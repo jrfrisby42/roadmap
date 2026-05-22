@@ -28,29 +28,27 @@ The data lives on its own EBS volume so it survives instance replacement. Daily 
 
 The repository has two deployable files: `server.py` and `roadmap.html`.
 
-### One-shot deploy (Windows)
+### Deploy via Claude
 
-```bat
-@echo off
-echo Uploading files...
-scp -i C:\Users\JRFrisby\.ssh\frazil-app.pem server.py roadmap.html ubuntu@52.35.224.183:/opt/roadmap/
-echo Restarting service...
-ssh -i C:\Users\JRFrisby\.ssh\frazil-app.pem ubuntu@52.35.224.183 "sudo systemctl restart roadmap"
-echo Done!
+The standard workflow is to ask Claude to deploy. Variables Claude uses:
+
+```
+KEY=C:\Users\JRFrisby\.ssh\frazil-app.pem     (Windows) or ~/.ssh/frazil-app.pem (mac/Linux)
+HOST=ubuntu@52.35.224.183
 ```
 
-Save as `deploy.bat` next to the source files.
-
-### One-shot deploy (macOS / Linux)
+**Always back up the current file on the server before overwriting** (the prior `.bat` scripts did this — keep doing it):
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
-KEY=~/.ssh/frazil-app.pem
-HOST=ubuntu@52.35.224.183
+ssh -i "$KEY" "$HOST" "sudo mkdir -p /opt/roadmap/bkup && sudo cp /opt/roadmap/server.py /opt/roadmap/bkup/server-$(date +%Y%m%d-%H%M%S).py"
+```
+
+### Full deploy (server.py + roadmap.html)
+
+```bash
+ssh -i "$KEY" "$HOST" "sudo mkdir -p /opt/roadmap/bkup && sudo cp /opt/roadmap/server.py /opt/roadmap/bkup/server-$(date +%Y%m%d-%H%M%S).py && sudo cp /opt/roadmap/roadmap.html /opt/roadmap/bkup/roadmap-$(date +%Y%m%d-%H%M%S).html"
 scp -i "$KEY" server.py roadmap.html "$HOST:/opt/roadmap/"
-ssh -i "$KEY" "$HOST" 'sudo systemctl restart roadmap'
-echo Done.
+ssh -i "$KEY" "$HOST" "sudo systemctl restart roadmap"
 ```
 
 ### Selective deploys
@@ -58,12 +56,14 @@ echo Done.
 - **HTML only** — no restart needed. Caddy reads the file fresh on each request.
 
   ```bash
+  ssh -i "$KEY" "$HOST" "sudo mkdir -p /opt/roadmap/bkup && sudo cp /opt/roadmap/roadmap.html /opt/roadmap/bkup/roadmap-$(date +%Y%m%d-%H%M%S).html"
   scp -i "$KEY" roadmap.html "$HOST:/opt/roadmap/"
   ```
 
 - **server.py only** — restart required.
 
   ```bash
+  ssh -i "$KEY" "$HOST" "sudo mkdir -p /opt/roadmap/bkup && sudo cp /opt/roadmap/server.py /opt/roadmap/bkup/server-$(date +%Y%m%d-%H%M%S).py"
   scp -i "$KEY" server.py "$HOST:/opt/roadmap/"
   ssh -i "$KEY" "$HOST" 'sudo systemctl restart roadmap'
   ```

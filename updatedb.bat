@@ -1,3 +1,0 @@
-echo Uploading files...
-scp -i C:\Users\JRFrisby\.ssh\frazil-app.pem roadmap.db ubuntu@52.35.224.183:/data/roadmap.db
-echo Done!
