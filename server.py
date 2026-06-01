@@ -177,7 +177,7 @@ def _fetch_jira_feature_flags(ticket: str) -> set:
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE         = os.path.dirname(os.path.abspath(__file__))
 HTML         = os.path.join(BASE, "roadmap.html")
-TENANTS_DIR  = "/data/tenants"
+TENANTS_DIR  = os.environ.get("FRAZIL_TENANTS_DIR", "/data/tenants")
 
 def team_db_path(team: str) -> str:
     return os.path.join(TENANTS_DIR, team, "roadmap.db")
@@ -897,12 +897,13 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     team = auth["team"]
     username = body.pop("_username", auth["username"])
     body.pop("id", None)
+    # Server-side rounding of parallelResources — must happen BEFORE the insert
+    # so the persisted value matches what we return (not just the response).
+    if "parallelResources" in body:
+        body["parallelResources"] = round_up_to_quarter(body["parallelResources"])
     with db(team) as c:
         cur = c.execute("INSERT INTO projects(data) VALUES(?)", (json.dumps(body),))
         body["id"] = cur.lastrowid
-    # Server-side rounding of parallelResources
-    if "parallelResources" in body:
-        body["parallelResources"] = round_up_to_quarter(body["parallelResources"])
     write_audit(team, "create", username, body["id"], body.get("name",""))
     return body
 

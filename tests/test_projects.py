@@ -1,0 +1,95 @@
+"""Business invariants on items: the test-period rule, parallelResources rounding,
+and the active-status lock on parallelResources."""
+import pytest
+import server
+
+
+# ── round_up_to_quarter (pure helper) ─────────────────────────────────────────
+@pytest.mark.parametrize("raw,expected", [
+    (1.0, 1.0),
+    (1.01, 1.25),
+    (1.26, 1.50),
+    (2.62, 2.75),
+    (3.00, 3.00),
+    (0, 1.0),       # min floor is 1.0
+    (-5, 1.0),      # negatives floor to 1.0
+    ("not-a-number", 1.0),
+])
+def test_round_up_to_quarter(raw, expected):
+    assert server.round_up_to_quarter(raw) == expected
+
+
+def _create(client, headers, **fields):
+    body = {"name": "Item", "status": "Planned", **fields}
+    return client.post("/api/projects", json=body, headers=headers)
+
+
+# ── testWeeks must be strictly less than dueWeeks (HTTP 422) ───────────────────
+def test_test_period_equal_to_estimate_rejected(client, admin_headers):
+    pid = _create(client, admin_headers).json()["id"]
+    r = client.put(f"/api/projects/{pid}",
+                   json={"name": "Item", "status": "Planned", "dueWeeks": 3, "testWeeks": 3},
+                   headers=admin_headers)
+    assert r.status_code == 422
+
+
+def test_test_period_exceeds_estimate_rejected(client, admin_headers):
+    pid = _create(client, admin_headers).json()["id"]
+    r = client.put(f"/api/projects/{pid}",
+                   json={"name": "Item", "status": "Planned", "dueWeeks": 3, "testWeeks": 5},
+                   headers=admin_headers)
+    assert r.status_code == 422
+
+
+def test_test_period_less_than_estimate_ok(client, admin_headers):
+    pid = _create(client, admin_headers).json()["id"]
+    r = client.put(f"/api/projects/{pid}",
+                   json={"name": "Item", "status": "Planned", "dueWeeks": 3, "testWeeks": 2},
+                   headers=admin_headers)
+    assert r.status_code == 200
+
+
+# ── parallelResources is rounded up to the nearest 0.25 on create ─────────────
+def test_create_rounds_parallel_resources_in_response(client, admin_headers):
+    r = _create(client, admin_headers, parallelResources=1.1)
+    assert r.status_code == 200
+    assert r.json()["parallelResources"] == 1.25
+
+
+def test_create_persists_rounded_parallel_resources(client, admin_headers):
+    """Regression: the value must be rounded in the DB, not only in the response."""
+    pid = _create(client, admin_headers, parallelResources=2.62).json()["id"]
+    allr = client.get("/api/all", headers=admin_headers).json()
+    stored = next(p for p in allr["projects"] if p["id"] == pid)
+    assert stored["parallelResources"] == 2.75
+
+
+# ── parallelResources is rounded up to the nearest 0.25 on update ──────────────
+def test_update_rounds_parallel_resources(client, admin_headers):
+    pid = _create(client, admin_headers).json()["id"]
+    r = client.put(f"/api/projects/{pid}",
+                   json={"name": "Item", "status": "Planned", "parallelResources": 1.1},
+                   headers=admin_headers)
+    assert r.status_code == 200
+    assert r.json()["parallelResources"] == 1.25
+
+
+# ── parallelResources cannot change while the item is in an active status ──────
+def test_parallel_resources_locked_when_active(client, admin_headers):
+    # Mark "In Progress" as an active status for this team.
+    client.put("/api/config/statusIsActive", json={"In Progress": True}, headers=admin_headers)
+
+    created = _create(client, admin_headers, status="In Progress", parallelResources=2.0)
+    pid = created.json()["id"]
+
+    # Attempting to change parallelResources while active -> 422.
+    r = client.put(f"/api/projects/{pid}",
+                   json={"name": "Item", "status": "In Progress", "parallelResources": 3.0},
+                   headers=admin_headers)
+    assert r.status_code == 422
+
+    # Same value (no change) is allowed even while active.
+    r_same = client.put(f"/api/projects/{pid}",
+                        json={"name": "Item", "status": "In Progress", "parallelResources": 2.0},
+                        headers=admin_headers)
+    assert r_same.status_code == 200

@@ -38,6 +38,26 @@ Add a team: `python server.py --new-team acme` (prints an initial admin password
 
 ---
 
+## Testing
+
+There is now a backend test suite under `tests/` (pytest + FastAPI `TestClient`). It is **not** shipped to production and has no bearing on the two-file deploy.
+
+```bash
+pip install -r requirements-dev.txt   # pytest + httpx (one-time)
+pytest                                 # runs tests/ (scoped via pytest.ini)
+```
+
+How isolation works (see `tests/conftest.py`):
+- `server.py` reads `TENANTS_DIR` from the `FRAZIL_TENANTS_DIR` env var (default `/data/tenants`). The suite points it at a throwaway temp dir **before** importing `server`, because `boot()` runs at import time. Real tenant data is never touched.
+- `TOKEN_SECRET` is pinned and Jira creds are blanked in `conftest.py` before import.
+- Each test gets a fresh uniquely-named team. Role-gating/business-logic tests mint tokens directly via `server.create_token(...)` to skip the login rate limiter; the login flow itself is covered in `test_auth.py`.
+
+Current coverage (`tests/`, ~49 tests): liveness; auth + role gating + login rate limit; the `testWeeks >= dueWeeks` 422; `parallelResources` rounding (create *and* update) + active-status lock; config `VALID_KEYS` allowlist + `/api/all` shape; capacity overrides (upsert/validation/ceiling/batch/delete/effective resolution); and planning sessions (lifecycle, payload validation, and atomic commit applying Review/Sprint/Release/deferral status changes through the config-driven status-flag maps). Extend it when you touch those areas. Run `pytest` before any deploy.
+
+Not yet covered: Jira sync (would need HTTP mocking of `urllib`), recurrence spawning, and comments/activities. Good next targets.
+
+---
+
 ## Tech stack & dependencies
 
 - **Backend:** FastAPI, uvicorn, gunicorn, sqlite3 (stdlib), `urllib.request` for Jira HTTP calls. No `requests`, no SQLAlchemy, no ORM — keep it that way unless we have a real reason to change.
@@ -305,7 +325,7 @@ with db(team) as c:
 - Don't add an ORM (no SQLAlchemy, no SQLModel).
 - Don't change the `X-Team` header convention.
 - Don't change the `Authorization: Bearer <token>` shape.
-- Don't write tests scaffolding (pytest, playwright) unless asked — there are currently none, and adding them is its own decision.
+- A backend pytest suite now exists under `tests/` (see the **Testing** section). Don't add a *new* test framework (e.g. playwright/frontend e2e) unprompted — extend the existing pytest suite instead.
 
 These are real choices we've made, not oversights. If something looks like it would benefit from one of these, flag it and ask first.
 
