@@ -58,6 +58,22 @@ Not yet covered: Jira sync (would need HTTP mocking of `urllib`), recurrence spa
 
 ---
 
+## PWA (installable standalone app)
+
+The app is an installable PWA. To preserve the two-file deploy, **all PWA assets are served as FastAPI routes** (no static files):
+
+- `GET /manifest.webmanifest` — web app manifest (`_PWA_MANIFEST` dict in `server.py`)
+- `GET /sw.js` — service worker (`_PWA_SW_TEMPLATE`; `__APP_VERSION__` is substituted at request time so the cache name tracks `APP_VERSION`)
+- `GET /icon-192.png`, `/icon-512.png`, `/apple-touch-icon.png` — PNG bytes base64-embedded in the `_PWA_ICON_*_B64` constants
+
+`roadmap.html` links the manifest + apple/theme-color meta tags in `<head>`, and registers `/sw.js` at the end of the single `<script>` block.
+
+**Caching strategy (deliberate):** network-first for the app shell / navigations so a `roadmap.html` deploy goes live immediately (consistent with "HTML changes need no restart"); cache-first only for our own icons/manifest; **`/api/*` is network-only** — there is no offline data layer (it would conflict with the server-validated planning/snapshot conflict model). Don't make the service worker cache API responses without a deliberate redesign.
+
+**Regenerating icons:** `python tools/gen_pwa_icons.py` (needs `pip install pillow` — Pillow is **dev-only**, NOT a runtime dependency). It redraws the brand map-pin and rewrites the three `_PWA_ICON_*_B64` constants in `server.py` in place. Run the JS/Python syntax checks after. Deploy is still just `scp server.py roadmap.html`.
+
+---
+
 ## Tech stack & dependencies
 
 - **Backend:** FastAPI, uvicorn, gunicorn, sqlite3 (stdlib), `urllib.request` for Jira HTTP calls. No `requests`, no SQLAlchemy, no ORM — keep it that way unless we have a real reason to change.

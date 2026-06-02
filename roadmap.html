@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Frazil Roadmap</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%235b4fff' d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z'/></svg>">
+<!-- PWA: installable standalone app -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#5b4fff">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Roadmap">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,300;0,400;0,700;0,900;1,400&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -13118,6 +13126,13 @@ async function boot(){
 }
 
 boot();
+
+// ── PWA: register the service worker (installable + cached app shell) ──
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
 </script>
 <!-- ACTIVITY CENTER PANEL -->
 <div id="activityPanel" style="position:fixed;top:0;right:0;width:460px;max-width:100vw;height:100vh;background:#fff;border-left:1px solid var(--border);box-shadow:-8px 0 32px rgba(0,0,0,0.12);z-index:800;flex-direction:column;transform:translateX(100%);transition:transform 0.25s ease;display:none">
