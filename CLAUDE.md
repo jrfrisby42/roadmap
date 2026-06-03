@@ -30,8 +30,12 @@ Optional `.env` next to `server.py` (loaded on startup):
 JIRA_BASE_URL=https://freezingpointllc.atlassian.net
 JIRA_EMAIL=you@example.com
 JIRA_API_TOKEN=...
-TOKEN_SECRET=<long random hex>     # signs auth tokens; auto-generated if absent
+TOKEN_SECRET=<long random hex>     # signs auth tokens. If absent, a secret is persisted
+                                   # to .token_secret next to server.py (shared across
+                                   # workers, survives restart). Set explicitly in prod.
 CORS_ORIGINS=https://roadmap.frazil.app
+DEBUG_TRACEBACKS=0                 # 1/true to echo Python tracebacks in 500 responses
+                                   # (default off — tracebacks are always logged server-side)
 ```
 
 Add a team: `python server.py --new-team acme` (prints an initial admin password and forces a change on first login).
