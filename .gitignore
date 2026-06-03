@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+.token_secret
 
 # Python
 __pycache__/

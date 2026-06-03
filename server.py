@@ -229,7 +229,44 @@ def is_hashed(pw: str) -> bool:
 
 # ── Token-based authentication ───────────────────────────────────────────────
 # Simple HMAC-signed tokens: "team:username:role:expiry:signature"
-_TOKEN_SECRET = os.environ.get("TOKEN_SECRET", secrets.token_hex(32))
+def _load_token_secret() -> str:
+    """Resolve the HMAC signing secret.
+
+    Priority: TOKEN_SECRET env var (the production path) → a persisted file next
+    to server.py → a freshly generated one written to that file.
+
+    Why not just generate one in-process: with gunicorn -w 2 each worker would
+    generate a *different* secret, so a token signed by worker A fails on worker
+    B (random 401s), and every restart would invalidate all live tokens.
+    Persisting to a shared file fixes both without requiring any configuration.
+    """
+    env = os.environ.get("TOKEN_SECRET")
+    if env:
+        return env
+    path = os.path.join(BASE, ".token_secret")
+    try:
+        if os.path.exists(path):
+            with open(path) as f:
+                existing = f.read().strip()
+            if existing:
+                return existing
+        generated = secrets.token_hex(32)
+        with open(path, "w") as f:
+            f.write(generated)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass  # best-effort (no-op on some platforms)
+        log.warning("[Auth] TOKEN_SECRET not set — generated a persistent secret "
+                    "at %s. Set TOKEN_SECRET explicitly in production.", path)
+        return generated
+    except OSError:
+        log.warning("[Auth] TOKEN_SECRET not set and secret file unwritable — "
+                    "falling back to an ephemeral secret (breaks across workers "
+                    "and on restart). Set TOKEN_SECRET in the environment.")
+        return secrets.token_hex(32)
+
+_TOKEN_SECRET = _load_token_secret()
 _TOKEN_EXPIRY = 86400  # 24 hours
 
 def _sign(payload: str) -> str:
@@ -313,6 +350,12 @@ def db(team: str):
     con = sqlite3.connect(path)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
+    # Wait up to 5s for a competing writer instead of erroring out immediately.
+    # With gunicorn -w 2, two worker processes can attempt writes concurrently;
+    # without this, the loser gets an instant "database is locked" -> HTTP 500.
+    con.execute("PRAGMA busy_timeout=5000")
+    # Safe + faster under WAL (fsync on checkpoint, not every commit).
+    con.execute("PRAGMA synchronous=NORMAL")
     try:
         yield con
         con.commit()
@@ -449,8 +492,18 @@ def init_team_db(team: str):
     _initialized_teams.add(team)
     print(f"[DB] Team '{team}' ready: {team_db_path(team)}")
 
+_migrated_teams: set = set()
+
 def _migrate_config_keys(team: str):
-    """Backfill any new config keys that didn't exist when the team was created."""
+    """Backfill any new config keys that didn't exist when the team was created.
+
+    Idempotent and cheap to call, but guarded so it runs at most once per team
+    per process: boot() migrates all teams and init_team_db() migrates on
+    creation, so the per-request call in GET /api/all was re-reading the whole
+    config table (and potentially writing) on every page load for no benefit.
+    """
+    if team in _migrated_teams:
+        return
     new_keys = {
         "changeReasons": ["Scope Change","Resource Constraint","Technical Blocker",
                           "External Dependency","Priority Shift",
@@ -490,6 +543,7 @@ def _migrate_config_keys(team: str):
                         (k, json.dumps(v))
                     )
                     print(f"[Migration] Seeded config key '{k}' for team '{team}'")
+    _migrated_teams.add(team)
 
 def _migrate_passwords(team: str):
     with db(team) as c:
@@ -574,19 +628,23 @@ APP_VERSION = "3.2.0"
 
 app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
 
-# ── Debug: expose Python traceback in 500 responses so we can diagnose ───────
+# ── Uncaught-exception handler ───────────────────────────────────────────────
 import traceback as _traceback
 from fastapi.responses import JSONResponse
 from fastapi import Request as _Request
 
+# The full traceback is always logged server-side. It is only echoed to the
+# client when DEBUG_TRACEBACKS is explicitly enabled — never leak internals
+# (file paths, library versions, data) to callers in production.
+_DEBUG_TRACEBACKS = os.environ.get("DEBUG_TRACEBACKS", "").strip().lower() in ("1", "true", "yes", "on")
+
 @app.exception_handler(Exception)
-async def _debug_exception_handler(request: _Request, exc: Exception):
+async def _unhandled_exception_handler(request: _Request, exc: Exception):
     tb = _traceback.format_exc()
     log.error(f"[500] {request.method} {request.url.path}\n{tb}")
-    return JSONResponse(
-        status_code=500,
-        content={"detail": str(exc), "traceback": tb}
-    )
+    if _DEBUG_TRACEBACKS:
+        return JSONResponse(status_code=500, content={"detail": str(exc), "traceback": tb})
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 @app.get("/api/version")
 def get_version():
