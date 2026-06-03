@@ -1093,15 +1093,20 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
     if _test_wks > 0 and _due_wks > 0 and _test_wks >= _due_wks:
         raise HTTPException(422, f"Test period ({_test_wks}w) cannot equal or exceed the time estimate ({_due_wks}w)")
 
-    # Read existing item, validate parallelResources, then write — single DB block
+    # One connection: read the item, read the status-flag config we need, validate,
+    # then write. (Previously statusIsReleased was read in a second connection.)
     with db(team) as c:
         row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
         if not row: raise HTTPException(404, "Not found")
         old = json.loads(row["data"])
 
+        cfg = {r["key"]: json.loads(r["value"]) for r in c.execute(
+            "SELECT key, value FROM config WHERE key IN ('statusIsActive','statusIsReleased')"
+        ).fetchall()}
+        active_map   = cfg.get("statusIsActive", {})
+        released_map = cfg.get("statusIsReleased", {})
+
         # Validate: parallelResources cannot be changed while item is in an active status
-        active_row = c.execute("SELECT value FROM config WHERE key='statusIsActive'").fetchone()
-        active_map = json.loads(active_row["value"]) if active_row else {}
         current_status = old.get("status", "")
         if active_map.get(current_status):
             old_pr = float(old.get("parallelResources") or 1)
@@ -1116,31 +1121,31 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
     write_audit(team, "update", username, pid, body.get("name",""), changes or None)
     body["id"] = pid
 
-    # ── FF pull: when item moves to Released status and has Jira tickets ──────
-    # Run in background (best-effort, non-blocking) so PUT response is fast.
-    new_status = body.get("status","")
-    old_status = old.get("status","")
+    # ── FF pull: when item moves to the Released status and has Jira tickets ──────
+    # Best-effort and isolated from the main update. The Jira hierarchy walk is a
+    # network call, so it runs OUTSIDE any transaction; the resulting write then
+    # re-reads the current row and merges ONLY the feature-flag fields, so a
+    # concurrent edit landing during the Jira call isn't clobbered.
+    new_status = body.get("status", "")
+    old_status = old.get("status", "")
     tickets    = body.get("jiraTickets") or []
-    if new_status != old_status and tickets and jira_configured():
-        # Check if the new status is the configured Released status
+    if new_status != old_status and released_map.get(new_status) and tickets and jira_configured():
         try:
-            with db(team) as c:
-                rel_row = c.execute("SELECT value FROM config WHERE key='statusIsReleased'").fetchone()
-            rel_map = json.loads(rel_row["value"]) if rel_row else {}
-            if rel_map.get(new_status):
-                # Pull FF flags across the full Jira hierarchy for all linked tickets
-                all_ff: set = set()
-                for ticket in tickets[:10]:
-                    all_ff.update(_fetch_jira_feature_flags(ticket))
-                if all_ff:
-                    body["jiraFeatureFlags"] = sorted(all_ff)
-                    # Merge into featureFlags (union of manual + Jira, deduped)
-                    existing_manual = set(body.get("featureFlags") or [])
-                    body["featureFlags"] = sorted(existing_manual | all_ff)
-                    with db(team) as c:
-                        c.execute("UPDATE projects SET data=? WHERE id=?",
-                                  (json.dumps(body), pid))
-                    log.info(f"[FeatureFlags] Pulled {len(all_ff)} flags for item {pid} on release")
+            all_ff: set = set()
+            for ticket in tickets[:10]:
+                all_ff.update(_fetch_jira_feature_flags(ticket))
+            if all_ff:
+                with db(team) as c:
+                    cur = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+                    if cur:
+                        current = json.loads(cur["data"])
+                        current["jiraFeatureFlags"] = sorted(all_ff)
+                        # Merge into featureFlags (union of existing + Jira, deduped)
+                        current["featureFlags"] = sorted(set(current.get("featureFlags") or []) | all_ff)
+                        c.execute("UPDATE projects SET data=? WHERE id=?", (json.dumps(current), pid))
+                        body["jiraFeatureFlags"] = current["jiraFeatureFlags"]
+                        body["featureFlags"]     = current["featureFlags"]
+                log.info(f"[FeatureFlags] Pulled {len(all_ff)} flags for item {pid} on release")
         except Exception as e:
             log.warning(f"[FeatureFlags] Release-trigger FF pull failed for item {pid}: {e}")
 
