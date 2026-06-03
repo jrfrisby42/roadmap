@@ -624,7 +624,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "3.2.1"
+APP_VERSION = "3.2.2"
 
 app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
 
