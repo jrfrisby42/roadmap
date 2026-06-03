@@ -38,3 +38,6 @@ Thumbs.db
 # Claude Code local settings (per-machine)
 .claude/settings.local.json
 
+# PWA icon previews (regenerable via tools/gen_pwa_icons.py; bytes live in server.py)
+tools/preview/
+
