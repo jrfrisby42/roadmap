@@ -1328,8 +1328,8 @@ def audit_page(request: FRequest, team: str = "development", search: str = "",  
     rows_html = "".join(row_html(r) for r in rows) or \
         '<tr><td colspan="5" style="text-align:center;padding:40px;color:#999">No matching audit entries.</td></tr>'
 
-    user_opts  = "".join(f'<option value="{u}"{" selected" if u==user else ""}>{u}</option>' for u in all_users)
-    action_opts = "".join(f'<option value="{a}"{" selected" if a==action_type else ""}>{a}</option>' for a in all_actions)
+    user_opts  = "".join(f'<option value="{html.escape(u)}"{" selected" if u==user else ""}>{html.escape(u)}</option>' for u in all_users)
+    action_opts = "".join(f'<option value="{html.escape(a)}"{" selected" if a==action_type else ""}>{html.escape(a)}</option>' for a in all_actions)
 
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <title>Frazil Roadmap — Audit Log ({team})</title>
