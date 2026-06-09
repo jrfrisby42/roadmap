@@ -624,7 +624,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "3.2.3"
+APP_VERSION = "3.2.4"
 
 app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
 
@@ -649,12 +649,28 @@ async def _unhandled_exception_handler(request: _Request, exc: Exception):
 @app.get("/api/version")
 def get_version():
     return {"server": APP_VERSION, "name": "Frazil Roadmap"}
+def _configure_cors(app, allowed_origins):
+    """Enable CORS only when an explicit allowlist is configured.
+
+    Deliberately does NOT fall back to '*': with allow_credentials=True,
+    Starlette would reflect any request Origin and return
+    Allow-Credentials: true — effectively opening the API to every site. With
+    no allowlist we add no CORS grants at all (same-origin requests, which is
+    how the app actually runs, are unaffected). Credentials are only enabled
+    alongside a concrete allowlist.
+    """
+    if allowed_origins:
+        app.add_middleware(CORSMiddleware,
+                           allow_origins=allowed_origins,
+                           allow_methods=["*"], allow_headers=["*"],
+                           allow_credentials=True)
+        log.info("[CORS] Restricted to: %s", ", ".join(allowed_origins))
+    else:
+        log.info("[CORS] No CORS_ORIGINS set — cross-origin disabled (same-origin only)")
+
 _allowed_origins = os.environ.get("CORS_ORIGINS", "").split(",")
 _allowed_origins = [o.strip() for o in _allowed_origins if o.strip()]
-app.add_middleware(CORSMiddleware,
-                   allow_origins=_allowed_origins or ["*"],
-                   allow_methods=["*"], allow_headers=["*"],
-                   allow_credentials=True)
+_configure_cors(app, _allowed_origins)
 
 @app.get("/", response_class=HTMLResponse)
 def root():
