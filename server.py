@@ -493,6 +493,10 @@ def init_team_db(team: str):
             created_ts  TEXT NOT NULL,
             edited_ts   TEXT
         );
+        CREATE TABLE IF NOT EXISTS key_counters (
+            prefix          TEXT PRIMARY KEY,
+            seq             INTEGER NOT NULL DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS capacity_overrides (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             owner           TEXT    NOT NULL,
@@ -1335,6 +1339,54 @@ def _save_project(c, pid: int, data: dict, ts: str = None):
     c.execute("UPDATE projects SET data=? WHERE id=?", (json.dumps(data), pid))
     _reindex_project(c, pid, data, ts)
 
+# ── Human-readable item keys (Phase 1b, JIRA-REPLACEMENT.md §4) ───────────────
+# Key = {PREFIX}-{n}, prefix configured per product in Admin → Projects. Counter
+# is per-prefix and atomic within the transaction. Keys are immutable once set.
+def _next_key_seq(c, prefix: str) -> int:
+    c.execute("INSERT INTO key_counters(prefix, seq) VALUES(?, 0) ON CONFLICT(prefix) DO NOTHING", (prefix,))
+    c.execute("UPDATE key_counters SET seq = seq + 1 WHERE prefix=?", (prefix,))
+    return c.execute("SELECT seq FROM key_counters WHERE prefix=?", (prefix,)).fetchone()[0]
+
+def _product_prefix(c, product_name: str):
+    if not product_name:
+        return None
+    row = c.execute("SELECT value FROM config WHERE key='products'").fetchone()
+    for p in (json.loads(row["value"]) if row else []):
+        if isinstance(p, dict) and p.get("name") == product_name:
+            return (p.get("keyPrefix") or "").strip() or None
+    return None
+
+def _assign_item_key(c, data: dict):
+    """Give the item a {PREFIX}-{n} key if its product has a prefix and it has
+    none yet. Immutable once set (kept even if the product later changes)."""
+    if data.get("itemKey"):
+        return
+    prefix = _product_prefix(c, data.get("product"))
+    if prefix:
+        data["itemKey"] = f"{prefix}-{_next_key_seq(c, prefix)}"
+
+def _backfill_item_keys(team: str) -> int:
+    """Assign keys to keyless items whose product now has a keyPrefix. Idempotent;
+    called after a products config save so defining a prefix keys existing items."""
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='products'").fetchone()
+        prefixes = {p["name"]: (p.get("keyPrefix") or "").strip()
+                    for p in (json.loads(row["value"]) if row else [])
+                    if isinstance(p, dict) and (p.get("keyPrefix") or "").strip()}
+        assigned = 0
+        for name, prefix in prefixes.items():
+            rows = c.execute(
+                "SELECT id, data FROM projects WHERE product=? AND (item_key IS NULL OR item_key='') ORDER BY id",
+                (name,)).fetchall()
+            for r in rows:
+                data = json.loads(r["data"])
+                if data.get("itemKey"):
+                    continue
+                data["itemKey"] = f"{prefix}-{_next_key_seq(c, prefix)}"
+                _save_project(c, r["id"], data)
+                assigned += 1
+    return assigned
+
 @app.post("/api/projects")
 def create_project(body: dict, auth: dict = Depends(require_role("admin", "editor"))):
     team = auth["team"]
@@ -1345,6 +1397,7 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     if "parallelResources" in body:
         body["parallelResources"] = round_up_to_quarter(body["parallelResources"])
     with db(team) as c:
+        _assign_item_key(c, body)
         body["id"] = _insert_project(c, body)
     write_audit(team, "create", username, body["id"], body.get("name",""))
     return body
@@ -1564,6 +1617,12 @@ def set_config(key: str, body = Body(...), username: str = "",
                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                   (key, json.dumps(body)))
     write_audit(team, f"config:{key}", username, changes={"updated": key})
+    # Defining/changing a product's keyPrefix backfills keys for its existing items.
+    if key == "products":
+        try:
+            _backfill_item_keys(team)
+        except Exception as e:
+            log.warning(f"[ItemKeys] backfill after products save failed: {e}")
     return body
 
 # ── Import ────────────────────────────────────────────────────────────────────
