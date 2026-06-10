@@ -798,6 +798,7 @@
     <select id="viewSelect" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none;color:var(--text)">
       <option value="gantt">Gantt</option>
       <option value="kanban">Kanban</option>
+      <option value="list">List</option>
       <option value="planning" id="planningOption" style="display:none">Planning</option>
       <option value="dashboard">Dashboard</option>
     </select>
@@ -1051,6 +1052,38 @@
 <!-- KANBAN BOARD -->
 <div id="kanbanBoard" style="display:none;padding:16px;overflow-x:auto;min-height:calc(100vh - 100px)">
   <div id="kanbanInner" style="display:flex;gap:14px;align-items:flex-start;width:100%"></div>
+</div>
+
+<!-- LIST VIEW (Phase 1d-i) — server-paginated item table backed by /api/items -->
+<div id="listView" style="display:none;padding:16px 20px">
+  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">
+    <input id="listSearch" type="search" placeholder="Search key, name, notes…" style="padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none;min-width:200px;flex:1;max-width:320px;color:var(--text)">
+    <select id="listProduct"  style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
+    <select id="listType"     style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
+    <select id="listStatus"   style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
+    <select id="listOwner"    style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
+    <select id="listAssignee" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
+    <select id="listPageSize" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"><option value="25">25 / page</option><option value="50" selected>50 / page</option><option value="100">100 / page</option></select>
+    <span id="listCount" style="margin-left:auto;font-size:12px;color:var(--muted)"></span>
+  </div>
+  <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:var(--surface);text-align:left">
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Key</th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Type</th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Name</th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Status</th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Owner</th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Assignee</th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;text-align:center">Points</th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Sprint</th>
+        </tr>
+      </thead>
+      <tbody id="listBody"></tbody>
+    </table>
+  </div>
+  <div id="listPager" style="display:flex;gap:10px;align-items:center;justify-content:center;margin-top:14px"></div>
 </div>
 
 <!-- DASHBOARD VIEW -->
@@ -8289,6 +8322,7 @@ function applyViewMode(){
   const kanban   = document.getElementById('kanbanBoard');
   const dash     = document.getElementById('dashboardView');
   const planning = document.getElementById('planningView');
+  const listv    = document.getElementById('listView');
   const addBtn   = document.getElementById('addBtn');
   const legend   = document.getElementById('ganttLegend');
   const dateRangeEls = ['dateRangeLbl','filterFrom','dateRangeLbl2','filterTo'];
@@ -8314,8 +8348,13 @@ function applyViewMode(){
   if(kanban)   kanban.style.display   = 'none';
   if(dash)     dash.style.display     = 'none';
   if(planning) planning.style.display = 'none';
+  if(listv)    listv.style.display    = 'none';
 
-  if(viewMode === 'planning'){
+  if(viewMode === 'list'){
+    if(listv) listv.style.display = '';
+    if(addBtn) addBtn.style.display = (isAdmin||isEditor) ? '' : 'none';
+    renderList();
+  } else if(viewMode === 'planning'){
     if(!isAdmin){ viewMode='gantt'; document.getElementById('viewSelect').value='gantt'; applyViewMode(); return; }
     planning.style.display = 'flex';
     if(addBtn) addBtn.style.display = 'none';
@@ -8361,6 +8400,104 @@ document.getElementById('viewSelect')?.addEventListener('change', e=>{
 });
 document.getElementById('filterFrom')?.addEventListener('change', ()=>{ if(viewMode==='dashboard') renderDashboard(); });
 document.getElementById('filterTo')?.addEventListener('change',   ()=>{ if(viewMode==='dashboard') renderDashboard(); });
+
+// ── LIST VIEW (Phase 1d-i) — server-paginated item table backed by /api/items ──
+const _listState = { page: 1, page_size: 50 };
+let _listFiltersReady = false;
+let _listSearchTimer = null;
+
+function _listFillSelect(id, options, allLabel){
+  const sel = document.getElementById(id);
+  if(!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">${allLabel}</option>` +
+    options.map(o => `<option value="${escA(o)}">${esc(o)}</option>`).join('');
+  sel.value = cur;  // preserve current selection if still valid
+}
+
+function populateListFilters(){
+  _listFillSelect('listProduct',  products.map(p=>p.name),   'All projects');
+  _listFillSelect('listType',     types.map(t=>t.name),      'All types');
+  _listFillSelect('listStatus',   statuses,                  'All statuses');
+  _listFillSelect('listOwner',    developers,                'All owners');
+  _listFillSelect('listAssignee', users.map(u=>u.username),  'All assignees');
+  _listFiltersReady = true;
+}
+
+function _listQuery(){
+  const v = id => (document.getElementById(id)?.value || '').trim();
+  const params = new URLSearchParams();
+  const map = { product:'listProduct', type:'listType', status:'listStatus',
+                owner:'listOwner', assignee:'listAssignee' };
+  for(const [k,id] of Object.entries(map)){ const val = v(id); if(val) params.set(k, val); }
+  const q = v('listSearch'); if(q) params.set('q', q);
+  params.set('page', _listState.page);
+  params.set('page_size', _listState.page_size);
+  return params.toString();
+}
+
+async function renderList(){
+  if(!_listFiltersReady) populateListFilters();
+  const body = document.getElementById('listBody');
+  const countEl = document.getElementById('listCount');
+  if(!body) return;
+  body.innerHTML = `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>`;
+  let data;
+  try { data = await API.get('/api/items?' + _listQuery()); }
+  catch(e){
+    body.innerHTML = `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--accent2)">${esc(e.message||'Failed to load')}</td></tr>`;
+    return;
+  }
+  const items = data.items || [];
+  if(countEl) countEl.textContent = `${data.total} item${data.total!==1?'s':''}`;
+  if(!items.length){
+    body.innerHTML = `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted)">No matching items.</td></tr>`;
+  } else {
+    const cell = v => esc(v==null||v===''?'—':String(v));
+    body.innerHTML = items.map(it => `
+      <tr class="list-row" data-id="${it.id}" style="cursor:pointer;border-top:1px solid var(--row-sep)">
+        <td style="padding:7px 10px;font-family:monospace;color:var(--muted);white-space:nowrap">${cell(it.itemKey)}</td>
+        <td style="padding:7px 10px;white-space:nowrap">${cell(it.type)}</td>
+        <td style="padding:7px 10px;font-weight:600">${cell(it.name)}</td>
+        <td style="padding:7px 10px;white-space:nowrap">${cell(it.status)}</td>
+        <td style="padding:7px 10px;white-space:nowrap">${cell(it.dev)}</td>
+        <td style="padding:7px 10px;white-space:nowrap">${cell(it.assignee)}</td>
+        <td style="padding:7px 10px;text-align:center">${cell(it.storyPoints)}</td>
+        <td style="padding:7px 10px;white-space:nowrap">${cell(it.sprintId)}</td>
+      </tr>`).join('');
+    body.querySelectorAll('.list-row').forEach(tr => {
+      tr.addEventListener('click', ()=> openItemPage(parseInt(tr.dataset.id)));
+      tr.addEventListener('mouseenter', ()=> tr.style.background='var(--surface)');
+      tr.addEventListener('mouseleave', ()=> tr.style.background='');
+    });
+  }
+  _renderListPager(data);
+}
+
+function _renderListPager(data){
+  const pager = document.getElementById('listPager');
+  if(!pager) return;
+  const pages = data.pages || 0;
+  if(pages <= 1){ pager.innerHTML = ''; return; }
+  const p = data.page;
+  const btn = (id,label,disabled)=>`<button id="${id}" ${disabled?'disabled':''} style="padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:${disabled?'default':'pointer'};opacity:${disabled?0.5:1}">${label}</button>`;
+  pager.innerHTML = btn('listPrev','‹ Prev', p<=1) +
+    `<span style="font-size:12px;color:var(--muted)">Page ${p} of ${pages}</span>` +
+    btn('listNext','Next ›', p>=pages);
+  document.getElementById('listPrev')?.addEventListener('click', ()=>{ if(_listState.page>1){ _listState.page--; renderList(); }});
+  document.getElementById('listNext')?.addEventListener('click', ()=>{ if(_listState.page<pages){ _listState.page++; renderList(); }});
+}
+
+['listProduct','listType','listStatus','listOwner','listAssignee'].forEach(id=>{
+  document.getElementById(id)?.addEventListener('change', ()=>{ _listState.page=1; renderList(); });
+});
+document.getElementById('listPageSize')?.addEventListener('change', e=>{
+  _listState.page_size = parseInt(e.target.value)||50; _listState.page=1; renderList();
+});
+document.getElementById('listSearch')?.addEventListener('input', ()=>{
+  clearTimeout(_listSearchTimer);
+  _listSearchTimer = setTimeout(()=>{ _listState.page=1; renderList(); }, 300);
+});
 
 // Named static actions for elements that can't use dynamic keys
 window._dashStaticActions = {
