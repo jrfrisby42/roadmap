@@ -31,14 +31,16 @@ that helps author work and hand it to Claude Code.
   polluting the Gantt / capacity engine.)
 - **Owner vs. assignee:** `owner` stays a **generic grouping** whose meaning each
   team defines (kept ambiguous on purpose so other teams can adopt the tool);
-  **Frazil uses owner = Pod**. `assignee` = the **individual**, a new *additive*
-  field. Set independently (pods shift, tickets get reassigned) — no auto-derivation,
-  and **no migration** of the existing `owner` field.
+  **Frazil uses owner = Pod**. `assignee` = the **individual**, sourced from `users`
+  via **multi-Pod membership** (the existing `ownerFilter`, made multi-valued — §4).
+  **Owner-first** flow: choosing an owner filters the assignee list to that Pod's
+  members. No new "Pods" config — the owner list + user membership already model it.
 - **Capacity:** the existing capacity engine is **unchanged** — it operates only on
   the bigger (show-on-Gantt) items, keyed on `owner` (now the Pod). No schedule
   roll-up from children.
-- **Access:** whole team sees and edits everything. Current admin/editor/viewer is
-  fine as-is (see §10 for an optional future lever).
+- **Access:** whole team sees and edits everything (most users have **empty** Pod
+  membership = unscoped). admin/editor/viewer is fine as-is; multi-Pod membership
+  doubles as an optional **Pod-scoping** lever for later (§4).
 - **Attachments:** desired, ideally via **ShareBox** — *nice-to-have, not required*.
 - **Cutover:** **transition period** — Jira and the tool run side by side.
 - **Copilot:** **authoring first** (help write/groom tickets); Claude Code handoff later.
@@ -137,15 +139,26 @@ move in lockstep here — this is the riskiest single edit.
 | `parent_id` | Hierarchy parent | §6 |
 | `sprint_id` | Sprint membership | §8 |
 
-**Owner / assignee model (kept generic):**
-- `owner` is **unchanged** — the capacity-bearing grouping field. Its meaning is
-  **team-defined and intentionally ambiguous** so other teams can use the tool
-  differently. **No data migration.** Frazil populates the owner list with **Pods**.
-- `assignee` is a **new, additive** individual field with its own picklist. Pragmatic
-  path: the existing `developers` config keeps feeding **owner** (Frazil fills it
-  with Pods — naming is cosmetic); add a separate people list (or pull from team
-  `users`) for **assignee**. Decide in Phase 2.
-- Capacity stays keyed on `owner` (Pods, for Frazil) — **no capacity-engine change**.
+**Owner / assignee model (kept generic; reuses the existing user↔owner tie-in):**
+- `owner` is **unchanged** — the capacity-bearing grouping field; meaning is
+  team-defined. **No owner migration.** Frazil populates the owner list (`developers`
+  config) with **Pods** (the name is cosmetic).
+- `assignee` (new field) is sourced from **`users`** — specifically users whose **Pod
+  membership includes the item's `owner`**. No separate people config needed.
+- **Membership = multi-valued `ownerFilter`.** Today `ownerFilter` is a single owner
+  string that view-scopes an editor; we make it a **list** so a user can belong to
+  several Pods (people float between squads). One concept serves both **assignment
+  candidacy** and (optional) **view-scoping**.
+  - *Migration (Phase 2):* existing `ownerFilter` strings → single-element lists;
+    update its consumers (view-scope logic, modal owner-lock, 📌 badge) to "any of my
+    Pods". **Empty list = unscoped = sees/edits everything** (the default for the team).
+- **Owner-first** is the primary flow — with multi-Pod membership an assignee no
+  longer uniquely implies a Pod: pick owner → assignee dropdown filters to that Pod's
+  members; assignee→owner autofill only when the user is in exactly one Pod; override
+  always allowed. Fallback: empty Pod (or assigning outside it) → dropdown falls back
+  to all users rather than blocking.
+- Capacity stays keyed on `owner` (per-Pod, for Frazil) and is **independent of how
+  many Pods a person belongs to** — **no capacity-engine change**.
 
 **Per-type config (Admin → item types)** gains:
 - `showOnGantt` (bool) — schedulable + capacity-consuming, or pure tracking.
@@ -357,9 +370,10 @@ markdown export; deep link / MCP later.
   query path coexisting with the Gantt's in-memory model needs care.
 - **Two estimate models** coexist — weeks/`parallelResources` drive the Gantt;
   story points drive sprint tracking. Keep them clearly separated.
-- **Owner/assignee (resolved):** `owner` stays generic + unchanged (no migration,
-  capacity untouched); `assignee` is additive. Remaining detail: where the assignee
-  picklist comes from (a new people config vs. the team `users` list) — Phase 2.
+- **Owner/assignee (resolved):** `owner` generic + unchanged; `assignee` sourced from
+  `users` via **multi-valued `ownerFilter`** Pod membership; **owner-first** flow;
+  empty membership = see-all. Phase-2 task: migrate `ownerFilter` string→list and
+  update its consumers (view-scope, modal lock, badge).
 - **Copilot dependency**: SDK vs. urllib (sign-off).
 - **Transition sync direction**: bidirectional vs. split authority?
 - **Per-type workflows**: needed at launch, or later?
