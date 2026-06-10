@@ -560,16 +560,6 @@ def init_team_db(team: str):
                       "ON projects(item_key) WHERE item_key IS NOT NULL")
         except Exception:
             pass
-        # Backfill columns for not-yet-indexed rows (updated_ts IS NULL).
-        # Self-limiting: once indexed a row has updated_ts and is skipped next boot.
-        _unindexed = c.execute("SELECT id, data FROM projects WHERE updated_ts IS NULL").fetchall()
-        for _r in _unindexed:
-            try:
-                _reindex_project(c, _r["id"], json.loads(_r["data"]))
-            except Exception:
-                pass
-        if _unindexed:
-            print(f"[Migration] Indexed {len(_unindexed)} item(s) for team '{team}'")
         defaults = {
             "developers":   [],
             "statuses":     ["In Progress","Planned","In Testing","Released","TBD","Backlogged"],
@@ -593,6 +583,22 @@ def init_team_db(team: str):
                       (k, json.dumps(v)))
     _migrate_passwords(team)
     _migrate_config_keys(team)
+    # Backfill indexed columns in its OWN transaction (after the schema migration
+    # has committed the new columns). Keeping it separate means a rollback in the
+    # schema block — or a concurrent worker boot — can't lose the backfill. It is
+    # self-limiting (only rows with updated_ts IS NULL) and idempotent.
+    try:
+        with db(team) as c:
+            _unindexed = c.execute("SELECT id, data FROM projects WHERE updated_ts IS NULL").fetchall()
+            for _r in _unindexed:
+                try:
+                    _reindex_project(c, _r["id"], json.loads(_r["data"]))
+                except Exception:
+                    pass
+        if _unindexed:
+            print(f"[Migration] Indexed {len(_unindexed)} item(s) for team '{team}'")
+    except Exception as e:
+        log.warning(f"[Migration] index backfill failed for '{team}': {e}")
     _initialized_teams.add(team)
     print(f"[DB] Team '{team}' ready: {team_db_path(team)}")
 
