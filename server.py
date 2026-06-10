@@ -1437,6 +1437,88 @@ def delete_project(pid: int, username: str = "",
     write_audit(team, "delete", username, pid, name)
     return {"ok": True}
 
+# Sortable columns for /api/items (whitelist — never interpolate raw user input).
+_ITEMS_SORTABLE = {"updated_ts", "item_key", "status", "type", "product",
+                   "owner", "assignee", "priority", "story_points", "sprint_id", "id"}
+
+@app.get("/api/items")
+def list_items(
+    auth: dict = Depends(require_auth),
+    product: Optional[str] = None,
+    type: Optional[str] = None,
+    status: Optional[str] = None,
+    owner: Optional[str] = None,
+    assignee: Optional[str] = None,
+    sprint: Optional[str] = None,
+    parent_id: Optional[str] = None,
+    archived: Optional[str] = None,
+    q: Optional[str] = None,
+    sort: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+):
+    """Server-side query/search/paginate over the indexed item columns
+    (JIRA-REPLACEMENT.md §3.2). Returns a page of full item blobs + total count.
+    Read-only; any authenticated role may call it."""
+    team = auth["team"]
+    init_team_db(team)
+
+    where, params = [], []
+    def eq(col, val):
+        if val is not None and val != "":
+            where.append(f"{col}=?"); params.append(val)
+    eq("product", product)
+    eq("type", type)
+    eq("status", status)
+    eq("owner", owner)
+    eq("assignee", assignee)
+    eq("sprint_id", sprint)
+
+    # parent_id: an integer, or 'none'/'null' for top-level items.
+    if parent_id not in (None, ""):
+        if parent_id.lower() in ("none", "null"):
+            where.append("parent_id IS NULL")
+        else:
+            try:
+                params.append(int(parent_id)); where.append("parent_id=?")
+            except ValueError:
+                raise HTTPException(400, "parent_id must be an integer or 'none'")
+
+    # archived: default hides archived; 'all' = both; '1'/'true' = archived only.
+    a = (archived or "").lower()
+    if a in ("1", "true", "yes"):
+        where.append("archived=1")
+    elif a != "all":
+        where.append("archived=0")
+
+    if q:
+        # item_key (column) + the blob text (covers name/notes/etc.) — fine at this scale.
+        where.append("(item_key LIKE ? OR data LIKE ?)")
+        params += [f"%{q}%", f"%{q}%"]
+
+    sort_col, _, sort_dir = (sort or "updated_ts:desc").partition(":")
+    if sort_col not in _ITEMS_SORTABLE:
+        sort_col = "updated_ts"
+    sort_dir = "ASC" if sort_dir.lower() == "asc" else "DESC"
+
+    page = max(1, page)
+    page_size = max(1, min(200, page_size))
+    offset = (page - 1) * page_size
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    with db(team) as c:
+        total = c.execute(f"SELECT COUNT(*) FROM projects {where_sql}", params).fetchone()[0]
+        rows = c.execute(
+            f"SELECT id, data FROM projects {where_sql} "
+            f"ORDER BY {sort_col} {sort_dir}, id DESC LIMIT ? OFFSET ?",
+            (*params, page_size, offset)
+        ).fetchall()
+    items = []
+    for r in rows:
+        p = json.loads(r["data"]); p["id"] = r["id"]; items.append(p)
+    return {"items": items, "total": total, "page": page, "page_size": page_size,
+            "pages": (total + page_size - 1) // page_size if total else 0}
+
 # ── Config ────────────────────────────────────────────────────────────────────
 VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "ownerCapacity","statusIgnoreConflicts","typeIgnoreConflicts",
