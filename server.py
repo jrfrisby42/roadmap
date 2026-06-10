@@ -532,6 +532,40 @@ def init_team_db(team: str):
             c.execute("ALTER TABLE capacity_overrides ADD COLUMN note TEXT NOT NULL DEFAULT ''")
         except Exception:
             pass  # column already exists
+        # ── Phase 1 (JIRA-REPLACEMENT.md): indexed columns mirrored from item JSON ──
+        for _col, _defn in [
+            ("item_key", "TEXT"), ("type", "TEXT"), ("status", "TEXT"),
+            ("parent_id", "INTEGER"), ("product", "TEXT"), ("owner", "TEXT"),
+            ("assignee", "TEXT"), ("reporter", "TEXT"), ("priority", "TEXT"),
+            ("rank", "TEXT"), ("story_points", "REAL"), ("sprint_id", "TEXT"),
+            ("archived", "INTEGER NOT NULL DEFAULT 0"), ("updated_ts", "TEXT"),
+        ]:
+            try:
+                c.execute(f"ALTER TABLE projects ADD COLUMN {_col} {_defn}")
+            except Exception:
+                pass  # column already exists
+        for _idx, _expr in [
+            ("idx_projects_parent",   "parent_id"), ("idx_projects_status",  "status"),
+            ("idx_projects_product",  "product"),   ("idx_projects_owner",   "owner"),
+            ("idx_projects_sprint",   "sprint_id"), ("idx_projects_archived","archived"),
+        ]:
+            c.execute(f"CREATE INDEX IF NOT EXISTS {_idx} ON projects({_expr})")
+        # Partial unique index: keys are unique when present, many NULLs allowed.
+        try:
+            c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_key "
+                      "ON projects(item_key) WHERE item_key IS NOT NULL")
+        except Exception:
+            pass
+        # Backfill columns for not-yet-indexed rows (updated_ts IS NULL).
+        # Self-limiting: once indexed a row has updated_ts and is skipped next boot.
+        _unindexed = c.execute("SELECT id, data FROM projects WHERE updated_ts IS NULL").fetchall()
+        for _r in _unindexed:
+            try:
+                _reindex_project(c, _r["id"], json.loads(_r["data"]))
+            except Exception:
+                pass
+        if _unindexed:
+            print(f"[Migration] Indexed {len(_unindexed)} item(s) for team '{team}'")
         defaults = {
             "developers":   [],
             "statuses":     ["In Progress","Planned","In Testing","Released","TBD","Backlogged"],
@@ -1254,6 +1288,53 @@ def reset_admin_password(body: dict = Body(...)):
     return {"ok": True, "team": team, "username": admin["username"], "note": "Password reset to frazil123, mustChangePassword=True"}
 
 # ── Projects ──────────────────────────────────────────────────────────────────
+# Phase 1 (JIRA-REPLACEMENT.md): items carry mirrored, indexed columns alongside
+# the JSON blob so we can query/filter/paginate without loading the whole team
+# into memory. The blob stays the source of truth; these helpers keep the columns
+# in sync on every write. NB: the blob's owner field is historically named `dev`.
+def _project_index_cols(data: dict) -> dict:
+    def _s(v):     return str(v) if v not in (None, "") else None
+    def _int(v):
+        try:    return int(v) if v not in (None, "", False) else None
+        except (TypeError, ValueError): return None
+    def _float(v):
+        try:    return float(v) if v not in (None, "") else None
+        except (TypeError, ValueError): return None
+    return {
+        "item_key":     _s(data.get("itemKey")),
+        "type":         _s(data.get("type")),
+        "status":       _s(data.get("status")),
+        "parent_id":    _int(data.get("parent")),
+        "product":      _s(data.get("product")),
+        "owner":        _s(data.get("dev")),          # blob field is `dev`
+        "assignee":     _s(data.get("assignee")),     # new in later phases
+        "reporter":     _s(data.get("reporter")),     # new in later phases
+        "priority":     _s(data.get("priority")),
+        "rank":         _s(data.get("rank")),          # new in later phases
+        "story_points": _float(data.get("storyPoints")),
+        "sprint_id":    _s(data.get("sprintId")),
+        "archived":     1 if data.get("archived") else 0,
+    }
+
+def _reindex_project(c, pid: int, data: dict, ts: str = None):
+    """Mirror an item's blob fields into its indexed columns (+ updated_ts)."""
+    cols = _project_index_cols(data)
+    cols["updated_ts"] = ts or datetime.now(timezone.utc).isoformat()
+    assignments = ", ".join(f"{k}=?" for k in cols)
+    c.execute(f"UPDATE projects SET {assignments} WHERE id=?", (*cols.values(), pid))
+
+def _insert_project(c, data: dict, ts: str = None) -> int:
+    """INSERT an item and populate its indexed columns. Returns the new id."""
+    cur = c.execute("INSERT INTO projects(data) VALUES(?)", (json.dumps(data),))
+    pid = cur.lastrowid
+    _reindex_project(c, pid, data, ts)
+    return pid
+
+def _save_project(c, pid: int, data: dict, ts: str = None):
+    """UPDATE an item's blob AND its indexed columns together (no drift)."""
+    c.execute("UPDATE projects SET data=? WHERE id=?", (json.dumps(data), pid))
+    _reindex_project(c, pid, data, ts)
+
 @app.post("/api/projects")
 def create_project(body: dict, auth: dict = Depends(require_role("admin", "editor"))):
     team = auth["team"]
@@ -1264,8 +1345,7 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     if "parallelResources" in body:
         body["parallelResources"] = round_up_to_quarter(body["parallelResources"])
     with db(team) as c:
-        cur = c.execute("INSERT INTO projects(data) VALUES(?)", (json.dumps(body),))
-        body["id"] = cur.lastrowid
+        body["id"] = _insert_project(c, body)
     write_audit(team, "create", username, body["id"], body.get("name",""))
     return body
 
@@ -1308,7 +1388,7 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
         changes = {k: {"from": old.get(k), "to": v}
                    for k, v in body.items()
                    if old.get(k) != v and k not in {"jiraTickets","description"}}
-        c.execute("UPDATE projects SET data=? WHERE id=?", (json.dumps(body), pid))
+        _save_project(c, pid, body)
     write_audit(team, "update", username, pid, body.get("name",""), changes or None)
     body["id"] = pid
 
@@ -1333,7 +1413,7 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
                         current["jiraFeatureFlags"] = sorted(all_ff)
                         # Merge into featureFlags (union of existing + Jira, deduped)
                         current["featureFlags"] = sorted(set(current.get("featureFlags") or []) | all_ff)
-                        c.execute("UPDATE projects SET data=? WHERE id=?", (json.dumps(current), pid))
+                        _save_project(c, pid, current)
                         body["jiraFeatureFlags"] = current["jiraFeatureFlags"]
                         body["featureFlags"]     = current["featureFlags"]
                 log.info(f"[FeatureFlags] Pulled {len(all_ff)} flags for item {pid} on release")
@@ -1413,7 +1493,7 @@ def bulk_import(body: dict = Body(...), auth: dict = Depends(require_role("admin
         c.execute("DELETE FROM projects")
         for p in body.get("projects", []):
             p.pop("id", None)
-            c.execute("INSERT INTO projects(data) VALUES(?)", (json.dumps(p),))
+            _insert_project(c, p)
     for key in VALID_KEYS:
         if key in body and body[key]:
             val = body[key]
@@ -2229,7 +2309,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
     p["jiraSyncSkipped"]      = skipped
 
     with db(team) as c:
-        c.execute("UPDATE projects SET data=? WHERE id=?", (json.dumps(p), pid))
+        _save_project(c, pid, p)
 
     # Roadmap status change → item history activity (Auto-Cleared, not visible in AC open tab)
     if status_change_activity:
@@ -2314,8 +2394,7 @@ def _do_sync_children(pid: int, p: dict, team: str, username: str) -> dict:
                                     existing["parent"] = pid
                                     existing["recurrence_parent"] = pid
                                     with db(team) as c2:
-                                        c2.execute("UPDATE projects SET data=? WHERE id=?",
-                                                   (json.dumps(existing), rr["id"]))
+                                        _save_project(c2, rr["id"], existing)
                                     write_audit(team, "update", username, rr["id"],
                                                 existing.get("name", ""),
                                                 changes={"parent": {"from": existing_parent, "to": pid},
@@ -2348,10 +2427,8 @@ def _do_sync_children(pid: int, p: dict, team: str, username: str) -> dict:
                     "hidden":            True,   # hidden by default — review before showing on roadmap
                 }
                 with db(team) as c:
-                    cur = c.execute("INSERT INTO projects(data) VALUES(?)", (json.dumps(child),))
-                    child_id = cur.lastrowid
-                    c.execute("UPDATE projects SET data=? WHERE id=?",
-                              (json.dumps({**child, "id": child_id}), child_id))
+                    child_id = _insert_project(c, child)
+                    _save_project(c, child_id, {**child, "id": child_id})
                 existing_jira_keys.add(sub_key)
                 created_ids.append(child_id)
                 write_audit(team, "create", username, child_id, sub_summary,
@@ -3090,8 +3167,7 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
     committed_ts = datetime.now(timezone.utc).isoformat()
     with db(team) as c:
         for item_id, updated in to_save.items():
-            c.execute("UPDATE projects SET data=? WHERE id=?",
-                      (json.dumps(updated), item_id))
+            _save_project(c, item_id, updated)
         for act in activities:
             act.setdefault("created_ts", committed_ts)
             c.execute("""INSERT INTO activities
@@ -3354,8 +3430,7 @@ def _sync_recurrence_child_statuses(parent_id: int, team: str, username: str) ->
                     row_id = child.get("_row_id") or child.get("id")
                     child_updated.pop("_row_id", None)
                     with db(team) as c:
-                        c.execute("UPDATE projects SET data=? WHERE id=?",
-                                  (json.dumps(child_updated), row_id))
+                        _save_project(c, row_id, child_updated)
                     write_audit(team, "update", username, row_id,
                                 child.get("name", ""),
                                 changes={"status": {"from": child.get("status"), "to": released_status},
@@ -3417,10 +3492,8 @@ def spawn_recurrence(pid: int, body: dict = Body({}), auth: dict = Depends(requi
     new_item["recurrence_parent"]  = pid
 
     with db(team) as c:
-        cur = c.execute("INSERT INTO projects(data) VALUES(?)", (json.dumps(new_item),))
-        new_id = cur.lastrowid
-        c.execute("UPDATE projects SET data=? WHERE id=?",
-                  (json.dumps({**new_item, "id": new_id}), new_id))
+        new_id = _insert_project(c, new_item)
+        _save_project(c, new_id, {**new_item, "id": new_id})
         new_row = c.execute("SELECT * FROM projects WHERE id=?", (new_id,)).fetchone()
     result = json.loads(new_row["data"])
     result["id"] = new_id
