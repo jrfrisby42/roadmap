@@ -944,6 +944,46 @@
     </div>
     <div class="login-error" id="loginError" style="display:none;margin-bottom:10px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Incorrect username or password.</div>
     <button class="btn-save" id="loginSubmitBtn" style="width:100%;padding:10px;font-size:14px;margin-top:4px">Sign In</button>
+    <div style="text-align:center;margin-top:14px">
+      <a id="forgotLink" href="#" style="font-size:12px;color:var(--accent);text-decoration:none">Forgot password?</a>
+    </div>
+    <div id="forgotForm" style="display:none;margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+      <div class="form-row">
+        <label>Email</label>
+        <input type="email" id="forgotEmail" placeholder="you@example.com" autocomplete="email">
+      </div>
+      <button class="btn-save" id="forgotSubmitBtn" style="width:100%;padding:9px;font-size:13px">Send reset link</button>
+      <div id="forgotMsg" style="display:none;font-size:12px;margin-top:10px;text-align:center;color:var(--muted)"></div>
+    </div>
+  </div>
+</div>
+
+<!-- SET-PASSWORD WALL (reset / invite link, ?pwtoken=) -->
+<div id="pwResetWall" style="display:none;position:fixed;inset:0;z-index:1001;background:#f5f5f7;align-items:center;justify-content:center;flex-direction:column">
+  <div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:36px 40px;width:360px;max-width:95vw;box-shadow:0 12px 48px rgba(0,0,0,0.12)">
+    <div style="text-align:center;margin-bottom:24px">
+      <div style="margin-bottom:10px">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="48" height="48"><path fill="#5b4fff" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+      </div>
+      <h1 style="font-size:20px;font-weight:900;color:var(--text);margin:0">Set your password</h1>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">Choose a new password to continue</div>
+    </div>
+    <div id="pwResetBody">
+      <div class="form-row">
+        <label>New password</label>
+        <input type="password" id="pwResetInput" placeholder="At least 6 characters" autocomplete="new-password">
+      </div>
+      <div class="form-row">
+        <label>Confirm password</label>
+        <input type="password" id="pwResetConfirm" placeholder="Re-enter password" autocomplete="new-password">
+      </div>
+      <div class="login-error" id="pwResetError" style="display:none;margin-bottom:10px"></div>
+      <button class="btn-save" id="pwResetSubmitBtn" style="width:100%;padding:10px;font-size:14px;margin-top:4px">Set password</button>
+    </div>
+    <div id="pwResetDone" style="display:none;text-align:center">
+      <div style="font-size:13px;color:var(--text);margin-bottom:16px">✓ Your password has been set. You can now sign in.</div>
+      <button class="btn-save" id="pwResetGoLogin" style="width:100%;padding:10px;font-size:14px">Go to login</button>
+    </div>
   </div>
 </div>
 
@@ -1771,14 +1811,23 @@
     <!-- USERS TAB -->
     <div class="admin-pane" id="usersTab">
       <div class="dev-list" id="userList"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
         <input type="text" id="newUserName" placeholder="Username…" class="dev-edit-inp" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-family:'Lato',sans-serif;outline:none">
-        <input type="password" id="newUserPass" placeholder="Password…" class="dev-edit-inp" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-family:'Lato',sans-serif;outline:none">
+        <input type="email" id="newUserEmail" placeholder="Email (for reset/notifications)…" class="dev-edit-inp" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-family:'Lato',sans-serif;outline:none">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
         <select id="newUserRole" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-family:'Lato',sans-serif;outline:none;color:var(--text)">
           <option value="viewer">Viewer</option>
           <option value="editor">Editor</option>
           <option value="admin">Admin</option>
         </select>
+        <select id="newUserPwMode" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-family:'Lato',sans-serif;outline:none;color:var(--text)">
+          <option value="password">Set password now</option>
+          <option value="invite">Email a setup link</option>
+        </select>
+      </div>
+      <div style="margin-top:8px" id="newUserPassWrap">
+        <input type="password" id="newUserPass" placeholder="Password…" class="dev-edit-inp" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-family:'Lato',sans-serif;outline:none">
       </div>
       <div style="margin-top:8px">
         <button class="btn-add-dev" id="addUserBtn">+ Add User</button>
@@ -1914,7 +1963,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '3.2.4';
+const APP_VERSION = '3.3.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -6171,11 +6220,15 @@ function renderUserList(){
       : isBuiltin ? `<span class="btn-ic" style="opacity:0.35;cursor:default" title="Built-in"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>` : '';
     const logoutBtn = canLogout ? `<button class="btn-ic" onclick="forceLogoutUser(${i})" title="Force logout" style="font-size:13px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polygon points="23 7 12 2 1 7 12 12 23 7"/><line x1="12" y1="17" x2="12" y2="22"/><line x1="7" y1="17" x2="17" y2="17"/></svg></button>` : '';
     const selfBadge = isSelf ? ' <span style="font-size:10px;background:rgba(91,79,255,0.1);color:var(--accent);padding:1px 6px;border-radius:8px;font-weight:700">you</span>' : '';
+    const emailTxt = u.email ? `<span style="font-size:11px;color:var(--muted);margin-left:2px">${esc(u.email)}</span>` : '';
+    const noPwBadge = (!u.password) ? ` <span style="font-size:10px;background:rgba(240,165,0,0.15);color:#b06f00;padding:1px 6px;border-radius:8px;font-weight:700" title="No password set — pending setup link">pending</span>` : '';
+    const linkBtn = (isAdmin && u.email) ? `<button class="btn-ic" onclick="sendUserLink(${i})" title="Email a password setup/reset link"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg></button>` : '';
 
     return `<div class="dev-item" data-idx="${i}">
-      <span class="dev-nm">${esc(u.username)}${selfBadge}</span>
+      <span class="dev-nm">${esc(u.username)}${selfBadge}${noPwBadge}</span>
+      ${emailTxt}
       ${rolePill}${ownerPill}
-      ${editBtn}${logoutBtn}${deleteBtn}
+      ${editBtn}${linkBtn}${logoutBtn}${deleteBtn}
     </div>`;
   }).join('');
 }
@@ -6217,6 +6270,7 @@ function startEditUser(i){
       ${isBuiltin
         ? `<div style="font-size:12px;font-weight:700;padding:5px 0;color:var(--text)">${esc(u.username)} <span style="font-size:10px;color:var(--muted);font-weight:400">(built-in — name locked)</span></div>`
         : `<input class="dev-edit-inp" id="uei_name_${i}" value="${escA(u.username)}" placeholder="Username">`}
+      <input class="dev-edit-inp" type="email" id="uei_email_${i}" value="${escA(u.email||'')}" placeholder="Email (for reset/notifications)">
       ${canChangePw
         ? `<input class="dev-edit-inp" type="password" id="uei_pass_${i}" value="" placeholder="New password (leave blank to keep)">`
         : `<div style="font-size:11px;color:var(--muted);padding:3px 0">⚠ Only the primary admin can change another admin's password</div>`}
@@ -6261,6 +6315,8 @@ async function saveEditUser(i){
   }
   users[i].role        = newRole;
   users[i].ownerFilter = newRole === 'editor' ? newOwner : '';
+  const emailEl = document.getElementById(`uei_email_${i}`);
+  if(emailEl) users[i].email = emailEl.value.trim();
   // Only update password if allowed and a new one was actually typed
   if(newPass && canChangePwNow){
     if(newPass.length < 6){ alert('Password must be at least 6 characters.'); return; }
@@ -6284,7 +6340,19 @@ async function saveEditUser(i){
       localStorage.setItem('frazil_rm_login_ts', String(Date.now()));
     } catch(e){}
   }
-  saveConfig('users', users); renderUserList();
+  try { await saveConfig('users', users); }
+  catch(e){ alert('Could not save user: ' + (e.message || String(e))); return; }
+  renderUserList();
+}
+
+async function sendUserLink(i){
+  const u = users[i];
+  if(!u || !u.email){ alert('This user has no email address set. Add one first.'); return; }
+  if(!confirm(`Email a password setup/reset link to ${u.email}?`)) return;
+  try {
+    await API.post('/api/users/' + encodeURIComponent(u.username) + '/send-invite', {});
+    alert(`Link sent to ${u.email}.`);
+  } catch(e){ alert('Could not send link: ' + (e.message || String(e))); }
 }
 
 function forceLogoutUser(i){
@@ -6303,39 +6371,56 @@ function deleteUser(i){
   saveConfig('users', users); renderUserList();
 }
 
+function _toggleNewUserPwMode(){
+  const mode = document.getElementById('newUserPwMode')?.value || 'password';
+  const wrap = document.getElementById('newUserPassWrap');
+  if(wrap) wrap.style.display = (mode === 'invite') ? 'none' : 'block';
+}
+document.getElementById('newUserPwMode')?.addEventListener('change', _toggleNewUserPwMode);
+
 document.getElementById('addUserBtn')?.addEventListener('click', async ()=>{
-  const nameInp = document.getElementById('newUserName');
-  const passInp = document.getElementById('newUserPass');
-  const roleInp = document.getElementById('newUserRole');
-  const errEl   = document.getElementById('userError');
-  const uname   = nameInp.value.trim();
-  const upass   = passInp.value.trim();
-  const urole   = roleInp.value || 'viewer';
+  const nameInp  = document.getElementById('newUserName');
+  const emailInp = document.getElementById('newUserEmail');
+  const passInp  = document.getElementById('newUserPass');
+  const roleInp  = document.getElementById('newUserRole');
+  const modeInp  = document.getElementById('newUserPwMode');
+  const errEl    = document.getElementById('userError');
+  const uname  = nameInp.value.trim();
+  const uemail = emailInp.value.trim();
+  const upass  = passInp.value.trim();
+  const urole  = roleInp.value || 'viewer';
+  const mode   = modeInp.value || 'password';
+  const fail = (m, ok)=>{ errEl.style.color = ok ? 'var(--bar-green)' : 'var(--accent2)';
+                          errEl.textContent = (ok?'✓ ':'! ') + m; errEl.style.display = 'block'; };
   errEl.style.display = 'none';
-  if(!uname || !upass){
-    errEl.textContent = '! Both username and password are required.';
-    errEl.style.display = 'block'; return;
-  }
-  if(upass.length < 6){
-    errEl.textContent = '! Password must be at least 6 characters.';
-    errEl.style.display = 'block'; return;
-  }
-  if(users.some(u => u.username.toLowerCase() === uname.toLowerCase())){
-    errEl.textContent = `! Username "${uname}" already exists.`;
-    errEl.style.display = 'block'; return;
+  if(!uname) return fail('Username is required.');
+  if(users.some(u => u.username.toLowerCase() === uname.toLowerCase())) return fail(`Username "${uname}" already exists.`);
+  if(mode === 'invite'){
+    if(!uemail) return fail('Email is required to send a setup link.');
+  } else {
+    if(!upass) return fail('Password is required (or choose "Email a setup link").');
+    if(upass.length < 6) return fail('Password must be at least 6 characters.');
   }
   try {
-    const r = await API.post('/api/hash-password', { password: upass });
-    users.push({ username: uname, password: r.hashed, builtin: false, role: urole });
-    nameInp.value = ''; passInp.value = ''; roleInp.value = 'viewer';
-    saveConfig('users', users); renderUserList();
-  } catch(e){
-    errEl.textContent = '! ' + e.message;
-    errEl.style.display = 'block';
-  }
+    if(mode === 'invite'){
+      // Create as a pending user (no password), then email the setup link.
+      users.push({ username: uname, email: uemail, builtin: false, role: urole });
+      await saveConfig('users', users);
+      await API.post('/api/users/' + encodeURIComponent(uname) + '/send-invite', {});
+      fail(`Setup link sent to ${uemail}.`, true);
+    } else {
+      const r = await API.post('/api/hash-password', { password: upass });
+      users.push({ username: uname, email: uemail, password: r.hashed, builtin: false, role: urole });
+      await saveConfig('users', users);
+    }
+    nameInp.value=''; emailInp.value=''; passInp.value=''; roleInp.value='viewer';
+    modeInp.value='password'; _toggleNewUserPwMode();
+    renderUserList();
+  } catch(e){ fail(e.message || String(e)); }
 });
 document.getElementById('newUserPass')?.addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('addUserBtn').click(); });
-document.getElementById('newUserName')?.addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('newUserPass').focus(); });
+document.getElementById('newUserName')?.addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('newUserEmail').focus(); });
+document.getElementById('newUserEmail')?.addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('newUserPass').focus(); });
 
 // ── STATUS LIST ──
 let dragStatusIdx = null;
@@ -7234,6 +7319,85 @@ document.getElementById('loginUser')?.addEventListener('keydown',
   e=>{ if(e.key==='Enter') document.getElementById('loginPass').focus(); });
 document.getElementById('loginTeam')?.addEventListener('keydown',
   e=>{ if(e.key==='Enter') document.getElementById('loginUser').focus(); });
+
+// ── FORGOT PASSWORD (self-service) ──
+document.getElementById('forgotLink')?.addEventListener('click', (e)=>{
+  e.preventDefault();
+  const f = document.getElementById('forgotForm');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+  if(f.style.display === 'block'){
+    // Prefill from the username field if it looks like an email.
+    const u = document.getElementById('loginUser').value.trim();
+    if(u.includes('@')) document.getElementById('forgotEmail').value = u;
+    document.getElementById('forgotEmail').focus();
+  }
+});
+async function submitForgotPassword(){
+  const team  = document.getElementById('loginTeam').value.trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+  const email = document.getElementById('forgotEmail').value.trim();
+  const msg   = document.getElementById('forgotMsg');
+  const btn   = document.getElementById('forgotSubmitBtn');
+  if(!team){ msg.textContent='Please select your team first.'; msg.style.display='block'; return; }
+  if(!email){ msg.textContent='Please enter your email.'; msg.style.display='block'; return; }
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    await fetch('/api/forgot-password', {
+      method:'POST', headers:{'Content-Type':'application/json','X-Team':team},
+      body: JSON.stringify({ team, email })
+    });
+  } catch(e){ /* uniform response regardless */ }
+  // Always show the same message — never reveal whether the account exists.
+  msg.textContent = 'If an account with that email exists, a reset link has been sent. Check your inbox.';
+  msg.style.display = 'block';
+  btn.disabled = false; btn.textContent = 'Send reset link';
+}
+document.getElementById('forgotSubmitBtn')?.addEventListener('click', submitForgotPassword);
+document.getElementById('forgotEmail')?.addEventListener('keydown', e=>{ if(e.key==='Enter') submitForgotPassword(); });
+
+// ── SET PASSWORD via emailed link (?pwtoken=) ──
+function checkPasswordTokenParam(){
+  const token = new URLSearchParams(location.search).get('pwtoken');
+  if(!token) return false;
+  showLoading(false);
+  document.getElementById('pwResetWall').style.display = 'flex';
+  document.getElementById('pwResetBody').style.display = 'block';
+  document.getElementById('pwResetDone').style.display = 'none';
+  window._pwResetToken = token;
+  setTimeout(()=>document.getElementById('pwResetInput').focus(), 50);
+  return true;
+}
+async function submitPwReset(){
+  const pw   = document.getElementById('pwResetInput').value;
+  const conf = document.getElementById('pwResetConfirm').value;
+  const err  = document.getElementById('pwResetError');
+  const btn  = document.getElementById('pwResetSubmitBtn');
+  err.style.display = 'none';
+  if(pw.length < 6){ err.textContent='Password must be at least 6 characters.'; err.style.display='block'; return; }
+  if(pw !== conf){ err.textContent='Passwords do not match.'; err.style.display='block'; return; }
+  btn.disabled = true; btn.textContent = 'Setting…';
+  try {
+    const r = await fetch('/api/reset-password', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ token: window._pwResetToken, password: pw })
+    });
+    if(!r.ok){ const t = await r.text(); throw new Error(t); }
+    document.getElementById('pwResetBody').style.display = 'none';
+    document.getElementById('pwResetDone').style.display = 'block';
+  } catch(e){
+    let m = 'This link is invalid or has expired. Request a new one.';
+    try { m = JSON.parse(e.message).detail || m; } catch(_){}
+    err.textContent = m; err.style.display = 'block';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Set password';
+  }
+}
+document.getElementById('pwResetSubmitBtn')?.addEventListener('click', submitPwReset);
+document.getElementById('pwResetConfirm')?.addEventListener('keydown', e=>{ if(e.key==='Enter') submitPwReset(); });
+document.getElementById('pwResetGoLogin')?.addEventListener('click', ()=>{
+  // Drop ?pwtoken= from the URL and go to a clean login.
+  history.replaceState({}, '', location.pathname);
+  location.reload();
+});
 
 // ── MY ACCOUNT (self-edit for any logged-in user) ──
 document.getElementById('myAccountBtn')?.addEventListener('click', ()=>{
@@ -12995,6 +13159,8 @@ async function unlinkJiraFromItemPage(ticket){
 
 // ── INIT ──
 async function boot(){
+  // Emailed set-password / reset link — handle before anything else (user is not logged in).
+  if(checkPasswordTokenParam()) return;
   // If no team stored yet, skip API call and go straight to login wall
   const _storedTeam = (() => { try { return localStorage.getItem(SK.team) || ''; } catch(e){ return ''; } })();
   if(!_storedTeam){

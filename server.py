@@ -17,6 +17,9 @@ Jira integration:
 """
 
 import json, os, re, sqlite3, base64, time, hashlib, hmac, sys, html, logging, secrets
+import smtplib, ssl
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from urllib.request import urlopen, Request
@@ -227,6 +230,35 @@ except ImportError:
 def is_hashed(pw: str) -> bool:
     return pw.startswith("$2b$") or pw.startswith("$2a$") or pw.startswith("$pbkdf2$")
 
+# ── Email (Amazon SES over SMTP — stdlib only, no boto3) ──────────────────────
+MAIL_FROM     = os.environ.get("MAIL_FROM", "notifications@frazil.app")
+SES_SMTP_HOST = os.environ.get("SES_SMTP_HOST", "")
+SES_SMTP_PORT = int(os.environ.get("SES_SMTP_PORT", "587"))
+SES_SMTP_USER = os.environ.get("SES_SMTP_USER", "")
+SES_SMTP_PASS = os.environ.get("SES_SMTP_PASS", "")
+APP_BASE_URL  = os.environ.get("APP_BASE_URL", "https://roadmap.frazil.app").rstrip("/")
+
+def mail_configured() -> bool:
+    """True only when the SES SMTP credentials are present."""
+    return bool(SES_SMTP_HOST and SES_SMTP_USER and SES_SMTP_PASS)
+
+def send_email(to_addr: str, subject: str, text_body: str, html_body: str = None):
+    """Send a single email via the SES SMTP endpoint (STARTTLS). Raises on failure."""
+    if not mail_configured():
+        raise RuntimeError("Email not configured (SES_SMTP_* env vars missing)")
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = MAIL_FROM
+    msg["To"]      = to_addr
+    msg.attach(MIMEText(text_body, "plain"))
+    if html_body:
+        msg.attach(MIMEText(html_body, "html"))
+    context = ssl.create_default_context()
+    with smtplib.SMTP(SES_SMTP_HOST, SES_SMTP_PORT, timeout=15) as srv:
+        srv.starttls(context=context)
+        srv.login(SES_SMTP_USER, SES_SMTP_PASS)
+        srv.sendmail(MAIL_FROM, [to_addr], msg.as_string())
+
 # ── Token-based authentication ───────────────────────────────────────────────
 # Simple HMAC-signed tokens: "team:username:role:expiry:signature"
 def _load_token_secret() -> str:
@@ -294,6 +326,37 @@ def decode_token(token: str) -> dict:
         return {"team": team, "username": username, "role": role}
     except (ValueError, Exception) as e:
         raise HTTPException(401, f"Invalid or expired token: {e}")
+
+# ── Password-link tokens (reset / invite) ────────────────────────────────────
+# Signed like auth tokens, but bound to the user's CURRENT password hash so a
+# link is single-use: once the password is set/changed, the bind no longer
+# matches and any earlier link stops validating. No DB table needed.
+_RESET_TTL  = 3600          # forgot-password links: 1 hour
+_INVITE_TTL = 7 * 86400     # new-user setup links: 7 days
+
+def _pw_token_bind(pw_hash: str) -> str:
+    return hashlib.sha256((pw_hash or "").encode()).hexdigest()[:16]
+
+def make_password_token(team: str, username: str, purpose: str, pw_hash: str, ttl: int) -> str:
+    expiry  = int(time.time()) + ttl
+    payload = f"{purpose}:{team}:{username}:{expiry}:{_pw_token_bind(pw_hash)}"
+    sig     = _sign(payload)
+    return base64.urlsafe_b64encode(f"{payload}:{sig}".encode()).decode()
+
+def decode_password_token(token: str) -> dict:
+    """Verify signature + expiry. Returns {purpose, team, username, bind}.
+    Raises HTTP 400 on any problem (single generic message — no detail leak)."""
+    try:
+        raw = base64.urlsafe_b64decode(token.encode()).decode()
+        payload, sig = raw.rsplit(":", 1)
+        if not hmac.compare_digest(_sign(payload), sig):
+            raise ValueError("bad signature")
+        purpose, team, username, expiry_str, bind = payload.split(":")
+        if int(expiry_str) < int(time.time()):
+            raise ValueError("expired")
+        return {"purpose": purpose, "team": team, "username": username, "bind": bind}
+    except Exception:
+        raise HTTPException(400, "This link is invalid or has expired.")
 
 def require_auth(authorization: Optional[str] = Header(None),
                  x_team: Optional[str] = Header(None)) -> dict:
@@ -624,7 +687,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "3.2.4"
+APP_VERSION = "3.3.0"
 
 app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
 
@@ -828,7 +891,12 @@ def login(body: dict = Body(...), request: FRequest = None, response: Response =
         row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
     users = json.loads(row["value"]) if row else []
 
-    user = next((u for u in users if u["username"] == username), None)
+    # Match by username (exact) or email (case-insensitive). Email is unique per
+    # team (enforced on save), so the email match is unambiguous.
+    _ident_l = username.lower()
+    user = next((u for u in users
+                 if u["username"] == username
+                 or ((u.get("email") or "").strip().lower() == _ident_l)), None)
     if not user:
         time.sleep(0.3)
         raise HTTPException(401, "Invalid username or password")
@@ -928,6 +996,105 @@ def admin_change_user_password(
     return {"ok": True}
 
 
+# ── Self-service password reset / invite (Amazon SES) ─────────────────────────
+@app.post("/api/forgot-password")
+def forgot_password(body: dict = Body(...), request: FRequest = None):
+    """Public. Emails a reset link if the (team, email) matches an active user.
+    Always returns the same response — never reveals whether an account exists."""
+    ip = (request.client.host if request else "unknown")
+    _check_rate_limit(ip)
+    resp = {"ok": True, "message": "If an account with that email exists, a reset link has been sent."}
+
+    team  = re.sub(r"[^a-z0-9]", "", (body.get("team") or "").strip().lower())
+    email = (body.get("email") or "").strip().lower()
+    if not team or not valid_team(team) or not email:
+        return resp
+
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+    users = json.loads(row["value"]) if row else []
+    user = next((u for u in users
+                 if (u.get("email") or "").strip().lower() == email and not u.get("revokedAt")), None)
+
+    if user and mail_configured():
+        try:
+            token = make_password_token(team, user["username"], "reset", user.get("password", ""), _RESET_TTL)
+            link  = f"{APP_BASE_URL}/?pwtoken={token}"
+            send_email(
+                user["email"],
+                "Reset your Frazil Roadmap password",
+                f"Hi {user['username']},\n\nReset your Frazil Roadmap password using the link below "
+                f"(valid for 1 hour):\n\n{link}\n\nIf you didn't request this, you can ignore this email.",
+                f"<p>Hi {html.escape(user['username'])},</p>"
+                f"<p><a href=\"{link}\">Reset your Frazil Roadmap password</a> (valid for 1 hour).</p>"
+                f"<p>If you didn't request this, you can ignore this email.</p>",
+            )
+            write_audit(team, "password:forgot", user["username"])
+        except Exception as e:
+            log.warning(f"[Email] forgot-password send failed: {e}")
+    return resp
+
+
+@app.post("/api/reset-password")
+def reset_password_with_token(body: dict = Body(...)):
+    """Public. Set a new password using a signed reset/invite link token."""
+    token  = body.get("token", "")
+    new_pw = body.get("password", "")
+    if not new_pw or len(new_pw) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+
+    decoded = decode_password_token(token)
+    team, uname = decoded["team"], decoded["username"]
+    if not valid_team(team):
+        raise HTTPException(400, "This link is invalid or has expired.")
+
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+        users = json.loads(row["value"]) if row else []
+        user = next((u for u in users if u["username"] == uname), None)
+        if not user:
+            raise HTTPException(400, "This link is invalid or has expired.")
+        # Single-use: the token's bind must match the CURRENT password hash.
+        if _pw_token_bind(user.get("password", "")) != decoded["bind"]:
+            raise HTTPException(400, "This link has already been used or is no longer valid.")
+        user["password"] = hash_password(new_pw)
+        user["mustChangePassword"] = False
+        c.execute("UPDATE config SET value=? WHERE key='users'", (json.dumps(users),))
+    write_audit(team, "password:reset_complete", uname)
+    return {"ok": True, "team": team, "username": uname}
+
+
+@app.post("/api/users/{target_username}/send-invite")
+def send_user_invite(target_username: str, auth: dict = Depends(require_role("admin"))):
+    """Admin. Email a new user a 'set your password' link (valid 7 days)."""
+    team = auth["team"]
+    if not mail_configured():
+        raise HTTPException(503, "Email is not configured on the server (set the SES_SMTP_* env vars).")
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+    users = json.loads(row["value"]) if row else []
+    user = next((u for u in users if u["username"] == target_username), None)
+    if not user:
+        raise HTTPException(404, f"User '{target_username}' not found")
+    email = (user.get("email") or "").strip()
+    if not email:
+        raise HTTPException(400, f"User '{target_username}' has no email address set")
+
+    token = make_password_token(team, target_username, "invite", user.get("password", ""), _INVITE_TTL)
+    link  = f"{APP_BASE_URL}/?pwtoken={token}"
+    send_email(
+        email,
+        "Set up your Frazil Roadmap account",
+        f"Hi {target_username},\n\nAn account has been created for you on Frazil Roadmap (team: {team}). "
+        f"Set your password using the link below (valid for 7 days):\n\n{link}",
+        f"<p>Hi {html.escape(target_username)},</p>"
+        f"<p>An account has been created for you on Frazil Roadmap (team: <b>{html.escape(team)}</b>). "
+        f"<a href=\"{link}\">Set your password</a> (valid for 7 days).</p>",
+    )
+    write_audit(team, "user:invite", auth["username"], changes={"target": target_username})
+    return {"ok": True}
+
+
 @app.post("/api/logout")
 def logout(response: Response):
     """Clear the session cookie set on login."""
@@ -1003,6 +1170,7 @@ def get_all(auth: dict = Depends(require_auth)):
     users_safe = [{"username": u["username"], "builtin": u.get("builtin", False),
                    "role": u.get("role", "viewer"),
                    "ownerFilter": u.get("ownerFilter", ""),
+                   "email": u.get("email", ""),
                    "revokedAt": u.get("revokedAt")} for u in users_raw]
     return {"projects": projects, "developers": cfg("developers"),
             "statuses": cfg("statuses"), "delayReasons": cfg("delayReasons"),
@@ -1202,6 +1370,7 @@ def set_config(key: str, body = Body(...), username: str = "",
         with db(team) as c:
             row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
         existing = {u["username"]: u for u in json.loads(row["value"])} if row else {}
+        seen_emails = {}
         for u in body:
             uname = u.get("username","")
             pw = u.get("password","")
@@ -1210,6 +1379,17 @@ def set_config(key: str, body = Body(...), username: str = "",
                     u["password"] = existing[uname]["password"]
             elif not is_hashed(pw):
                 u["password"] = hash_password(pw)
+            # Normalize + validate email; emails must be unique per team because
+            # users can log in by email.
+            email = (u.get("email") or "").strip()
+            u["email"] = email
+            if email:
+                if "@" not in email or " " in email:
+                    raise HTTPException(422, f"Invalid email address: '{email}'")
+                key_l = email.lower()
+                if key_l in seen_emails:
+                    raise HTTPException(422, f"Duplicate email '{email}' — emails must be unique per team")
+                seen_emails[key_l] = uname
     with db(team) as c:
         c.execute("INSERT INTO config(key,value) VALUES(?,?) "
                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
