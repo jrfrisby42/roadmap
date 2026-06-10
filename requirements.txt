@@ -2,3 +2,4 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 bcrypt>=4.0.0
 gunicorn>=21.0.0
+boto3>=1.34.0          # Amazon SES (password-reset/invite emails) via the EC2 instance role

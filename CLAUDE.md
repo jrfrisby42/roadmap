@@ -37,13 +37,11 @@ CORS_ORIGINS=https://roadmap.frazil.app
 DEBUG_TRACEBACKS=0                 # 1/true to echo Python tracebacks in 500 responses
                                    # (default off — tracebacks are always logged server-side)
 
-# Email (Amazon SES over SMTP) — powers self-service password reset + user invites.
-# If unset, forgot-password silently no-ops and send-invite returns 503.
+# Email (Amazon SES via boto3 + EC2 instance role) — password reset + invites.
+# No SMTP creds / AWS keys: SES auth comes from the instance role (matches the
+# dashboard & sharebox apps). The instance role needs ses:SendEmail/SendRawEmail.
 MAIL_FROM=notifications@frazil.app
-SES_SMTP_HOST=email-smtp.us-west-2.amazonaws.com
-SES_SMTP_PORT=587
-SES_SMTP_USER=<SES SMTP username>  # SES console → SMTP settings (NOT your IAM keys)
-SES_SMTP_PASS=<SES SMTP password>
+AWS_REGION=us-west-2
 APP_BASE_URL=https://roadmap.frazil.app   # base for emailed reset/invite links
 ```
 
@@ -89,7 +87,7 @@ The app is an installable PWA. To preserve the two-file deploy, **all PWA assets
 
 ## Auth emails: password reset & user invites (Amazon SES via SMTP)
 
-Self-service password management, sent through SES over **SMTP** (stdlib `smtplib` — no boto3, no new runtime dep). Config via the `MAIL_FROM` / `SES_SMTP_*` / `APP_BASE_URL` env vars above; **degrades gracefully when unset** (forgot-password no-ops, `send-invite` → 503).
+Self-service password management, sent through SES via **boto3 + the EC2 instance IAM role** — the same pattern as the `dashboard` and `sharebox` apps (no SMTP creds, no stored AWS keys). `boto3` is the one allowed runtime dependency beyond the stdlib here, justified by fleet consistency + role-based auth (it's lazily imported, so server.py still loads without it in dev/test). Config via `MAIL_FROM` / `AWS_REGION` / `APP_BASE_URL`; **degrades gracefully** when boto3 is absent (forgot-password no-ops, `send-invite` → 503) or the role lacks SES permission (`send-invite` → 502 with the SES error).
 
 - **Users have an `email` field** (admins populate it). Emails are validated + **unique per team**, because **login accepts username *or* email**.
 - **Reset/invite tokens** reuse the HMAC signing infra (`make_password_token` / `decode_password_token`) and are **bound to the user's current password hash** → single-use (a link dies once the password is set/changed). No DB table.

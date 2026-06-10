@@ -17,9 +17,6 @@ Jira integration:
 """
 
 import json, os, re, sqlite3, base64, time, hashlib, hmac, sys, html, logging, secrets
-import smtplib, ssl
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from urllib.request import urlopen, Request
@@ -230,34 +227,40 @@ except ImportError:
 def is_hashed(pw: str) -> bool:
     return pw.startswith("$2b$") or pw.startswith("$2a$") or pw.startswith("$pbkdf2$")
 
-# ── Email (Amazon SES over SMTP — stdlib only, no boto3) ──────────────────────
-MAIL_FROM     = os.environ.get("MAIL_FROM", "notifications@frazil.app")
-SES_SMTP_HOST = os.environ.get("SES_SMTP_HOST", "")
-SES_SMTP_PORT = int(os.environ.get("SES_SMTP_PORT", "587"))
-SES_SMTP_USER = os.environ.get("SES_SMTP_USER", "")
-SES_SMTP_PASS = os.environ.get("SES_SMTP_PASS", "")
-APP_BASE_URL  = os.environ.get("APP_BASE_URL", "https://roadmap.frazil.app").rstrip("/")
+# ── Email (Amazon SES via boto3 + EC2 instance role) ─────────────────────────
+# Matches the rest of the Frazil fleet (dashboard, sharebox): authenticate to
+# SES through the instance IAM role — no SMTP creds, no stored AWS keys. boto3
+# is imported lazily so server.py still loads in dev/test environments without it.
+MAIL_FROM    = os.environ.get("MAIL_FROM", "notifications@frazil.app")
+AWS_REGION   = os.environ.get("AWS_REGION", "us-west-2")
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "https://roadmap.frazil.app").rstrip("/")
 
 def mail_configured() -> bool:
-    """True only when the SES SMTP credentials are present."""
-    return bool(SES_SMTP_HOST and SES_SMTP_USER and SES_SMTP_PASS)
+    """True when sending is possible: boto3 importable + a From address set.
+    (SES authorization comes from the instance role and is checked at send time.)"""
+    if not MAIL_FROM:
+        return False
+    try:
+        import boto3  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 def send_email(to_addr: str, subject: str, text_body: str, html_body: str = None):
-    """Send a single email via the SES SMTP endpoint (STARTTLS). Raises on failure."""
-    if not mail_configured():
-        raise RuntimeError("Email not configured (SES_SMTP_* env vars missing)")
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"]    = MAIL_FROM
-    msg["To"]      = to_addr
-    msg.attach(MIMEText(text_body, "plain"))
+    """Send one email via the SES API using the instance role. Raises on failure."""
+    try:
+        import boto3
+    except ImportError as e:
+        raise RuntimeError(f"boto3 not installed: {e}")
+    body = {"Text": {"Data": text_body, "Charset": "UTF-8"}}
     if html_body:
-        msg.attach(MIMEText(html_body, "html"))
-    context = ssl.create_default_context()
-    with smtplib.SMTP(SES_SMTP_HOST, SES_SMTP_PORT, timeout=15) as srv:
-        srv.starttls(context=context)
-        srv.login(SES_SMTP_USER, SES_SMTP_PASS)
-        srv.sendmail(MAIL_FROM, [to_addr], msg.as_string())
+        body["Html"] = {"Data": html_body, "Charset": "UTF-8"}
+    client = boto3.client("ses", region_name=AWS_REGION)
+    client.send_email(
+        Source=MAIL_FROM,
+        Destination={"ToAddresses": [to_addr]},
+        Message={"Subject": {"Data": subject, "Charset": "UTF-8"}, "Body": body},
+    )
 
 # ── Token-based authentication ───────────────────────────────────────────────
 # Simple HMAC-signed tokens: "team:username:role:expiry:signature"
@@ -687,7 +690,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "3.3.0"
+APP_VERSION = "3.3.1"
 
 app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
 
@@ -1082,15 +1085,19 @@ def send_user_invite(target_username: str, auth: dict = Depends(require_role("ad
 
     token = make_password_token(team, target_username, "invite", user.get("password", ""), _INVITE_TTL)
     link  = f"{APP_BASE_URL}/?pwtoken={token}"
-    send_email(
-        email,
-        "Set up your Frazil Roadmap account",
-        f"Hi {target_username},\n\nAn account has been created for you on Frazil Roadmap (team: {team}). "
-        f"Set your password using the link below (valid for 7 days):\n\n{link}",
-        f"<p>Hi {html.escape(target_username)},</p>"
-        f"<p>An account has been created for you on Frazil Roadmap (team: <b>{html.escape(team)}</b>). "
-        f"<a href=\"{link}\">Set your password</a> (valid for 7 days).</p>",
-    )
+    try:
+        send_email(
+            email,
+            "Set up your Frazil Roadmap account",
+            f"Hi {target_username},\n\nAn account has been created for you on Frazil Roadmap (team: {team}). "
+            f"Set your password using the link below (valid for 7 days):\n\n{link}",
+            f"<p>Hi {html.escape(target_username)},</p>"
+            f"<p>An account has been created for you on Frazil Roadmap (team: <b>{html.escape(team)}</b>). "
+            f"<a href=\"{link}\">Set your password</a> (valid for 7 days).</p>",
+        )
+    except Exception as e:
+        log.warning(f"[Email] invite send failed for {target_username}: {e}")
+        raise HTTPException(502, f"Could not send email: {e}")
     write_audit(team, "user:invite", auth["username"], changes={"target": target_username})
     return {"ok": True}
 
