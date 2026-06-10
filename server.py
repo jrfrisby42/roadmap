@@ -1515,10 +1515,12 @@ def list_items(
     sort: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
+    counts: Optional[str] = None,
 ):
     """Server-side query/search/paginate over the indexed item columns
     (JIRA-REPLACEMENT.md §3.2). Returns a page of full item blobs + total count.
-    Read-only; any authenticated role may call it."""
+    With counts=1, each item gets a `_childCount` (non-archived children) so the
+    tree view knows which rows are expandable. Read-only; any role may call it."""
     team = auth["team"]
     init_team_db(team)
 
@@ -1561,7 +1563,7 @@ def list_items(
     sort_dir = "ASC" if sort_dir.lower() == "asc" else "DESC"
 
     page = max(1, page)
-    page_size = max(1, min(200, page_size))
+    page_size = max(1, min(500, page_size))
     offset = (page - 1) * page_size
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
@@ -1572,9 +1574,18 @@ def list_items(
             f"ORDER BY {sort_col} {sort_dir}, id DESC LIMIT ? OFFSET ?",
             (*params, page_size, offset)
         ).fetchall()
-    items = []
-    for r in rows:
-        p = json.loads(r["data"]); p["id"] = r["id"]; items.append(p)
+        items = []
+        for r in rows:
+            p = json.loads(r["data"]); p["id"] = r["id"]; items.append(p)
+        # Optional child counts for the tree view (one grouped query for the page).
+        if counts and items:
+            ids = [it["id"] for it in items]
+            qmarks = ",".join("?" * len(ids))
+            cc = {row["parent_id"]: row["n"] for row in c.execute(
+                f"SELECT parent_id, COUNT(*) AS n FROM projects "
+                f"WHERE parent_id IN ({qmarks}) AND archived=0 GROUP BY parent_id", ids).fetchall()}
+            for it in items:
+                it["_childCount"] = cc.get(it["id"], 0)
     return {"items": items, "total": total, "page": page, "page_size": page_size,
             "pages": (total + page_size - 1) // page_size if total else 0}
 

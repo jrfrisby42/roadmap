@@ -90,6 +90,21 @@ def test_viewer_can_read(client, team, viewer_headers, admin_headers):
     assert client.get("/api/items", headers=viewer_headers).status_code == 200
 
 
+def test_child_counts(client, team, admin_headers):
+    parent = _mk(client, admin_headers, name="Feature", type="Feature")
+    _mk(client, admin_headers, name="Task 1", parent=parent)
+    _mk(client, admin_headers, name="Task 2", parent=parent)
+    leaf = _mk(client, admin_headers, name="Lonely")
+    # counts only present when requested
+    plain = client.get("/api/items", headers=admin_headers).json()["items"][0]
+    assert "_childCount" not in plain
+    # top-level with counts → parent shows 2 children, leaf shows 0
+    top = client.get("/api/items?parent_id=none&counts=1", headers=admin_headers).json()
+    by_id = {i["id"]: i for i in top["items"]}
+    assert by_id[parent]["_childCount"] == 2
+    assert by_id[leaf]["_childCount"] == 0
+
+
 def test_sort_whitelist_ignores_garbage(client, team, admin_headers):
     _seed(client, admin_headers)
     # A non-whitelisted sort column must not error or inject — falls back to default.

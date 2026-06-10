@@ -1064,6 +1064,7 @@
     <select id="listOwner"    style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
     <select id="listAssignee" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
     <select id="listPageSize" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"><option value="25">25 / page</option><option value="50" selected>50 / page</option><option value="100">100 / page</option></select>
+    <button id="listTreeToggle" title="Toggle hierarchy (parent → children)" style="padding:6px 12px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">☰ Tree: Off</button>
     <span id="listCount" style="margin-left:auto;font-size:12px;color:var(--muted)"></span>
   </div>
   <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
@@ -8402,7 +8403,7 @@ document.getElementById('filterFrom')?.addEventListener('change', ()=>{ if(viewM
 document.getElementById('filterTo')?.addEventListener('change',   ()=>{ if(viewMode==='dashboard') renderDashboard(); });
 
 // ── LIST VIEW (Phase 1d-i) — server-paginated item table backed by /api/items ──
-const _listState = { page: 1, page_size: 50 };
+const _listState = { page: 1, page_size: 50, tree: false };
 let _listFiltersReady = false;
 let _listSearchTimer = null;
 
@@ -8436,42 +8437,68 @@ function _listQuery(){
   return params.toString();
 }
 
+function _listCell(v){ return esc(v==null||v===''?'—':String(v)); }
+
+function _listRowHtml(it, depth){
+  const tree = _listState.tree;
+  const hasKids = tree && (it._childCount||0) > 0;
+  const chevron = tree
+    ? `<span class="list-chevron" data-id="${it.id}" style="display:inline-block;width:14px;text-align:center;cursor:${hasKids?'pointer':'default'};color:var(--muted)">${hasKids?'▶':''}</span> `
+    : '';
+  const firstPad = `padding:7px 10px;padding-left:${10 + (tree ? depth*18 : 0)}px`;
+  return `<tr class="list-row" data-id="${it.id}" data-depth="${depth}" data-expanded="0" style="cursor:pointer;border-top:1px solid var(--row-sep)">
+    <td style="${firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${chevron}${_listCell(it.itemKey)}</td>
+    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.type)}</td>
+    <td style="padding:7px 10px;font-weight:600">${_listCell(it.name)}</td>
+    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.status)}</td>
+    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.dev)}</td>
+    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.assignee)}</td>
+    <td style="padding:7px 10px;text-align:center">${_listCell(it.storyPoints)}</td>
+    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.sprintId)}</td>
+  </tr>`;
+}
+
 async function renderList(){
   if(!_listFiltersReady) populateListFilters();
+  const tree = _listState.tree;
   const body = document.getElementById('listBody');
   const countEl = document.getElementById('listCount');
   if(!body) return;
   body.innerHTML = `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>`;
   let data;
-  try { data = await API.get('/api/items?' + _listQuery()); }
+  const url = '/api/items?' + _listQuery() + (tree ? '&parent_id=none&counts=1' : '');
+  try { data = await API.get(url); }
   catch(e){
     body.innerHTML = `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--accent2)">${esc(e.message||'Failed to load')}</td></tr>`;
     return;
   }
   const items = data.items || [];
-  if(countEl) countEl.textContent = `${data.total} item${data.total!==1?'s':''}`;
-  if(!items.length){
-    body.innerHTML = `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted)">No matching items.</td></tr>`;
-  } else {
-    const cell = v => esc(v==null||v===''?'—':String(v));
-    body.innerHTML = items.map(it => `
-      <tr class="list-row" data-id="${it.id}" style="cursor:pointer;border-top:1px solid var(--row-sep)">
-        <td style="padding:7px 10px;font-family:monospace;color:var(--muted);white-space:nowrap">${cell(it.itemKey)}</td>
-        <td style="padding:7px 10px;white-space:nowrap">${cell(it.type)}</td>
-        <td style="padding:7px 10px;font-weight:600">${cell(it.name)}</td>
-        <td style="padding:7px 10px;white-space:nowrap">${cell(it.status)}</td>
-        <td style="padding:7px 10px;white-space:nowrap">${cell(it.dev)}</td>
-        <td style="padding:7px 10px;white-space:nowrap">${cell(it.assignee)}</td>
-        <td style="padding:7px 10px;text-align:center">${cell(it.storyPoints)}</td>
-        <td style="padding:7px 10px;white-space:nowrap">${cell(it.sprintId)}</td>
-      </tr>`).join('');
-    body.querySelectorAll('.list-row').forEach(tr => {
-      tr.addEventListener('click', ()=> openItemPage(parseInt(tr.dataset.id)));
-      tr.addEventListener('mouseenter', ()=> tr.style.background='var(--surface)');
-      tr.addEventListener('mouseleave', ()=> tr.style.background='');
-    });
-  }
+  if(countEl) countEl.textContent = `${data.total} ${tree?'top-level ':''}item${data.total!==1?'s':''}`;
+  body.innerHTML = items.length
+    ? items.map(it => _listRowHtml(it, 0)).join('')
+    : `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted)">No matching items.</td></tr>`;
   _renderListPager(data);
+}
+
+// Tree expand/collapse with lazy child fetch.
+async function _listToggleExpand(tr){
+  const id = parseInt(tr.dataset.id);
+  const depth = parseInt(tr.dataset.depth);
+  const chev = tr.querySelector('.list-chevron');
+  if(tr.dataset.expanded === '1'){
+    let n = tr.nextElementSibling;
+    while(n && parseInt(n.dataset.depth||'-1') > depth){ const nx = n.nextElementSibling; n.remove(); n = nx; }
+    tr.dataset.expanded = '0';
+    if(chev) chev.textContent = '▶';
+    return;
+  }
+  if(chev) chev.textContent = '▾';
+  let data;
+  try { data = await API.get(`/api/items?parent_id=${id}&counts=1&page_size=500&sort=id:asc`); }
+  catch(e){ if(chev) chev.textContent = '▶'; return; }
+  const rows = (data.items||[]).map(it => _listRowHtml(it, depth+1)).join('');
+  if(rows) tr.insertAdjacentHTML('afterend', rows);
+  tr.dataset.expanded = '1';
 }
 
 function _renderListPager(data){
@@ -8497,6 +8524,25 @@ document.getElementById('listPageSize')?.addEventListener('change', e=>{
 document.getElementById('listSearch')?.addEventListener('input', ()=>{
   clearTimeout(_listSearchTimer);
   _listSearchTimer = setTimeout(()=>{ _listState.page=1; renderList(); }, 300);
+});
+// Delegated row interactions (works for dynamically-inserted tree child rows).
+document.getElementById('listBody')?.addEventListener('click', (e)=>{
+  const chev = e.target.closest('.list-chevron');
+  if(chev){ e.stopPropagation(); const tr = chev.closest('tr.list-row'); if(tr) _listToggleExpand(tr); return; }
+  const row = e.target.closest('tr.list-row');
+  if(row && row.dataset.id) openItemPage(parseInt(row.dataset.id));
+});
+document.getElementById('listBody')?.addEventListener('mouseover', e=>{ const tr=e.target.closest('tr.list-row'); if(tr) tr.style.background='var(--surface)'; });
+document.getElementById('listBody')?.addEventListener('mouseout',  e=>{ const tr=e.target.closest('tr.list-row'); if(tr) tr.style.background=''; });
+document.getElementById('listTreeToggle')?.addEventListener('click', ()=>{
+  _listState.tree = !_listState.tree; _listState.page = 1;
+  const btn = document.getElementById('listTreeToggle');
+  if(btn){
+    btn.textContent = _listState.tree ? '☰ Tree: On' : '☰ Tree: Off';
+    btn.style.background = _listState.tree ? 'var(--accent)' : 'var(--surface)';
+    btn.style.color = _listState.tree ? '#fff' : 'var(--text)';
+  }
+  renderList();
 });
 
 // Named static actions for elements that can't use dynamic keys

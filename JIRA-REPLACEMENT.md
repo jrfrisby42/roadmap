@@ -325,6 +325,11 @@ ShareBox already has S3-backed storage — don't rebuild it here.
 - **Reporting** — velocity, burndown, sprint report, created-vs-resolved, control
   charts. **Parked, not forgotten.**
 - **Time tracking / worklogs** — explicitly **out of scope** (points-based).
+- **Item Page: back button** — a clear "back to previous view/list" control so users
+  aren't stuck using the browser back button. (Queued — next build.)
+- **Item Page: inline-edit overhaul** — make fields editable directly on the Item
+  Page (and consistent with the List view) instead of round-tripping through the
+  modal. (Queued.)
 
 ---
 
