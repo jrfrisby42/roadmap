@@ -1067,10 +1067,26 @@
     <button id="listTreeToggle" title="Toggle hierarchy (parent → children)" style="padding:6px 12px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">☰ Tree: Off</button>
     <span id="listCount" style="margin-left:auto;font-size:12px;color:var(--muted)"></span>
   </div>
+  <div id="listBulkBar" style="display:none;align-items:center;gap:8px;margin-bottom:10px;padding:8px 12px;background:rgba(91,79,255,0.08);border:1px solid var(--accent);border-radius:8px;flex-wrap:wrap">
+    <span id="listBulkCount" style="font-size:12px;font-weight:700;color:var(--accent)"></span>
+    <span style="font-size:12px;color:var(--muted)">Set</span>
+    <select id="listBulkField" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none">
+      <option value="status">Status</option>
+      <option value="dev">Owner</option>
+      <option value="assignee">Assignee</option>
+      <option value="sprintId">Sprint</option>
+      <option value="priority">Priority</option>
+      <option value="archived">Archived</option>
+    </select>
+    <span id="listBulkValueWrap"></span>
+    <button id="listBulkApply" style="padding:5px 14px;font-size:12px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-weight:700">Apply</button>
+    <button id="listBulkClear" style="padding:5px 12px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--muted);cursor:pointer">Clear</button>
+  </div>
   <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead>
         <tr style="background:var(--surface);text-align:left">
+          <th style="padding:8px 10px;width:32px"><input type="checkbox" id="listSelectAll" title="Select all on this page"></th>
           <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Key</th>
           <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Type</th>
           <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Name</th>
@@ -8404,6 +8420,7 @@ document.getElementById('filterTo')?.addEventListener('change',   ()=>{ if(viewM
 
 // ── LIST VIEW (Phase 1d-i) — server-paginated item table backed by /api/items ──
 const _listState = { page: 1, page_size: 50, tree: false };
+let _listSelected = new Set();
 let _listFiltersReady = false;
 let _listSearchTimer = null;
 
@@ -8446,7 +8463,10 @@ function _listRowHtml(it, depth){
     ? `<span class="list-chevron" data-id="${it.id}" style="display:inline-block;width:14px;text-align:center;cursor:${hasKids?'pointer':'default'};color:var(--muted)">${hasKids?'▶':''}</span> `
     : '';
   const firstPad = `padding:7px 10px;padding-left:${10 + (tree ? depth*18 : 0)}px`;
+  const cb = (isAdmin||isEditor)
+    ? `<input type="checkbox" class="list-cb" data-id="${it.id}" ${_listSelected.has(it.id)?'checked':''}>` : '';
   return `<tr class="list-row" data-id="${it.id}" data-depth="${depth}" data-expanded="0" style="cursor:pointer;border-top:1px solid var(--row-sep)">
+    <td class="list-cb-cell" style="padding:7px 10px;width:32px">${cb}</td>
     <td style="${firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${chevron}${_listCell(it.itemKey)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.type)}</td>
     <td style="padding:7px 10px;font-weight:600">${_listCell(it.name)}</td>
@@ -8464,19 +8484,22 @@ async function renderList(){
   const body = document.getElementById('listBody');
   const countEl = document.getElementById('listCount');
   if(!body) return;
-  body.innerHTML = `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>`;
+  _listSelected.clear();
+  body.innerHTML = `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>`;
   let data;
   const url = '/api/items?' + _listQuery() + (tree ? '&parent_id=none&counts=1' : '');
   try { data = await API.get(url); }
   catch(e){
-    body.innerHTML = `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--accent2)">${esc(e.message||'Failed to load')}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--accent2)">${esc(e.message||'Failed to load')}</td></tr>`;
     return;
   }
   const items = data.items || [];
   if(countEl) countEl.textContent = `${data.total} ${tree?'top-level ':''}item${data.total!==1?'s':''}`;
   body.innerHTML = items.length
     ? items.map(it => _listRowHtml(it, 0)).join('')
-    : `<tr><td colspan="8" style="padding:24px;text-align:center;color:var(--muted)">No matching items.</td></tr>`;
+    : `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted)">No matching items.</td></tr>`;
+  const sa = document.getElementById('listSelectAll'); if(sa) sa.checked = false;
+  updateBulkBar();
   _renderListPager(data);
 }
 
@@ -8529,6 +8552,7 @@ document.getElementById('listSearch')?.addEventListener('input', ()=>{
 document.getElementById('listBody')?.addEventListener('click', (e)=>{
   const chev = e.target.closest('.list-chevron');
   if(chev){ e.stopPropagation(); const tr = chev.closest('tr.list-row'); if(tr) _listToggleExpand(tr); return; }
+  if(e.target.closest('.list-cb-cell')) return;   // checkbox clicks don't open the item
   const row = e.target.closest('tr.list-row');
   if(row && row.dataset.id) openItemPage(parseInt(row.dataset.id));
 });
@@ -8543,6 +8567,69 @@ document.getElementById('listTreeToggle')?.addEventListener('click', ()=>{
     btn.style.color = _listState.tree ? '#fff' : 'var(--text)';
   }
   renderList();
+});
+
+// ── Bulk actions (Phase 1d-ii) ──
+function updateBulkBar(){
+  const bar = document.getElementById('listBulkBar');
+  if(!bar) return;
+  const n = _listSelected.size;
+  if(n > 0 && (isAdmin||isEditor)){
+    bar.style.display = 'flex';
+    document.getElementById('listBulkCount').textContent = `${n} selected`;
+    if(!document.getElementById('listBulkVal')) _listBulkValue();
+  } else {
+    bar.style.display = 'none';
+  }
+}
+function _listBulkValue(){
+  const field = document.getElementById('listBulkField')?.value;
+  const wrap  = document.getElementById('listBulkValueWrap');
+  if(!wrap) return;
+  const sel = opts => `<select id="listBulkVal" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${opts}</select>`;
+  if(field==='status')        wrap.innerHTML = sel(statuses.map(s=>`<option value="${escA(s)}">${esc(s)}</option>`).join(''));
+  else if(field==='dev')      wrap.innerHTML = sel(developers.map(d=>`<option value="${escA(d)}">${esc(d)}</option>`).join(''));
+  else if(field==='assignee') wrap.innerHTML = sel(users.map(u=>`<option value="${escA(u.username)}">${esc(u.username)}</option>`).join(''));
+  else if(field==='archived') wrap.innerHTML = sel(`<option value="1">Yes</option><option value="0">No</option>`);
+  else                        wrap.innerHTML = `<input id="listBulkVal" type="text" placeholder="value" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">`;
+}
+document.getElementById('listBulkField')?.addEventListener('change', _listBulkValue);
+document.getElementById('listBody')?.addEventListener('change', e=>{
+  const cb = e.target.closest('.list-cb');
+  if(!cb) return;
+  const id = parseInt(cb.dataset.id);
+  if(cb.checked) _listSelected.add(id); else _listSelected.delete(id);
+  updateBulkBar();
+});
+document.getElementById('listSelectAll')?.addEventListener('change', e=>{
+  const on = e.target.checked;
+  document.querySelectorAll('#listBody .list-cb').forEach(cb=>{
+    cb.checked = on; const id = parseInt(cb.dataset.id);
+    if(on) _listSelected.add(id); else _listSelected.delete(id);
+  });
+  updateBulkBar();
+});
+document.getElementById('listBulkClear')?.addEventListener('click', ()=>{
+  _listSelected.clear();
+  document.querySelectorAll('#listBody .list-cb').forEach(cb=> cb.checked=false);
+  const sa = document.getElementById('listSelectAll'); if(sa) sa.checked=false;
+  updateBulkBar();
+});
+document.getElementById('listBulkApply')?.addEventListener('click', async ()=>{
+  const field = document.getElementById('listBulkField').value;
+  const valEl = document.getElementById('listBulkVal');
+  let value = valEl ? valEl.value : '';
+  if(field==='archived') value = (value==='1');
+  const ids = [..._listSelected];
+  if(!ids.length) return;
+  const btn = document.getElementById('listBulkApply');
+  btn.disabled = true; btn.textContent = 'Applying…';
+  try {
+    const r = await API.post('/api/items/bulk', { ids, patch: { [field]: value } });
+    if(typeof showToast==='function') showToast(`Updated ${r.updated} item${r.updated!==1?'s':''}`, 'success');
+    await renderList();
+  } catch(e){ alert('Bulk update failed: ' + (e.message||e)); }
+  finally { btn.disabled = false; btn.textContent = 'Apply'; }
 });
 
 // Named static actions for elements that can't use dynamic keys

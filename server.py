@@ -1589,6 +1589,46 @@ def list_items(
     return {"items": items, "total": total, "page": page, "page_size": page_size,
             "pages": (total + page_size - 1) // page_size if total else 0}
 
+# Fields safe to set in bulk. Deliberately excludes scheduling/capacity fields
+# (dueWeeks/testWeeks/parallelResources/start/due) — those have per-item rules.
+_BULK_FIELDS = {"status", "dev", "assignee", "sprintId", "priority", "archived"}
+
+@app.post("/api/items/bulk")
+def bulk_update_items(body: dict = Body(...),
+                      auth: dict = Depends(require_role("admin", "editor"))):
+    """Apply a small patch to many items at once, in one transaction. Only the
+    whitelisted fields above may be set."""
+    team  = auth["team"]
+    ids   = body.get("ids") or []
+    patch = body.get("patch") or {}
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(400, "ids must be a non-empty list")
+    if not isinstance(patch, dict) or not patch:
+        raise HTTPException(400, "patch must be a non-empty object")
+    bad = set(patch) - _BULK_FIELDS
+    if bad:
+        raise HTTPException(400, f"Fields not allowed in bulk edit: {', '.join(sorted(bad))}")
+    if "archived" in patch:
+        patch["archived"] = bool(patch["archived"])
+
+    updated = 0
+    with db(team) as c:
+        for raw in ids:
+            try:
+                pid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+            if not row:
+                continue
+            data = json.loads(row["data"])
+            data.update(patch)
+            _save_project(c, pid, data)
+            updated += 1
+    write_audit(team, "bulk_update", auth["username"],
+                changes={"count": updated, "fields": list(patch.keys())})
+    return {"updated": updated, "patch": patch}
+
 # ── Config ────────────────────────────────────────────────────────────────────
 VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "ownerCapacity","statusIgnoreConflicts","typeIgnoreConflicts",
