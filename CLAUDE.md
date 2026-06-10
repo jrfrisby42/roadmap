@@ -36,6 +36,15 @@ TOKEN_SECRET=<long random hex>     # signs auth tokens. If absent, a secret is p
 CORS_ORIGINS=https://roadmap.frazil.app
 DEBUG_TRACEBACKS=0                 # 1/true to echo Python tracebacks in 500 responses
                                    # (default off — tracebacks are always logged server-side)
+
+# Email (Amazon SES over SMTP) — powers self-service password reset + user invites.
+# If unset, forgot-password silently no-ops and send-invite returns 503.
+MAIL_FROM=notifications@frazil.app
+SES_SMTP_HOST=email-smtp.us-west-2.amazonaws.com
+SES_SMTP_PORT=587
+SES_SMTP_USER=<SES SMTP username>  # SES console → SMTP settings (NOT your IAM keys)
+SES_SMTP_PASS=<SES SMTP password>
+APP_BASE_URL=https://roadmap.frazil.app   # base for emailed reset/invite links
 ```
 
 Add a team: `python server.py --new-team acme` (prints an initial admin password and forces a change on first login).
@@ -75,6 +84,18 @@ The app is an installable PWA. To preserve the two-file deploy, **all PWA assets
 **Caching strategy (deliberate):** network-first for the app shell / navigations so a `roadmap.html` deploy goes live immediately (consistent with "HTML changes need no restart"); cache-first only for our own icons/manifest; **`/api/*` is network-only** — there is no offline data layer (it would conflict with the server-validated planning/snapshot conflict model). Don't make the service worker cache API responses without a deliberate redesign.
 
 **Regenerating icons:** `python tools/gen_pwa_icons.py` (needs `pip install pillow` — Pillow is **dev-only**, NOT a runtime dependency). It redraws the brand map-pin and rewrites the three `_PWA_ICON_*_B64` constants in `server.py` in place. Run the JS/Python syntax checks after. Deploy is still just `scp server.py roadmap.html`.
+
+---
+
+## Auth emails: password reset & user invites (Amazon SES via SMTP)
+
+Self-service password management, sent through SES over **SMTP** (stdlib `smtplib` — no boto3, no new runtime dep). Config via the `MAIL_FROM` / `SES_SMTP_*` / `APP_BASE_URL` env vars above; **degrades gracefully when unset** (forgot-password no-ops, `send-invite` → 503).
+
+- **Users have an `email` field** (admins populate it). Emails are validated + **unique per team**, because **login accepts username *or* email**.
+- **Reset/invite tokens** reuse the HMAC signing infra (`make_password_token` / `decode_password_token`) and are **bound to the user's current password hash** → single-use (a link dies once the password is set/changed). No DB table.
+- Endpoints: `POST /api/forgot-password` (public, rate-limited, **uniform response** — no email enumeration), `POST /api/reset-password` (sets pw via token), `POST /api/users/{username}/send-invite` (admin → emails a 7-day setup link; reset links are 1 hour).
+- Frontend: "Forgot password?" on the login wall; a `?pwtoken=…` set-password screen (handled first thing in `boot()` via `checkPasswordTokenParam()`); Add-User offers **"Set password now" vs "Email a setup link"**; per-user mail button re-sends a link; a **pending** badge marks users with no password yet.
+- New-user "send link" path creates the user with **no password** (a pending account that can't log in until the link is used), then calls `send-invite`.
 
 ---
 
