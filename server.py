@@ -1286,6 +1286,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "ownerCapacity": cfg("ownerCapacity") or {},
             "statusIgnoreConflicts": cfg("statusIgnoreConflicts") or {},
             "typeIgnoreConflicts": cfg("typeIgnoreConflicts") or {},
+            "productIgnoreConflicts": cfg("productIgnoreConflicts") or {},
             "statusIsActive": cfg("statusIsActive") or {},
             "statusIsTerminal": cfg("statusIsTerminal") or {},
             "statusIsDefault": cfg("statusIsDefault") or {},
@@ -1713,7 +1714,7 @@ def bulk_update_items(body: dict = Body(...),
 
 # ── Config ────────────────────────────────────────────────────────────────────
 VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
-              "ownerCapacity","statusIgnoreConflicts","typeIgnoreConflicts",
+              "ownerCapacity","statusIgnoreConflicts","typeIgnoreConflicts","productIgnoreConflicts",
               "statusIsActive","statusIsTerminal",
               "statusIsDefault","statusIsDeferred",
               "changeReasons","deferReasons",
