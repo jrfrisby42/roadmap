@@ -8470,7 +8470,7 @@ function _listRowHtml(it, depth){
     <td style="${firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${chevron}${_listCell(it.itemKey)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.type)}</td>
     <td style="padding:7px 10px;font-weight:600">${_listCell(it.name)}</td>
-    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.status)}</td>
+    <td style="padding:7px 10px;white-space:nowrap">${it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(it.status)}</span>` : '—'}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.dev)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.assignee)}</td>
     <td style="padding:7px 10px;text-align:center">${_listCell(it.storyPoints)}</td>
@@ -10153,8 +10153,9 @@ function itemMatchesSearch(p, query){
 }
 
 function updateSearchVisibility(){
+  // The top-bar box is an in-memory view filter — only meaningful for Gantt/Kanban.
   const wrap = document.getElementById('searchWrap');
-  if(wrap) wrap.style.display = viewMode === 'dashboard' ? 'none' : '';
+  if(wrap) wrap.style.display = (viewMode === 'gantt' || viewMode === 'kanban') ? '' : 'none';
 }
 // ── PLANNING BOARD ────────────────────────────────────────────────────────────
 
@@ -12245,7 +12246,7 @@ const FF_BASE_URL = 'https://features.fraznet.com/#/namespaces/qa/flags/';
  */
 function flagPill(f, {fromJira=false, showDelete=false, onDelete='', size='md'}={}){
   const fs   = size === 'sm' ? '11px' : '12px';
-  const url  = fromJira ? FF_BASE_URL + encodeURIComponent(f) : null;
+  const url  = FF_BASE_URL + encodeURIComponent(f);   // every flag links to the portal
   const link = url
     ? `<a href="${escA(url)}" target="_blank" rel="noopener"
          style="color:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:3px"
@@ -12694,6 +12695,36 @@ document.addEventListener('click', e=>{
   }
 });
 
+// ── Item Page actions menu (hamburger) ──
+function ipToggleMenu(e){
+  if(e) e.stopPropagation();
+  const m = document.getElementById('ipMenu');
+  if(m) m.style.display = (!m.style.display || m.style.display==='none') ? 'block' : 'none';
+}
+function closeIpMenu(){ const m = document.getElementById('ipMenu'); if(m) m.style.display='none'; }
+function ipCopyLink(){
+  const url = `${location.origin}${location.pathname}?item=${_itemPageId}`;
+  try { navigator.clipboard.writeText(url); if(typeof showToast==='function') showToast('Link copied','success'); }
+  catch(e){ if(typeof showToast==='function') showToast(url); }
+}
+async function ipDeleteItem(){
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  if(!confirm(`Delete "${p.name||'this item'}"? This cannot be undone.`)) return;
+  try {
+    await API.del('/api/projects/'+p.id);
+    const idx = projects.findIndex(x=>x.id===p.id); if(idx>=0) projects.splice(idx,1);
+    if(typeof showToast==='function') showToast('Item deleted','success');
+    closeItemPage();
+    if(viewMode==='list' && typeof renderList==='function') renderList();
+    else if(typeof render==='function') render();
+  } catch(e){ if(typeof showToast==='function') showToast('Delete failed: '+(e.message||e),'error'); else alert(e.message||e); }
+}
+document.addEventListener('click', e=>{
+  if(!e.target.closest('#ipMenu') && !e.target.closest('#ipMenuBtn')){
+    const m = document.getElementById('ipMenu'); if(m && m.style.display!=='none') m.style.display='none';
+  }
+});
+
 // ── Subtasks (inline create + roll-up) ──
 function renderItemPageSubtasks(p){
   const listEl = document.getElementById('ipSubtasks');
@@ -12834,11 +12865,17 @@ function renderItemPage(p){
   document.getElementById('ipBreadcrumb').innerHTML =
     `<span style="color:var(--muted)">${esc(p.product||'—')}</span> › <span style="color:var(--text);font-weight:700">${esc(p.name)}</span>`;
 
-  const statusColor = 'var(--accent)';
-  document.getElementById('ipStatusBadge').textContent = p.status||'—';
-
-  const editBtn = document.getElementById('ipEditModalBtn');
-  if(editBtn) editBtn.style.display = (isAdmin||isEditor) ? '' : 'none';
+  const _sb = document.getElementById('ipStatusBadge');
+  if(_sb){
+    _sb.textContent = p.status || '—';
+    _sb.className = p.status ? statusCls(p.status) : '';   // defined status color (light/dark aware)
+    _sb.style.background = ''; _sb.style.color = ''; _sb.style.border = '';
+  }
+  // Edit/Delete now live in the item-page hamburger menu (gated by role).
+  const _mEdit = document.getElementById('ipMenuEdit');
+  if(_mEdit) _mEdit.style.display = (isAdmin||isEditor) ? '' : 'none';
+  const _mDel = document.getElementById('ipMenuDelete');
+  if(_mDel) _mDel.style.display = isAdmin ? '' : 'none';
 
   document.getElementById('ipMeta').innerHTML =
     `${p.dev?`<span style="font-weight:700;color:var(--text)">${esc(p.dev)}</span> · `:''}` +
@@ -12855,7 +12892,7 @@ function renderItemPage(p){
   const lockNote = isLocked && !isAdmin ? `<span style="font-size:10px;color:#e8a000;display:block;margin-top:2px">🔒 Locked — active item</span>` : '';
 
   document.getElementById('ipFields').innerHTML = [
-    ipEditField('status',     'Status',       esc(p.status||''), 'select', {bold:true}),
+    ipEditField('status',     'Status',       p.status ? `<span class="${statusCls(p.status)}" style="background:none;border:none;padding:0">${esc(p.status)}</span>` : '', 'select', {bold:true}),
     ipEditField('dev',        'Owner (Pod)',  esc(p.dev||''),    'select', {bold:true}),
     ipEditField('assignee',   'Assignee',     esc(p.assignee||''), 'select'),
     ipEditField('type',       'Type',         esc(p.type||''),   'select'),
@@ -13645,17 +13682,40 @@ function renderItemPageFeatureFlags(p){
   // jiraFeatureFlags holds the raw Jira-sourced subset for badge display
   const allFlags   = Array.isArray(p?.featureFlags)     ? p.featureFlags.filter(Boolean)     : [];
   const jiraFlags  = new Set(Array.isArray(p?.jiraFeatureFlags) ? p.jiraFeatureFlags.filter(Boolean) : []);
+  const canEdit    = (isAdmin || isEditor);
 
-  if(!allFlags.length){
-    card.style.display = 'none';
-    return;
-  }
+  if(!allFlags.length && !canEdit){ card.style.display = 'none'; return; }
   card.style.display = '';
-  if(count) count.textContent = `(${allFlags.length})`;
+  if(count) count.textContent = allFlags.length ? `(${allFlags.length})` : '';
 
-  list.innerHTML = allFlags.map(f =>
-    flagPill(f, {fromJira: jiraFlags.has(f), size:'md'})
-  ).join('');
+  const pills = allFlags.map(f => flagPill(f, {
+    fromJira: jiraFlags.has(f), size:'md',
+    showDelete: canEdit && !jiraFlags.has(f),       // manual flags removable; Jira-sourced are managed by sync
+    onDelete: `ipRemoveFeatureFlag('${escA(f)}')`
+  }));
+  const addCtl = canEdit ? `
+    <button onclick="ipShowAddFlag()" style="display:inline-flex;align-items:center;background:none;border:1px dashed var(--border);color:var(--accent);padding:3px 9px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Lato',sans-serif">+ Add</button>
+    <span id="ipAddFlagRow" style="display:none;align-items:center;gap:4px">
+      <input id="ipNewFlagName" placeholder="flag_name" autocomplete="off"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();ipAddFeatureFlag();}else if(event.key==='Escape'){document.getElementById('ipAddFlagRow').style.display='none';}"
+        style="padding:4px 8px;font-size:12px;border:1px solid var(--accent);border-radius:8px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif;outline:none;width:150px">
+      <button onclick="ipAddFeatureFlag()" style="background:var(--accent);color:#fff;border:none;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Add</button>
+    </span>` : '';
+  list.innerHTML = (pills.join('') || (canEdit ? '' : '<span style="font-size:12px;color:var(--muted)">No feature flags</span>')) + addCtl;
+}
+function ipShowAddFlag(){ const r=document.getElementById('ipAddFlagRow'); if(r){ r.style.display='inline-flex'; const i=document.getElementById('ipNewFlagName'); if(i) i.focus(); } }
+function ipAddFeatureFlag(){
+  const inp = document.getElementById('ipNewFlagName');
+  const name = inp ? inp.value.trim() : '';
+  if(!name) return;
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  const flags = Array.isArray(p.featureFlags) ? [...p.featureFlags] : [];
+  if(!flags.includes(name)) flags.push(name);
+  saveItemPagePatch({featureFlags: flags});
+}
+function ipRemoveFeatureFlag(name){
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  saveItemPagePatch({featureFlags: (p.featureFlags||[]).filter(f => f !== name)});
 }
 
 // ── JIRA PULL-SYNC ENGINE ─────────────────────────────────────────────────────
@@ -14090,15 +14150,20 @@ if ('serviceWorker' in navigator) {
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <span id="ipStatusBadge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;background:var(--surface);color:var(--text)"></span>
         <span id="ipPriorityBadge" style="display:none;font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;flex-shrink:0"></span>
-        <button id="ipEditModalBtn" onclick="openItemPageModal()" style="background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">
-          Edit Item
-        </button>
-        <button onclick="itemPageBack()" title="Back to roadmap"
-          style="background:none;border:1px solid var(--border);color:var(--muted);padding:6px 8px;border-radius:6px;cursor:pointer;display:flex;align-items:center;line-height:1;flex-shrink:0"
-          onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
-          onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-        </button>
+        <div style="position:relative">
+          <button id="ipMenuBtn" onclick="ipToggleMenu(event)" title="Actions"
+            style="background:none;border:1px solid var(--border);color:var(--muted);padding:6px 9px;border-radius:6px;cursor:pointer;display:flex;align-items:center;line-height:1;flex-shrink:0"
+            onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+            onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+          <div id="ipMenu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,0.15);min-width:184px;z-index:40;overflow:hidden">
+            <button id="ipMenuEdit" onclick="closeIpMenu();openItemPageModal()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--row-sep);cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--text)">Edit item</button>
+            <button onclick="closeIpMenu();ipCopyLink()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--row-sep);cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Copy link</button>
+            <button onclick="closeIpMenu();window.open(location.pathname+'?item='+_itemPageId,'_blank')" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--row-sep);cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Open in new tab</button>
+            <button id="ipMenuDelete" onclick="closeIpMenu();ipDeleteItem()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:none;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent2)">Delete item</button>
+          </div>
+        </div>
       </div>
     </div>
 
