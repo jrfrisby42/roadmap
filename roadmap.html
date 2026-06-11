@@ -1058,13 +1058,8 @@
 <div id="listView" style="display:none;padding:16px 20px">
   <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">
     <input id="listSearch" type="search" placeholder="Search key, name, notes…" style="padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none;min-width:200px;flex:1;max-width:320px;color:var(--text)">
-    <select id="listProduct"  style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
-    <select id="listType"     style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
-    <select id="listStatus"   style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
-    <select id="listOwner"    style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
     <select id="listAssignee" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
-    <select id="listPageSize" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"><option value="25">25 / page</option><option value="50" selected>50 / page</option><option value="100">100 / page</option></select>
-    <button id="listTreeToggle" title="Toggle hierarchy (parent → children)" style="padding:6px 12px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">☰ Tree: Off</button>
+    <span style="font-size:11px;color:var(--muted)">Owner / Type / Project / Status filters are in the top bar ↑</span>
     <span id="listCount" style="margin-left:auto;font-size:12px;color:var(--muted)"></span>
   </div>
   <div id="listBulkBar" style="display:none;align-items:center;gap:8px;margin-bottom:10px;padding:8px 12px;background:rgba(91,79,255,0.08);border:1px solid var(--accent);border-radius:8px;flex-wrap:wrap">
@@ -1100,7 +1095,11 @@
       <tbody id="listBody"></tbody>
     </table>
   </div>
-  <div id="listPager" style="display:flex;gap:10px;align-items:center;justify-content:center;margin-top:14px"></div>
+  <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px">
+    <button id="listTreeToggle" title="Toggle hierarchy (parent → children)" style="padding:6px 12px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">☰ Tree: Off</button>
+    <select id="listPageSize" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"><option value="25">25 / page</option><option value="50" selected>50 / page</option><option value="100">100 / page</option></select>
+    <div id="listPager" style="display:flex;gap:10px;align-items:center;justify-content:center;flex:1"></div>
+  </div>
 </div>
 
 <!-- DASHBOARD VIEW -->
@@ -2013,7 +2012,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '3.7.1';
+const APP_VERSION = '3.8.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2154,6 +2153,7 @@ function renderCurrentView(){
   if(viewMode === 'planning') renderPlanningBoard();
   else if(viewMode === 'kanban') renderKanban();
   else if(viewMode === 'dashboard') renderDashboard();
+  else if(viewMode === 'list'){ _listState.page = 1; renderList(); }
   else render();
 }
 
@@ -8434,10 +8434,8 @@ function _listFillSelect(id, options, allLabel){
 }
 
 function populateListFilters(){
-  _listFillSelect('listProduct',  products.map(p=>p.name),   'All projects');
-  _listFillSelect('listType',     types.map(t=>t.name),      'All types');
-  _listFillSelect('listStatus',   statuses,                  'All statuses');
-  _listFillSelect('listOwner',    developers,                'All owners');
+  // Owner / Type / Project / Status now use the top-bar filters — only the
+  // List-local Assignee select needs populating here.
   _listFillSelect('listAssignee', users.map(u=>u.username),  'All assignees');
   _listFiltersReady = true;
 }
@@ -8445,9 +8443,15 @@ function populateListFilters(){
 function _listQuery(){
   const v = id => (document.getElementById(id)?.value || '').trim();
   const params = new URLSearchParams();
-  const map = { product:'listProduct', type:'listType', status:'listStatus',
-                owner:'listOwner', assignee:'listAssignee' };
-  for(const [k,id] of Object.entries(map)){ const val = v(id); if(val) params.set(k, val); }
+  // Owner / Type / Project / Status come from the shared top-bar multi-select
+  // filters (null = "All"). They're passed as comma-separated lists; /api/items
+  // expands those to SQL IN(...). Assignee stays a List-local single select.
+  const setMulti = (k, arr) => { if(arr && arr.length) params.set(k, arr.join(',')); };
+  setMulti('product', getSelectedProducts());
+  setMulti('type',    getSelectedTypes());
+  setMulti('status',  getSelectedStatuses());
+  setMulti('owner',   getSelectedDevs());
+  const asg = v('listAssignee'); if(asg) params.set('assignee', asg);
   const q = v('listSearch'); if(q) params.set('q', q);
   params.set('page', _listState.page);
   params.set('page_size', _listState.page_size);
@@ -8470,7 +8474,7 @@ function _listRowHtml(it, depth){
     <td style="${firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${chevron}${_listCell(it.itemKey)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.type)}</td>
     <td style="padding:7px 10px;font-weight:600">${_listCell(it.name)}</td>
-    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.status)}</td>
+    <td style="padding:7px 10px;white-space:nowrap">${it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(it.status)}</span>` : '—'}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.dev)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.assignee)}</td>
     <td style="padding:7px 10px;text-align:center">${_listCell(it.storyPoints)}</td>
@@ -8538,9 +8542,7 @@ function _renderListPager(data){
   document.getElementById('listNext')?.addEventListener('click', ()=>{ if(_listState.page<pages){ _listState.page++; renderList(); }});
 }
 
-['listProduct','listType','listStatus','listOwner','listAssignee'].forEach(id=>{
-  document.getElementById(id)?.addEventListener('change', ()=>{ _listState.page=1; renderList(); });
-});
+document.getElementById('listAssignee')?.addEventListener('change', ()=>{ _listState.page=1; renderList(); });
 document.getElementById('listPageSize')?.addEventListener('change', e=>{
   _listState.page_size = parseInt(e.target.value)||50; _listState.page=1; renderList();
 });
@@ -10153,8 +10155,9 @@ function itemMatchesSearch(p, query){
 }
 
 function updateSearchVisibility(){
+  // The top-bar box is an in-memory view filter — only meaningful for Gantt/Kanban.
   const wrap = document.getElementById('searchWrap');
-  if(wrap) wrap.style.display = viewMode === 'dashboard' ? 'none' : '';
+  if(wrap) wrap.style.display = (viewMode === 'gantt' || viewMode === 'kanban') ? '' : 'none';
 }
 // ── PLANNING BOARD ────────────────────────────────────────────────────────────
 
@@ -12245,7 +12248,7 @@ const FF_BASE_URL = 'https://features.fraznet.com/#/namespaces/qa/flags/';
  */
 function flagPill(f, {fromJira=false, showDelete=false, onDelete='', size='md'}={}){
   const fs   = size === 'sm' ? '11px' : '12px';
-  const url  = fromJira ? FF_BASE_URL + encodeURIComponent(f) : null;
+  const url  = FF_BASE_URL + encodeURIComponent(f);   // every flag links to the portal
   const link = url
     ? `<a href="${escA(url)}" target="_blank" rel="noopener"
          style="color:inherit;text-decoration:none;display:inline-flex;align-items:center;gap:3px"
@@ -12666,7 +12669,10 @@ async function ipGlobalSearch(q){
   if(!box) return;
   if(!q){ box.style.display='none'; box.innerHTML=''; return; }
   let data;
-  try { data = await API.get('/api/items?q='+encodeURIComponent(q)+'&page_size=8&sort=updated_ts:desc'); }
+  // Scope results to the current item's project so the search stays in context.
+  const cur = projects.find(x=>x.id===_itemPageId);
+  const prodParam = (cur && cur.product) ? '&product='+encodeURIComponent(cur.product) : '';
+  try { data = await API.get('/api/items?q='+encodeURIComponent(q)+'&page_size=8&sort=updated_ts:desc'+prodParam); }
   catch(e){ box.style.display='none'; return; }
   const items = data.items || [];
   box.innerHTML = items.length
@@ -12691,6 +12697,36 @@ document.addEventListener('click', e=>{
   if(!e.target.closest('#ipGlobalSearch') && !e.target.closest('#ipGlobalSearchResults')){
     const box = document.getElementById('ipGlobalSearchResults');
     if(box && box.style.display!=='none') box.style.display='none';
+  }
+});
+
+// ── Item Page actions menu (hamburger) ──
+function ipToggleMenu(e){
+  if(e) e.stopPropagation();
+  const m = document.getElementById('ipMenu');
+  if(m) m.style.display = (!m.style.display || m.style.display==='none') ? 'block' : 'none';
+}
+function closeIpMenu(){ const m = document.getElementById('ipMenu'); if(m) m.style.display='none'; }
+function ipCopyLink(){
+  const url = `${location.origin}${location.pathname}?item=${_itemPageId}`;
+  try { navigator.clipboard.writeText(url); if(typeof showToast==='function') showToast('Link copied','success'); }
+  catch(e){ if(typeof showToast==='function') showToast(url); }
+}
+async function ipDeleteItem(){
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  if(!confirm(`Delete "${p.name||'this item'}"? This cannot be undone.`)) return;
+  try {
+    await API.del('/api/projects/'+p.id);
+    const idx = projects.findIndex(x=>x.id===p.id); if(idx>=0) projects.splice(idx,1);
+    if(typeof showToast==='function') showToast('Item deleted','success');
+    closeItemPage();
+    if(viewMode==='list' && typeof renderList==='function') renderList();
+    else if(typeof render==='function') render();
+  } catch(e){ if(typeof showToast==='function') showToast('Delete failed: '+(e.message||e),'error'); else alert(e.message||e); }
+}
+document.addEventListener('click', e=>{
+  if(!e.target.closest('#ipMenu') && !e.target.closest('#ipMenuBtn')){
+    const m = document.getElementById('ipMenu'); if(m && m.style.display!=='none') m.style.display='none';
   }
 });
 
@@ -12834,11 +12870,20 @@ function renderItemPage(p){
   document.getElementById('ipBreadcrumb').innerHTML =
     `<span style="color:var(--muted)">${esc(p.product||'—')}</span> › <span style="color:var(--text);font-weight:700">${esc(p.name)}</span>`;
 
-  const statusColor = 'var(--accent)';
-  document.getElementById('ipStatusBadge').textContent = p.status||'—';
-
-  const editBtn = document.getElementById('ipEditModalBtn');
-  if(editBtn) editBtn.style.display = (isAdmin||isEditor) ? '' : 'none';
+  const _sb = document.getElementById('ipStatusBadge');
+  if(_sb){
+    _sb.textContent = p.status || '—';
+    _sb.className = p.status ? statusCls(p.status) : '';   // defined status color (light/dark aware)
+    _sb.style.background = ''; _sb.style.color = ''; _sb.style.border = '';
+  }
+  // Admin-only actions in the item-page hamburger menu.
+  const _mAdmin = document.getElementById('ipMenuAdmin');
+  if(_mAdmin) _mAdmin.style.display = isAdmin ? '' : 'none';
+  const _mDel = document.getElementById('ipMenuDelete');
+  if(_mDel) _mDel.style.display = isAdmin ? '' : 'none';
+  // Scope the in-page search placeholder to this item's project.
+  const _gs = document.getElementById('ipGlobalSearch');
+  if(_gs) _gs.placeholder = p.product ? ('Search ' + p.product + '…') : 'Search items…';
 
   document.getElementById('ipMeta').innerHTML =
     `${p.dev?`<span style="font-weight:700;color:var(--text)">${esc(p.dev)}</span> · `:''}` +
@@ -12855,7 +12900,7 @@ function renderItemPage(p){
   const lockNote = isLocked && !isAdmin ? `<span style="font-size:10px;color:#e8a000;display:block;margin-top:2px">🔒 Locked — active item</span>` : '';
 
   document.getElementById('ipFields').innerHTML = [
-    ipEditField('status',     'Status',       esc(p.status||''), 'select', {bold:true}),
+    ipEditField('status',     'Status',       p.status ? `<span class="${statusCls(p.status)}" style="background:none;border:none;padding:0">${esc(p.status)}</span>` : '', 'select', {bold:true}),
     ipEditField('dev',        'Owner (Pod)',  esc(p.dev||''),    'select', {bold:true}),
     ipEditField('assignee',   'Assignee',     esc(p.assignee||''), 'select'),
     ipEditField('type',       'Type',         esc(p.type||''),   'select'),
@@ -13645,17 +13690,40 @@ function renderItemPageFeatureFlags(p){
   // jiraFeatureFlags holds the raw Jira-sourced subset for badge display
   const allFlags   = Array.isArray(p?.featureFlags)     ? p.featureFlags.filter(Boolean)     : [];
   const jiraFlags  = new Set(Array.isArray(p?.jiraFeatureFlags) ? p.jiraFeatureFlags.filter(Boolean) : []);
+  const canEdit    = (isAdmin || isEditor);
 
-  if(!allFlags.length){
-    card.style.display = 'none';
-    return;
-  }
+  if(!allFlags.length && !canEdit){ card.style.display = 'none'; return; }
   card.style.display = '';
-  if(count) count.textContent = `(${allFlags.length})`;
+  if(count) count.textContent = allFlags.length ? `(${allFlags.length})` : '';
 
-  list.innerHTML = allFlags.map(f =>
-    flagPill(f, {fromJira: jiraFlags.has(f), size:'md'})
-  ).join('');
+  const pills = allFlags.map(f => flagPill(f, {
+    fromJira: jiraFlags.has(f), size:'md',
+    showDelete: canEdit && !jiraFlags.has(f),       // manual flags removable; Jira-sourced are managed by sync
+    onDelete: `ipRemoveFeatureFlag('${escA(f)}')`
+  }));
+  const addCtl = canEdit ? `
+    <button onclick="ipShowAddFlag()" style="display:inline-flex;align-items:center;background:none;border:1px dashed var(--border);color:var(--accent);padding:3px 9px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:'Lato',sans-serif">+ Add</button>
+    <span id="ipAddFlagRow" style="display:none;align-items:center;gap:4px">
+      <input id="ipNewFlagName" placeholder="flag_name" autocomplete="off"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();ipAddFeatureFlag();}else if(event.key==='Escape'){document.getElementById('ipAddFlagRow').style.display='none';}"
+        style="padding:4px 8px;font-size:12px;border:1px solid var(--accent);border-radius:8px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif;outline:none;width:150px">
+      <button onclick="ipAddFeatureFlag()" style="background:var(--accent);color:#fff;border:none;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Add</button>
+    </span>` : '';
+  list.innerHTML = (pills.join('') || (canEdit ? '' : '<span style="font-size:12px;color:var(--muted)">No feature flags</span>')) + addCtl;
+}
+function ipShowAddFlag(){ const r=document.getElementById('ipAddFlagRow'); if(r){ r.style.display='inline-flex'; const i=document.getElementById('ipNewFlagName'); if(i) i.focus(); } }
+function ipAddFeatureFlag(){
+  const inp = document.getElementById('ipNewFlagName');
+  const name = inp ? inp.value.trim() : '';
+  if(!name) return;
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  const flags = Array.isArray(p.featureFlags) ? [...p.featureFlags] : [];
+  if(!flags.includes(name)) flags.push(name);
+  saveItemPagePatch({featureFlags: flags});
+}
+function ipRemoveFeatureFlag(name){
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  saveItemPagePatch({featureFlags: (p.featureFlags||[]).filter(f => f !== name)});
 }
 
 // ── JIRA PULL-SYNC ENGINE ─────────────────────────────────────────────────────
@@ -14090,15 +14158,24 @@ if ('serviceWorker' in navigator) {
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <span id="ipStatusBadge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;background:var(--surface);color:var(--text)"></span>
         <span id="ipPriorityBadge" style="display:none;font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;flex-shrink:0"></span>
-        <button id="ipEditModalBtn" onclick="openItemPageModal()" style="background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">
-          Edit Item
-        </button>
-        <button onclick="itemPageBack()" title="Back to roadmap"
-          style="background:none;border:1px solid var(--border);color:var(--muted);padding:6px 8px;border-radius:6px;cursor:pointer;display:flex;align-items:center;line-height:1;flex-shrink:0"
-          onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
-          onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-        </button>
+        <div style="position:relative">
+          <button id="ipMenuBtn" onclick="ipToggleMenu(event)" title="Actions"
+            style="background:none;border:1px solid var(--border);color:var(--muted);padding:6px 9px;border-radius:6px;cursor:pointer;display:flex;align-items:center;line-height:1;flex-shrink:0"
+            onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+            onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+          <div id="ipMenu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,0.15);min-width:200px;z-index:40;overflow:hidden">
+            <button onclick="closeIpMenu();openActivityCenter()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Activity Center</button>
+            <button onclick="closeIpMenu();openManageSavedViews()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Saved Views</button>
+            <button onclick="closeIpMenu();openMyAccount()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--row-sep);cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">My Account</button>
+            <button id="ipMenuAdmin" onclick="closeIpMenu();openAdminPanel('devTab')" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:none;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--row-sep);cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Admin</button>
+            <button onclick="closeIpMenu();ipCopyLink()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Copy link</button>
+            <button onclick="closeIpMenu();window.open(location.pathname+'?item='+_itemPageId,'_blank')" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Open in new tab</button>
+            <button id="ipMenuDelete" onclick="closeIpMenu();ipDeleteItem()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:none;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--row-sep);cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent2)">Delete item</button>
+            <button onclick="closeIpMenu();doLogout()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Log Out</button>
+          </div>
+        </div>
       </div>
     </div>
 

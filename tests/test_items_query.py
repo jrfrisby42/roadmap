@@ -40,6 +40,21 @@ def test_filter_by_status_type_owner_product(client, team, admin_headers):
                       headers=admin_headers).json()["total"] == 1
 
 
+def test_filter_multi_value_is_or(client, team, admin_headers):
+    # Comma-separated values expand to SQL IN(...) — the List view's top-bar
+    # multi-select filters rely on this (any-of within a filter).
+    _seed(client, admin_headers)
+    # two statuses → matches items in either
+    assert client.get("/api/items?status=Planned,In Progress",
+                      headers=admin_headers).json()["total"] == 3
+    # two owners, one of which has no items → still just PodA's two
+    assert client.get("/api/items?owner=PodA,Nobody",
+                      headers=admin_headers).json()["total"] == 2
+    # multi-value across two filters still ANDs the filters together
+    assert client.get("/api/items?product=Fraznet,HubSpot&type=Task",
+                      headers=admin_headers).json()["total"] == 1
+
+
 def test_search_q(client, team, admin_headers):
     _seed(client, admin_headers)
     r = client.get("/api/items?q=OIDC", headers=admin_headers).json()
