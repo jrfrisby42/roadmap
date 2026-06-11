@@ -790,7 +790,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "3.8.0"
+APP_VERSION = "3.9.0"
 
 app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
 
@@ -1286,6 +1286,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "ownerCapacity": cfg("ownerCapacity") or {},
             "statusIgnoreConflicts": cfg("statusIgnoreConflicts") or {},
             "typeIgnoreConflicts": cfg("typeIgnoreConflicts") or {},
+            "productIgnoreConflicts": cfg("productIgnoreConflicts") or {},
             "statusIsActive": cfg("statusIsActive") or {},
             "statusIsTerminal": cfg("statusIsTerminal") or {},
             "statusIsDefault": cfg("statusIsDefault") or {},
@@ -1713,7 +1714,7 @@ def bulk_update_items(body: dict = Body(...),
 
 # ── Config ────────────────────────────────────────────────────────────────────
 VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
-              "ownerCapacity","statusIgnoreConflicts","typeIgnoreConflicts",
+              "ownerCapacity","statusIgnoreConflicts","typeIgnoreConflicts","productIgnoreConflicts",
               "statusIsActive","statusIsTerminal",
               "statusIsDefault","statusIsDeferred",
               "changeReasons","deferReasons",

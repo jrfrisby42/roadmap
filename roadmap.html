@@ -1059,7 +1059,6 @@
   <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">
     <input id="listSearch" type="search" placeholder="Search key, name, notes…" style="padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none;min-width:200px;flex:1;max-width:320px;color:var(--text)">
     <select id="listAssignee" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
-    <span style="font-size:11px;color:var(--muted)">Owner / Type / Project / Status filters are in the top bar ↑</span>
     <span id="listCount" style="margin-left:auto;font-size:12px;color:var(--muted)"></span>
   </div>
   <div id="listBulkBar" style="display:none;align-items:center;gap:8px;margin-bottom:10px;padding:8px 12px;background:rgba(91,79,255,0.08);border:1px solid var(--accent);border-radius:8px;flex-wrap:wrap">
@@ -2012,7 +2011,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '3.8.0';
+const APP_VERSION = '3.9.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2147,6 +2146,7 @@ let statusIsReleased = {}; // { [statusName]: bool } — exactly ONE true: marks
 let statusIsApproved = {}; // { [statusName]: bool } — exactly ONE true: marks the Approved status
 let statusIsTesting  = {}; // { [statusName]: bool } — exactly ONE true: marks the Testing status
 let typeIgnoreConflicts = {};   // { [typeName]: bool }
+let productIgnoreConflicts = {}; // { [productName]: bool } — exempt a whole project from capacity-conflict accounting
 
 // Re-render whichever view is currently active (used by top-bar filter changes)
 function renderCurrentView(){
@@ -2520,6 +2520,7 @@ function buildCapacityUsageMap(){
     if(p.hidden || !p.start || !p.dev) return;
     if(isTerminalStatus(p.status)) return;
     if(statusIgnoreConflicts[p.status]) return;
+    if(productIgnoreConflicts[p.product]) return;
     const owner = p.dev;
     if(!map[owner]) map[owner] = {};
     if(!window._capDetailMap[owner]) window._capDetailMap[owner] = {};
@@ -2863,6 +2864,7 @@ function computeConflictingIds(){
     if(statusIgnoreConflicts[p.status]) return;
     if(isTerminalStatus(p.status)) return;
     if(typeIgnoreConflicts[p.type]) return;
+    if(productIgnoreConflicts[p.product]) return;
     const owner = p.dev || '';
     if(!owner) return;
     (byOwner[owner] = byOwner[owner] || []).push(p);
@@ -2937,6 +2939,7 @@ function computeOwnerConflictDays(owner){
     if(p.hidden || p.dev !== owner || !p.start) return false;
     if(statusIgnoreConflicts[p.status] || isTerminalStatus(p.status)) return false;
     if(typeIgnoreConflicts[p.type]) return false;
+    if(productIgnoreConflicts[p.product]) return false;
     return !!conflictEndDate(p);
   });
   if(!items.length) return [];
@@ -4847,6 +4850,7 @@ function openConflictModal(itemId){
     if(other.dev !== owner) return false;
     if(statusIgnoreConflicts[other.status]) return false;
     if(typeIgnoreConflicts[other.type]) return false;
+    if(productIgnoreConflicts[other.product]) return false;
     if(isParentChildOrSibling(item, other)) return false;
     const pairKey = [itemId, other.id].sort((a,b)=>a-b).join('-');
     if(ignorePairs.has(pairKey)) return false;
@@ -5634,6 +5638,7 @@ function capacityHealthClass(owner, dateStr){
     if(p.hidden || p.dev !== owner || !p.start) return;
     if(isTerminalStatus(p.status)) return;
     if(statusIgnoreConflicts[p.status]) return;
+    if(productIgnoreConflicts[p.product]) return;
     totalUnits += itemCapacityOnDay(p, d);
   });
   if(totalUnits <= 0) return 'cap-health-off';
@@ -6213,6 +6218,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       if(data.statusIsTesting)       statusIsTesting        = data.statusIsTesting;
       if(data.statusIgnoreConflicts) statusIgnoreConflicts = data.statusIgnoreConflicts;
       if(data.typeIgnoreConflicts)   typeIgnoreConflicts   = data.typeIgnoreConflicts;
+      if(data.productIgnoreConflicts) productIgnoreConflicts = data.productIgnoreConflicts;
       // Don't import users unless explicitly present — protects login
       if(data.users && Array.isArray(data.users) && data.users.length){
         users = data.users;
@@ -6883,6 +6889,12 @@ function toggleTypeIgnore(i, val){
   render();
 }
 
+function toggleProductIgnore(i, val){
+  productIgnoreConflicts[products[i].name] = val;
+  saveConfig('productIgnoreConflicts', productIgnoreConflicts);
+  render();
+}
+
 function setTypeColor(i, color){
   types[i].color = color;
   saveConfig('types', types); renderTypeList(); populateTypeSelect();
@@ -6921,6 +6933,7 @@ function renderProductList(){
       ? `<span class="btn-ic" title="${lockTip}" style="opacity:0.4;cursor:default"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>`
       : `<button class="btn-ic del" onclick="deleteProduct(${i})" title="Delete"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`;
     const tag = p.builtin ? ' <span style="font-size:10px;color:var(--muted);font-weight:400">(built-in)</span>' : '';
+    const ignored = productIgnoreConflicts[p.name] || false;
     const assignedStatuses = p.statuses || [];
     const statusPills = assignedStatuses.length
       ? assignedStatuses.map(s=>`<span style="font-size:10px;background:rgba(91,79,255,0.1);color:var(--accent);padding:1px 6px;border-radius:8px">${esc(s)}</span>`).join(' ')
@@ -6930,6 +6943,10 @@ function renderProductList(){
       ${p.keyPrefix ? `<span style="font-size:10px;font-family:monospace;background:rgba(91,79,255,0.1);color:var(--accent);padding:1px 6px;border-radius:6px;flex-shrink:0">${esc(p.keyPrefix)}</span>` : ''}
       <span style="font-size:11px;color:var(--muted);flex-shrink:0">${cnt} item${cnt!==1?'s':''}</span>
       <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;flex:2">${statusPills}</div>
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;flex-shrink:0" title="Ignore capacity conflicts for every item in this project (useful for small projects with a single assignee)">
+        <input type="checkbox" onchange="toggleProductIgnore(${i},this.checked)" ${ignored?'checked':''} style="accent-color:var(--accent);cursor:pointer">
+        Ignore Conflicts
+      </label>
       <button class="btn-ic" onclick="startEditProduct(${i})" title="Edit"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
       ${deleteBtn}
     </div>`;
@@ -8051,6 +8068,7 @@ async function runAutoNotifications(){
     if(p.hidden) continue;
     if(isTerminalStatus(p.status)) continue;
     if(statusIgnoreConflicts[p.status]) continue;
+    if(productIgnoreConflicts[p.product]) continue;
     if(!p.start) continue;
 
     const start = parseD(p.start);
@@ -12367,7 +12385,7 @@ function renderCapacityHeatmap(items){
         if(dow===0||dow===6) continue;
         const dayStr = day.toISOString().slice(0,10);
         const dayEff = getEffectiveCapacity(owner, dayStr);
-        const units = projects.filter(p=>!p.hidden&&p.dev===owner&&!isTerminalStatus(p.status)&&!statusIgnoreConflicts[p.status])
+        const units = projects.filter(p=>!p.hidden&&p.dev===owner&&!isTerminalStatus(p.status)&&!statusIgnoreConflicts[p.status]&&!productIgnoreConflicts[p.product])
           .reduce((s,p)=>s+itemCapacityOnDay(p,day),0);
         totalUnits += units / dayEff; // normalise to fraction of capacity
         sampledDays++;
@@ -12385,7 +12403,7 @@ function renderCapacityHeatmap(items){
                       : avgRatio < 0.5 ? '#c07800'
                       :                  '#1a7a40';
       // Show units/cap as fraction — use displayUnits rounded to 1dp, never blank
-      const displayUnits = projects.filter(p=>!p.hidden&&p.dev===owner&&!isTerminalStatus(p.status)&&!statusIgnoreConflicts[p.status])
+      const displayUnits = projects.filter(p=>!p.hidden&&p.dev===owner&&!isTerminalStatus(p.status)&&!statusIgnoreConflicts[p.status]&&!productIgnoreConflicts[p.product])
         .reduce((s,p)=>s+itemCapacityOnDay(p,w.mid),0);
       const displayCap = getEffectiveCapacity(owner, w.mid.toISOString().slice(0,10));
       const dispNum = Math.round(displayUnits * 10) / 10;   // e.g. 2, 1.5, 0
@@ -13868,6 +13886,7 @@ async function boot(){
     // (full per-owner loading happens lazily when calendar is opened)
     statusIgnoreConflicts = data.statusIgnoreConflicts || {};
     typeIgnoreConflicts   = data.typeIgnoreConflicts   || {};
+    productIgnoreConflicts = data.productIgnoreConflicts || {};
     // Jira mappings (Team Settings)
     window._jiraProjectMappingData = data.jiraProjectMapping || {};
     window._jiraStatusMappingData  = data.jiraStatusMapping  || {};
