@@ -734,7 +734,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "3.5.0"
+APP_VERSION = "3.6.0"
 
 app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
 
@@ -1554,9 +1554,14 @@ def list_items(
         where.append("archived=0")
 
     if q:
-        # item_key (column) + the blob text (covers name/notes/etc.) — fine at this scale.
-        where.append("(item_key LIKE ? OR data LIKE ?)")
-        params += [f"%{q}%", f"%{q}%"]
+        # Scoped, multi-term search: each whitespace-separated term must match the
+        # item key, name, OR description (no longer the whole JSON blob — that matched
+        # field names/ids/internal flags). Terms are AND-ed for precision.
+        for term in q.split():
+            where.append("(item_key LIKE ? OR json_extract(data,'$.name') LIKE ? "
+                         "OR json_extract(data,'$.description') LIKE ?)")
+            t = f"%{term}%"
+            params += [t, t, t]
 
     sort_col, _, sort_dir = (sort or "updated_ts:desc").partition(":")
     if sort_col not in _ITEMS_SORTABLE:

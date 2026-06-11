@@ -47,6 +47,31 @@ def test_search_q(client, team, admin_headers):
     assert r["items"][0]["name"] == "Wire OIDC"
 
 
+def test_search_multi_term_is_and(client, team, admin_headers):
+    _seed(client, admin_headers)
+    # both terms in "Login revamp" -> match; only one term -> still that one item
+    assert client.get("/api/items?q=login+revamp", headers=admin_headers).json()["total"] == 1
+    # a term that matches nothing in name/key/description -> no results
+    assert client.get("/api/items?q=login+nonexistentword",
+                      headers=admin_headers).json()["total"] == 0
+
+
+def test_search_scoped_to_text_fields(client, team, admin_headers):
+    _seed(client, admin_headers)
+    # owner (dev) is NOT a searchable text field — q must not match it (precision).
+    assert client.get("/api/items?q=PodB", headers=admin_headers).json()["total"] == 0
+    # but the dedicated owner filter still works
+    assert client.get("/api/items?owner=PodB", headers=admin_headers).json()["total"] == 1
+
+
+def test_search_matches_description(client, team, admin_headers):
+    pid = client.post("/api/projects", json={"name": "Item X", "status": "Planned",
+                                             "description": "needs the widget pipeline"},
+                      headers=admin_headers).json()["id"]
+    r = client.get("/api/items?q=widget", headers=admin_headers).json()
+    assert pid in {i["id"] for i in r["items"]}
+
+
 def test_pagination(client, team, admin_headers):
     _seed(client, admin_headers)
     p1 = client.get("/api/items?page=1&page_size=2&sort=id:asc", headers=admin_headers).json()
