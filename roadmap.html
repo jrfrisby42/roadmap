@@ -12618,6 +12618,28 @@ function renderItemPage(p){
 
   // Header
   document.getElementById('ipTitle').textContent = p.name||'Untitled';
+  // Inline title editing (click to edit the item name)
+  const titleEl = document.getElementById('ipTitle');
+  if(titleEl){
+    const canEditTitle = (isAdmin||isEditor);
+    titleEl.contentEditable = canEditTitle ? 'true' : 'false';
+    titleEl.spellcheck = false;
+    titleEl.style.outline = 'none';
+    titleEl.title = canEditTitle ? 'Click to edit name' : '';
+    if(canEditTitle && !titleEl._wired){
+      titleEl._wired = true;
+      titleEl.addEventListener('blur', ()=>{
+        const cur = projects.find(x=>x.id===_itemPageId); if(!cur) return;
+        const v = titleEl.textContent.trim();
+        if(!v){ titleEl.textContent = cur.name; return; }   // names can't be empty
+        if(v !== cur.name) saveItemPageField('name', v);
+      });
+      titleEl.addEventListener('keydown', ev=>{
+        if(ev.key==='Enter'){ ev.preventDefault(); titleEl.blur(); }
+        else if(ev.key==='Escape'){ const cur=projects.find(x=>x.id===_itemPageId); if(cur) titleEl.textContent=cur.name; titleEl.blur(); }
+      });
+    }
+  }
   const prioEl = document.getElementById('ipPriorityBadge');
   if(p.priority && PRIO_COLORS[p.priority]){
     prioEl.style.display = '';
@@ -12689,12 +12711,20 @@ function renderItemPage(p){
     notesEl.contentEditable = 'true';
     if(notesToolbar) notesToolbar.style.display = '';
     if(notesSaveBtn) notesSaveBtn.style.display  = '';
-    notesEl.addEventListener('input', ()=>{ if(notesSaveBtn) notesSaveBtn.style.background='var(--accent)'; });
+    if(!notesEl._wired){   // wire once — element persists across renders
+      notesEl._wired = true;
+      notesEl.addEventListener('input', ()=>{ if(notesSaveBtn) notesSaveBtn.style.background='var(--accent)'; });
+      // Autosave on blur (no need to hit Save), only when actually changed.
+      notesEl.addEventListener('blur', ()=>{
+        const cur = projects.find(x=>x.id===_itemPageId);
+        if(cur && (cur.description||'') !== notesEl.innerHTML) saveItemPageNotes();
+      });
+    }
   } else {
     notesEl.contentEditable = 'false';
     if(notesToolbar) notesToolbar.style.display = 'none';
     if(notesSaveBtn) notesSaveBtn.style.display  = 'none';
-    if(!p.description) notesEl.innerHTML = '<span style="color:var(--muted);font-size:12px">No notes</span>';
+    if(!p.description) notesEl.innerHTML = '<span style="color:var(--muted);font-size:12px">No description</span>';
   }
 
   // Feature Flags — unified card (manual + Jira-sourced)
@@ -13862,8 +13892,8 @@ if ('serviceWorker' in navigator) {
         <!-- Notes card -->
         <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
           <div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;justify-content:space-between">
-            Notes
-            <button id="ipNotesSaveBtn" onclick="saveItemPageNotes()" style="display:none;background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">Save Notes</button>
+            Description
+            <button id="ipNotesSaveBtn" onclick="saveItemPageNotes()" style="display:none;background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">Save</button>
           </div>
           <div style="padding:14px 16px">
             <div class="rte-toolbar" id="ipNotesToolbar" style="display:none;margin-bottom:6px">
