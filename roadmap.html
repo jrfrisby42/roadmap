@@ -12637,6 +12637,22 @@ async function ipCreateSubtask(){
   } catch(e){ if(typeof showToast==='function') showToast('Failed to add subtask: '+(e.message||e),'error'); else alert(e.message||e); }
 }
 
+// ── Linked work items (dependency: this item "depends on" another) ──
+async function saveItemPagePatch(patch){
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  const updated = {...p, ...patch, _username:getUsername()};
+  try {
+    const saved = await API.put('/api/projects/'+p.id, updated);
+    const idx = projects.findIndex(x=>x.id===p.id);
+    if(idx>=0) projects[idx] = {...updated, ...(saved&&typeof saved==='object'?saved:{}), id:p.id};
+    if(typeof showToast==='function') showToast('Saved','success');
+    renderItemPage(idx>=0?projects[idx]:updated);
+  } catch(e){ if(typeof showToast==='function') showToast('Save failed: '+(e.message||e),'error'); else alert(e.message||e); renderItemPage(p); }
+}
+function ipShowAddLink(){ const r=document.getElementById('ipAddLinkRow'); if(r){ r.style.display='flex'; const s=document.getElementById('ipLinkSelect'); if(s) s.focus(); } }
+function ipLinkItem(){ const s=document.getElementById('ipLinkSelect'); const id=s?parseInt(s.value):0; if(!id) return; saveItemPagePatch({requires:id, parallel:false}); }
+function ipUnlinkRequires(){ saveItemPagePatch({requires:null, parallel:false}); }
+
 function openItemPage(id, opts={}){
   const p = projects.find(x=>x.id===id);
   if(!p) return;
@@ -12801,13 +12817,17 @@ function renderItemPage(p){
 
   // Dependencies
   const depsEl = document.getElementById('ipDeps');
+  const depCanEdit = (isAdmin||isEditor);
   const depRows = [];
   if(p.requires){
     const req = projects.find(x=>x.id===p.requires);
     if(req) depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
       <span style="font-size:10px;font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Depends On</span>
-      <button onclick="openItemPage(${req.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0">${esc(req.name)}</button>
-      <span style="font-size:11px;color:var(--muted);margin-left:auto">${p.parallel?'Parallel':'Sequential'}</span>
+      <button onclick="openItemPage(${req.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0;text-align:left;flex:1">${esc(req.name)}</button>
+      ${depCanEdit
+        ? `<button onclick="saveItemPagePatch({parallel:${!p.parallel}})" title="Toggle parallel / sequential" style="font-size:11px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:5px;padding:1px 8px;cursor:pointer">${p.parallel?'Parallel':'Sequential'}</button>
+           <button onclick="ipUnlinkRequires()" title="Remove link" style="background:none;border:none;color:var(--accent2);cursor:pointer;font-size:14px;padding:0 2px;line-height:1">✕</button>`
+        : `<span style="font-size:11px;color:var(--muted);margin-left:auto">${p.parallel?'Parallel':'Sequential'}</span>`}
     </div>`);
   }
   if(p.parent){
@@ -12828,8 +12848,26 @@ function renderItemPage(p){
       </div>`);
     });
   }
-  depsEl.innerHTML = depRows.length ? depRows.join('') :
-    `<div style="font-size:12px;color:var(--muted)">No dependencies</div>`;
+  // Add linked work item (set a dependency). Mutual exclusion: parent OR requires, not both.
+  let linkControl = '';
+  if(depCanEdit && !p.requires){
+    if(p.parent){
+      linkControl = `<div style="font-size:11px;color:var(--muted);font-style:italic">Linked items unavailable — this is a child item (has a parent). Remove the parent to add a dependency.</div>`;
+    } else {
+      const cands = projects.filter(x => x.id!==p.id && x.requires!==p.id && !x.archived)
+        .sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+      linkControl = `<div>
+        <button onclick="ipShowAddLink()" style="background:none;border:1px solid var(--border);color:var(--accent);padding:3px 10px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Add linked work item</button>
+        <div id="ipAddLinkRow" style="display:none;gap:6px;margin-top:6px">
+          <select id="ipLinkSelect" style="flex:1;padding:6px 8px;font-size:13px;border:1px solid var(--accent);border-radius:6px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif;outline:none">
+            <option value="">Depend on…</option>
+            ${cands.map(x=>`<option value="${x.id}">${x.itemKey?esc(x.itemKey)+' · ':''}${esc(x.name)}</option>`).join('')}
+          </select>
+          <button onclick="ipLinkItem()" style="background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Link</button>
+        </div></div>`;
+    }
+  }
+  depsEl.innerHTML = (depRows.length ? depRows.join('') : (linkControl ? '' : `<div style="font-size:12px;color:var(--muted)">No dependencies</div>`)) + linkControl;
 
   // Subtasks (children) — own card with roll-up + inline create
   renderItemPageSubtasks(p);
