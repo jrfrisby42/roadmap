@@ -798,6 +798,7 @@
     <select id="viewSelect" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none;color:var(--text)">
       <option value="gantt">Gantt</option>
       <option value="kanban">Kanban</option>
+      <option value="list">List</option>
       <option value="planning" id="planningOption" style="display:none">Planning</option>
       <option value="dashboard">Dashboard</option>
     </select>
@@ -1051,6 +1052,55 @@
 <!-- KANBAN BOARD -->
 <div id="kanbanBoard" style="display:none;padding:16px;overflow-x:auto;min-height:calc(100vh - 100px)">
   <div id="kanbanInner" style="display:flex;gap:14px;align-items:flex-start;width:100%"></div>
+</div>
+
+<!-- LIST VIEW (Phase 1d-i) — server-paginated item table backed by /api/items -->
+<div id="listView" style="display:none;padding:16px 20px">
+  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">
+    <input id="listSearch" type="search" placeholder="Search key, name, notes…" style="padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none;min-width:200px;flex:1;max-width:320px;color:var(--text)">
+    <select id="listProduct"  style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
+    <select id="listType"     style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
+    <select id="listStatus"   style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
+    <select id="listOwner"    style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
+    <select id="listAssignee" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
+    <select id="listPageSize" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"><option value="25">25 / page</option><option value="50" selected>50 / page</option><option value="100">100 / page</option></select>
+    <button id="listTreeToggle" title="Toggle hierarchy (parent → children)" style="padding:6px 12px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">☰ Tree: Off</button>
+    <span id="listCount" style="margin-left:auto;font-size:12px;color:var(--muted)"></span>
+  </div>
+  <div id="listBulkBar" style="display:none;align-items:center;gap:8px;margin-bottom:10px;padding:8px 12px;background:rgba(91,79,255,0.08);border:1px solid var(--accent);border-radius:8px;flex-wrap:wrap">
+    <span id="listBulkCount" style="font-size:12px;font-weight:700;color:var(--accent)"></span>
+    <span style="font-size:12px;color:var(--muted)">Set</span>
+    <select id="listBulkField" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none">
+      <option value="status">Status</option>
+      <option value="dev">Owner</option>
+      <option value="assignee">Assignee</option>
+      <option value="sprintId">Sprint</option>
+      <option value="priority">Priority</option>
+      <option value="archived">Archived</option>
+    </select>
+    <span id="listBulkValueWrap"></span>
+    <button id="listBulkApply" style="padding:5px 14px;font-size:12px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-weight:700">Apply</button>
+    <button id="listBulkClear" style="padding:5px 12px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--muted);cursor:pointer">Clear</button>
+  </div>
+  <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:var(--surface);text-align:left">
+          <th style="padding:8px 10px;width:32px"><input type="checkbox" id="listSelectAll" title="Select all on this page"></th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Key</th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Type</th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Name</th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Status</th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Owner</th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Assignee</th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;text-align:center">Points</th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Sprint</th>
+        </tr>
+      </thead>
+      <tbody id="listBody"></tbody>
+    </table>
+  </div>
+  <div id="listPager" style="display:flex;gap:10px;align-items:center;justify-content:center;margin-top:14px"></div>
 </div>
 
 <!-- DASHBOARD VIEW -->
@@ -1963,7 +2013,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '3.3.1';
+const APP_VERSION = '3.4.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -6877,6 +6927,7 @@ function renderProductList(){
       : `<span style="font-size:10px;color:var(--muted)">All statuses</span>`;
     return `<div class="dev-item" data-idx="${i}" style="flex-wrap:wrap;gap:6px">
       <span class="dev-nm" style="flex:1;min-width:120px">${esc(p.name)}${tag}</span>
+      ${p.keyPrefix ? `<span style="font-size:10px;font-family:monospace;background:rgba(91,79,255,0.1);color:var(--accent);padding:1px 6px;border-radius:6px;flex-shrink:0">${esc(p.keyPrefix)}</span>` : ''}
       <span style="font-size:11px;color:var(--muted);flex-shrink:0">${cnt} item${cnt!==1?'s':''}</span>
       <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;flex:2">${statusPills}</div>
       <button class="btn-ic" onclick="startEditProduct(${i})" title="Edit"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
@@ -6909,6 +6960,11 @@ function startEditProduct(i){
         <button class="btn-ic" onclick="saveEditProduct(${i})" style="color:var(--accent)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="20 6 9 17 4 12"/></svg></button>
         <button class="btn-ic" onclick="renderProductList()"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <label style="font-size:11px;color:var(--muted);min-width:84px">Item key prefix</label>
+        <input class="dev-edit-inp" id="pei_prefix_${i}" value="${escA(p.keyPrefix||'')}" placeholder="e.g. FRAZ" maxlength="8" style="flex:1;text-transform:uppercase" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')">
+      </div>
+      <div style="font-size:10px;color:var(--muted)">Generates item keys like <b>${escA(p.keyPrefix||'KEY')}-142</b>. Saving assigns keys to existing items in this project.</div>
       <div>
         <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Workflow Statuses (used in Kanban columns)</div>
         <div id="pei_statuses_${i}" style="display:flex;flex-wrap:wrap;align-items:center">${statusCheckboxes}</div>
@@ -6923,6 +6979,11 @@ function saveEditProduct(i){
   const n = el?.value.trim(); if(!n) return;
   const old = products[i].name;
   products[i].name = n;
+  const prefEl = document.getElementById(`pei_prefix_${i}`);
+  if(prefEl){
+    const pref = prefEl.value.trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+    if(pref) products[i].keyPrefix = pref; else delete products[i].keyPrefix;
+  }
   // Save selected statuses
   const statusCks = document.querySelectorAll(`#pei_statuses_${i} input[type=checkbox]`);
   const selectedStatuses = [...statusCks].filter(c=>c.checked||c.disabled).map(c=>c.value);
@@ -8278,6 +8339,7 @@ function applyViewMode(){
   const kanban   = document.getElementById('kanbanBoard');
   const dash     = document.getElementById('dashboardView');
   const planning = document.getElementById('planningView');
+  const listv    = document.getElementById('listView');
   const addBtn   = document.getElementById('addBtn');
   const legend   = document.getElementById('ganttLegend');
   const dateRangeEls = ['dateRangeLbl','filterFrom','dateRangeLbl2','filterTo'];
@@ -8303,8 +8365,13 @@ function applyViewMode(){
   if(kanban)   kanban.style.display   = 'none';
   if(dash)     dash.style.display     = 'none';
   if(planning) planning.style.display = 'none';
+  if(listv)    listv.style.display    = 'none';
 
-  if(viewMode === 'planning'){
+  if(viewMode === 'list'){
+    if(listv) listv.style.display = '';
+    if(addBtn) addBtn.style.display = (isAdmin||isEditor) ? '' : 'none';
+    renderList();
+  } else if(viewMode === 'planning'){
     if(!isAdmin){ viewMode='gantt'; document.getElementById('viewSelect').value='gantt'; applyViewMode(); return; }
     planning.style.display = 'flex';
     if(addBtn) addBtn.style.display = 'none';
@@ -8350,6 +8417,220 @@ document.getElementById('viewSelect')?.addEventListener('change', e=>{
 });
 document.getElementById('filterFrom')?.addEventListener('change', ()=>{ if(viewMode==='dashboard') renderDashboard(); });
 document.getElementById('filterTo')?.addEventListener('change',   ()=>{ if(viewMode==='dashboard') renderDashboard(); });
+
+// ── LIST VIEW (Phase 1d-i) — server-paginated item table backed by /api/items ──
+const _listState = { page: 1, page_size: 50, tree: false };
+let _listSelected = new Set();
+let _listFiltersReady = false;
+let _listSearchTimer = null;
+
+function _listFillSelect(id, options, allLabel){
+  const sel = document.getElementById(id);
+  if(!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">${allLabel}</option>` +
+    options.map(o => `<option value="${escA(o)}">${esc(o)}</option>`).join('');
+  sel.value = cur;  // preserve current selection if still valid
+}
+
+function populateListFilters(){
+  _listFillSelect('listProduct',  products.map(p=>p.name),   'All projects');
+  _listFillSelect('listType',     types.map(t=>t.name),      'All types');
+  _listFillSelect('listStatus',   statuses,                  'All statuses');
+  _listFillSelect('listOwner',    developers,                'All owners');
+  _listFillSelect('listAssignee', users.map(u=>u.username),  'All assignees');
+  _listFiltersReady = true;
+}
+
+function _listQuery(){
+  const v = id => (document.getElementById(id)?.value || '').trim();
+  const params = new URLSearchParams();
+  const map = { product:'listProduct', type:'listType', status:'listStatus',
+                owner:'listOwner', assignee:'listAssignee' };
+  for(const [k,id] of Object.entries(map)){ const val = v(id); if(val) params.set(k, val); }
+  const q = v('listSearch'); if(q) params.set('q', q);
+  params.set('page', _listState.page);
+  params.set('page_size', _listState.page_size);
+  return params.toString();
+}
+
+function _listCell(v){ return esc(v==null||v===''?'—':String(v)); }
+
+function _listRowHtml(it, depth){
+  const tree = _listState.tree;
+  const hasKids = tree && (it._childCount||0) > 0;
+  const chevron = tree
+    ? `<span class="list-chevron" data-id="${it.id}" style="display:inline-block;width:14px;text-align:center;cursor:${hasKids?'pointer':'default'};color:var(--muted)">${hasKids?'▶':''}</span> `
+    : '';
+  const firstPad = `padding:7px 10px;padding-left:${10 + (tree ? depth*18 : 0)}px`;
+  const cb = (isAdmin||isEditor)
+    ? `<input type="checkbox" class="list-cb" data-id="${it.id}" ${_listSelected.has(it.id)?'checked':''}>` : '';
+  return `<tr class="list-row" data-id="${it.id}" data-depth="${depth}" data-expanded="0" style="cursor:pointer;border-top:1px solid var(--row-sep)">
+    <td class="list-cb-cell" style="padding:7px 10px;width:32px">${cb}</td>
+    <td style="${firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${chevron}${_listCell(it.itemKey)}</td>
+    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.type)}</td>
+    <td style="padding:7px 10px;font-weight:600">${_listCell(it.name)}</td>
+    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.status)}</td>
+    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.dev)}</td>
+    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.assignee)}</td>
+    <td style="padding:7px 10px;text-align:center">${_listCell(it.storyPoints)}</td>
+    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.sprintId)}</td>
+  </tr>`;
+}
+
+async function renderList(){
+  if(!_listFiltersReady) populateListFilters();
+  const tree = _listState.tree;
+  const body = document.getElementById('listBody');
+  const countEl = document.getElementById('listCount');
+  if(!body) return;
+  _listSelected.clear();
+  body.innerHTML = `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>`;
+  let data;
+  const url = '/api/items?' + _listQuery() + (tree ? '&parent_id=none&counts=1' : '');
+  try { data = await API.get(url); }
+  catch(e){
+    body.innerHTML = `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--accent2)">${esc(e.message||'Failed to load')}</td></tr>`;
+    return;
+  }
+  const items = data.items || [];
+  if(countEl) countEl.textContent = `${data.total} ${tree?'top-level ':''}item${data.total!==1?'s':''}`;
+  body.innerHTML = items.length
+    ? items.map(it => _listRowHtml(it, 0)).join('')
+    : `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted)">No matching items.</td></tr>`;
+  const sa = document.getElementById('listSelectAll'); if(sa) sa.checked = false;
+  updateBulkBar();
+  _renderListPager(data);
+}
+
+// Tree expand/collapse with lazy child fetch.
+async function _listToggleExpand(tr){
+  const id = parseInt(tr.dataset.id);
+  const depth = parseInt(tr.dataset.depth);
+  const chev = tr.querySelector('.list-chevron');
+  if(tr.dataset.expanded === '1'){
+    let n = tr.nextElementSibling;
+    while(n && parseInt(n.dataset.depth||'-1') > depth){ const nx = n.nextElementSibling; n.remove(); n = nx; }
+    tr.dataset.expanded = '0';
+    if(chev) chev.textContent = '▶';
+    return;
+  }
+  if(chev) chev.textContent = '▾';
+  let data;
+  try { data = await API.get(`/api/items?parent_id=${id}&counts=1&page_size=500&sort=id:asc`); }
+  catch(e){ if(chev) chev.textContent = '▶'; return; }
+  const rows = (data.items||[]).map(it => _listRowHtml(it, depth+1)).join('');
+  if(rows) tr.insertAdjacentHTML('afterend', rows);
+  tr.dataset.expanded = '1';
+}
+
+function _renderListPager(data){
+  const pager = document.getElementById('listPager');
+  if(!pager) return;
+  const pages = data.pages || 0;
+  if(pages <= 1){ pager.innerHTML = ''; return; }
+  const p = data.page;
+  const btn = (id,label,disabled)=>`<button id="${id}" ${disabled?'disabled':''} style="padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:${disabled?'default':'pointer'};opacity:${disabled?0.5:1}">${label}</button>`;
+  pager.innerHTML = btn('listPrev','‹ Prev', p<=1) +
+    `<span style="font-size:12px;color:var(--muted)">Page ${p} of ${pages}</span>` +
+    btn('listNext','Next ›', p>=pages);
+  document.getElementById('listPrev')?.addEventListener('click', ()=>{ if(_listState.page>1){ _listState.page--; renderList(); }});
+  document.getElementById('listNext')?.addEventListener('click', ()=>{ if(_listState.page<pages){ _listState.page++; renderList(); }});
+}
+
+['listProduct','listType','listStatus','listOwner','listAssignee'].forEach(id=>{
+  document.getElementById(id)?.addEventListener('change', ()=>{ _listState.page=1; renderList(); });
+});
+document.getElementById('listPageSize')?.addEventListener('change', e=>{
+  _listState.page_size = parseInt(e.target.value)||50; _listState.page=1; renderList();
+});
+document.getElementById('listSearch')?.addEventListener('input', ()=>{
+  clearTimeout(_listSearchTimer);
+  _listSearchTimer = setTimeout(()=>{ _listState.page=1; renderList(); }, 300);
+});
+// Delegated row interactions (works for dynamically-inserted tree child rows).
+document.getElementById('listBody')?.addEventListener('click', (e)=>{
+  const chev = e.target.closest('.list-chevron');
+  if(chev){ e.stopPropagation(); const tr = chev.closest('tr.list-row'); if(tr) _listToggleExpand(tr); return; }
+  if(e.target.closest('.list-cb-cell')) return;   // checkbox clicks don't open the item
+  const row = e.target.closest('tr.list-row');
+  if(row && row.dataset.id) openItemPage(parseInt(row.dataset.id));
+});
+document.getElementById('listBody')?.addEventListener('mouseover', e=>{ const tr=e.target.closest('tr.list-row'); if(tr) tr.style.background='var(--surface)'; });
+document.getElementById('listBody')?.addEventListener('mouseout',  e=>{ const tr=e.target.closest('tr.list-row'); if(tr) tr.style.background=''; });
+document.getElementById('listTreeToggle')?.addEventListener('click', ()=>{
+  _listState.tree = !_listState.tree; _listState.page = 1;
+  const btn = document.getElementById('listTreeToggle');
+  if(btn){
+    btn.textContent = _listState.tree ? '☰ Tree: On' : '☰ Tree: Off';
+    btn.style.background = _listState.tree ? 'var(--accent)' : 'var(--surface)';
+    btn.style.color = _listState.tree ? '#fff' : 'var(--text)';
+  }
+  renderList();
+});
+
+// ── Bulk actions (Phase 1d-ii) ──
+function updateBulkBar(){
+  const bar = document.getElementById('listBulkBar');
+  if(!bar) return;
+  const n = _listSelected.size;
+  if(n > 0 && (isAdmin||isEditor)){
+    bar.style.display = 'flex';
+    document.getElementById('listBulkCount').textContent = `${n} selected`;
+    if(!document.getElementById('listBulkVal')) _listBulkValue();
+  } else {
+    bar.style.display = 'none';
+  }
+}
+function _listBulkValue(){
+  const field = document.getElementById('listBulkField')?.value;
+  const wrap  = document.getElementById('listBulkValueWrap');
+  if(!wrap) return;
+  const sel = opts => `<select id="listBulkVal" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${opts}</select>`;
+  if(field==='status')        wrap.innerHTML = sel(statuses.map(s=>`<option value="${escA(s)}">${esc(s)}</option>`).join(''));
+  else if(field==='dev')      wrap.innerHTML = sel(developers.map(d=>`<option value="${escA(d)}">${esc(d)}</option>`).join(''));
+  else if(field==='assignee') wrap.innerHTML = sel(users.map(u=>`<option value="${escA(u.username)}">${esc(u.username)}</option>`).join(''));
+  else if(field==='archived') wrap.innerHTML = sel(`<option value="1">Yes</option><option value="0">No</option>`);
+  else                        wrap.innerHTML = `<input id="listBulkVal" type="text" placeholder="value" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">`;
+}
+document.getElementById('listBulkField')?.addEventListener('change', _listBulkValue);
+document.getElementById('listBody')?.addEventListener('change', e=>{
+  const cb = e.target.closest('.list-cb');
+  if(!cb) return;
+  const id = parseInt(cb.dataset.id);
+  if(cb.checked) _listSelected.add(id); else _listSelected.delete(id);
+  updateBulkBar();
+});
+document.getElementById('listSelectAll')?.addEventListener('change', e=>{
+  const on = e.target.checked;
+  document.querySelectorAll('#listBody .list-cb').forEach(cb=>{
+    cb.checked = on; const id = parseInt(cb.dataset.id);
+    if(on) _listSelected.add(id); else _listSelected.delete(id);
+  });
+  updateBulkBar();
+});
+document.getElementById('listBulkClear')?.addEventListener('click', ()=>{
+  _listSelected.clear();
+  document.querySelectorAll('#listBody .list-cb').forEach(cb=> cb.checked=false);
+  const sa = document.getElementById('listSelectAll'); if(sa) sa.checked=false;
+  updateBulkBar();
+});
+document.getElementById('listBulkApply')?.addEventListener('click', async ()=>{
+  const field = document.getElementById('listBulkField').value;
+  const valEl = document.getElementById('listBulkVal');
+  let value = valEl ? valEl.value : '';
+  if(field==='archived') value = (value==='1');
+  const ids = [..._listSelected];
+  if(!ids.length) return;
+  const btn = document.getElementById('listBulkApply');
+  btn.disabled = true; btn.textContent = 'Applying…';
+  try {
+    const r = await API.post('/api/items/bulk', { ids, patch: { [field]: value } });
+    if(typeof showToast==='function') showToast(`Updated ${r.updated} item${r.updated!==1?'s':''}`, 'success');
+    await renderList();
+  } catch(e){ alert('Bulk update failed: ' + (e.message||e)); }
+  finally { btn.disabled = false; btn.textContent = 'Apply'; }
+});
 
 // Named static actions for elements that can't use dynamic keys
 window._dashStaticActions = {

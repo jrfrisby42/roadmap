@@ -493,6 +493,10 @@ def init_team_db(team: str):
             created_ts  TEXT NOT NULL,
             edited_ts   TEXT
         );
+        CREATE TABLE IF NOT EXISTS key_counters (
+            prefix          TEXT PRIMARY KEY,
+            seq             INTEGER NOT NULL DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS capacity_overrides (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             owner           TEXT    NOT NULL,
@@ -532,6 +536,30 @@ def init_team_db(team: str):
             c.execute("ALTER TABLE capacity_overrides ADD COLUMN note TEXT NOT NULL DEFAULT ''")
         except Exception:
             pass  # column already exists
+        # ── Phase 1 (JIRA-REPLACEMENT.md): indexed columns mirrored from item JSON ──
+        for _col, _defn in [
+            ("item_key", "TEXT"), ("type", "TEXT"), ("status", "TEXT"),
+            ("parent_id", "INTEGER"), ("product", "TEXT"), ("owner", "TEXT"),
+            ("assignee", "TEXT"), ("reporter", "TEXT"), ("priority", "TEXT"),
+            ("rank", "TEXT"), ("story_points", "REAL"), ("sprint_id", "TEXT"),
+            ("archived", "INTEGER NOT NULL DEFAULT 0"), ("updated_ts", "TEXT"),
+        ]:
+            try:
+                c.execute(f"ALTER TABLE projects ADD COLUMN {_col} {_defn}")
+            except Exception:
+                pass  # column already exists
+        for _idx, _expr in [
+            ("idx_projects_parent",   "parent_id"), ("idx_projects_status",  "status"),
+            ("idx_projects_product",  "product"),   ("idx_projects_owner",   "owner"),
+            ("idx_projects_sprint",   "sprint_id"), ("idx_projects_archived","archived"),
+        ]:
+            c.execute(f"CREATE INDEX IF NOT EXISTS {_idx} ON projects({_expr})")
+        # Partial unique index: keys are unique when present, many NULLs allowed.
+        try:
+            c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_key "
+                      "ON projects(item_key) WHERE item_key IS NOT NULL")
+        except Exception:
+            pass
         defaults = {
             "developers":   [],
             "statuses":     ["In Progress","Planned","In Testing","Released","TBD","Backlogged"],
@@ -555,6 +583,22 @@ def init_team_db(team: str):
                       (k, json.dumps(v)))
     _migrate_passwords(team)
     _migrate_config_keys(team)
+    # Backfill indexed columns in its OWN transaction (after the schema migration
+    # has committed the new columns). Keeping it separate means a rollback in the
+    # schema block — or a concurrent worker boot — can't lose the backfill. It is
+    # self-limiting (only rows with updated_ts IS NULL) and idempotent.
+    try:
+        with db(team) as c:
+            _unindexed = c.execute("SELECT id, data FROM projects WHERE updated_ts IS NULL").fetchall()
+            for _r in _unindexed:
+                try:
+                    _reindex_project(c, _r["id"], json.loads(_r["data"]))
+                except Exception:
+                    pass
+        if _unindexed:
+            print(f"[Migration] Indexed {len(_unindexed)} item(s) for team '{team}'")
+    except Exception as e:
+        log.warning(f"[Migration] index backfill failed for '{team}': {e}")
     _initialized_teams.add(team)
     print(f"[DB] Team '{team}' ready: {team_db_path(team)}")
 
@@ -690,7 +734,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "3.3.1"
+APP_VERSION = "3.4.0"
 
 app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
 
@@ -1254,6 +1298,101 @@ def reset_admin_password(body: dict = Body(...)):
     return {"ok": True, "team": team, "username": admin["username"], "note": "Password reset to frazil123, mustChangePassword=True"}
 
 # ── Projects ──────────────────────────────────────────────────────────────────
+# Phase 1 (JIRA-REPLACEMENT.md): items carry mirrored, indexed columns alongside
+# the JSON blob so we can query/filter/paginate without loading the whole team
+# into memory. The blob stays the source of truth; these helpers keep the columns
+# in sync on every write. NB: the blob's owner field is historically named `dev`.
+def _project_index_cols(data: dict) -> dict:
+    def _s(v):     return str(v) if v not in (None, "") else None
+    def _int(v):
+        try:    return int(v) if v not in (None, "", False) else None
+        except (TypeError, ValueError): return None
+    def _float(v):
+        try:    return float(v) if v not in (None, "") else None
+        except (TypeError, ValueError): return None
+    return {
+        "item_key":     _s(data.get("itemKey")),
+        "type":         _s(data.get("type")),
+        "status":       _s(data.get("status")),
+        "parent_id":    _int(data.get("parent")),
+        "product":      _s(data.get("product")),
+        "owner":        _s(data.get("dev")),          # blob field is `dev`
+        "assignee":     _s(data.get("assignee")),     # new in later phases
+        "reporter":     _s(data.get("reporter")),     # new in later phases
+        "priority":     _s(data.get("priority")),
+        "rank":         _s(data.get("rank")),          # new in later phases
+        "story_points": _float(data.get("storyPoints")),
+        "sprint_id":    _s(data.get("sprintId")),
+        "archived":     1 if data.get("archived") else 0,
+    }
+
+def _reindex_project(c, pid: int, data: dict, ts: str = None):
+    """Mirror an item's blob fields into its indexed columns (+ updated_ts)."""
+    cols = _project_index_cols(data)
+    cols["updated_ts"] = ts or datetime.now(timezone.utc).isoformat()
+    assignments = ", ".join(f"{k}=?" for k in cols)
+    c.execute(f"UPDATE projects SET {assignments} WHERE id=?", (*cols.values(), pid))
+
+def _insert_project(c, data: dict, ts: str = None) -> int:
+    """INSERT an item and populate its indexed columns. Returns the new id."""
+    cur = c.execute("INSERT INTO projects(data) VALUES(?)", (json.dumps(data),))
+    pid = cur.lastrowid
+    _reindex_project(c, pid, data, ts)
+    return pid
+
+def _save_project(c, pid: int, data: dict, ts: str = None):
+    """UPDATE an item's blob AND its indexed columns together (no drift)."""
+    c.execute("UPDATE projects SET data=? WHERE id=?", (json.dumps(data), pid))
+    _reindex_project(c, pid, data, ts)
+
+# ── Human-readable item keys (Phase 1b, JIRA-REPLACEMENT.md §4) ───────────────
+# Key = {PREFIX}-{n}, prefix configured per product in Admin → Projects. Counter
+# is per-prefix and atomic within the transaction. Keys are immutable once set.
+def _next_key_seq(c, prefix: str) -> int:
+    c.execute("INSERT INTO key_counters(prefix, seq) VALUES(?, 0) ON CONFLICT(prefix) DO NOTHING", (prefix,))
+    c.execute("UPDATE key_counters SET seq = seq + 1 WHERE prefix=?", (prefix,))
+    return c.execute("SELECT seq FROM key_counters WHERE prefix=?", (prefix,)).fetchone()[0]
+
+def _product_prefix(c, product_name: str):
+    if not product_name:
+        return None
+    row = c.execute("SELECT value FROM config WHERE key='products'").fetchone()
+    for p in (json.loads(row["value"]) if row else []):
+        if isinstance(p, dict) and p.get("name") == product_name:
+            return (p.get("keyPrefix") or "").strip() or None
+    return None
+
+def _assign_item_key(c, data: dict):
+    """Give the item a {PREFIX}-{n} key if its product has a prefix and it has
+    none yet. Immutable once set (kept even if the product later changes)."""
+    if data.get("itemKey"):
+        return
+    prefix = _product_prefix(c, data.get("product"))
+    if prefix:
+        data["itemKey"] = f"{prefix}-{_next_key_seq(c, prefix)}"
+
+def _backfill_item_keys(team: str) -> int:
+    """Assign keys to keyless items whose product now has a keyPrefix. Idempotent;
+    called after a products config save so defining a prefix keys existing items."""
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='products'").fetchone()
+        prefixes = {p["name"]: (p.get("keyPrefix") or "").strip()
+                    for p in (json.loads(row["value"]) if row else [])
+                    if isinstance(p, dict) and (p.get("keyPrefix") or "").strip()}
+        assigned = 0
+        for name, prefix in prefixes.items():
+            rows = c.execute(
+                "SELECT id, data FROM projects WHERE product=? AND (item_key IS NULL OR item_key='') ORDER BY id",
+                (name,)).fetchall()
+            for r in rows:
+                data = json.loads(r["data"])
+                if data.get("itemKey"):
+                    continue
+                data["itemKey"] = f"{prefix}-{_next_key_seq(c, prefix)}"
+                _save_project(c, r["id"], data)
+                assigned += 1
+    return assigned
+
 @app.post("/api/projects")
 def create_project(body: dict, auth: dict = Depends(require_role("admin", "editor"))):
     team = auth["team"]
@@ -1264,8 +1403,8 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     if "parallelResources" in body:
         body["parallelResources"] = round_up_to_quarter(body["parallelResources"])
     with db(team) as c:
-        cur = c.execute("INSERT INTO projects(data) VALUES(?)", (json.dumps(body),))
-        body["id"] = cur.lastrowid
+        _assign_item_key(c, body)
+        body["id"] = _insert_project(c, body)
     write_audit(team, "create", username, body["id"], body.get("name",""))
     return body
 
@@ -1308,7 +1447,7 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
         changes = {k: {"from": old.get(k), "to": v}
                    for k, v in body.items()
                    if old.get(k) != v and k not in {"jiraTickets","description"}}
-        c.execute("UPDATE projects SET data=? WHERE id=?", (json.dumps(body), pid))
+        _save_project(c, pid, body)
     write_audit(team, "update", username, pid, body.get("name",""), changes or None)
     body["id"] = pid
 
@@ -1333,7 +1472,7 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
                         current["jiraFeatureFlags"] = sorted(all_ff)
                         # Merge into featureFlags (union of existing + Jira, deduped)
                         current["featureFlags"] = sorted(set(current.get("featureFlags") or []) | all_ff)
-                        c.execute("UPDATE projects SET data=? WHERE id=?", (json.dumps(current), pid))
+                        _save_project(c, pid, current)
                         body["jiraFeatureFlags"] = current["jiraFeatureFlags"]
                         body["featureFlags"]     = current["featureFlags"]
                 log.info(f"[FeatureFlags] Pulled {len(all_ff)} flags for item {pid} on release")
@@ -1356,6 +1495,139 @@ def delete_project(pid: int, username: str = "",
         c.execute("DELETE FROM projects WHERE id=?", (pid,))
     write_audit(team, "delete", username, pid, name)
     return {"ok": True}
+
+# Sortable columns for /api/items (whitelist — never interpolate raw user input).
+_ITEMS_SORTABLE = {"updated_ts", "item_key", "status", "type", "product",
+                   "owner", "assignee", "priority", "story_points", "sprint_id", "id"}
+
+@app.get("/api/items")
+def list_items(
+    auth: dict = Depends(require_auth),
+    product: Optional[str] = None,
+    type: Optional[str] = None,
+    status: Optional[str] = None,
+    owner: Optional[str] = None,
+    assignee: Optional[str] = None,
+    sprint: Optional[str] = None,
+    parent_id: Optional[str] = None,
+    archived: Optional[str] = None,
+    q: Optional[str] = None,
+    sort: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    counts: Optional[str] = None,
+):
+    """Server-side query/search/paginate over the indexed item columns
+    (JIRA-REPLACEMENT.md §3.2). Returns a page of full item blobs + total count.
+    With counts=1, each item gets a `_childCount` (non-archived children) so the
+    tree view knows which rows are expandable. Read-only; any role may call it."""
+    team = auth["team"]
+    init_team_db(team)
+
+    where, params = [], []
+    def eq(col, val):
+        if val is not None and val != "":
+            where.append(f"{col}=?"); params.append(val)
+    eq("product", product)
+    eq("type", type)
+    eq("status", status)
+    eq("owner", owner)
+    eq("assignee", assignee)
+    eq("sprint_id", sprint)
+
+    # parent_id: an integer, or 'none'/'null' for top-level items.
+    if parent_id not in (None, ""):
+        if parent_id.lower() in ("none", "null"):
+            where.append("parent_id IS NULL")
+        else:
+            try:
+                params.append(int(parent_id)); where.append("parent_id=?")
+            except ValueError:
+                raise HTTPException(400, "parent_id must be an integer or 'none'")
+
+    # archived: default hides archived; 'all' = both; '1'/'true' = archived only.
+    a = (archived or "").lower()
+    if a in ("1", "true", "yes"):
+        where.append("archived=1")
+    elif a != "all":
+        where.append("archived=0")
+
+    if q:
+        # item_key (column) + the blob text (covers name/notes/etc.) — fine at this scale.
+        where.append("(item_key LIKE ? OR data LIKE ?)")
+        params += [f"%{q}%", f"%{q}%"]
+
+    sort_col, _, sort_dir = (sort or "updated_ts:desc").partition(":")
+    if sort_col not in _ITEMS_SORTABLE:
+        sort_col = "updated_ts"
+    sort_dir = "ASC" if sort_dir.lower() == "asc" else "DESC"
+
+    page = max(1, page)
+    page_size = max(1, min(500, page_size))
+    offset = (page - 1) * page_size
+
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    with db(team) as c:
+        total = c.execute(f"SELECT COUNT(*) FROM projects {where_sql}", params).fetchone()[0]
+        rows = c.execute(
+            f"SELECT id, data FROM projects {where_sql} "
+            f"ORDER BY {sort_col} {sort_dir}, id DESC LIMIT ? OFFSET ?",
+            (*params, page_size, offset)
+        ).fetchall()
+        items = []
+        for r in rows:
+            p = json.loads(r["data"]); p["id"] = r["id"]; items.append(p)
+        # Optional child counts for the tree view (one grouped query for the page).
+        if counts and items:
+            ids = [it["id"] for it in items]
+            qmarks = ",".join("?" * len(ids))
+            cc = {row["parent_id"]: row["n"] for row in c.execute(
+                f"SELECT parent_id, COUNT(*) AS n FROM projects "
+                f"WHERE parent_id IN ({qmarks}) AND archived=0 GROUP BY parent_id", ids).fetchall()}
+            for it in items:
+                it["_childCount"] = cc.get(it["id"], 0)
+    return {"items": items, "total": total, "page": page, "page_size": page_size,
+            "pages": (total + page_size - 1) // page_size if total else 0}
+
+# Fields safe to set in bulk. Deliberately excludes scheduling/capacity fields
+# (dueWeeks/testWeeks/parallelResources/start/due) — those have per-item rules.
+_BULK_FIELDS = {"status", "dev", "assignee", "sprintId", "priority", "archived"}
+
+@app.post("/api/items/bulk")
+def bulk_update_items(body: dict = Body(...),
+                      auth: dict = Depends(require_role("admin", "editor"))):
+    """Apply a small patch to many items at once, in one transaction. Only the
+    whitelisted fields above may be set."""
+    team  = auth["team"]
+    ids   = body.get("ids") or []
+    patch = body.get("patch") or {}
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(400, "ids must be a non-empty list")
+    if not isinstance(patch, dict) or not patch:
+        raise HTTPException(400, "patch must be a non-empty object")
+    bad = set(patch) - _BULK_FIELDS
+    if bad:
+        raise HTTPException(400, f"Fields not allowed in bulk edit: {', '.join(sorted(bad))}")
+    if "archived" in patch:
+        patch["archived"] = bool(patch["archived"])
+
+    updated = 0
+    with db(team) as c:
+        for raw in ids:
+            try:
+                pid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+            if not row:
+                continue
+            data = json.loads(row["data"])
+            data.update(patch)
+            _save_project(c, pid, data)
+            updated += 1
+    write_audit(team, "bulk_update", auth["username"],
+                changes={"count": updated, "fields": list(patch.keys())})
+    return {"updated": updated, "patch": patch}
 
 # ── Config ────────────────────────────────────────────────────────────────────
 VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
@@ -1402,6 +1674,12 @@ def set_config(key: str, body = Body(...), username: str = "",
                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                   (key, json.dumps(body)))
     write_audit(team, f"config:{key}", username, changes={"updated": key})
+    # Defining/changing a product's keyPrefix backfills keys for its existing items.
+    if key == "products":
+        try:
+            _backfill_item_keys(team)
+        except Exception as e:
+            log.warning(f"[ItemKeys] backfill after products save failed: {e}")
     return body
 
 # ── Import ────────────────────────────────────────────────────────────────────
@@ -1413,7 +1691,7 @@ def bulk_import(body: dict = Body(...), auth: dict = Depends(require_role("admin
         c.execute("DELETE FROM projects")
         for p in body.get("projects", []):
             p.pop("id", None)
-            c.execute("INSERT INTO projects(data) VALUES(?)", (json.dumps(p),))
+            _insert_project(c, p)
     for key in VALID_KEYS:
         if key in body and body[key]:
             val = body[key]
@@ -2229,7 +2507,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
     p["jiraSyncSkipped"]      = skipped
 
     with db(team) as c:
-        c.execute("UPDATE projects SET data=? WHERE id=?", (json.dumps(p), pid))
+        _save_project(c, pid, p)
 
     # Roadmap status change → item history activity (Auto-Cleared, not visible in AC open tab)
     if status_change_activity:
@@ -2314,8 +2592,7 @@ def _do_sync_children(pid: int, p: dict, team: str, username: str) -> dict:
                                     existing["parent"] = pid
                                     existing["recurrence_parent"] = pid
                                     with db(team) as c2:
-                                        c2.execute("UPDATE projects SET data=? WHERE id=?",
-                                                   (json.dumps(existing), rr["id"]))
+                                        _save_project(c2, rr["id"], existing)
                                     write_audit(team, "update", username, rr["id"],
                                                 existing.get("name", ""),
                                                 changes={"parent": {"from": existing_parent, "to": pid},
@@ -2348,10 +2625,8 @@ def _do_sync_children(pid: int, p: dict, team: str, username: str) -> dict:
                     "hidden":            True,   # hidden by default — review before showing on roadmap
                 }
                 with db(team) as c:
-                    cur = c.execute("INSERT INTO projects(data) VALUES(?)", (json.dumps(child),))
-                    child_id = cur.lastrowid
-                    c.execute("UPDATE projects SET data=? WHERE id=?",
-                              (json.dumps({**child, "id": child_id}), child_id))
+                    child_id = _insert_project(c, child)
+                    _save_project(c, child_id, {**child, "id": child_id})
                 existing_jira_keys.add(sub_key)
                 created_ids.append(child_id)
                 write_audit(team, "create", username, child_id, sub_summary,
@@ -3090,8 +3365,7 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
     committed_ts = datetime.now(timezone.utc).isoformat()
     with db(team) as c:
         for item_id, updated in to_save.items():
-            c.execute("UPDATE projects SET data=? WHERE id=?",
-                      (json.dumps(updated), item_id))
+            _save_project(c, item_id, updated)
         for act in activities:
             act.setdefault("created_ts", committed_ts)
             c.execute("""INSERT INTO activities
@@ -3354,8 +3628,7 @@ def _sync_recurrence_child_statuses(parent_id: int, team: str, username: str) ->
                     row_id = child.get("_row_id") or child.get("id")
                     child_updated.pop("_row_id", None)
                     with db(team) as c:
-                        c.execute("UPDATE projects SET data=? WHERE id=?",
-                                  (json.dumps(child_updated), row_id))
+                        _save_project(c, row_id, child_updated)
                     write_audit(team, "update", username, row_id,
                                 child.get("name", ""),
                                 changes={"status": {"from": child.get("status"), "to": released_status},
@@ -3417,10 +3690,8 @@ def spawn_recurrence(pid: int, body: dict = Body({}), auth: dict = Depends(requi
     new_item["recurrence_parent"]  = pid
 
     with db(team) as c:
-        cur = c.execute("INSERT INTO projects(data) VALUES(?)", (json.dumps(new_item),))
-        new_id = cur.lastrowid
-        c.execute("UPDATE projects SET data=? WHERE id=?",
-                  (json.dumps({**new_item, "id": new_id}), new_id))
+        new_id = _insert_project(c, new_item)
+        _save_project(c, new_id, {**new_item, "id": new_id})
         new_row = c.execute("SELECT * FROM projects WHERE id=?", (new_id,)).fetchone()
     result = json.loads(new_row["data"])
     result["id"] = new_id
