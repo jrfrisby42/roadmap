@@ -12524,6 +12524,8 @@ function _ipBeginEdit(cell){
     cell.innerHTML = `<select style="${bs}">${opts.map(o=>`<option value="${escA(o.value)}" ${String(cur??'')===String(o.value)?'selected':''}>${esc(o.label)}</option>`).join('')}</select>`;
   } else if(kind==='number'){
     cell.innerHTML = `<input type="number" step="0.5" min="0" value="${escA(cur??'')}" style="${bs}">`;
+  } else if(kind==='date'){
+    cell.innerHTML = `<input type="date" value="${escA(cur||'')}" style="${bs}">`;
   } else {
     cell.innerHTML = `<input type="text" value="${escA(cur??'')}" style="${bs}">`;
   }
@@ -12539,12 +12541,26 @@ function _ipBeginEdit(cell){
     if(fr && String(fr[field]??'')===String(v??'')){ if(fr) renderItemPage(fr); return; }
     saveItemPageField(field, v);
   };
-  if(kind==='select'){ ctrl.addEventListener('change', commit); ctrl.addEventListener('blur', cancel); }
+  if(kind==='select'||kind==='date'){ ctrl.addEventListener('change', commit); ctrl.addEventListener('blur', cancel); }
   else {
     ctrl.addEventListener('blur', commit);
     ctrl.addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); ctrl.blur(); } else if(ev.key==='Escape'){ cancel(); } });
   }
 }
+// Derived due date — mirrors the modal's formula (compressed dev weeks + testing).
+function computeItemDue(p){
+  const s = p.start;
+  if(!s) return p.due || '';
+  const w  = parseFloat(p.dueWeeks)||0;
+  const tw = parseFloat(p.testWeeks)||0;
+  const pr = roundUpToQuarter(parseFloat(p.parallelResources)||1);
+  const devWeeks = Math.max(w - tw, 0);
+  const compressedDev = pr > 1 ? devWeeks/pr : devWeeks;
+  const totalWeeks = compressedDev + tw;
+  const d = nextMonday(new Date(new Date(s).setHours(0,0,0,0) + totalWeeks*7*86400000));
+  return d.toISOString().slice(0,10);
+}
+
 async function saveItemPageField(field, value){
   const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
   if(field==='priority') value = (value===''||value==null) ? '' : parseInt(value);
@@ -12554,6 +12570,15 @@ async function saveItemPageField(field, value){
     renderItemPage(p); return;
   }
   const updated = {...p, [field]: value, _username: getUsername()};
+  // Schedule-driving fields: validate + recompute the derived due date (like the modal).
+  if(['start','dueWeeks','testWeeks','parallelResources'].includes(field)){
+    const dw = parseFloat(updated.dueWeeks)||0, tw = parseFloat(updated.testWeeks)||0;
+    if(tw>0 && dw>0 && tw>=dw){
+      if(typeof showToast==='function') showToast(`Test period (${tw}w) must be less than the time estimate (${dw}w)`,'error');
+      renderItemPage(p); return;
+    }
+    updated.due = computeItemDue(updated);
+  }
   try {
     const saved = await API.put('/api/projects/'+p.id, updated);
     const idx = projects.findIndex(x=>x.id===p.id);
@@ -12615,6 +12640,8 @@ function renderItemPage(p){
   const isLocked    = isLockedActive(p);
   const isTerm      = isTerminalStatus(p.status);
   const canEdit     = (isAdmin||isEditor) && !isTerm;
+  const timeRO      = isLocked && !isAdmin;   // editors can't edit time/date fields on active items
+  const prRO        = isLocked;               // parallelResources locked while active (server 422)
 
   // Header
   document.getElementById('ipTitle').textContent = p.name||'Untitled';
@@ -12681,8 +12708,9 @@ function renderItemPage(p){
     ipEditField('sprintId',   'Sprint',       esc(p.sprintId||''), 'text'),
     ipField('Project',       esc(p.product||'—')),
     ipField('Reporter',      esc(p.reporter||'—')),
-    ipField('Time Estimate', p.dueWeeks ? fmtEstimate(p.dueWeeks) : null),
-    ipField('Test Period',   p.testWeeks!==undefined ? fmtEstimate(p.testWeeks) : null),
+    ipEditField('dueWeeks',          'Time Estimate',      p.dueWeeks ? fmtEstimate(p.dueWeeks) : '', 'number', {readonly:timeRO}),
+    ipEditField('testWeeks',         'Test Period',        (p.testWeeks!==undefined && p.testWeeks!=='') ? fmtEstimate(p.testWeeks) : '', 'number', {readonly:timeRO}),
+    ipEditField('parallelResources', 'Parallel Resources', String(p.parallelResources||1), 'number', {readonly:prRO}),
     p.featureFlags?.length ? `<div><div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:5px">Feature Flags</div><div style="display:flex;flex-wrap:wrap;gap:4px">${renderFeatureFlagsInline(p.featureFlags||[], new Set(p.jiraFeatureFlags||[]))}</div></div>` : '',
   ].join('');
 
@@ -12693,13 +12721,13 @@ function renderItemPage(p){
 
   // Schedule sidebar
   document.getElementById('ipSchedule').innerHTML = [
-    ipField('Start Date',    fmtDate(startD)||p.start, {always:!!(p.start)}),
+    ipEditField('start', 'Start Date', fmtDate(startD)||'', 'date', {readonly:timeRO}),
     ipCodeComplete ? `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--surface2)"><span style="color:#0090d4;font-weight:700;font-size:12px">Code Complete</span><span style="color:#0090d4;font-weight:700;font-size:12px">${fmtDate(ipCodeComplete)}</span></div>` : '',
-    ipField('Due Date',      fmtDate(dueD),    {bold:true}),
-    fmtDate(revD) ? ipField('Revised Due',   fmtDate(revD), {bold:true}) : '',
-    fmtDate(expD) ? ipField('Expected Date', fmtDate(expD)) : '',
-    fmtDate(relD) ? ipField('Release Date',  fmtDate(relD)) : '',
-    p.delay     ? ipField('Delay Reason',    esc(stripHtml(p.delay))) : '',
+    ipField('Due Date', fmtDate(dueD), {bold:true}),   // derived from start + estimate
+    ipEditField('revised',     'Revised Due',   fmtDate(revD)||'', 'date', {bold:true, readonly:timeRO}),
+    ipEditField('expected',    'Expected Date', fmtDate(expD)||'', 'date', {readonly:timeRO}),
+    ipEditField('releaseDate', 'Release Date',  fmtDate(relD)||'', 'date', {readonly:timeRO}),
+    p.delay ? ipField('Delay Reason', esc(stripHtml(p.delay))) : '',
   ].join('') + lockNote;
 
   // Notes
@@ -12931,10 +12959,10 @@ async function saveItemPageNotes(){
         status:'Auto-Cleared'
       }).catch(()=>{});
     }
-    showToast('Notes saved');
+    showToast('Description saved');
     const btn = document.getElementById('ipNotesSaveBtn');
-    if(btn){ btn.textContent='Saved'; btn.style.background='#22b96e'; setTimeout(()=>{ btn.textContent='Save Notes'; btn.style.background='var(--accent)'; },2000); }
-  } catch(e){ showToast('Failed to save notes'); }
+    if(btn){ btn.textContent='Saved'; btn.style.background='#22b96e'; setTimeout(()=>{ btn.textContent='Save'; btn.style.background='var(--accent)'; },2000); }
+  } catch(e){ showToast('Failed to save description'); }
 }
 
 // Check for ?item= on boot
