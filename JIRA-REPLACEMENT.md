@@ -329,8 +329,13 @@ ShareBox already has S3-backed storage — don't rebuild it here.
   returns to the exact previous view in-app (via history) and falls back to a plain
   close for deep links.
 - **Item Page: inline-edit overhaul** — make fields editable directly on the Item
-  Page (and consistent with the List view) instead of round-tripping through the
-  modal. (Queued.)
+  Page instead of round-tripping through the modal. **In progress (staged):**
+  - ✅ Stage 1: inline-editable Details (status, owner/Pod, assignee, type, priority,
+    story points, sprint) with click-to-edit + autosave + role/active-status rules;
+    `reporter` auto-set on create.
+  - Remaining: inline title + description polish; inline schedule fields (with the
+    active-status lock); subtasks + linked-work-items add/navigate; attachments
+    (ShareBox); the modal stays for now.
 
 ---
 

@@ -1398,6 +1398,7 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     team = auth["team"]
     username = body.pop("_username", auth["username"])
     body.pop("id", None)
+    body.setdefault("reporter", username)   # who created the item (immutable-ish)
     # Server-side rounding of parallelResources — must happen BEFORE the insert
     # so the persisted value matches what we return (not just the response).
     if "parallelResources" in body:

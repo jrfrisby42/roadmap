@@ -12495,6 +12495,82 @@ function ipField(label, value, opts={}){
   </div>`;
 }
 
+// ── Inline-editable Item Page fields (inline-edit overhaul, Stage 1) ──
+function ipEditField(field, label, displayHtml, kind, opts={}){
+  const editable = (isAdmin||isEditor) && !opts.readonly;
+  const val = (displayHtml===''||displayHtml==null) ? '<span style="color:var(--muted)">—</span>' : displayHtml;
+  const lbl = `<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">${label}</div>`;
+  const vs  = `font-size:13px;font-weight:${opts.bold?'700':'400'};color:var(--text)`;
+  if(!editable) return `<div>${lbl}<div style="${vs}">${val}</div></div>`;
+  return `<div>${lbl}<div class="ip-edit" data-field="${field}" data-kind="${kind}" title="Click to edit" style="${vs};cursor:text;border-radius:4px;padding:2px 5px;margin:-2px -5px" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">${val}</div></div>`;
+}
+function _ipFieldOptions(field){
+  const o = (v,l)=>({value:v, label:l});
+  if(field==='status')   return statuses.map(s=>o(s,s));
+  if(field==='type')     return types.map(t=>o(t.name,t.name));
+  if(field==='dev')      return [o('','— Unassigned —'), ...developers.map(d=>o(d,d))];
+  if(field==='assignee') return [o('','— Unassigned —'), ...users.map(u=>o(u.username,u.username))];
+  if(field==='priority') return [o('','— None —'), o(1,'Urgent'), o(2,'High'), o(3,'Medium'), o(4,'Low')];
+  return [];
+}
+function _ipBeginEdit(cell){
+  const field = cell.dataset.field, kind = cell.dataset.kind;
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  cell.dataset.editing = '1';
+  const cur = p[field];
+  const bs = "width:100%;box-sizing:border-box;padding:3px 6px;font-size:13px;border:1px solid var(--accent);border-radius:4px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif;outline:none";
+  if(kind==='select'){
+    const opts = _ipFieldOptions(field);
+    cell.innerHTML = `<select style="${bs}">${opts.map(o=>`<option value="${escA(o.value)}" ${String(cur??'')===String(o.value)?'selected':''}>${esc(o.label)}</option>`).join('')}</select>`;
+  } else if(kind==='number'){
+    cell.innerHTML = `<input type="number" step="0.5" min="0" value="${escA(cur??'')}" style="${bs}">`;
+  } else {
+    cell.innerHTML = `<input type="text" value="${escA(cur??'')}" style="${bs}">`;
+  }
+  const ctrl = cell.firstElementChild; ctrl.focus(); try { ctrl.select && ctrl.select(); } catch(e){}
+  let done = false;
+  const fresh = ()=> projects.find(x=>x.id===_itemPageId);
+  const cancel = ()=>{ if(done) return; done=true; const fr=fresh(); if(fr) renderItemPage(fr); };
+  const commit = ()=>{
+    if(done) return; done=true;
+    let v = ctrl.value;
+    if(kind==='number') v = (v===''?null:parseFloat(v));
+    const fr = fresh();
+    if(fr && String(fr[field]??'')===String(v??'')){ if(fr) renderItemPage(fr); return; }
+    saveItemPageField(field, v);
+  };
+  if(kind==='select'){ ctrl.addEventListener('change', commit); ctrl.addEventListener('blur', cancel); }
+  else {
+    ctrl.addEventListener('blur', commit);
+    ctrl.addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); ctrl.blur(); } else if(ev.key==='Escape'){ cancel(); } });
+  }
+}
+async function saveItemPageField(field, value){
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  if(field==='priority') value = (value===''||value==null) ? '' : parseInt(value);
+  // Preserve the rule: can't move to an active status without an owner.
+  if(field==='status' && isActiveStatus(value) && !p.dev){
+    if(typeof showToast==='function') showToast('Assign an Owner before moving to an active status.','error');
+    renderItemPage(p); return;
+  }
+  const updated = {...p, [field]: value, _username: getUsername()};
+  try {
+    const saved = await API.put('/api/projects/'+p.id, updated);
+    const idx = projects.findIndex(x=>x.id===p.id);
+    if(idx>=0) projects[idx] = {...updated, ...(saved&&typeof saved==='object'?saved:{}), id:p.id};
+    if(typeof showToast==='function') showToast('Saved','success');
+    renderItemPage((idx>=0?projects[idx]:updated));
+  } catch(e){
+    if(typeof showToast==='function') showToast('Save failed: '+(e.message||e),'error'); else alert(e.message||e);
+    renderItemPage(p);
+  }
+}
+// Document-level delegation so it works regardless of when the overlay is built.
+document.addEventListener('click', e=>{
+  const cell = e.target.closest('.ip-edit');
+  if(cell && cell.dataset.editing!=='1') _ipBeginEdit(cell);
+});
+
 function openItemPage(id, opts={}){
   const p = projects.find(x=>x.id===id);
   if(!p) return;
@@ -12574,14 +12650,17 @@ function renderItemPage(p){
   const lockNote = isLocked && !isAdmin ? `<span style="font-size:10px;color:#e8a000;display:block;margin-top:2px">🔒 Locked — active item</span>` : '';
 
   document.getElementById('ipFields').innerHTML = [
-    ipField('Owner',       esc(p.dev||'Unassigned'), {bold:true}),
-    ipField('Project',     esc(p.product||'—')),
-    ipField('Type',        esc(p.type||'—')),
-    ipField('Status',      esc(p.status||'—'), {bold:true}),
-    ipField('Priority',    p.priority ? PRIO_LABELS[p.priority] : null),
+    ipEditField('status',     'Status',       esc(p.status||''), 'select', {bold:true}),
+    ipEditField('dev',        'Owner (Pod)',  esc(p.dev||''),    'select', {bold:true}),
+    ipEditField('assignee',   'Assignee',     esc(p.assignee||''), 'select'),
+    ipEditField('type',       'Type',         esc(p.type||''),   'select'),
+    ipEditField('priority',   'Priority',     p.priority ? PRIO_LABELS[p.priority] : '', 'select'),
+    ipEditField('storyPoints','Story Points', (p.storyPoints==null||p.storyPoints==='') ? '' : String(p.storyPoints), 'number'),
+    ipEditField('sprintId',   'Sprint',       esc(p.sprintId||''), 'text'),
+    ipField('Project',       esc(p.product||'—')),
+    ipField('Reporter',      esc(p.reporter||'—')),
     ipField('Time Estimate', p.dueWeeks ? fmtEstimate(p.dueWeeks) : null),
-    ipField('Test Period', p.testWeeks!==undefined ? fmtEstimate(p.testWeeks) : null),
-    ipField('Recurrence',  p.recurrence && p.recurrence!=='none' ? p.recurrence : null),
+    ipField('Test Period',   p.testWeeks!==undefined ? fmtEstimate(p.testWeeks) : null),
     p.featureFlags?.length ? `<div><div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:5px">Feature Flags</div><div style="display:flex;flex-wrap:wrap;gap:4px">${renderFeatureFlagsInline(p.featureFlags||[], new Set(p.jiraFeatureFlags||[]))}</div></div>` : '',
   ].join('');
 
