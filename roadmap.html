@@ -1058,13 +1058,8 @@
 <div id="listView" style="display:none;padding:16px 20px">
   <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">
     <input id="listSearch" type="search" placeholder="Search key, name, notes…" style="padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none;min-width:200px;flex:1;max-width:320px;color:var(--text)">
-    <select id="listProduct"  style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
-    <select id="listType"     style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
-    <select id="listStatus"   style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
-    <select id="listOwner"    style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
     <select id="listAssignee" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
-    <select id="listPageSize" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"><option value="25">25 / page</option><option value="50" selected>50 / page</option><option value="100">100 / page</option></select>
-    <button id="listTreeToggle" title="Toggle hierarchy (parent → children)" style="padding:6px 12px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">☰ Tree: Off</button>
+    <span style="font-size:11px;color:var(--muted)">Owner / Type / Project / Status filters are in the top bar ↑</span>
     <span id="listCount" style="margin-left:auto;font-size:12px;color:var(--muted)"></span>
   </div>
   <div id="listBulkBar" style="display:none;align-items:center;gap:8px;margin-bottom:10px;padding:8px 12px;background:rgba(91,79,255,0.08);border:1px solid var(--accent);border-radius:8px;flex-wrap:wrap">
@@ -1100,7 +1095,11 @@
       <tbody id="listBody"></tbody>
     </table>
   </div>
-  <div id="listPager" style="display:flex;gap:10px;align-items:center;justify-content:center;margin-top:14px"></div>
+  <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px">
+    <button id="listTreeToggle" title="Toggle hierarchy (parent → children)" style="padding:6px 12px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">☰ Tree: Off</button>
+    <select id="listPageSize" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"><option value="25">25 / page</option><option value="50" selected>50 / page</option><option value="100">100 / page</option></select>
+    <div id="listPager" style="display:flex;gap:10px;align-items:center;justify-content:center;flex:1"></div>
+  </div>
 </div>
 
 <!-- DASHBOARD VIEW -->
@@ -2013,7 +2012,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '3.7.1';
+const APP_VERSION = '3.8.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2154,6 +2153,7 @@ function renderCurrentView(){
   if(viewMode === 'planning') renderPlanningBoard();
   else if(viewMode === 'kanban') renderKanban();
   else if(viewMode === 'dashboard') renderDashboard();
+  else if(viewMode === 'list'){ _listState.page = 1; renderList(); }
   else render();
 }
 
@@ -8434,10 +8434,8 @@ function _listFillSelect(id, options, allLabel){
 }
 
 function populateListFilters(){
-  _listFillSelect('listProduct',  products.map(p=>p.name),   'All projects');
-  _listFillSelect('listType',     types.map(t=>t.name),      'All types');
-  _listFillSelect('listStatus',   statuses,                  'All statuses');
-  _listFillSelect('listOwner',    developers,                'All owners');
+  // Owner / Type / Project / Status now use the top-bar filters — only the
+  // List-local Assignee select needs populating here.
   _listFillSelect('listAssignee', users.map(u=>u.username),  'All assignees');
   _listFiltersReady = true;
 }
@@ -8445,9 +8443,15 @@ function populateListFilters(){
 function _listQuery(){
   const v = id => (document.getElementById(id)?.value || '').trim();
   const params = new URLSearchParams();
-  const map = { product:'listProduct', type:'listType', status:'listStatus',
-                owner:'listOwner', assignee:'listAssignee' };
-  for(const [k,id] of Object.entries(map)){ const val = v(id); if(val) params.set(k, val); }
+  // Owner / Type / Project / Status come from the shared top-bar multi-select
+  // filters (null = "All"). They're passed as comma-separated lists; /api/items
+  // expands those to SQL IN(...). Assignee stays a List-local single select.
+  const setMulti = (k, arr) => { if(arr && arr.length) params.set(k, arr.join(',')); };
+  setMulti('product', getSelectedProducts());
+  setMulti('type',    getSelectedTypes());
+  setMulti('status',  getSelectedStatuses());
+  setMulti('owner',   getSelectedDevs());
+  const asg = v('listAssignee'); if(asg) params.set('assignee', asg);
   const q = v('listSearch'); if(q) params.set('q', q);
   params.set('page', _listState.page);
   params.set('page_size', _listState.page_size);
@@ -8538,9 +8542,7 @@ function _renderListPager(data){
   document.getElementById('listNext')?.addEventListener('click', ()=>{ if(_listState.page<pages){ _listState.page++; renderList(); }});
 }
 
-['listProduct','listType','listStatus','listOwner','listAssignee'].forEach(id=>{
-  document.getElementById(id)?.addEventListener('change', ()=>{ _listState.page=1; renderList(); });
-});
+document.getElementById('listAssignee')?.addEventListener('change', ()=>{ _listState.page=1; renderList(); });
 document.getElementById('listPageSize')?.addEventListener('change', e=>{
   _listState.page_size = parseInt(e.target.value)||50; _listState.page=1; renderList();
 });
@@ -12667,7 +12669,10 @@ async function ipGlobalSearch(q){
   if(!box) return;
   if(!q){ box.style.display='none'; box.innerHTML=''; return; }
   let data;
-  try { data = await API.get('/api/items?q='+encodeURIComponent(q)+'&page_size=8&sort=updated_ts:desc'); }
+  // Scope results to the current item's project so the search stays in context.
+  const cur = projects.find(x=>x.id===_itemPageId);
+  const prodParam = (cur && cur.product) ? '&product='+encodeURIComponent(cur.product) : '';
+  try { data = await API.get('/api/items?q='+encodeURIComponent(q)+'&page_size=8&sort=updated_ts:desc'+prodParam); }
   catch(e){ box.style.display='none'; return; }
   const items = data.items || [];
   box.innerHTML = items.length
@@ -12871,11 +12876,14 @@ function renderItemPage(p){
     _sb.className = p.status ? statusCls(p.status) : '';   // defined status color (light/dark aware)
     _sb.style.background = ''; _sb.style.color = ''; _sb.style.border = '';
   }
-  // Edit/Delete now live in the item-page hamburger menu (gated by role).
-  const _mEdit = document.getElementById('ipMenuEdit');
-  if(_mEdit) _mEdit.style.display = (isAdmin||isEditor) ? '' : 'none';
+  // Admin-only actions in the item-page hamburger menu.
+  const _mAdmin = document.getElementById('ipMenuAdmin');
+  if(_mAdmin) _mAdmin.style.display = isAdmin ? '' : 'none';
   const _mDel = document.getElementById('ipMenuDelete');
   if(_mDel) _mDel.style.display = isAdmin ? '' : 'none';
+  // Scope the in-page search placeholder to this item's project.
+  const _gs = document.getElementById('ipGlobalSearch');
+  if(_gs) _gs.placeholder = p.product ? ('Search ' + p.product + '…') : 'Search items…';
 
   document.getElementById('ipMeta').innerHTML =
     `${p.dev?`<span style="font-weight:700;color:var(--text)">${esc(p.dev)}</span> · `:''}` +
@@ -14157,11 +14165,15 @@ if ('serviceWorker' in navigator) {
             onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
           </button>
-          <div id="ipMenu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,0.15);min-width:184px;z-index:40;overflow:hidden">
-            <button id="ipMenuEdit" onclick="closeIpMenu();openItemPageModal()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--row-sep);cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--text)">Edit item</button>
-            <button onclick="closeIpMenu();ipCopyLink()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--row-sep);cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Copy link</button>
-            <button onclick="closeIpMenu();window.open(location.pathname+'?item='+_itemPageId,'_blank')" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--row-sep);cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Open in new tab</button>
-            <button id="ipMenuDelete" onclick="closeIpMenu();ipDeleteItem()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:none;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent2)">Delete item</button>
+          <div id="ipMenu" style="display:none;position:absolute;top:calc(100% + 6px);right:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,0.15);min-width:200px;z-index:40;overflow:hidden">
+            <button onclick="closeIpMenu();openActivityCenter()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Activity Center</button>
+            <button onclick="closeIpMenu();openManageSavedViews()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Saved Views</button>
+            <button onclick="closeIpMenu();openMyAccount()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--row-sep);cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">My Account</button>
+            <button id="ipMenuAdmin" onclick="closeIpMenu();openAdminPanel('devTab')" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:none;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--row-sep);cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Admin</button>
+            <button onclick="closeIpMenu();ipCopyLink()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Copy link</button>
+            <button onclick="closeIpMenu();window.open(location.pathname+'?item='+_itemPageId,'_blank')" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Open in new tab</button>
+            <button id="ipMenuDelete" onclick="closeIpMenu();ipDeleteItem()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:none;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--row-sep);cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent2)">Delete item</button>
+            <button onclick="closeIpMenu();doLogout()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Log Out</button>
           </div>
         </div>
       </div>

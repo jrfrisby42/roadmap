@@ -790,7 +790,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "3.7.1"
+APP_VERSION = "3.8.0"
 
 app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
 
@@ -1585,8 +1585,15 @@ def list_items(
 
     where, params = [], []
     def eq(col, val):
+        # A value may be a single term or a comma-separated list (multi-select
+        # filters from the top bar). Single → `col=?`; multiple → `col IN (...)`.
         if val is not None and val != "":
-            where.append(f"{col}=?"); params.append(val)
+            vals = [v for v in val.split(",") if v != ""]
+            if len(vals) == 1:
+                where.append(f"{col}=?"); params.append(vals[0])
+            elif len(vals) > 1:
+                where.append(f"{col} IN ({','.join('?' * len(vals))})")
+                params.extend(vals)
     eq("product", product)
     eq("type", type)
     eq("status", status)
