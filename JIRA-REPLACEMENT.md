@@ -335,9 +335,10 @@ ShareBox already has S3-backed storage — don't rebuild it here.
   - ✅ Stage 3: inline schedule (start, estimate, test, parallel, revised, expected,
     release) with derived-due recompute + active-status locks + testWeeks<dueWeeks.
   - Stage 4 (in progress): subtasks (inline create + roll-up) + linked work items.
-  - ⚠️ **Queued — must not be lost:** capture a **change reason** on inline date/estimate
-    edits. The modal prompts for this today; inline edits currently bypass it. Add an
-    inline reason prompt (or keep Revised Due in the modal) in a future stage.
+  - ✅ Change reason: inline schedule edits that move a committed due/revised date now
+    prompt for a reason (from `changeReasons`) + note, stamp `delay`, and log to item
+    history (mirrors the modal). Inline schedule/date editing is **admin-only**; editors
+    change schedule via the modal (which keeps the editor approval workflow).
   - Later: attachments (ShareBox); copilot slot. The modal stays for now.
 
 ---

@@ -12579,16 +12579,74 @@ async function saveItemPageField(field, value){
     }
     updated.due = computeItemDue(updated);
   }
+  // Timeline change on a committed item → capture a change reason first (like the modal).
+  if(_ipNeedsReason(p, field, updated)){ _ipOpenReason(updated, field); return; }
+  _ipPersist(updated);
+}
+
+// Shared persist: PUT + update local cache + re-render.
+async function _ipPersist(updated, opts={}){
+  const prev = projects.find(x=>x.id===updated.id);
   try {
-    const saved = await API.put('/api/projects/'+p.id, updated);
-    const idx = projects.findIndex(x=>x.id===p.id);
-    if(idx>=0) projects[idx] = {...updated, ...(saved&&typeof saved==='object'?saved:{}), id:p.id};
-    if(typeof showToast==='function') showToast('Saved','success');
-    renderItemPage((idx>=0?projects[idx]:updated));
+    const saved = await API.put('/api/projects/'+updated.id, updated);
+    const idx = projects.findIndex(x=>x.id===updated.id);
+    if(idx>=0) projects[idx] = {...updated, ...(saved&&typeof saved==='object'?saved:{}), id:updated.id};
+    if(typeof showToast==='function') showToast(opts.msg||'Saved','success');
+    renderItemPage(idx>=0?projects[idx]:updated);
   } catch(e){
     if(typeof showToast==='function') showToast('Save failed: '+(e.message||e),'error'); else alert(e.message||e);
-    renderItemPage(p);
+    if(prev) renderItemPage(prev);
   }
+}
+
+// ── Change-reason capture for inline timeline edits (mirrors the modal) ──
+let _ipPendingReason = null;
+function _ipNeedsReason(p, field, updated){
+  if(field==='revised')
+    return !!p.due && !!updated.revised && (p.revised||'') !== (updated.revised||'');  // a delay on a committed item
+  if(['start','dueWeeks','testWeeks','parallelResources'].includes(field))
+    return !!p.due && !!updated.due && p.due !== updated.due;                          // committed due moved
+  return false;
+}
+function _ipOpenReason(updated, field){
+  _ipPendingReason = { updated, field };
+  const sel = document.getElementById('ipReasonSelect');
+  if(sel){
+    const reasons = (changeReasons && changeReasons.length) ? changeReasons : ['Timeline Change','Other'];
+    sel.innerHTML = reasons.map(r=>`<option value="${escA(r)}">${esc(r)}</option>`).join('');
+  }
+  const note = document.getElementById('ipReasonNote'); if(note) note.value = '';
+  const err  = document.getElementById('ipReasonError'); if(err) err.style.display = 'none';
+  const modal = document.getElementById('ipReasonModal'); if(modal) modal.style.display = 'flex';
+  setTimeout(()=>{ try { sel && sel.focus(); } catch(e){} }, 50);
+}
+function ipReasonCancel(){
+  const modal = document.getElementById('ipReasonModal'); if(modal) modal.style.display = 'none';
+  _ipPendingReason = null;
+  const fr = projects.find(x=>x.id===_itemPageId); if(fr) renderItemPage(fr);   // discard the edit
+}
+function ipReasonConfirm(){
+  if(!_ipPendingReason) return;
+  const reason = document.getElementById('ipReasonSelect')?.value || '';
+  const noteVal = (document.getElementById('ipReasonNote')?.value || '').trim();
+  const err = document.getElementById('ipReasonError');
+  if(!reason){ if(err){ err.textContent='Please select a reason.'; err.style.display=''; } return; }
+  if(reason==='Other' && !noteVal){ if(err){ err.textContent='"Other" requires a note.'; err.style.display=''; } return; }
+  const { updated } = _ipPendingReason; _ipPendingReason = null;
+  const modal = document.getElementById('ipReasonModal'); if(modal) modal.style.display = 'none';
+  const p = projects.find(x=>x.id===_itemPageId);
+  // Stamp the delay reason when a revised (delay) date is set — mirrors the modal.
+  if(updated.revised) updated.delay = (reason==='Other' ? noteVal : reason);
+  // Log to item history.
+  try {
+    if(typeof logActionOnItem==='function' && p){
+      logActionOnItem(p.id, p.name||'', p.dev||'', p.product||'',
+        `Timeline change by ${getUsername()} — ${reason}${noteVal?' ('+noteVal+')':''}`,
+        { due:p.due, revised:p.revised||'', dueWeeks:p.dueWeeks, start:p.start },
+        { due:updated.due, revised:updated.revised||'', dueWeeks:updated.dueWeeks, start:updated.start });
+    }
+  } catch(e){}
+  _ipPersist(updated, {msg:'Saved with reason'});
 }
 // Document-level delegation so it works regardless of when the overlay is built.
 document.addEventListener('click', e=>{
@@ -12697,8 +12755,9 @@ function renderItemPage(p){
   const isLocked    = isLockedActive(p);
   const isTerm      = isTerminalStatus(p.status);
   const canEdit     = (isAdmin||isEditor) && !isTerm;
-  const timeRO      = isLocked && !isAdmin;   // editors can't edit time/date fields on active items
-  const prRO        = isLocked;               // parallelResources locked while active (server 422)
+  const timeRO      = !isAdmin;               // inline schedule/date edits are admin-only — editors change
+                                              // schedule via the modal, which has the approval workflow
+  const prRO        = !isAdmin || isLocked;   // + locked for everyone while active (server 422)
 
   // Header
   document.getElementById('ipTitle').textContent = p.name||'Untitled';
@@ -13948,6 +14007,23 @@ if ('serviceWorker' in navigator) {
 </div>
 
 <!-- ITEM PAGE OVERLAY -->
+<!-- Item Page change-reason prompt (inline schedule edits) -->
+<div id="ipReasonModal" style="display:none;position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,0.45);align-items:center;justify-content:center;font-family:'Lato',sans-serif">
+  <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:22px 24px;width:380px;max-width:92vw;box-shadow:0 12px 48px rgba(0,0,0,0.2)">
+    <div style="font-size:15px;font-weight:900;color:var(--text);margin-bottom:4px">Reason for timeline change</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">This item's schedule is changing — capture why (logged to its history).</div>
+    <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">Reason</label>
+    <select id="ipReasonSelect" style="width:100%;padding:8px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none;margin:4px 0 12px"></select>
+    <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">Note <span style="font-weight:400;text-transform:none">(required for "Other")</span></label>
+    <textarea id="ipReasonNote" rows="2" placeholder="Optional note…" style="width:100%;box-sizing:border-box;padding:8px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none;margin:4px 0;resize:vertical"></textarea>
+    <div id="ipReasonError" style="display:none;font-size:11px;color:var(--accent2);font-weight:700;margin-bottom:6px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+      <button onclick="ipReasonCancel()" style="background:none;border:1px solid var(--border);color:var(--muted);padding:7px 16px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Cancel</button>
+      <button onclick="ipReasonConfirm()" style="background:var(--accent);color:#fff;border:none;padding:7px 16px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Save change</button>
+    </div>
+  </div>
+</div>
+
 <div id="itemPageOverlay" style="display:none;position:fixed;inset:0;background:#fff;z-index:900;overflow-y:auto;font-family:'Lato',sans-serif">
   <div style="max-width:1100px;margin:0 auto;padding:0 0 60px">
     <!-- Item page header bar -->
