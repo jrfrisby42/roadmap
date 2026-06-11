@@ -408,6 +408,49 @@ def require_role(*allowed_roles):
 
 # ── Database (per-team) ───────────────────────────────────────────────────────
 _initialized_teams: set = set()
+_FTS_ENABLED = True   # FTS5 full-text search; flipped off if the fts5 module is absent
+
+# ── Full-text search (FTS5) helpers — defined early so init_team_db (run at boot) can use them ──
+def _strip_tags(s: str) -> str:
+    return re.sub(r"<[^>]+>", " ", s or "")
+
+def _ensure_fts(c):
+    """Create the FTS5 index table; flip _FTS_ENABLED off if fts5 isn't available."""
+    global _FTS_ENABLED
+    if not _FTS_ENABLED:
+        return
+    try:
+        c.execute("CREATE VIRTUAL TABLE IF NOT EXISTS projects_fts "
+                  "USING fts5(item_key, name, description)")
+    except Exception as e:
+        _FTS_ENABLED = False
+        log.warning(f"[Search] FTS5 unavailable — falling back to LIKE search: {e}")
+
+def _fts_sync(c, pid: int, data: dict):
+    """Keep the FTS row (rowid = item id) in step with the item's text fields."""
+    if not _FTS_ENABLED:
+        return
+    try:
+        c.execute("DELETE FROM projects_fts WHERE rowid=?", (pid,))
+        c.execute("INSERT INTO projects_fts(rowid, item_key, name, description) VALUES(?,?,?,?)",
+                  (pid, data.get("itemKey") or "", data.get("name") or "",
+                   _strip_tags(data.get("description") or "")))
+    except Exception:
+        pass  # never let search-index upkeep block a write
+
+def _fts_delete(c, pid: int):
+    if not _FTS_ENABLED:
+        return
+    try:
+        c.execute("DELETE FROM projects_fts WHERE rowid=?", (pid,))
+    except Exception:
+        pass
+
+def _fts_match(q: str):
+    """Build a safe FTS5 MATCH string: alnum terms only, prefix-matched, AND-ed."""
+    terms = [re.sub(r"[^0-9A-Za-z]", "", t) for t in (q or "").split()]
+    terms = [t for t in terms if t]
+    return " ".join(f"{t}*" for t in terms) or None
 
 @contextmanager
 def db(team: str):
@@ -560,6 +603,7 @@ def init_team_db(team: str):
                       "ON projects(item_key) WHERE item_key IS NOT NULL")
         except Exception:
             pass
+        _ensure_fts(c)   # FTS5 search index (no-op if fts5 module unavailable)
         defaults = {
             "developers":   [],
             "statuses":     ["In Progress","Planned","In Testing","Released","TBD","Backlogged"],
@@ -595,6 +639,18 @@ def init_team_db(team: str):
                     _reindex_project(c, _r["id"], json.loads(_r["data"]))
                 except Exception:
                     pass
+            # (Re)build the FTS index if it's out of sync (first create / drift).
+            if _FTS_ENABLED:
+                try:
+                    fts_n  = c.execute("SELECT count(*) FROM projects_fts").fetchone()[0]
+                    proj_n = c.execute("SELECT count(*) FROM projects").fetchone()[0]
+                    if fts_n != proj_n:
+                        c.execute("DELETE FROM projects_fts")
+                        for _r in c.execute("SELECT id, data FROM projects").fetchall():
+                            _fts_sync(c, _r["id"], json.loads(_r["data"]))
+                        print(f"[Search] Built FTS index ({proj_n} items) for team '{team}'")
+                except Exception as e:
+                    log.warning(f"[Search] FTS backfill failed for '{team}': {e}")
         if _unindexed:
             print(f"[Migration] Indexed {len(_unindexed)} item(s) for team '{team}'")
     except Exception as e:
@@ -734,7 +790,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "3.6.0"
+APP_VERSION = "3.7.0"
 
 app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
 
@@ -1327,11 +1383,12 @@ def _project_index_cols(data: dict) -> dict:
     }
 
 def _reindex_project(c, pid: int, data: dict, ts: str = None):
-    """Mirror an item's blob fields into its indexed columns (+ updated_ts)."""
+    """Mirror an item's blob fields into its indexed columns (+ updated_ts) and FTS."""
     cols = _project_index_cols(data)
     cols["updated_ts"] = ts or datetime.now(timezone.utc).isoformat()
     assignments = ", ".join(f"{k}=?" for k in cols)
     c.execute(f"UPDATE projects SET {assignments} WHERE id=?", (*cols.values(), pid))
+    _fts_sync(c, pid, data)
 
 def _insert_project(c, data: dict, ts: str = None) -> int:
     """INSERT an item and populate its indexed columns. Returns the new id."""
@@ -1494,6 +1551,7 @@ def delete_project(pid: int, username: str = "",
         c.execute("DELETE FROM comments WHERE item_id=?", (pid,))
         c.execute("DELETE FROM activities WHERE item_id=?", (pid,))
         c.execute("DELETE FROM projects WHERE id=?", (pid,))
+        _fts_delete(c, pid)
     write_audit(team, "delete", username, pid, name)
     return {"ok": True}
 
@@ -1553,10 +1611,13 @@ def list_items(
     elif a != "all":
         where.append("archived=0")
 
-    if q:
-        # Scoped, multi-term search: each whitespace-separated term must match the
-        # item key, name, OR description (no longer the whole JSON blob — that matched
-        # field names/ids/internal flags). Terms are AND-ed for precision.
+    # Free-text search: FTS5 (relevance-ranked) when available, else scoped LIKE.
+    use_fts   = bool(q) and _FTS_ENABLED
+    fts_match = _fts_match(q) if use_fts else None
+    if use_fts and not fts_match:
+        use_fts = False
+    if q and not use_fts:
+        # Fallback: scoped, multi-term LIKE over key/name/description (AND-ed).
         for term in q.split():
             where.append("(item_key LIKE ? OR json_extract(data,'$.name') LIKE ? "
                          "OR json_extract(data,'$.description') LIKE ?)")
@@ -1572,12 +1633,20 @@ def list_items(
     page_size = max(1, min(500, page_size))
     offset = (page - 1) * page_size
 
+    join  = ""
+    order = f"projects.{sort_col} {sort_dir}, projects.id DESC"
+    if use_fts:
+        join = "JOIN projects_fts ON projects_fts.rowid = projects.id"
+        where.append("projects_fts MATCH ?")
+        params.append(fts_match)
+        if not sort:                       # default → rank by relevance
+            order = "bm25(projects_fts), projects.id DESC"
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     with db(team) as c:
-        total = c.execute(f"SELECT COUNT(*) FROM projects {where_sql}", params).fetchone()[0]
+        total = c.execute(f"SELECT COUNT(*) FROM projects {join} {where_sql}", params).fetchone()[0]
         rows = c.execute(
-            f"SELECT id, data FROM projects {where_sql} "
-            f"ORDER BY {sort_col} {sort_dir}, id DESC LIMIT ? OFFSET ?",
+            f"SELECT projects.id AS id, projects.data AS data FROM projects {join} {where_sql} "
+            f"ORDER BY {order} LIMIT ? OFFSET ?",
             (*params, page_size, offset)
         ).fetchall()
         items = []
