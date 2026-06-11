@@ -2013,7 +2013,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '3.4.0';
+const APP_VERSION = '3.4.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -12484,6 +12484,7 @@ async function _doExportPNG(){
 // ── ITEM PAGE ─────────────────────────────────────────────────────────────────
 
 let _itemPageId = null;
+let _itemPageCameFromApp = false;
 
 function ipField(label, value, opts={}){
   if(!value && !opts.always) return '';
@@ -12494,11 +12495,15 @@ function ipField(label, value, opts={}){
   </div>`;
 }
 
-function openItemPage(id){
+function openItemPage(id, opts={}){
   const p = projects.find(x=>x.id===id);
   if(!p) return;
   _itemPageId = id;
-  try { history.pushState({itemPage:id}, '', `${location.pathname}?item=${id}`); } catch(e){}
+  const push = opts.push !== false;
+  if(push){ try { history.pushState({itemPage:id}, '', `${location.pathname}?item=${id}`); } catch(e){} }
+  // True when we navigated here from within the app (so Back can return to the
+  // exact previous view); false for deep links / history restores.
+  _itemPageCameFromApp = push && !opts.deepLink;
   renderItemPage(p);
   document.getElementById('itemPageOverlay').style.display = '';
   document.getElementById('itemPageOverlay').scrollTop = 0;
@@ -12506,10 +12511,18 @@ function openItemPage(id){
   loadActivities().then(()=>{ if(_itemPageId===id) renderItemPageActivity(id); }).catch(()=>{});
 }
 
-function closeItemPage(){
+function closeItemPage(opts={}){
   document.getElementById('itemPageOverlay').style.display = 'none';
   _itemPageId = null;
-  try { history.pushState({}, '', location.pathname); } catch(e){}
+  _itemPageCameFromApp = false;
+  if(opts.push !== false){ try { history.pushState({}, '', location.pathname); } catch(e){} }
+}
+
+function itemPageBack(){
+  // Return to the exact previous view when we came from within the app;
+  // otherwise (deep link / direct ?item= load) just close the overlay.
+  if(_itemPageCameFromApp){ history.back(); }   // -> popstate -> closeItemPage({push:false})
+  else { closeItemPage(); }
 }
 
 function openItemPageModal(){
@@ -12825,7 +12838,7 @@ function checkItemPageParam(){
       // Wait for data to load then open
       const tryOpen = () => {
         const p = projects.find(x=>x.id===id);
-        if(p) openItemPage(id);
+        if(p) openItemPage(id, {push:false, deepLink:true});
         else showToast('Item not found: #'+id);
       };
       // If projects already loaded, open immediately; else defer
@@ -12839,8 +12852,8 @@ document.getElementById('ipCommentText')?.addEventListener('keydown', e=>{
   if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); postItemPageComment(); }
 });
 window.addEventListener('popstate', e=>{
-  if(e.state?.itemPage) openItemPage(e.state.itemPage);
-  else closeItemPage();
+  if(e.state?.itemPage) openItemPage(e.state.itemPage, {push:false});
+  else closeItemPage({push:false});
 });
 
 // ── TEAM SETTINGS ─────────────────────────────────────────────────────────────
@@ -13726,6 +13739,13 @@ if ('serviceWorker' in navigator) {
   <div style="max-width:1100px;margin:0 auto;padding:0 0 60px">
     <!-- Item page header bar -->
     <div style="position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--border);z-index:10;padding:14px 28px;display:flex;align-items:center;gap:12px">
+      <button id="ipBackBtn" onclick="itemPageBack()" title="Back to previous page"
+        style="background:none;border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;flex-shrink:0"
+        onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+        onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text)'">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+        Back
+      </button>
       <div id="ipBreadcrumb" style="font-size:12px;color:var(--muted)"></div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <span id="ipStatusBadge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;background:var(--surface);color:var(--text)"></span>
@@ -13733,7 +13753,7 @@ if ('serviceWorker' in navigator) {
         <button id="ipEditModalBtn" onclick="openItemPageModal()" style="background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">
           Edit Item
         </button>
-        <button onclick="closeItemPage()" title="Back to roadmap"
+        <button onclick="itemPageBack()" title="Back to roadmap"
           style="background:none;border:1px solid var(--border);color:var(--muted);padding:6px 8px;border-radius:6px;cursor:pointer;display:flex;align-items:center;line-height:1;flex-shrink:0"
           onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
           onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
