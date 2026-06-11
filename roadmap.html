@@ -12596,6 +12596,47 @@ document.addEventListener('click', e=>{
   if(cell && cell.dataset.editing!=='1') _ipBeginEdit(cell);
 });
 
+// ── Subtasks (inline create + roll-up) ──
+function renderItemPageSubtasks(p){
+  const listEl = document.getElementById('ipSubtasks');
+  const rollEl = document.getElementById('ipSubtaskRollup');
+  const addBtn = document.getElementById('ipAddSubtaskBtn');
+  if(!listEl) return;
+  const kids = projects.filter(x=>x.parent===p.id);
+  if(addBtn) addBtn.style.display = (isAdmin||isEditor) ? '' : 'none';
+  const done = kids.filter(k=>isTerminalStatus(k.status)).length;
+  if(rollEl) rollEl.textContent = kids.length ? `· ${done}/${kids.length} done` : '';
+  const rows = kids.map(ch => `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
+      ${ch.itemKey?`<span style="font-family:monospace;font-size:11px;color:var(--muted);flex-shrink:0">${esc(ch.itemKey)}</span>`:''}
+      <button onclick="openItemPage(${ch.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:600;color:var(--accent);padding:0;text-align:left;flex:1">${esc(ch.name)}</button>
+      <span style="font-size:11px;color:var(--muted)">${esc(ch.status||'')}</span>
+    </div>`).join('');
+  const addRow = `<div id="ipAddSubtaskRow" style="display:none;gap:6px">
+      <input id="ipNewSubtaskName" type="text" placeholder="Subtask name…" onkeydown="if(event.key==='Enter'){event.preventDefault();ipCreateSubtask();}else if(event.key==='Escape'){document.getElementById('ipAddSubtaskRow').style.display='none';}" style="flex:1;padding:6px 10px;font-size:13px;border:1px solid var(--accent);border-radius:6px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif;outline:none">
+      <button onclick="ipCreateSubtask()" style="background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Add</button>
+    </div>`;
+  listEl.innerHTML = (rows || `<div style="font-size:12px;color:var(--muted)">No subtasks</div>`) + addRow;
+}
+function ipShowAddSubtask(){
+  const row = document.getElementById('ipAddSubtaskRow');
+  if(row){ row.style.display='flex'; const inp=document.getElementById('ipNewSubtaskName'); if(inp) inp.focus(); }
+}
+async function ipCreateSubtask(){
+  const inp = document.getElementById('ipNewSubtaskName');
+  const name = inp ? inp.value.trim() : '';
+  if(!name) return;
+  const parent = projects.find(x=>x.id===_itemPageId); if(!parent) return;
+  const child = { name, parent: parent.id, product: parent.product||'', dev: parent.dev||'',
+                  status: (typeof getDefaultStatus==='function' ? getDefaultStatus() : ''),
+                  dueWeeks: 2, testWeeks: 0 };
+  try {
+    const created = await API.post('/api/projects', {...child, _username:getUsername()});
+    if(created && created.id) projects.push(created);
+    if(typeof showToast==='function') showToast('Subtask added','success');
+    renderItemPage(parent);
+  } catch(e){ if(typeof showToast==='function') showToast('Failed to add subtask: '+(e.message||e),'error'); else alert(e.message||e); }
+}
+
 function openItemPage(id, opts={}){
   const p = projects.find(x=>x.id===id);
   if(!p) return;
@@ -12776,13 +12817,7 @@ function renderItemPage(p){
       <button onclick="openItemPage(${par.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0">${esc(par.name)}</button>
     </div>`);
   }
-  // Children
-  const children = projects.filter(x=>x.parent===p.id);
-  children.forEach(ch => depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
-    <span style="font-size:10px;font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Child</span>
-    <button onclick="openItemPage(${ch.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0">${esc(ch.name)}</button>
-    <span style="font-size:11px;color:var(--muted);margin-left:auto">${esc(ch.status||'')}</span>
-  </div>`));
+  // Children now render in their own Subtasks card (renderItemPageSubtasks).
   // Ignore conflicts pairs
   if(p.ignoreConflictsWith?.length){
     p.ignoreConflictsWith.forEach(xId => {
@@ -12795,6 +12830,9 @@ function renderItemPage(p){
   }
   depsEl.innerHTML = depRows.length ? depRows.join('') :
     `<div style="font-size:12px;color:var(--muted)">No dependencies</div>`;
+
+  // Subtasks (children) — own card with roll-up + inline create
+  renderItemPageSubtasks(p);
 
   // JIRA — delegated to dedicated function for richer display
   loadItemPageJira(p);
@@ -13941,6 +13979,15 @@ if ('serviceWorker' in navigator) {
             <span id="ipFeatureFlagsCount" style="font-size:10px;font-weight:400;color:var(--muted)"></span>
           </div>
           <div id="ipFeatureFlagsList" style="padding:12px 16px;display:flex;flex-wrap:wrap;gap:6px"></div>
+        </div>
+
+        <!-- Subtasks card -->
+        <div id="ipSubtasksCard" style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
+          <div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;justify-content:space-between">
+            <span>Subtasks <span id="ipSubtaskRollup" style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;font-size:11px"></span></span>
+            <button id="ipAddSubtaskBtn" onclick="ipShowAddSubtask()" style="display:none;background:none;border:1px solid var(--border);color:var(--accent);padding:3px 10px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Add subtask</button>
+          </div>
+          <div id="ipSubtasks" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px"></div>
         </div>
 
         <!-- Dependencies card -->
