@@ -2013,7 +2013,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '3.4.1';
+const APP_VERSION = '3.5.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -12495,6 +12495,222 @@ function ipField(label, value, opts={}){
   </div>`;
 }
 
+// ── Inline-editable Item Page fields (inline-edit overhaul, Stage 1) ──
+function ipEditField(field, label, displayHtml, kind, opts={}){
+  const editable = (isAdmin||isEditor) && !opts.readonly;
+  const val = (displayHtml===''||displayHtml==null) ? '<span style="color:var(--muted)">—</span>' : displayHtml;
+  const lbl = `<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">${label}</div>`;
+  const vs  = `font-size:13px;font-weight:${opts.bold?'700':'400'};color:var(--text)`;
+  if(!editable) return `<div>${lbl}<div style="${vs}">${val}</div></div>`;
+  return `<div>${lbl}<div class="ip-edit" data-field="${field}" data-kind="${kind}" title="Click to edit" style="${vs};cursor:text;border-radius:4px;padding:2px 5px;margin:-2px -5px" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">${val}</div></div>`;
+}
+function _ipFieldOptions(field){
+  const o = (v,l)=>({value:v, label:l});
+  if(field==='status')   return statuses.map(s=>o(s,s));
+  if(field==='type')     return types.map(t=>o(t.name,t.name));
+  if(field==='dev')      return [o('','— Unassigned —'), ...developers.map(d=>o(d,d))];
+  if(field==='assignee') return [o('','— Unassigned —'), ...users.map(u=>o(u.username,u.username))];
+  if(field==='priority') return [o('','— None —'), o(1,'Urgent'), o(2,'High'), o(3,'Medium'), o(4,'Low')];
+  return [];
+}
+function _ipBeginEdit(cell){
+  const field = cell.dataset.field, kind = cell.dataset.kind;
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  cell.dataset.editing = '1';
+  const cur = p[field];
+  const bs = "width:100%;box-sizing:border-box;padding:3px 6px;font-size:13px;border:1px solid var(--accent);border-radius:4px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif;outline:none";
+  if(kind==='select'){
+    const opts = _ipFieldOptions(field);
+    cell.innerHTML = `<select style="${bs}">${opts.map(o=>`<option value="${escA(o.value)}" ${String(cur??'')===String(o.value)?'selected':''}>${esc(o.label)}</option>`).join('')}</select>`;
+  } else if(kind==='number'){
+    cell.innerHTML = `<input type="number" step="0.5" min="0" value="${escA(cur??'')}" style="${bs}">`;
+  } else if(kind==='date'){
+    cell.innerHTML = `<input type="date" value="${escA(cur||'')}" style="${bs}">`;
+  } else {
+    cell.innerHTML = `<input type="text" value="${escA(cur??'')}" style="${bs}">`;
+  }
+  const ctrl = cell.firstElementChild; ctrl.focus(); try { ctrl.select && ctrl.select(); } catch(e){}
+  let done = false;
+  const fresh = ()=> projects.find(x=>x.id===_itemPageId);
+  const cancel = ()=>{ if(done) return; done=true; const fr=fresh(); if(fr) renderItemPage(fr); };
+  const commit = ()=>{
+    if(done) return; done=true;
+    let v = ctrl.value;
+    if(kind==='number') v = (v===''?null:parseFloat(v));
+    const fr = fresh();
+    if(fr && String(fr[field]??'')===String(v??'')){ if(fr) renderItemPage(fr); return; }
+    saveItemPageField(field, v);
+  };
+  if(kind==='select'||kind==='date'){ ctrl.addEventListener('change', commit); ctrl.addEventListener('blur', cancel); }
+  else {
+    ctrl.addEventListener('blur', commit);
+    ctrl.addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); ctrl.blur(); } else if(ev.key==='Escape'){ cancel(); } });
+  }
+}
+// Derived due date — mirrors the modal's formula (compressed dev weeks + testing).
+function computeItemDue(p){
+  const s = p.start;
+  if(!s) return p.due || '';
+  const w  = parseFloat(p.dueWeeks)||0;
+  const tw = parseFloat(p.testWeeks)||0;
+  const pr = roundUpToQuarter(parseFloat(p.parallelResources)||1);
+  const devWeeks = Math.max(w - tw, 0);
+  const compressedDev = pr > 1 ? devWeeks/pr : devWeeks;
+  const totalWeeks = compressedDev + tw;
+  const d = nextMonday(new Date(new Date(s).setHours(0,0,0,0) + totalWeeks*7*86400000));
+  return d.toISOString().slice(0,10);
+}
+
+async function saveItemPageField(field, value){
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  if(field==='priority') value = (value===''||value==null) ? '' : parseInt(value);
+  // Preserve the rule: can't move to an active status without an owner.
+  if(field==='status' && isActiveStatus(value) && !p.dev){
+    if(typeof showToast==='function') showToast('Assign an Owner before moving to an active status.','error');
+    renderItemPage(p); return;
+  }
+  const updated = {...p, [field]: value, _username: getUsername()};
+  // Schedule-driving fields: validate + recompute the derived due date (like the modal).
+  if(['start','dueWeeks','testWeeks','parallelResources'].includes(field)){
+    const dw = parseFloat(updated.dueWeeks)||0, tw = parseFloat(updated.testWeeks)||0;
+    if(tw>0 && dw>0 && tw>=dw){
+      if(typeof showToast==='function') showToast(`Test period (${tw}w) must be less than the time estimate (${dw}w)`,'error');
+      renderItemPage(p); return;
+    }
+    updated.due = computeItemDue(updated);
+  }
+  // Timeline change on a committed item → capture a change reason first (like the modal).
+  if(_ipNeedsReason(p, field, updated)){ _ipOpenReason(updated, field); return; }
+  _ipPersist(updated);
+}
+
+// Shared persist: PUT + update local cache + re-render.
+async function _ipPersist(updated, opts={}){
+  const prev = projects.find(x=>x.id===updated.id);
+  try {
+    const saved = await API.put('/api/projects/'+updated.id, updated);
+    const idx = projects.findIndex(x=>x.id===updated.id);
+    if(idx>=0) projects[idx] = {...updated, ...(saved&&typeof saved==='object'?saved:{}), id:updated.id};
+    if(typeof showToast==='function') showToast(opts.msg||'Saved','success');
+    renderItemPage(idx>=0?projects[idx]:updated);
+  } catch(e){
+    if(typeof showToast==='function') showToast('Save failed: '+(e.message||e),'error'); else alert(e.message||e);
+    if(prev) renderItemPage(prev);
+  }
+}
+
+// ── Change-reason capture for inline timeline edits (mirrors the modal) ──
+let _ipPendingReason = null;
+function _ipNeedsReason(p, field, updated){
+  if(field==='revised')
+    return !!p.due && !!updated.revised && (p.revised||'') !== (updated.revised||'');  // a delay on a committed item
+  if(['start','dueWeeks','testWeeks','parallelResources'].includes(field))
+    return !!p.due && !!updated.due && p.due !== updated.due;                          // committed due moved
+  return false;
+}
+function _ipOpenReason(updated, field){
+  _ipPendingReason = { updated, field };
+  const sel = document.getElementById('ipReasonSelect');
+  if(sel){
+    const reasons = (changeReasons && changeReasons.length) ? changeReasons : ['Timeline Change','Other'];
+    sel.innerHTML = reasons.map(r=>`<option value="${escA(r)}">${esc(r)}</option>`).join('');
+  }
+  const note = document.getElementById('ipReasonNote'); if(note) note.value = '';
+  const err  = document.getElementById('ipReasonError'); if(err) err.style.display = 'none';
+  const modal = document.getElementById('ipReasonModal'); if(modal) modal.style.display = 'flex';
+  setTimeout(()=>{ try { sel && sel.focus(); } catch(e){} }, 50);
+}
+function ipReasonCancel(){
+  const modal = document.getElementById('ipReasonModal'); if(modal) modal.style.display = 'none';
+  _ipPendingReason = null;
+  const fr = projects.find(x=>x.id===_itemPageId); if(fr) renderItemPage(fr);   // discard the edit
+}
+function ipReasonConfirm(){
+  if(!_ipPendingReason) return;
+  const reason = document.getElementById('ipReasonSelect')?.value || '';
+  const noteVal = (document.getElementById('ipReasonNote')?.value || '').trim();
+  const err = document.getElementById('ipReasonError');
+  if(!reason){ if(err){ err.textContent='Please select a reason.'; err.style.display=''; } return; }
+  if(reason==='Other' && !noteVal){ if(err){ err.textContent='"Other" requires a note.'; err.style.display=''; } return; }
+  const { updated } = _ipPendingReason; _ipPendingReason = null;
+  const modal = document.getElementById('ipReasonModal'); if(modal) modal.style.display = 'none';
+  const p = projects.find(x=>x.id===_itemPageId);
+  // Stamp the delay reason when a revised (delay) date is set — mirrors the modal.
+  if(updated.revised) updated.delay = (reason==='Other' ? noteVal : reason);
+  // Log to item history.
+  try {
+    if(typeof logActionOnItem==='function' && p){
+      logActionOnItem(p.id, p.name||'', p.dev||'', p.product||'',
+        `Timeline change by ${getUsername()} — ${reason}${noteVal?' ('+noteVal+')':''}`,
+        { due:p.due, revised:p.revised||'', dueWeeks:p.dueWeeks, start:p.start },
+        { due:updated.due, revised:updated.revised||'', dueWeeks:updated.dueWeeks, start:updated.start });
+    }
+  } catch(e){}
+  _ipPersist(updated, {msg:'Saved with reason'});
+}
+// Document-level delegation so it works regardless of when the overlay is built.
+document.addEventListener('click', e=>{
+  const cell = e.target.closest('.ip-edit');
+  if(cell && cell.dataset.editing!=='1') _ipBeginEdit(cell);
+});
+
+// ── Subtasks (inline create + roll-up) ──
+function renderItemPageSubtasks(p){
+  const listEl = document.getElementById('ipSubtasks');
+  const rollEl = document.getElementById('ipSubtaskRollup');
+  const addBtn = document.getElementById('ipAddSubtaskBtn');
+  if(!listEl) return;
+  const kids = projects.filter(x=>x.parent===p.id);
+  if(addBtn) addBtn.style.display = (isAdmin||isEditor) ? '' : 'none';
+  const done = kids.filter(k=>isTerminalStatus(k.status)).length;
+  if(rollEl) rollEl.textContent = kids.length ? `· ${done}/${kids.length} done` : '';
+  const rows = kids.map(ch => `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
+      ${ch.itemKey?`<span style="font-family:monospace;font-size:11px;color:var(--muted);flex-shrink:0">${esc(ch.itemKey)}</span>`:''}
+      <button onclick="openItemPage(${ch.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:600;color:var(--accent);padding:0;text-align:left;flex:1">${esc(ch.name)}</button>
+      <span style="font-size:11px;color:var(--muted)">${esc(ch.status||'')}</span>
+    </div>`).join('');
+  const addRow = `<div id="ipAddSubtaskRow" style="display:none;gap:6px">
+      <input id="ipNewSubtaskName" type="text" placeholder="Subtask name…" onkeydown="if(event.key==='Enter'){event.preventDefault();ipCreateSubtask();}else if(event.key==='Escape'){document.getElementById('ipAddSubtaskRow').style.display='none';}" style="flex:1;padding:6px 10px;font-size:13px;border:1px solid var(--accent);border-radius:6px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif;outline:none">
+      <button onclick="ipCreateSubtask()" style="background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Add</button>
+    </div>`;
+  listEl.innerHTML = (rows || `<div style="font-size:12px;color:var(--muted)">No subtasks</div>`) + addRow;
+}
+function ipShowAddSubtask(){
+  const row = document.getElementById('ipAddSubtaskRow');
+  if(row){ row.style.display='flex'; const inp=document.getElementById('ipNewSubtaskName'); if(inp) inp.focus(); }
+}
+async function ipCreateSubtask(){
+  const inp = document.getElementById('ipNewSubtaskName');
+  const name = inp ? inp.value.trim() : '';
+  if(!name) return;
+  const parent = projects.find(x=>x.id===_itemPageId); if(!parent) return;
+  const child = { name, parent: parent.id, product: parent.product||'', dev: parent.dev||'',
+                  status: (typeof getDefaultStatus==='function' ? getDefaultStatus() : ''),
+                  dueWeeks: 2, testWeeks: 0 };
+  try {
+    const created = await API.post('/api/projects', {...child, _username:getUsername()});
+    if(created && created.id) projects.push(created);
+    if(typeof showToast==='function') showToast('Subtask added','success');
+    renderItemPage(parent);
+  } catch(e){ if(typeof showToast==='function') showToast('Failed to add subtask: '+(e.message||e),'error'); else alert(e.message||e); }
+}
+
+// ── Linked work items (dependency: this item "depends on" another) ──
+async function saveItemPagePatch(patch){
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  const updated = {...p, ...patch, _username:getUsername()};
+  try {
+    const saved = await API.put('/api/projects/'+p.id, updated);
+    const idx = projects.findIndex(x=>x.id===p.id);
+    if(idx>=0) projects[idx] = {...updated, ...(saved&&typeof saved==='object'?saved:{}), id:p.id};
+    if(typeof showToast==='function') showToast('Saved','success');
+    renderItemPage(idx>=0?projects[idx]:updated);
+  } catch(e){ if(typeof showToast==='function') showToast('Save failed: '+(e.message||e),'error'); else alert(e.message||e); renderItemPage(p); }
+}
+function ipShowAddLink(){ const r=document.getElementById('ipAddLinkRow'); if(r){ r.style.display='flex'; const s=document.getElementById('ipLinkSelect'); if(s) s.focus(); } }
+function ipLinkItem(){ const s=document.getElementById('ipLinkSelect'); const id=s?parseInt(s.value):0; if(!id) return; saveItemPagePatch({requires:id, parallel:false}); }
+function ipUnlinkRequires(){ saveItemPagePatch({requires:null, parallel:false}); }
+
 function openItemPage(id, opts={}){
   const p = projects.find(x=>x.id===id);
   if(!p) return;
@@ -12539,9 +12755,34 @@ function renderItemPage(p){
   const isLocked    = isLockedActive(p);
   const isTerm      = isTerminalStatus(p.status);
   const canEdit     = (isAdmin||isEditor) && !isTerm;
+  const timeRO      = !isAdmin;               // inline schedule/date edits are admin-only — editors change
+                                              // schedule via the modal, which has the approval workflow
+  const prRO        = !isAdmin || isLocked;   // + locked for everyone while active (server 422)
 
   // Header
   document.getElementById('ipTitle').textContent = p.name||'Untitled';
+  // Inline title editing (click to edit the item name)
+  const titleEl = document.getElementById('ipTitle');
+  if(titleEl){
+    const canEditTitle = (isAdmin||isEditor);
+    titleEl.contentEditable = canEditTitle ? 'true' : 'false';
+    titleEl.spellcheck = false;
+    titleEl.style.outline = 'none';
+    titleEl.title = canEditTitle ? 'Click to edit name' : '';
+    if(canEditTitle && !titleEl._wired){
+      titleEl._wired = true;
+      titleEl.addEventListener('blur', ()=>{
+        const cur = projects.find(x=>x.id===_itemPageId); if(!cur) return;
+        const v = titleEl.textContent.trim();
+        if(!v){ titleEl.textContent = cur.name; return; }   // names can't be empty
+        if(v !== cur.name) saveItemPageField('name', v);
+      });
+      titleEl.addEventListener('keydown', ev=>{
+        if(ev.key==='Enter'){ ev.preventDefault(); titleEl.blur(); }
+        else if(ev.key==='Escape'){ const cur=projects.find(x=>x.id===_itemPageId); if(cur) titleEl.textContent=cur.name; titleEl.blur(); }
+      });
+    }
+  }
   const prioEl = document.getElementById('ipPriorityBadge');
   if(p.priority && PRIO_COLORS[p.priority]){
     prioEl.style.display = '';
@@ -12574,14 +12815,18 @@ function renderItemPage(p){
   const lockNote = isLocked && !isAdmin ? `<span style="font-size:10px;color:#e8a000;display:block;margin-top:2px">🔒 Locked — active item</span>` : '';
 
   document.getElementById('ipFields').innerHTML = [
-    ipField('Owner',       esc(p.dev||'Unassigned'), {bold:true}),
-    ipField('Project',     esc(p.product||'—')),
-    ipField('Type',        esc(p.type||'—')),
-    ipField('Status',      esc(p.status||'—'), {bold:true}),
-    ipField('Priority',    p.priority ? PRIO_LABELS[p.priority] : null),
-    ipField('Time Estimate', p.dueWeeks ? fmtEstimate(p.dueWeeks) : null),
-    ipField('Test Period', p.testWeeks!==undefined ? fmtEstimate(p.testWeeks) : null),
-    ipField('Recurrence',  p.recurrence && p.recurrence!=='none' ? p.recurrence : null),
+    ipEditField('status',     'Status',       esc(p.status||''), 'select', {bold:true}),
+    ipEditField('dev',        'Owner (Pod)',  esc(p.dev||''),    'select', {bold:true}),
+    ipEditField('assignee',   'Assignee',     esc(p.assignee||''), 'select'),
+    ipEditField('type',       'Type',         esc(p.type||''),   'select'),
+    ipEditField('priority',   'Priority',     p.priority ? PRIO_LABELS[p.priority] : '', 'select'),
+    ipEditField('storyPoints','Story Points', (p.storyPoints==null||p.storyPoints==='') ? '' : String(p.storyPoints), 'number'),
+    ipEditField('sprintId',   'Sprint',       esc(p.sprintId||''), 'text'),
+    ipField('Project',       esc(p.product||'—')),
+    ipField('Reporter',      esc(p.reporter||'—')),
+    ipEditField('dueWeeks',          'Time Estimate',      p.dueWeeks ? fmtEstimate(p.dueWeeks) : '', 'number', {readonly:timeRO}),
+    ipEditField('testWeeks',         'Test Period',        (p.testWeeks!==undefined && p.testWeeks!=='') ? fmtEstimate(p.testWeeks) : '', 'number', {readonly:timeRO}),
+    ipEditField('parallelResources', 'Parallel Resources', String(p.parallelResources||1), 'number', {readonly:prRO}),
     p.featureFlags?.length ? `<div><div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:5px">Feature Flags</div><div style="display:flex;flex-wrap:wrap;gap:4px">${renderFeatureFlagsInline(p.featureFlags||[], new Set(p.jiraFeatureFlags||[]))}</div></div>` : '',
   ].join('');
 
@@ -12592,13 +12837,13 @@ function renderItemPage(p){
 
   // Schedule sidebar
   document.getElementById('ipSchedule').innerHTML = [
-    ipField('Start Date',    fmtDate(startD)||p.start, {always:!!(p.start)}),
+    ipEditField('start', 'Start Date', fmtDate(startD)||'', 'date', {readonly:timeRO}),
     ipCodeComplete ? `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--surface2)"><span style="color:#0090d4;font-weight:700;font-size:12px">Code Complete</span><span style="color:#0090d4;font-weight:700;font-size:12px">${fmtDate(ipCodeComplete)}</span></div>` : '',
-    ipField('Due Date',      fmtDate(dueD),    {bold:true}),
-    fmtDate(revD) ? ipField('Revised Due',   fmtDate(revD), {bold:true}) : '',
-    fmtDate(expD) ? ipField('Expected Date', fmtDate(expD)) : '',
-    fmtDate(relD) ? ipField('Release Date',  fmtDate(relD)) : '',
-    p.delay     ? ipField('Delay Reason',    esc(stripHtml(p.delay))) : '',
+    ipField('Due Date', fmtDate(dueD), {bold:true}),   // derived from start + estimate
+    ipEditField('revised',     'Revised Due',   fmtDate(revD)||'', 'date', {bold:true, readonly:timeRO}),
+    ipEditField('expected',    'Expected Date', fmtDate(expD)||'', 'date', {readonly:timeRO}),
+    ipEditField('releaseDate', 'Release Date',  fmtDate(relD)||'', 'date', {readonly:timeRO}),
+    p.delay ? ipField('Delay Reason', esc(stripHtml(p.delay))) : '',
   ].join('') + lockNote;
 
   // Notes
@@ -12610,12 +12855,20 @@ function renderItemPage(p){
     notesEl.contentEditable = 'true';
     if(notesToolbar) notesToolbar.style.display = '';
     if(notesSaveBtn) notesSaveBtn.style.display  = '';
-    notesEl.addEventListener('input', ()=>{ if(notesSaveBtn) notesSaveBtn.style.background='var(--accent)'; });
+    if(!notesEl._wired){   // wire once — element persists across renders
+      notesEl._wired = true;
+      notesEl.addEventListener('input', ()=>{ if(notesSaveBtn) notesSaveBtn.style.background='var(--accent)'; });
+      // Autosave on blur (no need to hit Save), only when actually changed.
+      notesEl.addEventListener('blur', ()=>{
+        const cur = projects.find(x=>x.id===_itemPageId);
+        if(cur && (cur.description||'') !== notesEl.innerHTML) saveItemPageNotes();
+      });
+    }
   } else {
     notesEl.contentEditable = 'false';
     if(notesToolbar) notesToolbar.style.display = 'none';
     if(notesSaveBtn) notesSaveBtn.style.display  = 'none';
-    if(!p.description) notesEl.innerHTML = '<span style="color:var(--muted);font-size:12px">No notes</span>';
+    if(!p.description) notesEl.innerHTML = '<span style="color:var(--muted);font-size:12px">No description</span>';
   }
 
   // Feature Flags — unified card (manual + Jira-sourced)
@@ -12623,13 +12876,17 @@ function renderItemPage(p){
 
   // Dependencies
   const depsEl = document.getElementById('ipDeps');
+  const depCanEdit = (isAdmin||isEditor);
   const depRows = [];
   if(p.requires){
     const req = projects.find(x=>x.id===p.requires);
     if(req) depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
       <span style="font-size:10px;font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Depends On</span>
-      <button onclick="openItemPage(${req.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0">${esc(req.name)}</button>
-      <span style="font-size:11px;color:var(--muted);margin-left:auto">${p.parallel?'Parallel':'Sequential'}</span>
+      <button onclick="openItemPage(${req.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0;text-align:left;flex:1">${esc(req.name)}</button>
+      ${depCanEdit
+        ? `<button onclick="saveItemPagePatch({parallel:${!p.parallel}})" title="Toggle parallel / sequential" style="font-size:11px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:5px;padding:1px 8px;cursor:pointer">${p.parallel?'Parallel':'Sequential'}</button>
+           <button onclick="ipUnlinkRequires()" title="Remove link" style="background:none;border:none;color:var(--accent2);cursor:pointer;font-size:14px;padding:0 2px;line-height:1">✕</button>`
+        : `<span style="font-size:11px;color:var(--muted);margin-left:auto">${p.parallel?'Parallel':'Sequential'}</span>`}
     </div>`);
   }
   if(p.parent){
@@ -12639,13 +12896,7 @@ function renderItemPage(p){
       <button onclick="openItemPage(${par.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0">${esc(par.name)}</button>
     </div>`);
   }
-  // Children
-  const children = projects.filter(x=>x.parent===p.id);
-  children.forEach(ch => depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
-    <span style="font-size:10px;font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Child</span>
-    <button onclick="openItemPage(${ch.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0">${esc(ch.name)}</button>
-    <span style="font-size:11px;color:var(--muted);margin-left:auto">${esc(ch.status||'')}</span>
-  </div>`));
+  // Children now render in their own Subtasks card (renderItemPageSubtasks).
   // Ignore conflicts pairs
   if(p.ignoreConflictsWith?.length){
     p.ignoreConflictsWith.forEach(xId => {
@@ -12656,8 +12907,29 @@ function renderItemPage(p){
       </div>`);
     });
   }
-  depsEl.innerHTML = depRows.length ? depRows.join('') :
-    `<div style="font-size:12px;color:var(--muted)">No dependencies</div>`;
+  // Add linked work item (set a dependency). Mutual exclusion: parent OR requires, not both.
+  let linkControl = '';
+  if(depCanEdit && !p.requires){
+    if(p.parent){
+      linkControl = `<div style="font-size:11px;color:var(--muted);font-style:italic">Linked items unavailable — this is a child item (has a parent). Remove the parent to add a dependency.</div>`;
+    } else {
+      const cands = projects.filter(x => x.id!==p.id && x.requires!==p.id && !x.archived)
+        .sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+      linkControl = `<div>
+        <button onclick="ipShowAddLink()" style="background:none;border:1px solid var(--border);color:var(--accent);padding:3px 10px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Add linked work item</button>
+        <div id="ipAddLinkRow" style="display:none;gap:6px;margin-top:6px">
+          <select id="ipLinkSelect" style="flex:1;padding:6px 8px;font-size:13px;border:1px solid var(--accent);border-radius:6px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif;outline:none">
+            <option value="">Depend on…</option>
+            ${cands.map(x=>`<option value="${x.id}">${x.itemKey?esc(x.itemKey)+' · ':''}${esc(x.name)}</option>`).join('')}
+          </select>
+          <button onclick="ipLinkItem()" style="background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Link</button>
+        </div></div>`;
+    }
+  }
+  depsEl.innerHTML = (depRows.length ? depRows.join('') : (linkControl ? '' : `<div style="font-size:12px;color:var(--muted)">No dependencies</div>`)) + linkControl;
+
+  // Subtasks (children) — own card with roll-up + inline create
+  renderItemPageSubtasks(p);
 
   // JIRA — delegated to dedicated function for richer display
   loadItemPageJira(p);
@@ -12822,10 +13094,10 @@ async function saveItemPageNotes(){
         status:'Auto-Cleared'
       }).catch(()=>{});
     }
-    showToast('Notes saved');
+    showToast('Description saved');
     const btn = document.getElementById('ipNotesSaveBtn');
-    if(btn){ btn.textContent='Saved'; btn.style.background='#22b96e'; setTimeout(()=>{ btn.textContent='Save Notes'; btn.style.background='var(--accent)'; },2000); }
-  } catch(e){ showToast('Failed to save notes'); }
+    if(btn){ btn.textContent='Saved'; btn.style.background='#22b96e'; setTimeout(()=>{ btn.textContent='Save'; btn.style.background='var(--accent)'; },2000); }
+  } catch(e){ showToast('Failed to save description'); }
 }
 
 // Check for ?item= on boot
@@ -13735,6 +14007,23 @@ if ('serviceWorker' in navigator) {
 </div>
 
 <!-- ITEM PAGE OVERLAY -->
+<!-- Item Page change-reason prompt (inline schedule edits) -->
+<div id="ipReasonModal" style="display:none;position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,0.45);align-items:center;justify-content:center;font-family:'Lato',sans-serif">
+  <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:22px 24px;width:380px;max-width:92vw;box-shadow:0 12px 48px rgba(0,0,0,0.2)">
+    <div style="font-size:15px;font-weight:900;color:var(--text);margin-bottom:4px">Reason for timeline change</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">This item's schedule is changing — capture why (logged to its history).</div>
+    <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">Reason</label>
+    <select id="ipReasonSelect" style="width:100%;padding:8px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none;margin:4px 0 12px"></select>
+    <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">Note <span style="font-weight:400;text-transform:none">(required for "Other")</span></label>
+    <textarea id="ipReasonNote" rows="2" placeholder="Optional note…" style="width:100%;box-sizing:border-box;padding:8px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none;margin:4px 0;resize:vertical"></textarea>
+    <div id="ipReasonError" style="display:none;font-size:11px;color:var(--accent2);font-weight:700;margin-bottom:6px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+      <button onclick="ipReasonCancel()" style="background:none;border:1px solid var(--border);color:var(--muted);padding:7px 16px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Cancel</button>
+      <button onclick="ipReasonConfirm()" style="background:var(--accent);color:#fff;border:none;padding:7px 16px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Save change</button>
+    </div>
+  </div>
+</div>
+
 <div id="itemPageOverlay" style="display:none;position:fixed;inset:0;background:#fff;z-index:900;overflow-y:auto;font-family:'Lato',sans-serif">
   <div style="max-width:1100px;margin:0 auto;padding:0 0 60px">
     <!-- Item page header bar -->
@@ -13783,8 +14072,8 @@ if ('serviceWorker' in navigator) {
         <!-- Notes card -->
         <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
           <div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;justify-content:space-between">
-            Notes
-            <button id="ipNotesSaveBtn" onclick="saveItemPageNotes()" style="display:none;background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">Save Notes</button>
+            Description
+            <button id="ipNotesSaveBtn" onclick="saveItemPageNotes()" style="display:none;background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">Save</button>
           </div>
           <div style="padding:14px 16px">
             <div class="rte-toolbar" id="ipNotesToolbar" style="display:none;margin-bottom:6px">
@@ -13804,6 +14093,15 @@ if ('serviceWorker' in navigator) {
             <span id="ipFeatureFlagsCount" style="font-size:10px;font-weight:400;color:var(--muted)"></span>
           </div>
           <div id="ipFeatureFlagsList" style="padding:12px 16px;display:flex;flex-wrap:wrap;gap:6px"></div>
+        </div>
+
+        <!-- Subtasks card -->
+        <div id="ipSubtasksCard" style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
+          <div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;justify-content:space-between">
+            <span>Subtasks <span id="ipSubtaskRollup" style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;font-size:11px"></span></span>
+            <button id="ipAddSubtaskBtn" onclick="ipShowAddSubtask()" style="display:none;background:none;border:1px solid var(--border);color:var(--accent);padding:3px 10px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Add subtask</button>
+          </div>
+          <div id="ipSubtasks" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px"></div>
         </div>
 
         <!-- Dependencies card -->

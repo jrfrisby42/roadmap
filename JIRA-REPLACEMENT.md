@@ -329,8 +329,17 @@ ShareBox already has S3-backed storage — don't rebuild it here.
   returns to the exact previous view in-app (via history) and falls back to a plain
   close for deep links.
 - **Item Page: inline-edit overhaul** — make fields editable directly on the Item
-  Page (and consistent with the List view) instead of round-tripping through the
-  modal. (Queued.)
+  Page instead of round-tripping through the modal. **In progress (staged):**
+  - ✅ Stage 1: inline Details (status, owner/Pod, assignee, type, priority, points, sprint).
+  - ✅ Stage 2: inline title + description (autosave on blur).
+  - ✅ Stage 3: inline schedule (start, estimate, test, parallel, revised, expected,
+    release) with derived-due recompute + active-status locks + testWeeks<dueWeeks.
+  - Stage 4 (in progress): subtasks (inline create + roll-up) + linked work items.
+  - ✅ Change reason: inline schedule edits that move a committed due/revised date now
+    prompt for a reason (from `changeReasons`) + note, stamp `delay`, and log to item
+    history (mirrors the modal). Inline schedule/date editing is **admin-only**; editors
+    change schedule via the modal (which keeps the editor approval workflow).
+  - Later: attachments (ShareBox); copilot slot. The modal stays for now.
 
 ---
 
