@@ -15256,16 +15256,17 @@ if ('serviceWorker' in navigator) {
       if (opt){ handleOpt(opt.getAttribute('data-opt'), opt); return; }
     });
     document.getElementById('frzCollapse').addEventListener('click', toggleCollapse);
-    // Shell-level keyboard shortcuts — bound ONCE here (same place as the collapse
-    // button), on window + capture, so they fire on EVERY /beta route including
-    // /beta/item/:id before any view/item-overlay handler can pre-empt them.
-    window.addEventListener('keydown', function(e){
+    // ONE shell-level keyboard handler, bound once here when the shell mounts (same
+    // place as the collapse button). document-level, default (bubble) phase, guarded
+    // only by "not typing". Handles [ (collapse) and / (focus search) on every route.
+    document.addEventListener('keydown', function(e){
       var ae = document.activeElement;
       var typing = !!(ae && (ae.tagName==='INPUT' || ae.tagName==='TEXTAREA' || ae.isContentEditable));
-      if (e.key==='[' && !typing){ e.preventDefault(); toggleCollapse(); }
-      else if (e.key==='/' && !typing){ e.preventDefault(); var si=document.getElementById('itemSearch'); if(si) si.focus(); }
+      if (typing) { if(e.key==='Escape' && state.pop) closePop(); return; }
+      if (e.key==='['){ e.preventDefault(); toggleCollapse(); }
+      else if (e.key==='/'){ e.preventDefault(); var si=document.getElementById('itemSearch'); if(si) si.focus(); }
       else if (e.key==='Escape' && state.pop){ closePop(); }
-    }, true);
+    });
     document.getElementById('frzSaveBtn').addEventListener('click', function(e){ e.stopPropagation(); saveCurrent(this); });
     document.getElementById('frzAddProj').addEventListener('click', function(e){ e.stopPropagation(); _call('showToast','Add project — coming soon'); });
     document.getElementById('frzAddBoard').addEventListener('click', function(e){ e.stopPropagation(); openBoardEditor(null); });
