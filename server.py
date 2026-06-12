@@ -845,6 +845,19 @@ def root():
     with open(HTML, encoding="utf-8") as f:
         return f.read()
 
+# ── Beta shell (/beta) ────────────────────────────────────────────────────────
+# Additive: serves the SAME roadmap.html so the /beta left-rail shell can run
+# alongside production. The shell is a route-gated module inside roadmap.html that
+# is a no-op unless location.pathname starts with "/beta". Production "/" above is
+# untouched. The catch-all carries /beta/gantt, /beta/list, /beta/item/123, etc.
+@app.get("/beta", response_class=HTMLResponse)
+@app.get("/beta/{subpath:path}", response_class=HTMLResponse)
+def beta_shell(subpath: str = ""):
+    if not os.path.exists(HTML):
+        raise HTTPException(404, "roadmap.html not found next to server.py")
+    with open(HTML, encoding="utf-8") as f:
+        return f.read()
+
 # ── PWA: manifest, service worker, icons ──────────────────────────────────────
 # Served as routes (not static files) so the deploy stays a two-file scp. Icon
 # bytes are base64-embedded below; regenerate with `python tools/gen_pwa_icons.py`
