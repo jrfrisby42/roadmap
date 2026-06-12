@@ -754,13 +754,28 @@
     Filters
   </button>
   <div class="controls">
-    <span class="ctrl-lbl">Group</span>
+    <span class="ctrl-lbl">View</span>
+    <select id="viewSelect" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none;color:var(--text)">
+      <option value="gantt">Gantt</option>
+      <option value="kanban">Kanban</option>
+      <option value="list">List</option>
+      <option value="planning" id="planningOption" style="display:none">Planning</option>
+      <option value="dashboard">Dashboard</option>
+    </select>
+    <span class="ctrl-lbl" id="groupByLbl">Group</span>
     <select id="groupBy">
       <option value="developer">Owner</option>
       <option value="status">Status</option>
       <option value="priority">Priority</option>
       <option value="none">None</option>
     </select>
+    <span class="ctrl-lbl">Project</span>
+    <div class="ms-wrap" id="productDropWrap">
+      <button class="ms-btn" id="productDropBtn" type="button">All Projects ▾</button>
+      <div class="ms-panel" id="productDropPanel">
+        <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
+      </div>
+    </div>
     <span class="ctrl-lbl">Owner</span>
     <div class="ms-wrap" id="devDropWrap">
       <button class="ms-btn" id="devDropBtn" type="button">All Owners ▾</button>
@@ -768,17 +783,17 @@
         <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
       </div>
     </div>
+    <span class="ctrl-lbl" id="assigneeLbl" style="display:none">Assignee</span>
+    <div class="ms-wrap" id="assigneeDropWrap" style="display:none">
+      <button class="ms-btn" id="assigneeDropBtn" type="button">All ▾</button>
+      <div class="ms-panel" id="assigneeDropPanel">
+        <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
+      </div>
+    </div>
     <span class="ctrl-lbl">Type</span>
     <div class="ms-wrap" id="typeDropWrap">
       <button class="ms-btn" id="typeDropBtn" type="button">All Types ▾</button>
       <div class="ms-panel" id="typeDropPanel">
-        <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
-      </div>
-    </div>
-    <span class="ctrl-lbl">Project</span>
-    <div class="ms-wrap" id="productDropWrap">
-      <button class="ms-btn" id="productDropBtn" type="button">All Projects ▾</button>
-      <div class="ms-panel" id="productDropPanel">
         <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
       </div>
     </div>
@@ -794,14 +809,6 @@
         <label class="ms-opt" data-val="TBD"><input type="checkbox" value="TBD"> TBD</label>
       </div>
     </div>
-    <span class="ctrl-lbl">View</span>
-    <select id="viewSelect" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none;color:var(--text)">
-      <option value="gantt">Gantt</option>
-      <option value="kanban">Kanban</option>
-      <option value="list">List</option>
-      <option value="planning" id="planningOption" style="display:none">Planning</option>
-      <option value="dashboard">Dashboard</option>
-    </select>
     <span class="ctrl-lbl" id="dateRangeLbl" style="display:none">From</span>
     <input type="date" id="filterFrom" style="display:none;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none">
     <span class="ctrl-lbl" id="dateRangeLbl2" style="display:none">To</span>
@@ -1056,11 +1063,6 @@
 
 <!-- LIST VIEW (Phase 1d-i) — server-paginated item table backed by /api/items -->
 <div id="listView" style="display:none;padding:16px 20px">
-  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">
-    <input id="listSearch" type="search" placeholder="Search key, name, notes…" style="padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none;min-width:200px;flex:1;max-width:320px;color:var(--text)">
-    <select id="listAssignee" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
-    <span id="listCount" style="margin-left:auto;font-size:12px;color:var(--muted)"></span>
-  </div>
   <div id="listBulkBar" style="display:none;align-items:center;gap:8px;margin-bottom:10px;padding:8px 12px;background:rgba(91,79,255,0.08);border:1px solid var(--accent);border-radius:8px;flex-wrap:wrap">
     <span id="listBulkCount" style="font-size:12px;font-weight:700;color:var(--accent)"></span>
     <span style="font-size:12px;color:var(--muted)">Set</span>
@@ -1079,16 +1081,17 @@
   <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead>
-        <tr style="background:var(--surface);text-align:left">
+        <tr id="listHeadRow" style="background:var(--surface);text-align:left">
           <th style="padding:8px 10px;width:32px"><input type="checkbox" id="listSelectAll" title="Select all on this page"></th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Key</th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Type</th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Name</th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Status</th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Owner</th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Assignee</th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;text-align:center">Points</th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Sprint</th>
+          <th class="list-sort" data-sort="item_key" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Key<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="type" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Type<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="name" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Name<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="status" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Status<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="priority" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Priority<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="owner" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Owner<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="assignee" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Assignee<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="story_points" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap;text-align:center">Points<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="sprint_id" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Sprint<span class="sort-arrow"></span></th>
         </tr>
       </thead>
       <tbody id="listBody"></tbody>
@@ -1098,6 +1101,7 @@
     <button id="listTreeToggle" title="Toggle hierarchy (parent → children)" style="padding:6px 12px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">☰ Tree: Off</button>
     <select id="listPageSize" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"><option value="25">25 / page</option><option value="50" selected>50 / page</option><option value="100">100 / page</option></select>
     <div id="listPager" style="display:flex;gap:10px;align-items:center;justify-content:center;flex:1"></div>
+    <span id="listCount" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
   </div>
 </div>
 
@@ -2011,7 +2015,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '3.9.0';
+const APP_VERSION = '3.10.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2320,7 +2324,7 @@ function getSelectedProducts(){
 
 // ── Close all filter dropdowns (only one open at a time) ──────────────────────
 function closeAllDropdowns(){
-  ['productDropBtn','devDropBtn','typeDropBtn','statusDropBtn'].forEach(id => {
+  ['productDropBtn','devDropBtn','assigneeDropBtn','typeDropBtn','statusDropBtn'].forEach(id => {
     const btn = document.getElementById(id);
     const panel = btn?.nextElementSibling;
     btn?.classList.remove('open');
@@ -7093,6 +7097,63 @@ function wireDevDropdown(){
 
 // Outside-click close for devDropPanel handled by closeAllDropdowns
 
+// ── ASSIGNEE DROPDOWN (top bar, List view only) ──
+function getSelectedAssignees(){
+  const allCk = document.querySelector('#assigneeDropPanel input[value="all"]');
+  if(allCk?.checked) return null;
+  const chosen = [...document.querySelectorAll('#assigneeDropPanel input[type=checkbox]')]
+    .filter(c => c.value !== 'all' && c.checked).map(c => c.value);
+  return chosen.length ? chosen : null;
+}
+function populateAssigneeDrop(){
+  const panel = document.getElementById('assigneeDropPanel');
+  if(!panel) return;
+  const prevChecked = [...panel.querySelectorAll('input[type=checkbox]:not([value="all"])')].filter(c=>c.checked).map(c=>c.value);
+  const names = users.map(u=>u.username);
+  panel.innerHTML = `<label class="ms-opt" data-val="all"><input type="checkbox" value="all" ${prevChecked.length===0?'checked':''}> All</label>` +
+    names.map(n=>`<label class="ms-opt" data-val="${escA(n)}"><input type="checkbox" value="${escA(n)}"${prevChecked.includes(n)?' checked':''}> ${esc(n)}</label>`).join('') +
+    `<label class="ms-opt" data-val=""><input type="checkbox" value=""${prevChecked.includes('')?' checked':''}> <em style="color:var(--muted)">Unassigned</em></label>`;
+  wireAssigneeDropdown();
+}
+function wireAssigneeDropdown(){
+  const panel   = document.getElementById('assigneeDropPanel');
+  if(!panel) return;
+  const allCk   = () => panel.querySelector('input[value="all"]');
+  const itemCks = () => [...panel.querySelectorAll('input[type=checkbox]')].filter(c=>c.value!=='all');
+  function updateBtn(){
+    const btn = document.getElementById('assigneeDropBtn');
+    if(!btn) return;
+    const chosen = itemCks().filter(c=>c.checked);
+    if(!chosen.length || allCk()?.checked){ btn.textContent = 'All ▾'; btn.classList.remove('filtered'); }
+    else if(chosen.length === 1){ btn.textContent = (chosen[0].value || 'Unassigned') + ' ▾'; btn.classList.add('filtered'); }
+    else { btn.textContent = chosen.length + ' selected ▾'; btn.classList.add('filtered'); }
+  }
+  if(!panel._wired){
+    panel._wired = true;
+    panel.addEventListener('change', e=>{
+      const ck = e.target;
+      if(!ck.matches('input[type=checkbox]')) return;
+      const ac = allCk();
+      if(ck.value === 'all'){
+        if(ck.checked) itemCks().forEach(c=>c.checked=false);
+      } else {
+        if(ck.checked && ac) ac.checked = false;
+        if(itemCks().every(c=>!c.checked) && ac) ac.checked = true;
+      }
+      updateBtn();
+      if(viewMode === 'list'){ _listState.page = 1; renderList(); }
+    });
+    document.getElementById('assigneeDropBtn')?.addEventListener('click', e=>{
+      e.stopPropagation();
+      const btn    = document.getElementById('assigneeDropBtn');
+      const isOpen = btn.classList.contains('open');
+      closeAllDropdowns();
+      if(!isOpen){ btn.classList.add('open'); panel.classList.add('open'); }
+    });
+  }
+  updateBtn();
+}
+
 // ── TYPE DROPDOWN ──
 function populateTypeSelect(){
   const panel = document.getElementById('typeDropPanel');
@@ -8369,6 +8430,16 @@ function applyViewMode(){
   });
   // Legend only visible in Gantt
   if(legend) legend.style.display = viewMode === 'gantt' ? '' : 'none';
+  // Group control only applies to the Gantt view — hide it (label + select) elsewhere
+  ['groupByLbl','groupBy'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.style.display = viewMode === 'gantt' ? '' : 'none';
+  });
+  // Assignee filter applies only to the List view
+  ['assigneeLbl','assigneeDropWrap'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.style.display = viewMode === 'list' ? '' : 'none';
+  });
   updateSearchVisibility();
 
   // Restore topbar controls that were dimmed for planning view
@@ -8437,27 +8508,8 @@ document.getElementById('filterFrom')?.addEventListener('change', ()=>{ if(viewM
 document.getElementById('filterTo')?.addEventListener('change',   ()=>{ if(viewMode==='dashboard') renderDashboard(); });
 
 // ── LIST VIEW (Phase 1d-i) — server-paginated item table backed by /api/items ──
-const _listState = { page: 1, page_size: 50, tree: false };
+const _listState = { page: 1, page_size: 50, tree: false, sort: '' };  // sort: '<col>:<asc|desc>' ('' = server default)
 let _listSelected = new Set();
-let _listFiltersReady = false;
-let _listSearchTimer = null;
-
-function _listFillSelect(id, options, allLabel){
-  const sel = document.getElementById(id);
-  if(!sel) return;
-  const cur = sel.value;
-  sel.innerHTML = `<option value="">${allLabel}</option>` +
-    options.map(o => `<option value="${escA(o)}">${esc(o)}</option>`).join('');
-  sel.value = cur;  // preserve current selection if still valid
-}
-
-function populateListFilters(){
-  // Owner / Type / Project / Status now use the top-bar filters — only the
-  // List-local Assignee select needs populating here.
-  _listFillSelect('listAssignee', users.map(u=>u.username),  'All assignees');
-  _listFiltersReady = true;
-}
-
 function _listQuery(){
   const v = id => (document.getElementById(id)?.value || '').trim();
   const params = new URLSearchParams();
@@ -8465,12 +8517,13 @@ function _listQuery(){
   // filters (null = "All"). They're passed as comma-separated lists; /api/items
   // expands those to SQL IN(...). Assignee stays a List-local single select.
   const setMulti = (k, arr) => { if(arr && arr.length) params.set(k, arr.join(',')); };
-  setMulti('product', getSelectedProducts());
-  setMulti('type',    getSelectedTypes());
-  setMulti('status',  getSelectedStatuses());
-  setMulti('owner',   getSelectedDevs());
-  const asg = v('listAssignee'); if(asg) params.set('assignee', asg);
-  const q = v('listSearch'); if(q) params.set('q', q);
+  setMulti('product',  getSelectedProducts());
+  setMulti('type',     getSelectedTypes());
+  setMulti('status',   getSelectedStatuses());
+  setMulti('owner',    getSelectedDevs());
+  setMulti('assignee', getSelectedAssignees());   // top-bar multi-select (List only)
+  const q = v('itemSearch'); if(q) params.set('q', q);   // shared header search box
+  if(_listState.sort) params.set('sort', _listState.sort);
   params.set('page', _listState.page);
   params.set('page_size', _listState.page_size);
   return params.toString();
@@ -8493,6 +8546,7 @@ function _listRowHtml(it, depth){
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.type)}</td>
     <td style="padding:7px 10px;font-weight:600">${_listCell(it.name)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(it.status)}</span>` : '—'}</td>
+    <td style="padding:7px 10px;white-space:nowrap">${(it.priority && PRIO_LABELS[it.priority]) ? `<span style="background:${PRIO_COLORS[it.priority]}22;color:${PRIO_COLORS[it.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[it.priority])}</span>` : '—'}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.dev)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.assignee)}</td>
     <td style="padding:7px 10px;text-align:center">${_listCell(it.storyPoints)}</td>
@@ -8501,26 +8555,26 @@ function _listRowHtml(it, depth){
 }
 
 async function renderList(){
-  if(!_listFiltersReady) populateListFilters();
   const tree = _listState.tree;
   const body = document.getElementById('listBody');
   const countEl = document.getElementById('listCount');
   if(!body) return;
   _listSelected.clear();
-  body.innerHTML = `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>`;
+  body.innerHTML = `<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>`;
   let data;
   const url = '/api/items?' + _listQuery() + (tree ? '&parent_id=none&counts=1' : '');
   try { data = await API.get(url); }
   catch(e){
-    body.innerHTML = `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--accent2)">${esc(e.message||'Failed to load')}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--accent2)">${esc(e.message||'Failed to load')}</td></tr>`;
     return;
   }
   const items = data.items || [];
   if(countEl) countEl.textContent = `${data.total} ${tree?'top-level ':''}item${data.total!==1?'s':''}`;
   body.innerHTML = items.length
     ? items.map(it => _listRowHtml(it, 0)).join('')
-    : `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted)">No matching items.</td></tr>`;
+    : `<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">No matching items.</td></tr>`;
   const sa = document.getElementById('listSelectAll'); if(sa) sa.checked = false;
+  _updateSortIndicators();
   updateBulkBar();
   _renderListPager(data);
 }
@@ -8560,13 +8614,29 @@ function _renderListPager(data){
   document.getElementById('listNext')?.addEventListener('click', ()=>{ if(_listState.page<pages){ _listState.page++; renderList(); }});
 }
 
-document.getElementById('listAssignee')?.addEventListener('change', ()=>{ _listState.page=1; renderList(); });
+// ── List column sorting ──
+// Click a header to sort by that column; click again to flip direction.
+function _listSetSort(col){
+  const [cur, dir] = (_listState.sort || '').split(':');
+  _listState.sort = (cur === col && dir === 'asc') ? `${col}:desc` : `${col}:asc`;
+  _listState.page = 1;
+  renderList();
+}
+function _updateSortIndicators(){
+  const [cur, dir] = (_listState.sort || '').split(':');
+  document.querySelectorAll('#listHeadRow .list-sort').forEach(th => {
+    const arrow = th.querySelector('.sort-arrow');
+    const active = th.dataset.sort === cur;
+    if(arrow) arrow.textContent = active ? (dir === 'asc' ? ' ▲' : ' ▼') : '';
+    th.style.color = active ? 'var(--accent)' : 'var(--muted)';
+  });
+}
+document.getElementById('listHeadRow')?.addEventListener('click', e=>{
+  const th = e.target.closest('.list-sort');
+  if(th && th.dataset.sort) _listSetSort(th.dataset.sort);
+});
 document.getElementById('listPageSize')?.addEventListener('change', e=>{
   _listState.page_size = parseInt(e.target.value)||50; _listState.page=1; renderList();
-});
-document.getElementById('listSearch')?.addEventListener('input', ()=>{
-  clearTimeout(_listSearchTimer);
-  _listSearchTimer = setTimeout(()=>{ _listState.page=1; renderList(); }, 300);
 });
 // Delegated row interactions (works for dynamically-inserted tree child rows).
 document.getElementById('listBody')?.addEventListener('click', (e)=>{
@@ -10142,7 +10212,8 @@ function clearSearch(){
   document.getElementById('itemSearchClear').style.display = 'none';
   const wrap = document.getElementById('searchWrap');
   if(wrap) wrap.style.borderColor = '';
-  render();
+  if(viewMode === 'list') _listState.page = 1;
+  renderCurrentView();
 }
 
 function initSearch(){
@@ -10173,9 +10244,9 @@ function itemMatchesSearch(p, query){
 }
 
 function updateSearchVisibility(){
-  // The top-bar box is an in-memory view filter — only meaningful for Gantt/Kanban.
+  // Header search box: in-memory filter on Gantt/Kanban, server-side FTS on List.
   const wrap = document.getElementById('searchWrap');
-  if(wrap) wrap.style.display = (viewMode === 'gantt' || viewMode === 'kanban') ? '' : 'none';
+  if(wrap) wrap.style.display = (viewMode === 'gantt' || viewMode === 'kanban' || viewMode === 'list') ? '' : 'none';
 }
 // ── PLANNING BOARD ────────────────────────────────────────────────────────────
 
@@ -12886,7 +12957,9 @@ function renderItemPage(p){
   } else { prioEl.style.display='none'; }
 
   document.getElementById('ipBreadcrumb').innerHTML =
-    `<span style="color:var(--muted)">${esc(p.product||'—')}</span> › <span style="color:var(--text);font-weight:700">${esc(p.name)}</span>`;
+    `<span style="color:var(--muted)">${esc(p.product||'—')}</span> › ` +
+    (p.itemKey ? `<span style="font-family:monospace;font-weight:700;color:var(--accent)">${esc(p.itemKey)}</span> › ` : '') +
+    `<span style="color:var(--text);font-weight:700">${esc(p.name)}</span>`;
 
   const _sb = document.getElementById('ipStatusBadge');
   if(_sb){
@@ -12906,7 +12979,7 @@ function renderItemPage(p){
   document.getElementById('ipMeta').innerHTML =
     `${p.dev?`<span style="font-weight:700;color:var(--text)">${esc(p.dev)}</span> · `:''}` +
     `${p.type?esc(p.type)+' · ':''}` +
-    `<span style="color:${isTerm?'#22b96e':isLocked?'var(--accent)':'var(--muted)'}">${esc(p.status||'—')}</span>`;
+    `<span class="${p.status?statusCls(p.status):''}" style="background:none;border:none;padding:0;font-weight:700">${esc(p.status||'—')}</span>`;
 
   // Core fields
   const dueD  = nextMonday(parseD(p.due));
@@ -12922,9 +12995,10 @@ function renderItemPage(p){
     ipEditField('dev',        'Owner (Pod)',  esc(p.dev||''),    'select', {bold:true}),
     ipEditField('assignee',   'Assignee',     esc(p.assignee||''), 'select'),
     ipEditField('type',       'Type',         esc(p.type||''),   'select'),
-    ipEditField('priority',   'Priority',     p.priority ? PRIO_LABELS[p.priority] : '', 'select'),
+    ipEditField('priority',   'Priority',     p.priority ? `<span style="color:${PRIO_COLORS[p.priority]};font-weight:700">${esc(PRIO_LABELS[p.priority])}</span>` : '', 'select'),
     ipEditField('storyPoints','Story Points', (p.storyPoints==null||p.storyPoints==='') ? '' : String(p.storyPoints), 'number'),
     ipEditField('sprintId',   'Sprint',       esc(p.sprintId||''), 'text'),
+    ipField('Key', p.itemKey ? `<span style="font-family:monospace">${esc(p.itemKey)}</span>` : '—', {bold:true}),
     ipField('Project',       esc(p.product||'—')),
     ipField('Reporter',      esc(p.reporter||'—')),
     ipEditField('dueWeeks',          'Time Estimate',      p.dueWeeks ? fmtEstimate(p.dueWeeks) : '', 'number', {readonly:timeRO}),
@@ -13960,6 +14034,7 @@ async function boot(){
   populateDelaySelect();
   populateProductSelect();
   populateTypeSelect();
+  populateAssigneeDrop();
   initViewSelect(); // sets viewMode and calls render() or renderKanban()
   applyMobileViewDefault(); // on small screens, default to Kanban
   initSearch();     // wire search input
@@ -14152,11 +14227,11 @@ if ('serviceWorker' in navigator) {
 </div>
 
 <div id="itemPageOverlay" style="display:none;position:fixed;inset:0;background:#fff;z-index:900;overflow-y:auto;font-family:'Lato',sans-serif">
-  <div style="max-width:1100px;margin:0 auto;padding:0 0 60px">
-    <!-- Item page header bar -->
-    <div style="position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--border);z-index:10;padding:14px 28px;display:flex;align-items:center;gap:12px">
+  <!-- Item page header bar (full width) -->
+  <div style="position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--border);z-index:10;padding:14px 28px;display:flex;align-items:center;gap:12px">
       <a class="topbar-logo" href="https://fraznet.com" target="_blank" rel="noopener" style="flex-shrink:0">
         <img src="https://frazil.com/frazil/wp-content/uploads/2021/02/Frazil_Website_Nav_Logo@2x.png" alt="Frazil">
+        <span class="topbar-title">Roadmap</span>
       </a>
       <div class="topbar-div" style="flex-shrink:0"></div>
       <button id="ipBackBtn" onclick="itemPageBack()" title="Back to previous page"
@@ -14167,16 +14242,16 @@ if ('serviceWorker' in navigator) {
         Back
       </button>
       <div id="ipBreadcrumb" style="font-size:12px;color:var(--muted)"></div>
-      <div style="position:relative;flex:1;max-width:380px;margin:0 auto">
-        <input id="ipGlobalSearch" type="text" placeholder="Search items…" autocomplete="off"
-          onkeydown="if(event.key==='Enter'){const r=document.querySelector('#ipGlobalSearchResults .ip-search-result'); if(r) r.click();} else if(event.key==='Escape'){const b=document.getElementById('ipGlobalSearchResults'); if(b) b.style.display='none';}"
-          style="width:100%;box-sizing:border-box;padding:7px 12px 7px 32px;font-size:13px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);pointer-events:none"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <div id="ipGlobalSearchResults" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,0.15);max-height:340px;overflow-y:auto;z-index:30"></div>
-      </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <span id="ipStatusBadge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;background:var(--surface);color:var(--text)"></span>
         <span id="ipPriorityBadge" style="display:none;font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;flex-shrink:0"></span>
+        <div style="position:relative;width:280px;max-width:40vw">
+          <input id="ipGlobalSearch" type="text" placeholder="Search items…" autocomplete="off"
+            onkeydown="if(event.key==='Enter'){const r=document.querySelector('#ipGlobalSearchResults .ip-search-result'); if(r) r.click();} else if(event.key==='Escape'){const b=document.getElementById('ipGlobalSearchResults'); if(b) b.style.display='none';}"
+            style="width:100%;box-sizing:border-box;padding:7px 12px 7px 32px;font-size:13px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);pointer-events:none"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <div id="ipGlobalSearchResults" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,0.15);max-height:340px;overflow-y:auto;z-index:30"></div>
+        </div>
         <div style="position:relative">
           <button id="ipMenuBtn" onclick="ipToggleMenu(event)" title="Actions"
             style="background:none;border:1px solid var(--border);color:var(--muted);padding:6px 9px;border-radius:6px;cursor:pointer;display:flex;align-items:center;line-height:1;flex-shrink:0"
@@ -14198,6 +14273,7 @@ if ('serviceWorker' in navigator) {
       </div>
     </div>
 
+  <div style="max-width:1100px;margin:0 auto;padding:0 0 60px">
     <!-- Item title -->
     <div style="padding:28px 28px 0">
       <h1 id="ipTitle" style="font-size:24px;font-weight:900;color:var(--text);margin:0 0 4px;line-height:1.2"></h1>

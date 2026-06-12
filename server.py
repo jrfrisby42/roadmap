@@ -790,7 +790,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "3.9.0"
+APP_VERSION = "3.10.0"
 
 app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
 
@@ -1633,16 +1633,22 @@ def list_items(
             params += [t, t, t]
 
     sort_col, _, sort_dir = (sort or "updated_ts:desc").partition(":")
-    if sort_col not in _ITEMS_SORTABLE:
-        sort_col = "updated_ts"
     sort_dir = "ASC" if sort_dir.lower() == "asc" else "DESC"
+    # `name` lives in the JSON blob (no indexed column) — sort it via json_extract,
+    # case-insensitively. All other sorts must be whitelisted indexed columns.
+    if sort_col == "name":
+        sort_expr = "json_extract(projects.data,'$.name') COLLATE NOCASE"
+    else:
+        if sort_col not in _ITEMS_SORTABLE:
+            sort_col = "updated_ts"
+        sort_expr = f"projects.{sort_col}"
 
     page = max(1, page)
     page_size = max(1, min(500, page_size))
     offset = (page - 1) * page_size
 
     join  = ""
-    order = f"projects.{sort_col} {sort_dir}, projects.id DESC"
+    order = f"{sort_expr} {sort_dir}, projects.id DESC"
     if use_fts:
         join = "JOIN projects_fts ON projects_fts.rowid = projects.id"
         where.append("projects_fts MATCH ?")

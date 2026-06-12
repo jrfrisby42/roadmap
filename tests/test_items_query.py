@@ -145,6 +145,26 @@ def test_child_counts(client, team, admin_headers):
     assert by_id[leaf]["_childCount"] == 0
 
 
+def test_sort_by_name(client, team, admin_headers):
+    # `name` lives in the JSON blob — sortable via json_extract, case-insensitive.
+    _mk(client, admin_headers, name="banana")
+    _mk(client, admin_headers, name="Apple")
+    _mk(client, admin_headers, name="cherry")
+    asc = [i["name"] for i in
+           client.get("/api/items?sort=name:asc", headers=admin_headers).json()["items"]]
+    assert asc == ["Apple", "banana", "cherry"]   # NOCASE: Apple before banana
+    desc = [i["name"] for i in
+            client.get("/api/items?sort=name:desc", headers=admin_headers).json()["items"]]
+    assert desc == ["cherry", "banana", "Apple"]
+
+
+def test_sort_by_indexed_column(client, team, admin_headers):
+    ids = _seed(client, admin_headers)
+    r = client.get("/api/items?sort=type:asc", headers=admin_headers).json()
+    # sorting by an indexed column returns all rows without error
+    assert {i["id"] for i in r["items"]} == set(ids.values())
+
+
 def test_sort_whitelist_ignores_garbage(client, team, admin_headers):
     _seed(client, admin_headers)
     # A non-whitelisted sort column must not error or inject — falls back to default.
