@@ -783,6 +783,13 @@
         <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
       </div>
     </div>
+    <span class="ctrl-lbl" id="assigneeLbl" style="display:none">Assignee</span>
+    <div class="ms-wrap" id="assigneeDropWrap" style="display:none">
+      <button class="ms-btn" id="assigneeDropBtn" type="button">All ▾</button>
+      <div class="ms-panel" id="assigneeDropPanel">
+        <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
+      </div>
+    </div>
     <span class="ctrl-lbl">Type</span>
     <div class="ms-wrap" id="typeDropWrap">
       <button class="ms-btn" id="typeDropBtn" type="button">All Types ▾</button>
@@ -1056,11 +1063,6 @@
 
 <!-- LIST VIEW (Phase 1d-i) — server-paginated item table backed by /api/items -->
 <div id="listView" style="display:none;padding:16px 20px">
-  <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px">
-    <input id="listSearch" type="search" placeholder="Search key, name, notes…" style="padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none;min-width:200px;flex:1;max-width:320px;color:var(--text)">
-    <select id="listAssignee" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"></select>
-    <span id="listCount" style="margin-left:auto;font-size:12px;color:var(--muted)"></span>
-  </div>
   <div id="listBulkBar" style="display:none;align-items:center;gap:8px;margin-bottom:10px;padding:8px 12px;background:rgba(91,79,255,0.08);border:1px solid var(--accent);border-radius:8px;flex-wrap:wrap">
     <span id="listBulkCount" style="font-size:12px;font-weight:700;color:var(--accent)"></span>
     <span style="font-size:12px;color:var(--muted)">Set</span>
@@ -1098,6 +1100,7 @@
     <button id="listTreeToggle" title="Toggle hierarchy (parent → children)" style="padding:6px 12px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">☰ Tree: Off</button>
     <select id="listPageSize" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"><option value="25">25 / page</option><option value="50" selected>50 / page</option><option value="100">100 / page</option></select>
     <div id="listPager" style="display:flex;gap:10px;align-items:center;justify-content:center;flex:1"></div>
+    <span id="listCount" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
   </div>
 </div>
 
@@ -2320,7 +2323,7 @@ function getSelectedProducts(){
 
 // ── Close all filter dropdowns (only one open at a time) ──────────────────────
 function closeAllDropdowns(){
-  ['productDropBtn','devDropBtn','typeDropBtn','statusDropBtn'].forEach(id => {
+  ['productDropBtn','devDropBtn','assigneeDropBtn','typeDropBtn','statusDropBtn'].forEach(id => {
     const btn = document.getElementById(id);
     const panel = btn?.nextElementSibling;
     btn?.classList.remove('open');
@@ -7093,6 +7096,63 @@ function wireDevDropdown(){
 
 // Outside-click close for devDropPanel handled by closeAllDropdowns
 
+// ── ASSIGNEE DROPDOWN (top bar, List view only) ──
+function getSelectedAssignees(){
+  const allCk = document.querySelector('#assigneeDropPanel input[value="all"]');
+  if(allCk?.checked) return null;
+  const chosen = [...document.querySelectorAll('#assigneeDropPanel input[type=checkbox]')]
+    .filter(c => c.value !== 'all' && c.checked).map(c => c.value);
+  return chosen.length ? chosen : null;
+}
+function populateAssigneeDrop(){
+  const panel = document.getElementById('assigneeDropPanel');
+  if(!panel) return;
+  const prevChecked = [...panel.querySelectorAll('input[type=checkbox]:not([value="all"])')].filter(c=>c.checked).map(c=>c.value);
+  const names = users.map(u=>u.username);
+  panel.innerHTML = `<label class="ms-opt" data-val="all"><input type="checkbox" value="all" ${prevChecked.length===0?'checked':''}> All</label>` +
+    names.map(n=>`<label class="ms-opt" data-val="${escA(n)}"><input type="checkbox" value="${escA(n)}"${prevChecked.includes(n)?' checked':''}> ${esc(n)}</label>`).join('') +
+    `<label class="ms-opt" data-val=""><input type="checkbox" value=""${prevChecked.includes('')?' checked':''}> <em style="color:var(--muted)">Unassigned</em></label>`;
+  wireAssigneeDropdown();
+}
+function wireAssigneeDropdown(){
+  const panel   = document.getElementById('assigneeDropPanel');
+  if(!panel) return;
+  const allCk   = () => panel.querySelector('input[value="all"]');
+  const itemCks = () => [...panel.querySelectorAll('input[type=checkbox]')].filter(c=>c.value!=='all');
+  function updateBtn(){
+    const btn = document.getElementById('assigneeDropBtn');
+    if(!btn) return;
+    const chosen = itemCks().filter(c=>c.checked);
+    if(!chosen.length || allCk()?.checked){ btn.textContent = 'All ▾'; btn.classList.remove('filtered'); }
+    else if(chosen.length === 1){ btn.textContent = (chosen[0].value || 'Unassigned') + ' ▾'; btn.classList.add('filtered'); }
+    else { btn.textContent = chosen.length + ' selected ▾'; btn.classList.add('filtered'); }
+  }
+  if(!panel._wired){
+    panel._wired = true;
+    panel.addEventListener('change', e=>{
+      const ck = e.target;
+      if(!ck.matches('input[type=checkbox]')) return;
+      const ac = allCk();
+      if(ck.value === 'all'){
+        if(ck.checked) itemCks().forEach(c=>c.checked=false);
+      } else {
+        if(ck.checked && ac) ac.checked = false;
+        if(itemCks().every(c=>!c.checked) && ac) ac.checked = true;
+      }
+      updateBtn();
+      if(viewMode === 'list'){ _listState.page = 1; renderList(); }
+    });
+    document.getElementById('assigneeDropBtn')?.addEventListener('click', e=>{
+      e.stopPropagation();
+      const btn    = document.getElementById('assigneeDropBtn');
+      const isOpen = btn.classList.contains('open');
+      closeAllDropdowns();
+      if(!isOpen){ btn.classList.add('open'); panel.classList.add('open'); }
+    });
+  }
+  updateBtn();
+}
+
 // ── TYPE DROPDOWN ──
 function populateTypeSelect(){
   const panel = document.getElementById('typeDropPanel');
@@ -8374,6 +8434,11 @@ function applyViewMode(){
     const el = document.getElementById(id);
     if(el) el.style.display = viewMode === 'gantt' ? '' : 'none';
   });
+  // Assignee filter applies only to the List view
+  ['assigneeLbl','assigneeDropWrap'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.style.display = viewMode === 'list' ? '' : 'none';
+  });
   updateSearchVisibility();
 
   // Restore topbar controls that were dimmed for planning view
@@ -8444,25 +8509,6 @@ document.getElementById('filterTo')?.addEventListener('change',   ()=>{ if(viewM
 // ── LIST VIEW (Phase 1d-i) — server-paginated item table backed by /api/items ──
 const _listState = { page: 1, page_size: 50, tree: false, sort: '' };  // sort: '<col>:<asc|desc>' ('' = server default)
 let _listSelected = new Set();
-let _listFiltersReady = false;
-let _listSearchTimer = null;
-
-function _listFillSelect(id, options, allLabel){
-  const sel = document.getElementById(id);
-  if(!sel) return;
-  const cur = sel.value;
-  sel.innerHTML = `<option value="">${allLabel}</option>` +
-    options.map(o => `<option value="${escA(o)}">${esc(o)}</option>`).join('');
-  sel.value = cur;  // preserve current selection if still valid
-}
-
-function populateListFilters(){
-  // Owner / Type / Project / Status now use the top-bar filters — only the
-  // List-local Assignee select needs populating here.
-  _listFillSelect('listAssignee', users.map(u=>u.username),  'All assignees');
-  _listFiltersReady = true;
-}
-
 function _listQuery(){
   const v = id => (document.getElementById(id)?.value || '').trim();
   const params = new URLSearchParams();
@@ -8470,12 +8516,12 @@ function _listQuery(){
   // filters (null = "All"). They're passed as comma-separated lists; /api/items
   // expands those to SQL IN(...). Assignee stays a List-local single select.
   const setMulti = (k, arr) => { if(arr && arr.length) params.set(k, arr.join(',')); };
-  setMulti('product', getSelectedProducts());
-  setMulti('type',    getSelectedTypes());
-  setMulti('status',  getSelectedStatuses());
-  setMulti('owner',   getSelectedDevs());
-  const asg = v('listAssignee'); if(asg) params.set('assignee', asg);
-  const q = v('listSearch'); if(q) params.set('q', q);
+  setMulti('product',  getSelectedProducts());
+  setMulti('type',     getSelectedTypes());
+  setMulti('status',   getSelectedStatuses());
+  setMulti('owner',    getSelectedDevs());
+  setMulti('assignee', getSelectedAssignees());   // top-bar multi-select (List only)
+  const q = v('itemSearch'); if(q) params.set('q', q);   // shared header search box
   if(_listState.sort) params.set('sort', _listState.sort);
   params.set('page', _listState.page);
   params.set('page_size', _listState.page_size);
@@ -8507,7 +8553,6 @@ function _listRowHtml(it, depth){
 }
 
 async function renderList(){
-  if(!_listFiltersReady) populateListFilters();
   const tree = _listState.tree;
   const body = document.getElementById('listBody');
   const countEl = document.getElementById('listCount');
@@ -8567,8 +8612,6 @@ function _renderListPager(data){
   document.getElementById('listNext')?.addEventListener('click', ()=>{ if(_listState.page<pages){ _listState.page++; renderList(); }});
 }
 
-document.getElementById('listAssignee')?.addEventListener('change', ()=>{ _listState.page=1; renderList(); });
-
 // ── List column sorting ──
 // Click a header to sort by that column; click again to flip direction.
 function _listSetSort(col){
@@ -8592,10 +8635,6 @@ document.getElementById('listHeadRow')?.addEventListener('click', e=>{
 });
 document.getElementById('listPageSize')?.addEventListener('change', e=>{
   _listState.page_size = parseInt(e.target.value)||50; _listState.page=1; renderList();
-});
-document.getElementById('listSearch')?.addEventListener('input', ()=>{
-  clearTimeout(_listSearchTimer);
-  _listSearchTimer = setTimeout(()=>{ _listState.page=1; renderList(); }, 300);
 });
 // Delegated row interactions (works for dynamically-inserted tree child rows).
 document.getElementById('listBody')?.addEventListener('click', (e)=>{
@@ -10171,7 +10210,8 @@ function clearSearch(){
   document.getElementById('itemSearchClear').style.display = 'none';
   const wrap = document.getElementById('searchWrap');
   if(wrap) wrap.style.borderColor = '';
-  render();
+  if(viewMode === 'list') _listState.page = 1;
+  renderCurrentView();
 }
 
 function initSearch(){
@@ -10202,9 +10242,9 @@ function itemMatchesSearch(p, query){
 }
 
 function updateSearchVisibility(){
-  // The top-bar box is an in-memory view filter — only meaningful for Gantt/Kanban.
+  // Header search box: in-memory filter on Gantt/Kanban, server-side FTS on List.
   const wrap = document.getElementById('searchWrap');
-  if(wrap) wrap.style.display = (viewMode === 'gantt' || viewMode === 'kanban') ? '' : 'none';
+  if(wrap) wrap.style.display = (viewMode === 'gantt' || viewMode === 'kanban' || viewMode === 'list') ? '' : 'none';
 }
 // ── PLANNING BOARD ────────────────────────────────────────────────────────────
 
@@ -12915,7 +12955,9 @@ function renderItemPage(p){
   } else { prioEl.style.display='none'; }
 
   document.getElementById('ipBreadcrumb').innerHTML =
-    `<span style="color:var(--muted)">${esc(p.product||'—')}</span> › <span style="color:var(--text);font-weight:700">${esc(p.name)}</span>`;
+    `<span style="color:var(--muted)">${esc(p.product||'—')}</span> › ` +
+    (p.itemKey ? `<span style="font-family:monospace;font-weight:700;color:var(--accent)">${esc(p.itemKey)}</span> › ` : '') +
+    `<span style="color:var(--text);font-weight:700">${esc(p.name)}</span>`;
 
   const _sb = document.getElementById('ipStatusBadge');
   if(_sb){
@@ -12954,6 +12996,7 @@ function renderItemPage(p){
     ipEditField('priority',   'Priority',     p.priority ? PRIO_LABELS[p.priority] : '', 'select'),
     ipEditField('storyPoints','Story Points', (p.storyPoints==null||p.storyPoints==='') ? '' : String(p.storyPoints), 'number'),
     ipEditField('sprintId',   'Sprint',       esc(p.sprintId||''), 'text'),
+    ipField('Key', p.itemKey ? `<span style="font-family:monospace">${esc(p.itemKey)}</span>` : '—', {bold:true}),
     ipField('Project',       esc(p.product||'—')),
     ipField('Reporter',      esc(p.reporter||'—')),
     ipEditField('dueWeeks',          'Time Estimate',      p.dueWeeks ? fmtEstimate(p.dueWeeks) : '', 'number', {readonly:timeRO}),
@@ -13989,6 +14032,7 @@ async function boot(){
   populateDelaySelect();
   populateProductSelect();
   populateTypeSelect();
+  populateAssigneeDrop();
   initViewSelect(); // sets viewMode and calls render() or renderKanban()
   applyMobileViewDefault(); // on small screens, default to Kanban
   initSearch();     // wire search input
@@ -14181,11 +14225,11 @@ if ('serviceWorker' in navigator) {
 </div>
 
 <div id="itemPageOverlay" style="display:none;position:fixed;inset:0;background:#fff;z-index:900;overflow-y:auto;font-family:'Lato',sans-serif">
-  <div style="max-width:1100px;margin:0 auto;padding:0 0 60px">
-    <!-- Item page header bar -->
-    <div style="position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--border);z-index:10;padding:14px 28px;display:flex;align-items:center;gap:12px">
+  <!-- Item page header bar (full width) -->
+  <div style="position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--border);z-index:10;padding:14px 28px;display:flex;align-items:center;gap:12px">
       <a class="topbar-logo" href="https://fraznet.com" target="_blank" rel="noopener" style="flex-shrink:0">
         <img src="https://frazil.com/frazil/wp-content/uploads/2021/02/Frazil_Website_Nav_Logo@2x.png" alt="Frazil">
+        <span class="topbar-title">Roadmap</span>
       </a>
       <div class="topbar-div" style="flex-shrink:0"></div>
       <button id="ipBackBtn" onclick="itemPageBack()" title="Back to previous page"
@@ -14227,6 +14271,7 @@ if ('serviceWorker' in navigator) {
       </div>
     </div>
 
+  <div style="max-width:1100px;margin:0 auto;padding:0 0 60px">
     <!-- Item title -->
     <div style="padding:28px 28px 0">
       <h1 id="ipTitle" style="font-size:24px;font-weight:900;color:var(--text);margin:0 0 4px;line-height:1.2"></h1>
