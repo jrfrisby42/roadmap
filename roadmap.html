@@ -1087,6 +1087,7 @@
           <th class="list-sort" data-sort="type" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Type<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="name" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Name<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="status" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Status<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="priority" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Priority<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="owner" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Owner<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="assignee" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Assignee<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="story_points" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap;text-align:center">Points<span class="sort-arrow"></span></th>
@@ -8545,6 +8546,7 @@ function _listRowHtml(it, depth){
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.type)}</td>
     <td style="padding:7px 10px;font-weight:600">${_listCell(it.name)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(it.status)}</span>` : '—'}</td>
+    <td style="padding:7px 10px;white-space:nowrap">${(it.priority && PRIO_LABELS[it.priority]) ? `<span style="background:${PRIO_COLORS[it.priority]}22;color:${PRIO_COLORS[it.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[it.priority])}</span>` : '—'}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.dev)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.assignee)}</td>
     <td style="padding:7px 10px;text-align:center">${_listCell(it.storyPoints)}</td>
@@ -8558,19 +8560,19 @@ async function renderList(){
   const countEl = document.getElementById('listCount');
   if(!body) return;
   _listSelected.clear();
-  body.innerHTML = `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>`;
+  body.innerHTML = `<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>`;
   let data;
   const url = '/api/items?' + _listQuery() + (tree ? '&parent_id=none&counts=1' : '');
   try { data = await API.get(url); }
   catch(e){
-    body.innerHTML = `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--accent2)">${esc(e.message||'Failed to load')}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--accent2)">${esc(e.message||'Failed to load')}</td></tr>`;
     return;
   }
   const items = data.items || [];
   if(countEl) countEl.textContent = `${data.total} ${tree?'top-level ':''}item${data.total!==1?'s':''}`;
   body.innerHTML = items.length
     ? items.map(it => _listRowHtml(it, 0)).join('')
-    : `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted)">No matching items.</td></tr>`;
+    : `<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">No matching items.</td></tr>`;
   const sa = document.getElementById('listSelectAll'); if(sa) sa.checked = false;
   _updateSortIndicators();
   updateBulkBar();
@@ -12993,7 +12995,7 @@ function renderItemPage(p){
     ipEditField('dev',        'Owner (Pod)',  esc(p.dev||''),    'select', {bold:true}),
     ipEditField('assignee',   'Assignee',     esc(p.assignee||''), 'select'),
     ipEditField('type',       'Type',         esc(p.type||''),   'select'),
-    ipEditField('priority',   'Priority',     p.priority ? PRIO_LABELS[p.priority] : '', 'select'),
+    ipEditField('priority',   'Priority',     p.priority ? `<span style="color:${PRIO_COLORS[p.priority]};font-weight:700">${esc(PRIO_LABELS[p.priority])}</span>` : '', 'select'),
     ipEditField('storyPoints','Story Points', (p.storyPoints==null||p.storyPoints==='') ? '' : String(p.storyPoints), 'number'),
     ipEditField('sprintId',   'Sprint',       esc(p.sprintId||''), 'text'),
     ipField('Key', p.itemKey ? `<span style="font-family:monospace">${esc(p.itemKey)}</span>` : '—', {bold:true}),
