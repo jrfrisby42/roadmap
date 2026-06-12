@@ -14429,6 +14429,7 @@ if ('serviceWorker' in navigator) {
     position:fixed; inset:0; z-index:1; background:var(--frz-bg-app);
     color:var(--frz-text); font-family:'Lato',system-ui,-apple-system,sans-serif;
     font-size:14px; display:grid; grid-template-columns:var(--frz-rail-w) 1fr;
+    grid-template-rows:minmax(0,1fr);   /* cap the row at viewport height so .frz-content can scroll */
     transition:grid-template-columns var(--frz-anim);
   }
   .frz-beta.is-collapsed { grid-template-columns:var(--frz-rail-w-collapsed) 1fr; }
@@ -14468,7 +14469,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta.is-collapsed .frz-section--saved, .frz-beta.is-collapsed .frz-section--projects { display:none; }
 
   /* Main column */
-  .frz-beta .frz-main { display:flex; flex-direction:column; min-width:0; }
+  .frz-beta .frz-main { display:flex; flex-direction:column; min-width:0; min-height:0; }
   .frz-beta .frz-topbar { height:var(--frz-topbar-h); display:flex; align-items:center; gap:10px; padding:0 14px; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-surface); flex-shrink:0; }
   .frz-beta .frz-collapse { width:30px; height:30px; border:0; background:transparent; cursor:pointer; border-radius:8px; color:var(--frz-text-secondary); display:grid; place-items:center; flex-shrink:0; }
   .frz-beta .frz-collapse:hover { background:var(--frz-bg-app); }
@@ -14650,6 +14651,7 @@ if ('serviceWorker' in navigator) {
             '<div class="frz-acct-wrap">'+
               '<button class="frz-avatar" id="frzAvatar" aria-label="Account"></button>'+
               '<div class="frz-acct-menu" id="frzAcctMenu" hidden>'+
+                '<button id="frzActivity">Activity Center</button>'+
                 '<button id="frzClassic">Switch to classic UI</button>'+
                 '<button id="frzLogout">Log out</button>'+
               '</div>'+
@@ -15105,6 +15107,7 @@ if ('serviceWorker' in navigator) {
     var av=document.getElementById('frzAvatar'), am=document.getElementById('frzAcctMenu');
     av.addEventListener('click', function(e){ e.stopPropagation(); am.hidden=!am.hidden; });
     document.addEventListener('click', function(){ am.hidden=true; });
+    document.getElementById('frzActivity').addEventListener('click', function(){ _call('openActivityCenter'); });
     document.getElementById('frzClassic').addEventListener('click', function(){ location.href='/'; });
     document.getElementById('frzLogout').addEventListener('click', function(){ _call('doLogout'); });
     // arrow-key nav within the rail
