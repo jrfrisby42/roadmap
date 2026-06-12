@@ -14914,6 +14914,11 @@ if ('serviceWorker' in navigator) {
     if (!ps.some(function(p){return p.id===id;})){ _call('showToast','Item not found: #'+id); return; }
     state.onItem=true; state.itemId=id; state.itemFromApp=true;   // a beta view entry always sits beneath
     root.classList.add('on-item');
+    // The item overlay flows in-content now (no longer position:fixed), so the
+    // view containers must be hidden or they render alongside/over it.
+    // applyViewMode() restores them when we navigate back to a view.
+    var _gv=document.querySelector('.gantt-outer'); if(_gv) _gv.style.display='none';
+    ['kanbanBoard','listView','dashboardView','planningView'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
     // Render content via the ORIGINAL openItemPage (avoid recursing our override); we own history
     if (_origOpenItemPage) _origOpenItemPage(id, {push:false}); else _call('openItemPage', id, {push:false});
     // top bar: Back + breadcrumb
