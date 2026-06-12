@@ -754,6 +754,14 @@
     Filters
   </button>
   <div class="controls">
+    <span class="ctrl-lbl">View</span>
+    <select id="viewSelect" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none;color:var(--text)">
+      <option value="gantt">Gantt</option>
+      <option value="kanban">Kanban</option>
+      <option value="list">List</option>
+      <option value="planning" id="planningOption" style="display:none">Planning</option>
+      <option value="dashboard">Dashboard</option>
+    </select>
     <span class="ctrl-lbl" id="groupByLbl">Group</span>
     <select id="groupBy">
       <option value="developer">Owner</option>
@@ -761,6 +769,13 @@
       <option value="priority">Priority</option>
       <option value="none">None</option>
     </select>
+    <span class="ctrl-lbl">Project</span>
+    <div class="ms-wrap" id="productDropWrap">
+      <button class="ms-btn" id="productDropBtn" type="button">All Projects ▾</button>
+      <div class="ms-panel" id="productDropPanel">
+        <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
+      </div>
+    </div>
     <span class="ctrl-lbl">Owner</span>
     <div class="ms-wrap" id="devDropWrap">
       <button class="ms-btn" id="devDropBtn" type="button">All Owners ▾</button>
@@ -772,13 +787,6 @@
     <div class="ms-wrap" id="typeDropWrap">
       <button class="ms-btn" id="typeDropBtn" type="button">All Types ▾</button>
       <div class="ms-panel" id="typeDropPanel">
-        <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
-      </div>
-    </div>
-    <span class="ctrl-lbl">Project</span>
-    <div class="ms-wrap" id="productDropWrap">
-      <button class="ms-btn" id="productDropBtn" type="button">All Projects ▾</button>
-      <div class="ms-panel" id="productDropPanel">
         <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
       </div>
     </div>
@@ -794,14 +802,6 @@
         <label class="ms-opt" data-val="TBD"><input type="checkbox" value="TBD"> TBD</label>
       </div>
     </div>
-    <span class="ctrl-lbl">View</span>
-    <select id="viewSelect" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none;color:var(--text)">
-      <option value="gantt">Gantt</option>
-      <option value="kanban">Kanban</option>
-      <option value="list">List</option>
-      <option value="planning" id="planningOption" style="display:none">Planning</option>
-      <option value="dashboard">Dashboard</option>
-    </select>
     <span class="ctrl-lbl" id="dateRangeLbl" style="display:none">From</span>
     <input type="date" id="filterFrom" style="display:none;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none">
     <span class="ctrl-lbl" id="dateRangeLbl2" style="display:none">To</span>
