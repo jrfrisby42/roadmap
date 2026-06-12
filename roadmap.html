@@ -14586,9 +14586,9 @@ if ('serviceWorker' in navigator) {
   function _call(name){ try { var f = (typeof window[name]==='function')?window[name]:eval(name); return f.apply(null, [].slice.call(arguments,1)); } catch(e){ return undefined; } }
   function _val(name, dflt){ try { var v = eval(name); return (v===undefined?dflt:v); } catch(e){ return dflt; } }
 
-  var root, state = {
+  var root, _origOpenItemPage = null, state = {
     view:'gantt', collapsed:false, project:'__all__',
-    saved:[], onItem:false, itemId:null, pop:null
+    saved:[], onItem:false, itemId:null, pop:null, itemFromApp:false
   };
 
   // ── persistence ──
@@ -14700,6 +14700,15 @@ if ('serviceWorker' in navigator) {
     // state restore
     state.saved = loadSaved();
     var savedProj = ls(projKey()); if (savedProj) state.project = savedProj;
+    // Route in-view item clicks (Gantt bar, List row, Kanban card → openItemPage)
+    // through the beta shell so they get the shell top bar / Back / hidden filter
+    // row. openItemPage is a global function ON window, so reassigning it changes
+    // what the production bare calls invoke. We keep the original for rendering.
+    _origOpenItemPage = window.openItemPage;
+    window.openItemPage = function(id, opts){
+      if (!root) return _origOpenItemPage.apply(this, arguments);   // pre-build (boot deep link) → original
+      openItem(id, { push: !(opts && opts.push===false) });
+    };
     wire();
     renderRail();
     onResize();
@@ -14903,9 +14912,10 @@ if ('serviceWorker' in navigator) {
     opts = opts||{};
     var ps = _val('projects',[])||[];
     if (!ps.some(function(p){return p.id===id;})){ _call('showToast','Item not found: #'+id); return; }
-    state.onItem=true; state.itemId=id;
+    state.onItem=true; state.itemId=id; state.itemFromApp=true;   // a beta view entry always sits beneath
     root.classList.add('on-item');
-    _call('openItemPage', id, {push:false});      // reuse existing item content; we own history
+    // Render content via the ORIGINAL openItemPage (avoid recursing our override); we own history
+    if (_origOpenItemPage) _origOpenItemPage(id, {push:false}); else _call('openItemPage', id, {push:false});
     // top bar: Back + breadcrumb
     var p = ps.filter(function(x){return x.id===id;})[0] || {};
     var crumbKey = p.itemKey ? '<span class="frz-crumb-key" id="frzCrumbKey" title="Copy key">'+esc(p.itemKey)+'</span> › ' : '';
