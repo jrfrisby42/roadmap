@@ -8544,7 +8544,7 @@ function _listRowHtml(it, depth){
     <td class="list-cb-cell" style="padding:7px 10px;width:32px">${cb}</td>
     <td style="${firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${chevron}${_listCell(it.itemKey)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.type)}</td>
-    <td style="padding:7px 10px;font-weight:600">${_listCell(it.name)}</td>
+    <td style="padding:7px 10px">${_listCell(it.name)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(it.status)}</span>` : '—'}</td>
     <td style="padding:7px 10px;white-space:nowrap">${(it.priority && PRIO_LABELS[it.priority]) ? `<span style="background:${PRIO_COLORS[it.priority]}22;color:${PRIO_COLORS[it.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[it.priority])}</span>` : '—'}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.dev)}</td>
@@ -15168,6 +15168,20 @@ if ('serviceWorker' in navigator) {
     });
     document.getElementById('frzScrim').addEventListener('click', function(){ setCollapsed(true,false); });
     window.addEventListener('resize', onResize);
+    // Open-item links that would open a new tab (item-edit modal's "Open item page",
+    // planning card name → /?item=N) should navigate IN-APP in beta so Back returns
+    // to the previous page. Capture phase so we beat the anchor's default + onclick.
+    document.addEventListener('click', function(e){
+      if (!root) return;
+      var a = e.target.closest && e.target.closest('a[href]');
+      if (!a) return;
+      var href = a.getAttribute('href') || '';
+      var mm = href.match(/[?&]item=(\d+)/) || href.match(/\/item\/(\d+)(?:[?#]|$)/);
+      if (!mm) return;
+      e.preventDefault(); e.stopPropagation();
+      document.querySelectorAll('.modal-bg.open').forEach(function(m){ m.classList.remove('open'); }); // close edit modal etc.
+      navigate('/beta/item/'+mm[1], false);
+    }, true);
   }
   function handleOpt(o, anchor){
     if (o==='groupby') return groupByMenu(anchor);
