@@ -15038,6 +15038,9 @@ if ('serviceWorker' in navigator) {
     var ck=document.getElementById('frzCrumbKey'); if(ck) ck.addEventListener('click', function(){ try{ navigator.clipboard.writeText(p.itemKey); _call('showToast','Copied '+p.itemKey); }catch(e){} });
     renderBar();
     document.getElementById('frzContent').scrollTop = 0;
+    // Drop focus to a neutral place so the shell shortcuts ([ and /) work immediately
+    // on the item page (navigation may have left focus on a now-hidden element).
+    try { if(document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch(_){}
     if (opts.push!==false){
       // include itemPage:id so the production popstate handler re-opens (not closes)
       history.pushState({ frzItem:id, itemPage:id, frzView:state.view }, '', '/beta/item/'+id);
@@ -15253,6 +15256,16 @@ if ('serviceWorker' in navigator) {
       if (opt){ handleOpt(opt.getAttribute('data-opt'), opt); return; }
     });
     document.getElementById('frzCollapse').addEventListener('click', toggleCollapse);
+    // Shell-level keyboard shortcuts — bound ONCE here (same place as the collapse
+    // button), on window + capture, so they fire on EVERY /beta route including
+    // /beta/item/:id before any view/item-overlay handler can pre-empt them.
+    window.addEventListener('keydown', function(e){
+      var ae = document.activeElement;
+      var typing = !!(ae && (ae.tagName==='INPUT' || ae.tagName==='TEXTAREA' || ae.isContentEditable));
+      if (e.key==='[' && !typing){ e.preventDefault(); toggleCollapse(); }
+      else if (e.key==='/' && !typing){ e.preventDefault(); var si=document.getElementById('itemSearch'); if(si) si.focus(); }
+      else if (e.key==='Escape' && state.pop){ closePop(); }
+    }, true);
     document.getElementById('frzSaveBtn').addEventListener('click', function(e){ e.stopPropagation(); saveCurrent(this); });
     document.getElementById('frzAddProj').addEventListener('click', function(e){ e.stopPropagation(); _call('showToast','Add project — coming soon'); });
     document.getElementById('frzAddBoard').addEventListener('click', function(e){ e.stopPropagation(); openBoardEditor(null); });
@@ -15530,18 +15543,6 @@ if ('serviceWorker' in navigator) {
     root.classList.toggle('frz-narrow', narrow);
     if (narrow && !state.collapsed && ls(railKey())!=='e'){ /* auto-collapse below 900 unless user forced expanded */ root.classList.add('is-collapsed'); state.collapsed=true; }
   }
-
-  // keyboard shortcuts
-  // Capture phase + on window so the shell shortcuts fire on EVERY /beta route
-  // (including /beta/item/:id) before any view/item-overlay handler can swallow them.
-  window.addEventListener('keydown', function(e){
-    if (!root) return;
-    var tag = (document.activeElement&&document.activeElement.tagName)||'';
-    var typing = tag==='INPUT' || tag==='TEXTAREA' || (document.activeElement&&document.activeElement.isContentEditable);
-    if (e.key==='[' && !typing){ e.preventDefault(); toggleCollapse(); }
-    if (e.key==='/' && !typing){ e.preventDefault(); var si=document.getElementById('itemSearch'); if(si) si.focus(); }
-    if (e.key==='Escape' && state.pop) closePop();
-  }, true);
 
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 
