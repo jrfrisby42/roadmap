@@ -14998,6 +14998,12 @@ if ('serviceWorker' in navigator) {
   }
 
   // ════════ item detail ════════
+  function _debrandItem(){
+    var io=document.getElementById('itemPageOverlay'); if(!io) return;
+    io.querySelectorAll('[style*="var(--accent)"]').forEach(function(el){
+      var s=el.getAttribute('style'); if(s) el.setAttribute('style', s.replace(/var\(--accent\)/g,'#0059A9'));
+    });
+  }
   function openItem(id, opts){
     opts = opts||{};
     var ps = _val('projects',[])||[];
@@ -15011,6 +15017,11 @@ if ('serviceWorker' in navigator) {
     ['kanbanBoard','listView','dashboardView','planningView'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
     // Render content via the ORIGINAL openItemPage (avoid recursing our override); we own history
     if (_origOpenItemPage) _origOpenItemPage(id, {push:false}); else _call('openItemPage', id, {push:false});
+    // Guaranteed de-indigo: reused item-page markup uses inline background/color/
+    // border:var(--accent). Rewrite those inline values to the brand blue so no
+    // indigo can survive regardless of custom-property inheritance. Run now +
+    // after a tick for async-rendered sections (activity/comments).
+    _debrandItem(); setTimeout(_debrandItem, 500);
     // top bar: Back + breadcrumb
     var p = ps.filter(function(x){return x.id===id;})[0] || {};
     var crumbKey = p.itemKey ? '<span class="frz-crumb-key" id="frzCrumbKey" title="Copy key">'+esc(p.itemKey)+'</span> › ' : '';
@@ -15453,6 +15464,8 @@ if ('serviceWorker' in navigator) {
           return '<label class="frz-stat-opt'+(dis?' is-disabled':'')+'"'+(dis?' title="Used in another column"':'')+'>'
             + '<input type="checkbox" data-col="'+idx+'" data-status="'+escA(s)+'" '+(checked?'checked':'')+' '+(dis?'disabled':'')+'> '+esc(s)+'</label>';
         }).join('');
+        var multi=(col.statuses||[]).length>1;
+        var ph = multi ? '<option value="" '+(!col.dropStatus?'selected':'')+'>— Select drop status —</option>' : '';
         var dropOpts=(col.statuses||[]).map(function(s){ return '<option value="'+escA(s)+'" '+(col.dropStatus===s?'selected':'')+'>'+esc(s)+'</option>'; }).join('');
         return '<div class="frz-col-edit">'
           + '<div class="frz-col-edit-hd">'
@@ -15463,15 +15476,16 @@ if ('serviceWorker' in navigator) {
           + '</div>'
           + '<div class="frz-stat-grid">'+stHtml+'</div>'
           + '<div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="frz-lbl" style="margin:0">Drop status</span>'
-          +   '<select class="frz-fld" data-coldrop="'+idx+'" style="width:auto;min-width:150px" '+((col.statuses||[]).length?'':'disabled')+'>'+(dropOpts||'<option value="">—</option>')+'</select></div>'
+          +   '<select class="frz-fld" data-coldrop="'+idx+'" style="width:auto;min-width:150px" '+((col.statuses||[]).length?'':'disabled')+'>'+ph+(dropOpts||'<option value="">—</option>')+'</select></div>'
           + '</div>';
       }).join('');
       host.querySelectorAll('[data-colname]').forEach(function(inp){ inp.addEventListener('input', function(){ draft.columns[+inp.dataset.colname].name=inp.value; }); });
       host.querySelectorAll('input[type=checkbox][data-status]').forEach(function(cb){ cb.addEventListener('change', function(){
         var ci=+cb.dataset.col, s=cb.dataset.status, col=draft.columns[ci]; col.statuses=col.statuses||[];
         if(cb.checked){ if(col.statuses.indexOf(s)<0) col.statuses.push(s); } else { col.statuses=col.statuses.filter(function(x){return x!==s;}); }
+        // single status → auto drop; multi status → require an explicit choice (don't guess)
         if(col.statuses.length===1) col.dropStatus=col.statuses[0];
-        else if(col.statuses.indexOf(col.dropStatus)<0) col.dropStatus=col.statuses[0]||'';
+        else if(col.statuses.indexOf(col.dropStatus)<0) col.dropStatus='';
         renderCols(); updateUnassigned();
       }); });
       host.querySelectorAll('[data-coldrop]').forEach(function(sel){ sel.addEventListener('change', function(){ draft.columns[+sel.dataset.coldrop].dropStatus=sel.value; }); });
@@ -15491,7 +15505,8 @@ if ('serviceWorker' in navigator) {
       for(var i=0;i<draft.columns.length;i++){ var c=draft.columns[i];
         if(!(c.name||'').trim()){ err.textContent='Every column needs a name.'; return; }
         if(!(c.statuses||[]).length){ err.textContent='Every column needs at least one status.'; return; }
-        if((c.statuses||[]).indexOf(c.dropStatus)<0) c.dropStatus=c.statuses[0];
+        if((c.statuses||[]).length===1) c.dropStatus=c.statuses[0];   // single status → implicit
+        if((c.statuses||[]).indexOf(c.dropStatus)<0){ err.textContent='Choose a drop status for column "'+(c.name||'')+'".'; return; }
       }
       draft.name=draft.name.trim();
       if(editing){ var idx=_boards.findIndex(function(x){return x.id===draft.id;}); if(idx>-1) _boards[idx]=draft; else _boards.push(draft); }
