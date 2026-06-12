@@ -754,7 +754,7 @@
     Filters
   </button>
   <div class="controls">
-    <span class="ctrl-lbl">Group</span>
+    <span class="ctrl-lbl" id="groupByLbl">Group</span>
     <select id="groupBy">
       <option value="developer">Owner</option>
       <option value="status">Status</option>
@@ -1079,16 +1079,16 @@
   <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead>
-        <tr style="background:var(--surface);text-align:left">
+        <tr id="listHeadRow" style="background:var(--surface);text-align:left">
           <th style="padding:8px 10px;width:32px"><input type="checkbox" id="listSelectAll" title="Select all on this page"></th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Key</th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Type</th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Name</th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Status</th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Owner</th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Assignee</th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;text-align:center">Points</th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Sprint</th>
+          <th class="list-sort" data-sort="item_key" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Key<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="type" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Type<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="name" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Name<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="status" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Status<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="owner" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Owner<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="assignee" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Assignee<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="story_points" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap;text-align:center">Points<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="sprint_id" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Sprint<span class="sort-arrow"></span></th>
         </tr>
       </thead>
       <tbody id="listBody"></tbody>
@@ -8369,6 +8369,11 @@ function applyViewMode(){
   });
   // Legend only visible in Gantt
   if(legend) legend.style.display = viewMode === 'gantt' ? '' : 'none';
+  // Group control only applies to the Gantt view — hide it (label + select) elsewhere
+  ['groupByLbl','groupBy'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.style.display = viewMode === 'gantt' ? '' : 'none';
+  });
   updateSearchVisibility();
 
   // Restore topbar controls that were dimmed for planning view
@@ -8437,7 +8442,7 @@ document.getElementById('filterFrom')?.addEventListener('change', ()=>{ if(viewM
 document.getElementById('filterTo')?.addEventListener('change',   ()=>{ if(viewMode==='dashboard') renderDashboard(); });
 
 // ── LIST VIEW (Phase 1d-i) — server-paginated item table backed by /api/items ──
-const _listState = { page: 1, page_size: 50, tree: false };
+const _listState = { page: 1, page_size: 50, tree: false, sort: '' };  // sort: '<col>:<asc|desc>' ('' = server default)
 let _listSelected = new Set();
 let _listFiltersReady = false;
 let _listSearchTimer = null;
@@ -8471,6 +8476,7 @@ function _listQuery(){
   setMulti('owner',   getSelectedDevs());
   const asg = v('listAssignee'); if(asg) params.set('assignee', asg);
   const q = v('listSearch'); if(q) params.set('q', q);
+  if(_listState.sort) params.set('sort', _listState.sort);
   params.set('page', _listState.page);
   params.set('page_size', _listState.page_size);
   return params.toString();
@@ -8521,6 +8527,7 @@ async function renderList(){
     ? items.map(it => _listRowHtml(it, 0)).join('')
     : `<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--muted)">No matching items.</td></tr>`;
   const sa = document.getElementById('listSelectAll'); if(sa) sa.checked = false;
+  _updateSortIndicators();
   updateBulkBar();
   _renderListPager(data);
 }
@@ -8561,6 +8568,28 @@ function _renderListPager(data){
 }
 
 document.getElementById('listAssignee')?.addEventListener('change', ()=>{ _listState.page=1; renderList(); });
+
+// ── List column sorting ──
+// Click a header to sort by that column; click again to flip direction.
+function _listSetSort(col){
+  const [cur, dir] = (_listState.sort || '').split(':');
+  _listState.sort = (cur === col && dir === 'asc') ? `${col}:desc` : `${col}:asc`;
+  _listState.page = 1;
+  renderList();
+}
+function _updateSortIndicators(){
+  const [cur, dir] = (_listState.sort || '').split(':');
+  document.querySelectorAll('#listHeadRow .list-sort').forEach(th => {
+    const arrow = th.querySelector('.sort-arrow');
+    const active = th.dataset.sort === cur;
+    if(arrow) arrow.textContent = active ? (dir === 'asc' ? ' ▲' : ' ▼') : '';
+    th.style.color = active ? 'var(--accent)' : 'var(--muted)';
+  });
+}
+document.getElementById('listHeadRow')?.addEventListener('click', e=>{
+  const th = e.target.closest('.list-sort');
+  if(th && th.dataset.sort) _listSetSort(th.dataset.sort);
+});
 document.getElementById('listPageSize')?.addEventListener('change', e=>{
   _listState.page_size = parseInt(e.target.value)||50; _listState.page=1; renderList();
 });
