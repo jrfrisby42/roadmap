@@ -1784,6 +1784,54 @@ def set_config(key: str, body = Body(...), username: str = "",
             log.warning(f"[ItemKeys] backfill after products save failed: {e}")
     return body
 
+# ── Beta: Kanban Boards (shared, global per team) ─────────────────────────────
+# Additive endpoints used only by the /beta shell. Boards are a shared column
+# configuration for Kanban, stored in the config table under key 'boards'. Per
+# spec, create/edit/delete is available to any logged-in user (require_auth).
+# Production routes/behaviour are untouched — nothing in production reads these.
+def _read_boards(team: str):
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='boards'").fetchone()
+    try:
+        return json.loads(row["value"]) if row else []
+    except Exception:
+        return []
+
+@app.get("/api/boards")
+def get_boards(auth: dict = Depends(require_auth)):
+    return {"boards": _read_boards(auth["team"])}
+
+@app.put("/api/boards")
+def put_boards(body = Body(...), auth: dict = Depends(require_auth)):
+    team = auth["team"]
+    boards = body.get("boards") if isinstance(body, dict) else body
+    if not isinstance(boards, list):
+        raise HTTPException(422, "boards must be a list")
+    # Light validation: each board needs an id, a name, and ≥1 column with ≥1 status.
+    for b in boards:
+        if not isinstance(b, dict) or not b.get("id") or not (b.get("name") or "").strip():
+            raise HTTPException(422, "each board needs an id and a name")
+        cols = b.get("columns")
+        if not isinstance(cols, list) or not cols:
+            raise HTTPException(422, f"board '{b.get('name')}' needs at least one column")
+        seen = set()
+        for col in cols:
+            sts = col.get("statuses") if isinstance(col, dict) else None
+            if not isinstance(sts, list) or not sts:
+                raise HTTPException(422, "each column needs at least one status")
+            for s in sts:
+                if s in seen:
+                    raise HTTPException(422, f"status '{s}' is assigned to more than one column")
+                seen.add(s)
+            if col.get("dropStatus") not in sts:
+                raise HTTPException(422, "a column's drop status must be one of its statuses")
+    with db(team) as c:
+        c.execute("INSERT INTO config(key,value) VALUES('boards',?) "
+                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                  (json.dumps(boards),))
+    write_audit(team, "beta:boards", auth["username"], changes={"count": len(boards)})
+    return {"boards": boards}
+
 # ── Import ────────────────────────────────────────────────────────────────────
 @app.post("/api/import")
 def bulk_import(body: dict = Body(...), auth: dict = Depends(require_role("admin"))):

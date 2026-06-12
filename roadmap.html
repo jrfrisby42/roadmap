@@ -14471,7 +14471,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta.is-collapsed .frz-rowmenu { display:none; }
   .frz-beta.is-collapsed .frz-brand { justify-content:center; padding:0; }
   .frz-beta.is-collapsed .frz-logo { height:auto; max-width:40px; }
-  .frz-beta.is-collapsed .frz-section--saved, .frz-beta.is-collapsed .frz-section--projects { display:none; }
+  .frz-beta.is-collapsed .frz-section--saved, .frz-beta.is-collapsed .frz-section--projects, .frz-beta.is-collapsed .frz-section--boards { display:none; }
 
   /* Main column */
   .frz-beta .frz-main { display:flex; flex-direction:column; min-width:0; min-height:0; }
@@ -14554,6 +14554,34 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-scrim { display:none; position:absolute; inset:0 0 0 var(--frz-rail-w-collapsed); background:rgba(20,40,63,.18); z-index:30; }
   .frz-beta.frz-narrow.is-collapsed .frz-scrim { display:none; }
 
+  /* ── Beta modal (board editor etc.) — scaled-up Save-filter popover pattern ── */
+  .frz-beta .frz-modal-bg { position:fixed; inset:0; background:rgba(20,40,63,.32); z-index:80; display:flex; align-items:center; justify-content:center; padding:24px; }
+  .frz-beta .frz-modal { background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:14px; box-shadow:0 18px 56px rgba(20,40,63,.28); width:640px; max-width:100%; max-height:88vh; display:flex; flex-direction:column; overflow:hidden; }
+  .frz-beta .frz-modal-hd { padding:16px 20px; border-bottom:1px solid var(--frz-border); font-size:16px; font-weight:800; color:var(--frz-text); display:flex; align-items:center; justify-content:space-between; }
+  .frz-beta .frz-modal-bd { padding:16px 20px; overflow-y:auto; }
+  .frz-beta .frz-modal-ft { padding:12px 20px; border-top:1px solid var(--frz-border); display:flex; gap:8px; justify-content:flex-end; align-items:center; }
+  .frz-beta .frz-modal-err { margin-right:auto; color:#C0392B; font-size:12px; font-weight:700; }
+  .frz-beta .frz-fld { display:block; width:100%; box-sizing:border-box; font:inherit; font-size:13px; border:1px solid var(--frz-border-strong); border-radius:6px; padding:7px 10px; color:var(--frz-text); outline:none; background:var(--frz-bg-surface); }
+  .frz-beta .frz-fld:focus { border-color:var(--frz-accent); }
+  .frz-beta .frz-lbl { font-size:11px; font-weight:700; letter-spacing:.04em; color:var(--frz-text-muted); text-transform:uppercase; margin:0 0 5px; display:block; }
+  .frz-beta .frz-col-edit { border:1px solid var(--frz-border); border-radius:10px; padding:12px; margin-bottom:10px; background:var(--frz-bg-app); }
+  .frz-beta .frz-col-edit-hd { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .frz-beta .frz-stat-grid { display:flex; flex-wrap:wrap; gap:6px 12px; margin:6px 0; }
+  .frz-beta .frz-stat-opt { display:inline-flex; align-items:center; gap:5px; font-size:12.5px; color:var(--frz-text); }
+  .frz-beta .frz-stat-opt input { accent-color:var(--frz-accent); }
+  .frz-beta .frz-stat-opt.is-disabled { color:var(--frz-text-muted); opacity:.7; }
+  .frz-beta .frz-iconbtn { border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); color:var(--frz-text-secondary); cursor:pointer; border-radius:6px; width:26px; height:26px; display:grid; place-items:center; font-size:13px; line-height:1; }
+  .frz-beta .frz-iconbtn:hover { border-color:var(--frz-accent); color:var(--frz-accent); }
+  .frz-beta .frz-iconbtn:disabled { opacity:.35; cursor:default; }
+  .frz-beta .frz-unassigned { font-size:12px; color:var(--frz-text-muted); margin-top:4px; }
+  /* ── Beta board Kanban columns/cards (mirrors production kanban look) ── */
+  .frz-beta .frz-board-zone { min-height:60px; }
+  .frz-beta .frz-bcard { position:relative; background:#fff; border:1px solid var(--frz-border); border-radius:8px; padding:9px 11px; cursor:pointer; user-select:none; margin-bottom:8px; }
+  .frz-beta .frz-bcard:hover { border-color:var(--frz-accent-soft-border); }
+  .frz-beta .frz-bcard-key { font-size:10px; font-family:monospace; color:var(--frz-text-muted); }
+  .frz-beta .frz-bcard-name { font-size:12px; font-weight:700; color:var(--frz-text); line-height:1.3; }
+  .frz-beta .frz-bcard-meta { font-size:11px; color:var(--frz-text-muted); margin-top:3px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+
   @media (prefers-reduced-motion: reduce) { .frz-beta { --frz-anim:0s; } }
 </style>
 <script>
@@ -14599,8 +14627,10 @@ if ('serviceWorker' in navigator) {
   function _call(name){ try { var f = (typeof window[name]==='function')?window[name]:eval(name); return f.apply(null, [].slice.call(arguments,1)); } catch(e){ return undefined; } }
   function _val(name, dflt){ try { var v = eval(name); return (v===undefined?dflt:v); } catch(e){ return dflt; } }
 
-  var root, _origOpenItemPage = null, state = {
-    view:'gantt', collapsed:false, project:'__all__',
+  var root, _origOpenItemPage = null, _origRenderKanban = null;
+  var _boards = [], _betaHideEmpty = false;
+  var state = {
+    view:'gantt', collapsed:false, project:'__all__', board:'__all__',
     saved:[], onItem:false, itemId:null, pop:null, itemFromApp:false
   };
 
@@ -14651,6 +14681,7 @@ if ('serviceWorker' in navigator) {
         '<div class="frz-scroll">'+
           '<nav class="frz-section" id="frzViewNav" aria-label="Views"><div class="frz-heading">VIEWS</div></nav>'+
           '<nav class="frz-section frz-section--projects" id="frzProjNav" aria-label="Projects"><div class="frz-heading">PROJECTS <button class="frz-add" id="frzAddProj" title="Add project (coming soon)">＋</button></div></nav>'+
+          '<nav class="frz-section frz-section--boards" id="frzBoardNav" aria-label="Boards"><div class="frz-heading">BOARDS <button class="frz-add" id="frzAddBoard" title="Create board">＋</button></div></nav>'+
           '<nav class="frz-section frz-section--saved" id="frzSavedNav" aria-label="Saved filters"><div class="frz-heading">SAVED FILTERS <button class="frz-add" id="frzSaveBtn" title="Save current filters">＋</button></div></nav>'+
         '</div>'+
         '<div class="frz-footer">'+
@@ -14722,11 +14753,18 @@ if ('serviceWorker' in navigator) {
       if (!root) return _origOpenItemPage.apply(this, arguments);   // pre-build (boot deep link) → original
       openItem(id, { push: !(opts && opts.push===false) });
     };
+    // Wrap renderKanban: an active custom board renders our board layout; the
+    // built-in "All statuses" board falls through to the untouched original.
+    _origRenderKanban = window.renderKanban;
+    window.renderKanban = function(){
+      if (root && state.view==='kanban' && state.board && state.board!=='__all__') return renderBetaKanban();
+      return _origRenderKanban.apply(this, arguments);
+    };
     wire();
     renderRail();
     onResize();
-    // initial route
-    routeFromLocation(true);
+    // Load shared boards first so a ?board= deep link mounts correctly, then route.
+    loadBoards(function(){ routeFromLocation(true); });
   }
 
   // ════════ rail ════════
@@ -14765,7 +14803,8 @@ if ('serviceWorker' in navigator) {
       b.innerHTML = '<span class="frz-dot" style="background:'+PROJ_COLORS[(i+1)%PROJ_COLORS.length]+'"></span><span>'+esc(name)+'</span><span class="frz-count">'+projItems(name).length+'</span>';
       pn.appendChild(b);
     });
-    // saved filters
+    // boards + saved filters
+    renderBoardNav();
     renderSavedNav();
     // admin visibility
     document.getElementById('frzAdmin').style.display = _val('isAdmin', false) ? '' : 'none';
@@ -14773,6 +14812,38 @@ if ('serviceWorker' in navigator) {
     ni.style.display = (_val('isAdmin',false) || _val('isEditor',false)) ? '' : 'none';
   }
   function scopeAllCount(){ var ps=_val('projects',[])||[]; return ps.filter(function(p){return !p.archived;}).length; }
+
+  // ════════ boards (Feature A) ════════
+  var KANBAN_IC = IC.kanban;
+  function loadBoards(done){
+    API.get('/api/boards').then(function(d){ _boards = (d && d.boards) || []; })
+      .catch(function(){ _boards = []; })
+      .then(function(){ _boards.sort(function(a,b){ return (a.position||0)-(b.position||0); }); renderBoardNav(); if(done) done(); });
+  }
+  function saveBoards(done){
+    return API.put('/api/boards', { boards: _boards })
+      .then(function(d){ _boards = (d && d.boards) || _boards; _boards.sort(function(a,b){ return (a.position||0)-(b.position||0); }); renderBoardNav(); if(done) done(); })
+      .catch(function(e){ _call('showToast','Save failed: '+(e&&e.message||''),'error'); throw e; });
+  }
+  function activeBoard(){ return _boards.filter(function(b){ return b.id===state.board; })[0] || null; }
+  function renderBoardNav(){
+    var bn = document.getElementById('frzBoardNav'); if(!bn) return;
+    bn.querySelectorAll('.frz-item').forEach(function(b){ b.remove(); });
+    var onKanban = (state.view==='kanban' && !state.onItem);
+    // built-in "All statuses"
+    var all = document.createElement('button');
+    all.className='frz-item'; all.setAttribute('data-board','__all__'); all.title='All statuses';
+    all.setAttribute('aria-current', String(onKanban && state.board==='__all__'));
+    all.innerHTML = KANBAN_IC + '<span>All statuses</span>';
+    bn.appendChild(all);
+    _boards.forEach(function(b){
+      var btn = document.createElement('button');
+      btn.className='frz-item'; btn.setAttribute('data-board', b.id); btn.title=b.name;
+      btn.setAttribute('aria-current', String(onKanban && state.board===b.id));
+      btn.innerHTML = KANBAN_IC + '<span>'+esc(b.name)+'</span><button class="frz-rowmenu" data-boardmenu="'+esc(b.id)+'" title="Edit / Duplicate / Delete">…</button>';
+      bn.appendChild(btn);
+    });
+  }
 
   function renderSavedNav(){
     var sn = document.getElementById('frzSavedNav');
@@ -14834,7 +14905,8 @@ if ('serviceWorker' in navigator) {
     };
     var label = map[o]||o;
     if (o==='groupby'){ var gb=document.getElementById('groupBy'); var cur=gb?(gb.options[gb.selectedIndex]||{}).text:'Owner'; label='Group by: '+(cur||'Owner'); }
-    return '<button class="frz-viewopt" data-opt="'+o+'">'+esc(label)+'</button>';
+    var activeStyle = (o==='hideEmpty' && _betaHideEmpty) ? ' style="border-color:var(--frz-accent);color:var(--frz-accent)"' : '';
+    return '<button class="frz-viewopt" data-opt="'+o+'"'+activeStyle+'>'+esc(label)+'</button>';
   }
 
   // ════════ apply filters to the production panels + URL ════════
@@ -14864,12 +14936,15 @@ if ('serviceWorker' in navigator) {
       var sel = CHIPS[k].get();
       if (sel && sel.length) params.set(CHIPS[k].param, sel.join(','));
     });
+    if (view==='kanban' && state.board && state.board!=='__all__') params.set('board', state.board);  // board is URL state
     var qs = params.toString();
     var url = '/beta/'+view + (qs?('?'+qs):'');
     var st = { frzView:view };
     if (replace) history.replaceState(st,'',url); else history.pushState(st,'',url);
   }
   function applyURLToFilters(view, qp){
+    // board is URL state for the kanban view (navigation scope, not a chip)
+    if (view==='kanban') state.board = qp.get('board') || '__all__';
     // reset filters this view cares about, then apply query params
     var keys = CFG[view].chips.slice();
     // ensure any param-bearing extra chips are shown
@@ -14905,9 +14980,11 @@ if ('serviceWorker' in navigator) {
     var vsel = document.getElementById('viewSelect'); if (vsel) vsel.value = view;
     _call('initViewSelect');        // sets viewMode + mounts/renders the production view
     applyChromeHiding();            // re-hide chrome that applyViewMode may reveal
-    // top bar
+    // top bar — Kanban title shows the active board name
+    var titleTxt = VIEW_LABEL[view];
+    if (view==='kanban' && state.board && state.board!=='__all__'){ var _b=activeBoard(); if(_b) titleTxt += ' · '+_b.name; }
     document.getElementById('frzLeft').innerHTML =
-      '<span class="frz-title">'+VIEW_LABEL[view]+'</span>'+
+      '<span class="frz-title">'+esc(titleTxt)+'</span>'+
       '<span class="frz-crumbs">· '+esc(state.project==='__all__'?'All projects':state.project)+'</span>';
     document.getElementById('frzBadges').innerHTML='';
     renderBar();
@@ -15151,6 +15228,10 @@ if ('serviceWorker' in navigator) {
       if (savedBtn){ var s=state.saved.filter(function(x){return x.id===savedBtn.getAttribute('data-saved');})[0]; if(s) applySaved(s); return; }
       var proj = e.target.closest && e.target.closest('[data-proj]');
       if (proj){ setProject(proj.getAttribute('data-proj')); return; }
+      var boardMenu = e.target.closest && e.target.closest('[data-boardmenu]');
+      if (boardMenu){ e.stopPropagation(); boardRowMenu(boardMenu); return; }
+      var boardBtn = e.target.closest && e.target.closest('[data-board]');
+      if (boardBtn){ navigate('/beta/kanban' + (boardBtn.getAttribute('data-board')==='__all__'?'':('?board='+encodeURIComponent(boardBtn.getAttribute('data-board')))), false); return; }
       var clr = e.target.closest && e.target.closest('[data-clear]');
       if (clr){ e.stopPropagation(); var k=clr.getAttribute('data-clear'); if(k==='range'){ var ff=document.getElementById('filterFrom'),ft=document.getElementById('filterTo'); if(ff){ff.value='';ff.dispatchEvent(new Event('change'));} if(ft){ft.value='';ft.dispatchEvent(new Event('change'));} } else applyPanel(CHIPS[k].panel,null); rerender(); renderBar(); renderRail(); syncURL(true); return; }
       var chip = e.target.closest && e.target.closest('[data-chip]');
@@ -15163,6 +15244,7 @@ if ('serviceWorker' in navigator) {
     document.getElementById('frzCollapse').addEventListener('click', toggleCollapse);
     document.getElementById('frzSaveBtn').addEventListener('click', function(e){ e.stopPropagation(); saveCurrent(this); });
     document.getElementById('frzAddProj').addEventListener('click', function(e){ e.stopPropagation(); _call('showToast','Add project — coming soon'); });
+    document.getElementById('frzAddBoard').addEventListener('click', function(e){ e.stopPropagation(); openBoardEditor(null); });
     document.getElementById('frzNewItem').addEventListener('click', function(){ _call('openProjectModal', null); });
     document.getElementById('frzSettings').addEventListener('click', function(){ _call('openMyAccount'); });
     document.getElementById('frzAdmin').addEventListener('click', function(){ _call('openAdminPanel','devTab'); });
@@ -15202,7 +15284,12 @@ if ('serviceWorker' in navigator) {
     if (o==='capacity') { _call('toggleCapacityView'); return; }
     if (o==='newSession'){ _call('openMyAccount'); /* placeholder: planning entry lives in classic */ _call('showToast','Use the Planning board controls'); return; }
     if (o==='history'){ _call('openActivityCenter'); return; }
-    if (o==='hideEmpty' || o==='columns'){ _call('showToast','Available in the classic UI'); return; }
+    if (o==='hideEmpty'){
+      if (state.board && state.board!=='__all__'){ _betaHideEmpty=!_betaHideEmpty; renderBetaKanban(); renderBar(); }
+      else _call('showToast','Hide empty columns applies to custom boards');
+      return;
+    }
+    if (o==='columns'){ _call('showToast','Available in the classic UI'); return; }
   }
   function setProject(name){
     state.project = name; lset(projKey(), name);
@@ -15223,6 +15310,199 @@ if ('serviceWorker' in navigator) {
       pop.appendChild(r); pop.appendChild(d);
     });
   }
+
+  // ════════ board kanban rendering + drag/drop (Feature A) ════════
+  function _kanbanFilteredItems(){
+    var fDev=getSelectedDevs(), fProd=getSelectedProducts(), fType=getSelectedTypes(), fSt=getSelectedStatuses();
+    var ownerScope=_call('getCurrentOwnerFilter');
+    var searchQ=((document.getElementById('itemSearch')||{}).value||'').trim().toLowerCase();
+    return (_val('projects',[])||[]).filter(function(p){
+      if(p.hidden) return false;
+      if(fDev && fDev.indexOf(p.dev||'')<0) return false;
+      if(fProd && fProd.indexOf(p.product||'')<0) return false;
+      if(fType && fType.indexOf(p.type||'')<0) return false;
+      if(fSt && fSt.indexOf(p.status)<0) return false;
+      if(ownerScope && p.dev!==ownerScope) return false;
+      if(searchQ && !_call('itemMatchesSearch',p,searchQ)) return false;
+      return true;
+    });
+  }
+  function _kanbanSort(a,b){
+    var sa=a.start||'zzzz', sb=b.start||'zzzz';
+    if(sa!==sb) return sa<sb?-1:1;
+    var pa=(a.priority!=null&&a.priority!==''&&+a.priority>0)?+a.priority:100, pb=(b.priority!=null&&b.priority!==''&&+b.priority>0)?+b.priority:100;
+    if(pa!==pb) return pa-pb;
+    return (+(b.dueWeeks)||0)-(+(a.dueWeeks)||0);
+  }
+  function renderBetaKanban(){
+    var inner=document.getElementById('kanbanInner'); if(!inner) return;
+    var board=activeBoard();
+    if(!board){ if(_origRenderKanban) _origRenderKanban(); return; }
+    var items=_kanbanFilteredItems();
+    var boardEl=document.getElementById('kanbanBoard');
+    var shown=board.columns.map(function(col){ return { col:col, items: items.filter(function(p){ return (col.statuses||[]).indexOf(p.status)>=0; }).sort(_kanbanSort) }; });
+    if(_betaHideEmpty) shown=shown.filter(function(s){ return s.items.length>0; });
+    var available=((boardEl&&boardEl.clientWidth)||1200)-32;
+    var n=Math.max(shown.length,1);
+    var colW=Math.min(320,Math.max(180,Math.floor((available-14*(n-1))/n)));
+    inner.innerHTML = shown.map(function(s){
+      var col=s.col, multi=(col.statuses||[]).length>1;
+      var cards=s.items.map(function(p){
+        var badge = multi ? '<span class="'+(_call('statusCls',p.status)||'')+'" style="padding:0 7px;border-radius:9px;font-size:10px;font-weight:700">'+esc(p.status)+'</span>' : '';
+        var pts=(p.storyPoints!=null&&p.storyPoints!=='')?(esc(p.storyPoints)+' pts'):'';
+        return '<div class="frz-bcard" draggable="true" data-id="'+p.id+'" onclick="openItemPage('+p.id+')">'
+          + (p.itemKey?'<div class="frz-bcard-key">'+esc(p.itemKey)+'</div>':'')
+          + '<div class="frz-bcard-name">'+esc(p.name||'')+'</div>'
+          + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' · '+pts:'')+(badge?' '+badge:'')+'</div>'
+          + '</div>';
+      }).join('');
+      return '<div class="kanban-col" style="width:'+colW+'px;min-width:160px;flex:1;background:var(--surface2);border-radius:10px;padding:10px">'
+        + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;padding-bottom:8px;border-bottom:2px solid var(--frz-border-strong)">'
+        + '<span style="font-size:12px;font-weight:900;color:var(--frz-text)">'+esc(col.name)+'</span>'
+        + '<span style="font-size:10px;color:var(--frz-text-muted);background:rgba(128,128,128,0.15);padding:1px 6px;border-radius:8px">'+s.items.length+'</span>'
+        + '</div>'
+        + '<div class="frz-board-zone" data-drop="'+escA(col.dropStatus)+'">'+cards+'</div>'
+        + '</div>';
+    }).join('');
+    if(!shown.length){ inner.innerHTML='<div style="padding:40px;color:var(--frz-text-muted);font-size:13px;text-align:center">No columns to show'+(_betaHideEmpty?' (empty columns hidden).':'.')+'</div>'; }
+    wireBetaKanbanDrag();
+  }
+  function wireBetaKanbanDrag(){
+    var dragId=null;
+    document.querySelectorAll('#kanbanInner .frz-bcard').forEach(function(card){
+      card.addEventListener('dragstart', function(e){ dragId=+card.dataset.id; card.style.opacity='0.4'; e.dataTransfer.effectAllowed='move'; try{ e.dataTransfer.setData('text/plain', String(dragId)); }catch(_){} });
+      card.addEventListener('dragend', function(){ card.style.opacity=''; dragId=null; });
+    });
+    document.querySelectorAll('#kanbanInner .frz-board-zone').forEach(function(zone){
+      zone.addEventListener('dragover', function(e){ e.preventDefault(); zone.style.background='var(--frz-accent-soft)'; });
+      zone.addEventListener('dragleave', function(){ zone.style.background=''; });
+      zone.addEventListener('drop', function(e){ e.preventDefault(); zone.style.background='';
+        var id=dragId||(+((e.dataTransfer&&e.dataTransfer.getData('text/plain'))||0)); if(!id) return;
+        betaBoardDrop(id, zone.getAttribute('data-drop'));
+      });
+    });
+  }
+  function betaBoardDrop(id, newStatus){
+    var ps=_val('projects',[])||[]; var p=ps.filter(function(x){return x.id===id;})[0];
+    if(!p || !newStatus || p.status===newStatus) return;
+    if(_call('isActiveStatus',newStatus) && !p.dev){ _call('showToast','Cannot move to an Active status — assign an Owner first.','error'); return; }
+    if(_call('isActiveStatus',newStatus) && !p.start){ _call('showToast','Cannot move to an Active status — a Start Date is required.','error'); return; }
+    if(_call('isTerminalStatus',newStatus) && !_val('isAdmin',false)){ _call('showToast','Only admins can move items to a terminal status.','error'); return; }
+    if(!_val('isAdmin',false) && _call('isLockedActive',p) && !_call('isActiveStatus',newStatus) && !_call('isTerminalStatus',newStatus)){ _call('showToast','You cannot regress an active item — contact an admin.','error'); return; }
+    var oldStatus=p.status; p.status=newStatus;
+    var body=Object.assign({}, p, {_username:_call('getUsername')});
+    API.put('/api/projects/'+p.id, body).then(function(updated){
+      var i=ps.findIndex(function(x){return x.id===p.id;}); if(i>-1) ps[i]=updated;
+      // attributed entry to the item's Activity & History (spec requirement)
+      _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Board move: Status '+oldStatus+' → '+newStatus, {status:oldStatus}, {status:newStatus});
+      renderBetaKanban(); renderRail();
+    }).catch(function(err){ p.status=oldStatus; _call('showToast','Save failed: '+(err&&err.message||''),'error'); });
+  }
+  function boardRowMenu(btn){
+    var id=btn.getAttribute('data-boardmenu'); var b=_boards.filter(function(x){return x.id===id;})[0]; if(!b) return;
+    openPop(btn, function(pop){
+      function mk(label,color,fn){ var x=document.createElement('button'); x.className='frz-pop-opt'; if(color)x.style.color=color; x.textContent=label; x.addEventListener('click',fn); return x; }
+      pop.appendChild(mk('Edit',null,function(){ closePop(); openBoardEditor(b); }));
+      pop.appendChild(mk('Duplicate',null,function(){ closePop(); duplicateBoard(b); }));
+      pop.appendChild(mk('Delete','#C0392B',function(){ closePop(); if(confirm('Delete board "'+b.name+'"?')) deleteBoard(id); }));
+    });
+  }
+  function duplicateBoard(b){
+    _boards.push({ id:'b'+Date.now(), name:b.name+' (copy)', position:_boards.length, columns:JSON.parse(JSON.stringify(b.columns||[])) });
+    saveBoards();
+  }
+  function deleteBoard(id){
+    _boards=_boards.filter(function(x){return x.id!==id;});
+    saveBoards(function(){ if(state.board===id) navigate('/beta/kanban', false); });
+  }
+  function openBoardEditor(board){
+    closePop();
+    var editing=!!board;
+    var draft = board ? JSON.parse(JSON.stringify(board)) : { id:'b'+Date.now(), name:'', position:_boards.length, columns:[{name:'Column 1',statuses:[],dropStatus:''}] };
+    if(!draft.columns || !draft.columns.length) draft.columns=[{name:'Column 1',statuses:[],dropStatus:''}];
+    var allStatuses=(_val('statuses',[])||[]);
+    var bg=document.createElement('div'); bg.className='frz-modal-bg';
+    bg.innerHTML='<div class="frz-modal" role="dialog" aria-modal="true">'
+      + '<div class="frz-modal-hd">'+(editing?'Edit board':'Create board')+'<button class="frz-iconbtn" id="frzBeClose" title="Close">✕</button></div>'
+      + '<div class="frz-modal-bd">'
+      +   '<label class="frz-lbl">Board name</label>'
+      +   '<input class="frz-fld" id="frzBeName" placeholder="e.g. Wasatch Board" style="margin-bottom:14px">'
+      +   '<label class="frz-lbl">Columns</label><div id="frzBeCols"></div>'
+      +   '<button class="frz-viewopt" id="frzBeAddCol" style="margin-top:4px">+ Add column</button>'
+      +   '<div class="frz-unassigned" id="frzBeUnassigned"></div>'
+      + '</div>'
+      + '<div class="frz-modal-ft"><span class="frz-modal-err" id="frzBeErr"></span>'
+      +   '<button class="frz-viewopt" id="frzBeCancel">Cancel</button>'
+      +   '<button class="frz-newitem" id="frzBeSave">Save board</button></div>'
+      + '</div>';
+    root.appendChild(bg);
+    var nameEl=bg.querySelector('#frzBeName'); nameEl.value=draft.name||'';
+    nameEl.addEventListener('input', function(){ draft.name=nameEl.value; });
+    function usedElsewhere(colIdx){ var set={}; draft.columns.forEach(function(c,i){ if(i!==colIdx)(c.statuses||[]).forEach(function(s){set[s]=true;}); }); return set; }
+    function updateUnassigned(){
+      var assigned={}; draft.columns.forEach(function(c){ (c.statuses||[]).forEach(function(s){assigned[s]=true;}); });
+      var un=allStatuses.filter(function(s){ return !assigned[s]; });
+      bg.querySelector('#frzBeUnassigned').textContent = un.length ? ('Hidden on this board: '+un.join(', ')) : 'All statuses are assigned.';
+    }
+    function renderCols(){
+      var host=bg.querySelector('#frzBeCols');
+      host.innerHTML=draft.columns.map(function(col,idx){
+        var used=usedElsewhere(idx);
+        var stHtml=allStatuses.map(function(s){
+          var checked=(col.statuses||[]).indexOf(s)>=0, dis=used[s]&&!checked;
+          return '<label class="frz-stat-opt'+(dis?' is-disabled':'')+'"'+(dis?' title="Used in another column"':'')+'>'
+            + '<input type="checkbox" data-col="'+idx+'" data-status="'+escA(s)+'" '+(checked?'checked':'')+' '+(dis?'disabled':'')+'> '+esc(s)+'</label>';
+        }).join('');
+        var dropOpts=(col.statuses||[]).map(function(s){ return '<option value="'+escA(s)+'" '+(col.dropStatus===s?'selected':'')+'>'+esc(s)+'</option>'; }).join('');
+        return '<div class="frz-col-edit">'
+          + '<div class="frz-col-edit-hd">'
+          +   '<input class="frz-fld" data-colname="'+idx+'" value="'+escA(col.name||'')+'" placeholder="Column name" style="flex:1">'
+          +   '<button class="frz-iconbtn" data-colup="'+idx+'" '+(idx===0?'disabled':'')+' title="Move up">↑</button>'
+          +   '<button class="frz-iconbtn" data-coldown="'+idx+'" '+(idx===draft.columns.length-1?'disabled':'')+' title="Move down">↓</button>'
+          +   '<button class="frz-iconbtn" data-coldel="'+idx+'" '+(draft.columns.length<=1?'disabled':'')+' title="Delete column">✕</button>'
+          + '</div>'
+          + '<div class="frz-stat-grid">'+stHtml+'</div>'
+          + '<div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="frz-lbl" style="margin:0">Drop status</span>'
+          +   '<select class="frz-fld" data-coldrop="'+idx+'" style="width:auto;min-width:150px" '+((col.statuses||[]).length?'':'disabled')+'>'+(dropOpts||'<option value="">—</option>')+'</select></div>'
+          + '</div>';
+      }).join('');
+      host.querySelectorAll('[data-colname]').forEach(function(inp){ inp.addEventListener('input', function(){ draft.columns[+inp.dataset.colname].name=inp.value; }); });
+      host.querySelectorAll('input[type=checkbox][data-status]').forEach(function(cb){ cb.addEventListener('change', function(){
+        var ci=+cb.dataset.col, s=cb.dataset.status, col=draft.columns[ci]; col.statuses=col.statuses||[];
+        if(cb.checked){ if(col.statuses.indexOf(s)<0) col.statuses.push(s); } else { col.statuses=col.statuses.filter(function(x){return x!==s;}); }
+        if(col.statuses.length===1) col.dropStatus=col.statuses[0];
+        else if(col.statuses.indexOf(col.dropStatus)<0) col.dropStatus=col.statuses[0]||'';
+        renderCols(); updateUnassigned();
+      }); });
+      host.querySelectorAll('[data-coldrop]').forEach(function(sel){ sel.addEventListener('change', function(){ draft.columns[+sel.dataset.coldrop].dropStatus=sel.value; }); });
+      host.querySelectorAll('[data-colup]').forEach(function(b){ b.addEventListener('click', function(){ var i=+b.dataset.colup; if(i>0){ var t=draft.columns[i-1]; draft.columns[i-1]=draft.columns[i]; draft.columns[i]=t; renderCols(); } }); });
+      host.querySelectorAll('[data-coldown]').forEach(function(b){ b.addEventListener('click', function(){ var i=+b.dataset.coldown; if(i<draft.columns.length-1){ var t=draft.columns[i+1]; draft.columns[i+1]=draft.columns[i]; draft.columns[i]=t; renderCols(); } }); });
+      host.querySelectorAll('[data-coldel]').forEach(function(b){ b.addEventListener('click', function(){ var i=+b.dataset.coldel; if(draft.columns.length>1){ draft.columns.splice(i,1); renderCols(); updateUnassigned(); } }); });
+    }
+    function close(){ bg.remove(); }
+    bg.querySelector('#frzBeClose').addEventListener('click', close);
+    bg.querySelector('#frzBeCancel').addEventListener('click', close);
+    bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
+    bg.querySelector('#frzBeAddCol').addEventListener('click', function(){ draft.columns.push({name:'Column '+(draft.columns.length+1),statuses:[],dropStatus:''}); renderCols(); updateUnassigned(); });
+    bg.querySelector('#frzBeSave').addEventListener('click', function(){
+      var err=bg.querySelector('#frzBeErr'); err.textContent='';
+      if(!(draft.name||'').trim()){ err.textContent='Board name is required.'; return; }
+      if(!draft.columns.length){ err.textContent='Add at least one column.'; return; }
+      for(var i=0;i<draft.columns.length;i++){ var c=draft.columns[i];
+        if(!(c.name||'').trim()){ err.textContent='Every column needs a name.'; return; }
+        if(!(c.statuses||[]).length){ err.textContent='Every column needs at least one status.'; return; }
+        if((c.statuses||[]).indexOf(c.dropStatus)<0) c.dropStatus=c.statuses[0];
+      }
+      draft.name=draft.name.trim();
+      if(editing){ var idx=_boards.findIndex(function(x){return x.id===draft.id;}); if(idx>-1) _boards[idx]=draft; else _boards.push(draft); }
+      else { draft.position=_boards.length; _boards.push(draft); }
+      var saveBtn=bg.querySelector('#frzBeSave'); saveBtn.disabled=true;
+      saveBoards(function(){ close(); navigate('/beta/kanban?board='+encodeURIComponent(draft.id), false); }).catch(function(){ saveBtn.disabled=false; err.textContent='Save failed.'; });
+    });
+    renderCols(); updateUnassigned();
+    setTimeout(function(){ nameEl.focus(); }, 0);
+  }
+
   function onResize(){
     var narrow = window.innerWidth < 900;
     root.classList.toggle('frz-narrow', narrow);
