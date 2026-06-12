@@ -14594,7 +14594,7 @@ if ('serviceWorker' in navigator) {
     gantt:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M2 4h8M2 8h11M2 12h6"/><rect x="5" y="2.8" width="5" height="2.4" rx="1.2"/><rect x="7" y="6.8" width="6" height="2.4" rx="1.2"/><rect x="4" y="10.8" width="4" height="2.4" rx="1.2"/></svg>',
     kanban:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2" y="2" width="3.4" height="12" rx="1"/><rect x="6.3" y="2" width="3.4" height="8" rx="1"/><rect x="10.6" y="2" width="3.4" height="10" rx="1"/></svg>',
     list:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M5.5 3.5h9M5.5 8h9M5.5 12.5h9"/><circle cx="2.5" cy="3.5" r="1"/><circle cx="2.5" cy="8" r="1"/><circle cx="2.5" cy="12.5" r="1"/></svg>',
-    planning:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M3 13V8M8 13V3M13 13v-7"/><path d="M2 14h12"/></svg>',
+    planning:'<svg class="frz-ic" viewBox="0 0 16 16"><circle cx="8" cy="9" r="5"/><path d="M8 6.5V9l1.8 1.3"/><path d="M6.5 1.5h3"/></svg>',
     dashboard:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2" y="2" width="5.2" height="5.2" rx="1.2"/><rect x="8.8" y="2" width="5.2" height="5.2" rx="1.2"/><rect x="2" y="8.8" width="5.2" height="5.2" rx="1.2"/><rect x="8.8" y="8.8" width="5.2" height="5.2" rx="1.2"/></svg>',
     flag:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M2 3h12l-4.5 5.2V13l-3 1.6V8.2z"/></svg>',
     settings:'<svg class="frz-ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4"/></svg>',
@@ -15431,6 +15431,9 @@ if ('serviceWorker' in navigator) {
     var editing=!!board;
     var draft = board ? JSON.parse(JSON.stringify(board)) : { id:'b'+Date.now(), name:'', position:_boards.length, columns:[{name:'Column 1',statuses:[],dropStatus:''}] };
     if(!draft.columns || !draft.columns.length) draft.columns=[{name:'Column 1',statuses:[],dropStatus:''}];
+    // _dropExplicit (transient): true when the drop status was chosen by the user
+    // rather than auto-filled. Existing multi-status columns count as explicit.
+    draft.columns.forEach(function(c){ c._dropExplicit = ((c.statuses||[]).length>1 && !!c.dropStatus); });
     var allStatuses=(_val('statuses',[])||[]);
     var bg=document.createElement('div'); bg.className='frz-modal-bg';
     bg.innerHTML='<div class="frz-modal" role="dialog" aria-modal="true">'
@@ -15483,12 +15486,15 @@ if ('serviceWorker' in navigator) {
       host.querySelectorAll('input[type=checkbox][data-status]').forEach(function(cb){ cb.addEventListener('change', function(){
         var ci=+cb.dataset.col, s=cb.dataset.status, col=draft.columns[ci]; col.statuses=col.statuses||[];
         if(cb.checked){ if(col.statuses.indexOf(s)<0) col.statuses.push(s); } else { col.statuses=col.statuses.filter(function(x){return x!==s;}); }
-        // single status → auto drop; multi status → require an explicit choice (don't guess)
-        if(col.statuses.length===1) col.dropStatus=col.statuses[0];
-        else if(col.statuses.indexOf(col.dropStatus)<0) col.dropStatus='';
+        if(col.statuses.length===1){
+          col.dropStatus=col.statuses[0]; col._dropExplicit=false;   // single status → auto-fill
+        } else {
+          // multi status → keep ONLY a user-chosen, still-valid drop status; otherwise clear it
+          if(!col._dropExplicit || col.statuses.indexOf(col.dropStatus)<0){ col.dropStatus=''; col._dropExplicit=false; }
+        }
         renderCols(); updateUnassigned();
       }); });
-      host.querySelectorAll('[data-coldrop]').forEach(function(sel){ sel.addEventListener('change', function(){ draft.columns[+sel.dataset.coldrop].dropStatus=sel.value; }); });
+      host.querySelectorAll('[data-coldrop]').forEach(function(sel){ sel.addEventListener('change', function(){ var col=draft.columns[+sel.dataset.coldrop]; col.dropStatus=sel.value; col._dropExplicit=!!sel.value; }); });
       host.querySelectorAll('[data-colup]').forEach(function(b){ b.addEventListener('click', function(){ var i=+b.dataset.colup; if(i>0){ var t=draft.columns[i-1]; draft.columns[i-1]=draft.columns[i]; draft.columns[i]=t; renderCols(); } }); });
       host.querySelectorAll('[data-coldown]').forEach(function(b){ b.addEventListener('click', function(){ var i=+b.dataset.coldown; if(i<draft.columns.length-1){ var t=draft.columns[i+1]; draft.columns[i+1]=draft.columns[i]; draft.columns[i]=t; renderCols(); } }); });
       host.querySelectorAll('[data-coldel]').forEach(function(b){ b.addEventListener('click', function(){ var i=+b.dataset.coldel; if(draft.columns.length>1){ draft.columns.splice(i,1); renderCols(); updateUnassigned(); } }); });
@@ -15509,6 +15515,7 @@ if ('serviceWorker' in navigator) {
         if((c.statuses||[]).indexOf(c.dropStatus)<0){ err.textContent='Choose a drop status for column "'+(c.name||'')+'".'; return; }
       }
       draft.name=draft.name.trim();
+      draft.columns.forEach(function(c){ delete c._dropExplicit; });   // strip transient flag
       if(editing){ var idx=_boards.findIndex(function(x){return x.id===draft.id;}); if(idx>-1) _boards[idx]=draft; else _boards.push(draft); }
       else { draft.position=_boards.length; _boards.push(draft); }
       var saveBtn=bg.querySelector('#frzBeSave'); saveBtn.disabled=true;
@@ -15525,14 +15532,16 @@ if ('serviceWorker' in navigator) {
   }
 
   // keyboard shortcuts
-  document.addEventListener('keydown', function(e){
+  // Capture phase + on window so the shell shortcuts fire on EVERY /beta route
+  // (including /beta/item/:id) before any view/item-overlay handler can swallow them.
+  window.addEventListener('keydown', function(e){
     if (!root) return;
     var tag = (document.activeElement&&document.activeElement.tagName)||'';
     var typing = tag==='INPUT' || tag==='TEXTAREA' || (document.activeElement&&document.activeElement.isContentEditable);
     if (e.key==='[' && !typing){ e.preventDefault(); toggleCollapse(); }
     if (e.key==='/' && !typing){ e.preventDefault(); var si=document.getElementById('itemSearch'); if(si) si.focus(); }
     if (e.key==='Escape' && state.pop) closePop();
-  });
+  }, true);
 
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
 
