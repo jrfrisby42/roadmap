@@ -14422,7 +14422,11 @@ if ('serviceWorker' in navigator) {
     --frz-radius-chip:999px; --frz-radius-control:8px;
     --frz-topbar-h:52px; --frz-rail-w:232px; --frz-rail-w-collapsed:56px;
     --frz-anim:.18s ease;
-    position:fixed; inset:0; z-index:600; background:var(--frz-bg-app);
+    /* Low z-index on purpose: the shell is a full-viewport overlay over the
+       (hidden) production body, but it must sit BELOW the production modal/overlay
+       layer (.modal-bg is z-index:200, panels 800+, login 1000, loading 9999) so
+       every existing modal still opens on top. */
+    position:fixed; inset:0; z-index:1; background:var(--frz-bg-app);
     color:var(--frz-text); font-family:'Lato',system-ui,-apple-system,sans-serif;
     font-size:14px; display:grid; grid-template-columns:var(--frz-rail-w) 1fr;
     transition:grid-template-columns var(--frz-anim);
