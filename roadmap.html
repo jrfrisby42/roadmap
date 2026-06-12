@@ -14601,9 +14601,14 @@ if ('serviceWorker' in navigator) {
 
   // ── readiness: wait for login + data before building the shell ──
   function ready(){
+    // Gate on the GLOBAL currentUser (set synchronously in boot() immediately
+    // before its view-init tail). Because that whole tail — setAdminMode (sets
+    // isAdmin), initViewSelect, applyDefaultViewIfSet, checkItemPageParam — is
+    // synchronous, by the time this async poll observes currentUser truthy the
+    // entire boot tail has completed, so build() runs LAST and isn't clobbered.
     var lw = document.getElementById('loginWall');
     var lo = document.getElementById('loadingOverlay');
-    var loggedIn = !!uname();
+    var loggedIn = !!_val('currentUser', '');
     var loginVisible = lw && getComputedStyle(lw).display !== 'none';
     var loadingVisible = lo && getComputedStyle(lo).display !== 'none';
     return loggedIn && !loginVisible && !loadingVisible && Array.isArray(_val('projects', null));
@@ -14674,6 +14679,16 @@ if ('serviceWorker' in navigator) {
     ['kanbanBoard','listView','dashboardView','planningView','itemPageOverlay'].forEach(function(id){
       var el = document.getElementById(id); if (el) content.appendChild(el);
     });
+    // The item overlay carries inline position:fixed/inset/z-index:900 that scoped
+    // CSS can't beat without !important — neutralize via JS so it flows INSIDE the
+    // shell content, and hide the item's own header (the shell top bar replaces it).
+    var _io = document.getElementById('itemPageOverlay');
+    if (_io){
+      _io.style.position='static'; _io.style.inset='auto'; _io.style.zIndex='auto';
+      _io.style.height='auto'; _io.style.minHeight='100%'; _io.style.background='transparent';
+      _io.style.display='none';
+      if (_io.firstElementChild) _io.firstElementChild.style.display='none';
+    }
     // Hide production chrome (CONSTRAINT 3: display:none, keep in DOM)
     var tb = document.querySelector('.topbar'); if (tb) tb.style.display = 'none';
     var lg = document.getElementById('ganttLegend'); if (lg) lg.style.display = 'none';
@@ -14908,7 +14923,8 @@ if ('serviceWorker' in navigator) {
     renderBar();
     document.getElementById('frzContent').scrollTop = 0;
     if (opts.push!==false){
-      history.pushState({ frzItem:id, frzView:state.view }, '', '/beta/item/'+id);
+      // include itemPage:id so the production popstate handler re-opens (not closes)
+      history.pushState({ frzItem:id, itemPage:id, frzView:state.view }, '', '/beta/item/'+id);
     }
     renderRail();
     reflow();
@@ -14988,13 +15004,31 @@ if ('serviceWorker' in navigator) {
   // ════════ saved filters ════════
   function loadSaved(){ try { return JSON.parse(ls(savedKey())||'[]'); } catch(e){ return []; } }
   function persistSaved(){ lset(savedKey(), JSON.stringify(state.saved)); }
-  function saveCurrent(){
-    var name = (prompt('Name this saved filter:')||'').trim();
-    if(!name) return;
-    var qs = location.search || '';
-    var id = 's'+Date.now();
-    state.saved.push({ id:id, name:name, view:state.view, qs:qs });
-    persistSaved(); renderSavedNav();
+  // Non-blocking inline name popover (replaces window.prompt — styleable, async)
+  function namePopover(anchor, opts){
+    closePop();
+    openPop(anchor, function(pop){
+      pop.style.minWidth='240px'; pop.style.padding='10px';
+      var inp=document.createElement('input'); inp.type='text';
+      inp.placeholder=opts.placeholder||'Name…'; inp.value=opts.initial||'';
+      inp.style.cssText='width:100%;box-sizing:border-box;font:inherit;font-size:13px;border:1px solid var(--frz-border-strong);border-radius:6px;padding:6px 9px;color:var(--frz-text);margin-bottom:8px;outline:none';
+      var row=document.createElement('div'); row.style.cssText='display:flex;gap:6px;justify-content:flex-end';
+      var cancel=document.createElement('button'); cancel.type='button'; cancel.className='frz-viewopt'; cancel.textContent='Cancel';
+      var save=document.createElement('button'); save.type='button'; save.className='frz-newitem'; save.textContent=opts.saveLabel||'Save';
+      function commit(){ var v=inp.value.trim(); if(!v){ inp.focus(); return; } closePop(); opts.onSave(v); }
+      save.addEventListener('click', commit);
+      cancel.addEventListener('click', closePop);
+      inp.addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); commit(); } else if(e.key==='Escape'){ e.preventDefault(); closePop(); } });
+      row.appendChild(cancel); row.appendChild(save);
+      pop.appendChild(inp); pop.appendChild(row);
+      setTimeout(function(){ inp.focus(); inp.select(); }, 0);
+    });
+  }
+  function saveCurrent(anchor){
+    namePopover(anchor, { placeholder:'Saved filter name…', saveLabel:'Save', onSave:function(name){
+      state.saved.push({ id:'s'+Date.now(), name:name, view:state.view, qs:(location.search||'') });
+      persistSaved(); renderSavedNav();
+    }});
   }
   function applySaved(s){ navigate('/beta/'+s.view + (s.qs||''), false); }
 
@@ -15094,12 +15128,12 @@ if ('serviceWorker' in navigator) {
       var chip = e.target.closest && e.target.closest('[data-chip]');
       if (chip){ chipMenu(chip.getAttribute('data-chip'), chip); return; }
       if (e.target.closest && e.target.closest('[data-addfilter]')){ addFilterMenu(e.target.closest('[data-addfilter]')); return; }
-      if (e.target.closest && e.target.closest('[data-savefilter]')){ saveCurrent(); return; }
+      if (e.target.closest && e.target.closest('[data-savefilter]')){ saveCurrent(e.target.closest('[data-savefilter]')); return; }
       var opt = e.target.closest && e.target.closest('[data-opt]');
       if (opt){ handleOpt(opt.getAttribute('data-opt'), opt); return; }
     });
     document.getElementById('frzCollapse').addEventListener('click', toggleCollapse);
-    document.getElementById('frzSaveBtn').addEventListener('click', function(e){ e.stopPropagation(); saveCurrent(); });
+    document.getElementById('frzSaveBtn').addEventListener('click', function(e){ e.stopPropagation(); saveCurrent(this); });
     document.getElementById('frzAddProj').addEventListener('click', function(e){ e.stopPropagation(); _call('showToast','Add project — coming soon'); });
     document.getElementById('frzNewItem').addEventListener('click', function(){ _call('openProjectModal', null); });
     document.getElementById('frzSettings').addEventListener('click', function(){ _call('openMyAccount'); });
@@ -15141,7 +15175,7 @@ if ('serviceWorker' in navigator) {
     var s = state.saved.filter(function(x){return x.id===id;})[0]; if(!s) return;
     openPop(btn, function(pop){
       var r=document.createElement('button'); r.className='frz-pop-opt'; r.textContent='Rename';
-      r.addEventListener('click', function(){ closePop(); var n=(prompt('Rename saved filter:', s.name)||'').trim(); if(n){ s.name=n; persistSaved(); renderSavedNav(); } });
+      r.addEventListener('click', function(){ namePopover(btn, { placeholder:'Rename…', initial:s.name, saveLabel:'Rename', onSave:function(n){ s.name=n; persistSaved(); renderSavedNav(); } }); });
       var d=document.createElement('button'); d.className='frz-pop-opt'; d.style.color='#C0392B'; d.textContent='Delete';
       d.addEventListener('click', function(){ closePop(); if(confirm('Delete "'+s.name+'"?')){ state.saved=state.saved.filter(function(x){return x.id!==id;}); persistSaved(); renderSavedNav(); } });
       pop.appendChild(r); pop.appendChild(d);
