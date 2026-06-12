@@ -14422,6 +14422,11 @@ if ('serviceWorker' in navigator) {
     --frz-radius-chip:999px; --frz-radius-control:8px;
     --frz-topbar-h:52px; --frz-rail-w:232px; --frz-rail-w-collapsed:56px;
     --frz-anim:.18s ease;
+    /* Rebrand reused production content: its primary buttons, links, focus rings
+       and toggle accent-color all read var(--accent) (#5b4fff indigo). Custom
+       properties resolve from the nearest ancestor, so overriding --accent HERE
+       turns the entire reused subtree Frazil-blue — production :root is untouched. */
+    --accent:#0059A9;
     /* Low z-index on purpose: the shell is a full-viewport overlay over the
        (hidden) production body, but it must sit BELOW the production modal/overlay
        layer (.modal-bg is z-index:200, panels 800+, login 1000, loading 9999) so
@@ -14487,6 +14492,14 @@ if ('serviceWorker' in navigator) {
   /* Reuse the production search box (its 210px width is set inline on re-parent) */
   .frz-beta .frz-newitem { border:0; background:var(--frz-accent); color:#fff; cursor:pointer; font:inherit; font-size:13px; font-weight:600; display:inline-flex; align-items:center; gap:6px; padding:6px 13px; border-radius:var(--frz-radius-control); white-space:nowrap; }
   .frz-beta .frz-newitem:hover { background:var(--frz-accent-hover); }
+  /* Reused production primary buttons hover via filter:brightness (lightens blue) —
+     pin them to the brand hover #004A8F within /beta. Scoped, higher specificity, no !important. */
+  .frz-beta button.primary:hover, .frz-beta .btn-save:hover { filter:none; background:var(--frz-accent-hover); border-color:var(--frz-accent-hover); }
+  /* Focus-ring GLOWS are hardcoded indigo box-shadows (not var-driven) in reused
+     content (form inputs, the item-page Description rich-text box) — rebrand to blue.
+     Scoped + higher specificity than production, no !important. */
+  .frz-beta .form-row input:focus, .frz-beta .form-row select:focus,
+  .frz-beta .rte-box:focus, .frz-beta .add-dev-row input:focus { box-shadow:0 0 0 3px rgba(0,89,169,0.15); }
   .frz-beta .frz-newitem svg { width:13px; height:13px; stroke-width:2.2; }
   .frz-beta .frz-acct-wrap { position:relative; }
   .frz-beta .frz-avatar { width:30px; height:30px; border-radius:50%; background:var(--frz-accent); color:#fff; font-size:12px; font-weight:700; display:grid; place-items:center; cursor:pointer; border:0; }
