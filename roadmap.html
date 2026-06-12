@@ -14240,16 +14240,14 @@ if ('serviceWorker' in navigator) {
         Back
       </button>
       <div id="ipBreadcrumb" style="font-size:12px;color:var(--muted)"></div>
-      <div style="position:relative;flex:1;max-width:380px;margin:0 auto">
-        <input id="ipGlobalSearch" type="text" placeholder="Search items…" autocomplete="off"
-          onkeydown="if(event.key==='Enter'){const r=document.querySelector('#ipGlobalSearchResults .ip-search-result'); if(r) r.click();} else if(event.key==='Escape'){const b=document.getElementById('ipGlobalSearchResults'); if(b) b.style.display='none';}"
-          style="width:100%;box-sizing:border-box;padding:7px 12px 7px 32px;font-size:13px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);pointer-events:none"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <div id="ipGlobalSearchResults" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,0.15);max-height:340px;overflow-y:auto;z-index:30"></div>
-      </div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-        <span id="ipStatusBadge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;background:var(--surface);color:var(--text)"></span>
-        <span id="ipPriorityBadge" style="display:none;font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;flex-shrink:0"></span>
+        <div style="position:relative;width:280px;max-width:40vw">
+          <input id="ipGlobalSearch" type="text" placeholder="Search items…" autocomplete="off"
+            onkeydown="if(event.key==='Enter'){const r=document.querySelector('#ipGlobalSearchResults .ip-search-result'); if(r) r.click();} else if(event.key==='Escape'){const b=document.getElementById('ipGlobalSearchResults'); if(b) b.style.display='none';}"
+            style="width:100%;box-sizing:border-box;padding:7px 12px 7px 32px;font-size:13px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);pointer-events:none"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <div id="ipGlobalSearchResults" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--bg);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,0.15);max-height:340px;overflow-y:auto;z-index:30"></div>
+        </div>
         <div style="position:relative">
           <button id="ipMenuBtn" onclick="ipToggleMenu(event)" title="Actions"
             style="background:none;border:1px solid var(--border);color:var(--muted);padding:6px 9px;border-radius:6px;cursor:pointer;display:flex;align-items:center;line-height:1;flex-shrink:0"
@@ -14274,7 +14272,11 @@ if ('serviceWorker' in navigator) {
   <div style="max-width:1100px;margin:0 auto;padding:0 0 60px">
     <!-- Item title -->
     <div style="padding:28px 28px 0">
-      <h1 id="ipTitle" style="font-size:24px;font-weight:900;color:var(--text);margin:0 0 4px;line-height:1.2"></h1>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+        <span id="ipStatusBadge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;background:var(--surface);color:var(--text)"></span>
+        <span id="ipPriorityBadge" style="display:none;font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;flex-shrink:0"></span>
+        <h1 id="ipTitle" style="font-size:24px;font-weight:900;color:var(--text);margin:0;line-height:1.2"></h1>
+      </div>
       <div id="ipMeta" style="font-size:13px;color:var(--muted);margin-bottom:0"></div>
     </div>
 
