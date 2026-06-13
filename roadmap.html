@@ -14963,6 +14963,7 @@ if ('serviceWorker' in navigator) {
       .catch(function(e){ _call('showToast','Sprint save failed: '+(e&&e.message||''),'error'); throw e; });
   }
   function sprintById(id){ return _sprints.filter(function(s){ return s.id===id; })[0] || null; }
+  function sprintByName(n){ return _sprints.filter(function(s){ return s.name===n; })[0] || null; }
   function activeSprint(){ return _sprints.filter(function(s){ return s.state==='Active'; })[0] || null; }
   function plannedSprint(){ return _sprints.filter(function(s){ return s.state==='Planned'; })[0] || null; }
   function currentSprint(){ return activeSprint() || plannedSprint(); }
@@ -16263,14 +16264,65 @@ if ('serviceWorker' in navigator) {
   }
 
   // ════════ Stage 2b — Multi-sprint history ════════
+  function _shName(id){ var sp=sprintById(id); return sp?sp.name:id; }
+  // Backfill: reconstruct the FULL ordered sprint history from the item's activity
+  // log. Pre-Stage-2b items never recorded sprintHistory, but every membership left
+  // a "Sprint planning: …" entry, so the journey is recoverable. Outcomes:
+  // moved-to → carried-over, returned-to-backlog, current (open).
+  function _parseSprintActivities(itemId){
+    var acts=(_val('activities',[])||[]).filter(function(a){ return a && a.item_id===itemId && typeof a.message==='string' && a.message.indexOf('Sprint planning:')===0; });
+    acts.sort(function(a,b){ return String(a.created_ts||'').localeCompare(String(b.created_ts||'')); });   // oldest first
+    var hist=[];
+    function nameToId(name){ var sp=sprintByName(name); return sp?sp.id:name; }
+    function openFor(name){ for(var k=hist.length-1;k>=0;k--){ if(_shName(hist[k].sprintId)===name && !hist[k].outcome) return hist[k]; } return null; }
+    acts.forEach(function(a){
+      var m=a.message, ts=String(a.created_ts||'').slice(0,10);
+      var mc=/^Sprint planning: (.+?) completed → (moved to (.+)|returned to backlog)$/.exec(m);
+      if(mc){
+        var fromName=mc[1], carried=!!mc[3];
+        var e=openFor(fromName);
+        if(e) e.outcome = carried?'carried-over':'returned-to-backlog';
+        else hist.push({sprintId:nameToId(fromName), addedAt:'', outcome:carried?'carried-over':'returned-to-backlog'});
+        if(carried) hist.push({sprintId:nameToId(mc[3]), addedAt:ts, outcome:''});   // moved-to opens a new membership
+        return;
+      }
+      if(m==='Sprint planning: removed from sprint (returned to backlog)'){
+        for(var k=hist.length-1;k>=0;k--){ if(!hist[k].outcome){ hist[k].outcome='returned-to-backlog'; break; } }
+        return;
+      }
+      var ma=/^Sprint planning: Sprint (.+) → (.+)$/.exec(m);   // add / re-assignment (field label is "Sprint")
+      if(ma){
+        var newName=ma[2];
+        for(var j=0;j<hist.length;j++){ if(!hist[j].outcome && _shName(hist[j].sprintId)!==newName) hist[j].outcome='returned-to-backlog'; }
+        if(!openFor(newName)) hist.push({sprintId:nameToId(newName), addedAt:ts, outcome:''});
+      }
+    });
+    return hist;
+  }
   function itemSprintHistory(p){
-    // Ordered history of every sprint this item has been in. Migration: a legacy
-    // item with a current sprint but no recorded history gets a synthesized
-    // "current" seed entry (never a blank list); it is persisted lazily on the
-    // next sprint action via _histClone (no mass write).
-    if(p && Array.isArray(p.sprintHistory) && p.sprintHistory.length) return p.sprintHistory;
-    if(p && p.sprintId){ var sp=sprintById(p.sprintId); return [{sprintId:p.sprintId, addedAt:(sp&&sp.startDate)||'', outcome:''}]; }
+    // Ordered history of every sprint this item has been in. Prefer the richer of
+    // (stored sprintHistory) vs (reconstructed-from-activity-log) — reconstruction
+    // backfills prior memberships that pre-Stage-2b items never recorded. Going
+    // forward the stored list grows to match. Falls back to a synthesized "current"
+    // seed from sprintId, then to empty.
+    if(!p) return [];
+    var stored = Array.isArray(p.sprintHistory)?p.sprintHistory:[];
+    var rec = _parseSprintActivities(p.id);
+    var base = (rec.length > stored.length) ? rec : stored;
+    if(base.length) return base;
+    if(p.sprintId){ var sp=sprintById(p.sprintId); return [{sprintId:p.sprintId, addedAt:(sp&&sp.startDate)||'', outcome:''}]; }
     return [];
+  }
+  function maybePersistSprintHistory(p, hist){
+    // One-time backfill write: if we reconstructed more than what's stored, persist
+    // it (editors/admins only — viewers can't PUT and just see the live render).
+    var stored = Array.isArray(p.sprintHistory)?p.sprintHistory:[];
+    if(hist.length<=stored.length) return;
+    if(!(_val('isAdmin',false)||_val('isEditor',false))) return;
+    if(p._shBackfilled) return; p._shBackfilled=true;   // guard the 500ms double-inject from a duplicate PUT
+    var ps=_val('projects',[])||[]; var i=ps.findIndex(function(x){return x.id===p.id;});
+    var patch=Object.assign({}, p, {sprintHistory:hist, _username:_call('getUsername')});
+    API.put('/api/projects/'+p.id, patch).then(function(updated){ if(i>-1) ps[i]=updated; p.sprintHistory=hist; }).catch(function(){});
   }
   function _histClone(p){ return itemSprintHistory(p).map(function(h){ return {sprintId:h.sprintId, addedAt:h.addedAt||'', outcome:h.outcome||''}; }); }
   function _histCloseOpen(hist, sprintId, outcome){ for(var k=0;k<hist.length;k++){ if(hist[k].sprintId===sprintId && !hist[k].outcome){ hist[k].outcome=outcome; return true; } } return false; }
@@ -16279,6 +16331,7 @@ if ('serviceWorker' in navigator) {
     if(!p) return;
     var anchor=document.getElementById('ipFieldsCard'); if(!anchor||!anchor.parentNode) return;
     var hist=itemSprintHistory(p);
+    maybePersistSprintHistory(p, hist);   // backfill reconstructed priors (one write)
     var card=document.getElementById('frzSprintHistCard');
     if(!hist.length){ if(card) card.remove(); return; }
     if(!card){
