@@ -563,6 +563,26 @@ def init_team_db(team: str):
             release_notes   TEXT,
             payload         TEXT NOT NULL DEFAULT '{}'
         );
+        -- Stage 3b: per-user notification inbox (private; internal/in-app only)
+        CREATE TABLE IF NOT EXISTS notifications (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            username    TEXT NOT NULL,                 -- recipient
+            type        TEXT NOT NULL,                 -- mention|watch_status|watch_comment|assigned
+            item_id     INTEGER,
+            item_name   TEXT,
+            message     TEXT NOT NULL DEFAULT '',
+            actor       TEXT,
+            created_ts  TEXT NOT NULL,
+            read        INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(username, read);
+        -- Stage 3b: item watchers (kept OUT of the item JSON blob, which update_project
+        -- fully replaces from the client body — a blob field would be wiped on next save)
+        CREATE TABLE IF NOT EXISTS watchers (
+            item_id     INTEGER NOT NULL,
+            username    TEXT NOT NULL,
+            PRIMARY KEY(item_id, username)
+        );
         """)
         # ── Live migrations: add new columns if they don't exist yet ─────────────
         for _col, _defn in [
@@ -1478,6 +1498,14 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
         _assign_item_key(c, body)
         body["id"] = _insert_project(c, body)
     write_audit(team, "create", username, body["id"], body.get("name",""))
+    # Stage 3b: notifications (post-commit, best-effort — never fail the create)
+    try:
+        _add_watchers(team, body["id"], [username, body.get("assignee")])
+        if body.get("assignee") and body.get("assignee") != username:
+            _notify(team, [body["assignee"]], "assigned", body["id"], body.get("name",""),
+                    f"{username} assigned you {body.get('name','an item')}", username)
+    except Exception as e:
+        log.warning(f"[Notify] create hook failed for item {body['id']}: {e}")
     return body
 
 @app.put("/api/projects/{pid}")
@@ -1522,6 +1550,11 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
         _save_project(c, pid, body)
     write_audit(team, "update", username, pid, body.get("name",""), changes or None)
     body["id"] = pid
+    # Stage 3b: notifications (post-commit, best-effort — never fail/roll back the update)
+    try:
+        _notify_item_update(team, pid, old, body, username)
+    except Exception as e:
+        log.warning(f"[Notify] update hook failed for item {pid}: {e}")
 
     # ── FF pull: when item moves to the Released status and has Jira tickets ──────
     # Best-effort and isolated from the main update. The Jira hierarchy walk is a
@@ -2053,6 +2086,126 @@ def delete_attachment(pid: int, att_id: str,
         log.warning("[Attach] S3 delete failed for %s: %s", target.get("key"), e)
     write_audit(team, "attachment:delete", username, pid, p.get("name", ""), changes={"file": target.get("name")})
     return {"deleted": att_id, "name": target.get("name")}
+
+# ── Notifications & watchers (Stage 3b) ──────────────────────────────────────
+# Server-side generation hooked into the real write paths (item update/assign,
+# comment, planning commit, jira sync). Every hook runs AFTER the primary write
+# has committed and is wrapped best-effort so a notification failure can never
+# fail or roll back the underlying mutation. Self-notifications are suppressed.
+_MENTION_TEXT_RE = re.compile(r'@([A-Za-z0-9._-]+)')
+_MENTION_HTML_RE = re.compile(r'data-u="([^"]+)"')
+
+def _team_usernames(team: str) -> set:
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+    try:
+        return {u.get("username") for u in (json.loads(row["value"]) if row else []) if u.get("username")}
+    except Exception:
+        return set()
+
+def _notify(team, recipients, ntype, item_id, item_name, message, actor):
+    """Insert one notification per recipient, de-duped and excluding the actor."""
+    recips = [r for r in dict.fromkeys(recipients or []) if r and r != actor]
+    if not recips:
+        return
+    ts = datetime.now(timezone.utc).isoformat()
+    with db(team) as c:
+        for r in recips:
+            c.execute("INSERT INTO notifications(username,type,item_id,item_name,message,actor,created_ts,read)"
+                      " VALUES(?,?,?,?,?,?,?,0)", (r, ntype, item_id, item_name or "", message, actor or "", ts))
+
+def _get_watchers(team, item_id) -> set:
+    with db(team) as c:
+        rows = c.execute("SELECT username FROM watchers WHERE item_id=?", (item_id,)).fetchall()
+    return {r["username"] for r in rows}
+
+def _add_watchers(team, item_id, usernames):
+    us = [u for u in dict.fromkeys(usernames or []) if u]
+    if not us:
+        return
+    with db(team) as c:
+        for u in us:
+            c.execute("INSERT OR IGNORE INTO watchers(item_id,username) VALUES(?,?)", (item_id, u))
+
+def _parse_mentions_text(text, valid):
+    return {m for m in _MENTION_TEXT_RE.findall(text or "") if m in valid}
+
+def _parse_mentions_html(html, valid):
+    return {m for m in _MENTION_HTML_RE.findall(html or "") if m in valid}
+
+def _item_name(team, item_id):
+    with db(team) as c:
+        row = c.execute("SELECT data FROM projects WHERE id=?", (item_id,)).fetchone()
+    try:
+        return json.loads(row["data"]).get("name", "") if row else ""
+    except Exception:
+        return ""
+
+def _notify_item_update(team, pid, old, new, actor):
+    """Status change → watchers; assignee change → new assignee; new description mention → mentioned."""
+    name = new.get("name", "") or old.get("name", "")
+    os_, ns_ = old.get("status", ""), new.get("status", "")
+    if ns_ and ns_ != os_:
+        _notify(team, _get_watchers(team, pid), "watch_status", pid, name,
+                f"{actor} changed status to {ns_}", actor)
+    oa, na = old.get("assignee", ""), new.get("assignee", "")
+    if na and na != oa:
+        _add_watchers(team, pid, [na])
+        _notify(team, [na], "assigned", pid, name, f"{actor} assigned you {name or 'an item'}", actor)
+    od, nd = old.get("description", "") or "", new.get("description", "") or ""
+    if nd != od:
+        valid = _team_usernames(team)
+        new_m = _parse_mentions_html(nd, valid) - _parse_mentions_html(od, valid)
+        if new_m:
+            _add_watchers(team, pid, list(new_m))
+            _notify(team, list(new_m), "mention", pid, name, f"{actor} mentioned you in {name or 'an item'}", actor)
+
+def _notify_on_comment(team, item_id, author, text):
+    if not item_id:
+        return
+    valid = _team_usernames(team)
+    mentioned = _parse_mentions_text(text, valid)
+    name = _item_name(team, item_id)
+    _add_watchers(team, item_id, [author] + list(mentioned))   # commenter + mentioned auto-watch
+    if mentioned:
+        _notify(team, list(mentioned), "mention", item_id, name, f"{author} mentioned you in a comment", author)
+    watchers = _get_watchers(team, item_id) - mentioned         # avoid double-notifying the mentioned
+    _notify(team, watchers, "watch_comment", item_id, name, f"{author} commented on {name or 'an item'}", author)
+
+@app.get("/api/notifications")
+def list_notifications(auth: dict = Depends(require_auth)):
+    team = auth["team"]; me = auth["username"]
+    with db(team) as c:
+        rows = c.execute("SELECT * FROM notifications WHERE username=? ORDER BY id DESC LIMIT 100", (me,)).fetchall()
+        unread = c.execute("SELECT COUNT(*) FROM notifications WHERE username=? AND read=0", (me,)).fetchone()[0]
+    return {"notifications": [dict(r) for r in rows], "unread": unread}
+
+@app.post("/api/notifications/read")
+def mark_notifications_read(body: dict = Body({}), auth: dict = Depends(require_auth)):
+    team = auth["team"]; me = auth["username"]
+    with db(team) as c:
+        if body.get("all"):
+            c.execute("UPDATE notifications SET read=1 WHERE username=? AND read=0", (me,))
+        elif body.get("id") is not None:
+            c.execute("UPDATE notifications SET read=1 WHERE id=? AND username=?", (body.get("id"), me))
+        unread = c.execute("SELECT COUNT(*) FROM notifications WHERE username=? AND read=0", (me,)).fetchone()[0]
+    return {"unread": unread}
+
+@app.get("/api/items/{pid}/watchers")
+def get_item_watchers(pid: int, auth: dict = Depends(require_auth)):
+    w = _get_watchers(auth["team"], pid)
+    return {"watchers": sorted(w), "watching": auth["username"] in w}
+
+@app.post("/api/items/{pid}/watch")
+def watch_item(pid: int, auth: dict = Depends(require_auth)):
+    _add_watchers(auth["team"], pid, [auth["username"]])
+    return {"watching": True}
+
+@app.post("/api/items/{pid}/unwatch")
+def unwatch_item(pid: int, auth: dict = Depends(require_auth)):
+    with db(auth["team"]) as c:
+        c.execute("DELETE FROM watchers WHERE item_id=? AND username=?", (pid, auth["username"]))
+    return {"watching": False}
 
 # ── Import ────────────────────────────────────────────────────────────────────
 @app.post("/api/import")
@@ -2888,6 +3041,16 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
         except Exception as e:
             log.warning(f"[Jira] Failed to log status change activity for item {pid}: {e}")
 
+    # Stage 3b: notify watchers of a Jira-driven status change (post-commit, best-effort).
+    # Suppressed for bulk/initial syncs (jira_pull_all sets _suppressNotify) to avoid a
+    # post-deploy notification burst from accumulated Jira changes.
+    if any_changed and best_new_status and best_new_status != old_status and not (body or {}).get("_suppressNotify"):
+        try:
+            _notify(team, _get_watchers(team, pid), "watch_status", pid, p.get("name", ""),
+                    f"Jira sync changed status to {best_new_status}", "Jira Sync")
+        except Exception as e:
+            log.warning(f"[Notify] jira status hook failed for item {pid}: {e}")
+
     # Everything else → audit log only (skip when nothing changed to reduce noise)
     if any_changed or ff_changed:
         write_audit(team, "jira:pull", username, pid, p.get("name",""),
@@ -3016,6 +3179,9 @@ def jira_pull_all(body: dict = Body({}), x_team: Optional[str] = Header(None),
     Also syncs Jira children for items with syncChildren=True."""
     team = auth["team"]
     if not jira_configured(): raise HTTPException(503, "Jira not configured")
+    # Stage 3b: bulk sync = the initial/backfill path → suppress per-watcher notifications
+    # so a post-deploy run can't emit a burst for accumulated Jira status changes.
+    body = {**(body or {}), "_suppressNotify": True}
 
     # Check jiraEnabled for this team
     with db(team) as c:
@@ -3080,6 +3246,11 @@ def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin
             (body.get("item_id"), body.get("author", auth["username"]), body.get("body",""), ts)
         )
         row = c.execute("SELECT * FROM comments WHERE id=?", (cur.lastrowid,)).fetchone()
+    # Stage 3b: mention + watcher notifications (post-commit, best-effort)
+    try:
+        _notify_on_comment(team, body.get("item_id"), body.get("author", auth["username"]), body.get("body", ""))
+    except Exception as e:
+        log.warning(f"[Notify] comment hook failed: {e}")
     return dict(row)
 
 @app.delete("/api/comments/{cid}")
@@ -3762,6 +3933,17 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
     write_audit(team, "planning_session:commit", auth["username"],
                 changes={"session_id": session_id, "type": stype,
                          "items_changed": len(to_save), "release_number": rel_number})
+
+    # Stage 3b: notify watchers of planning-driven status changes (post-commit, best-effort)
+    try:
+        for ch in changes:
+            sf, st_ = ch.get("status_from"), ch.get("status_to")
+            if st_ and sf != st_:
+                _notify(team, _get_watchers(team, ch["item_id"]), "watch_status",
+                        ch["item_id"], ch.get("name", ""),
+                        f"{auth['username']} changed status to {st_} (planning)", auth["username"])
+    except Exception as e:
+        log.warning(f"[Notify] planning-commit hook failed: {e}")
 
     return {
         "session_id": session_id, "type": stype, "status": "committed",
