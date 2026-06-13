@@ -14672,6 +14672,16 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-sh-carried { background:#FBEAD0; color:#B5710C; }
   .frz-beta .frz-sh-returned { background:#E7EEF5; color:var(--frz-text-secondary); }
 
+  /* Stage 3a — My Work view */
+  .frz-beta #frzMyWork { padding:16px 20px; }
+  .frz-beta .frz-mw-count { font-size:12px; color:var(--frz-text-muted); margin-bottom:10px; }
+  .frz-beta .frz-mw-table { width:100%; border-collapse:collapse; font-size:13px; }
+  .frz-beta .frz-mw-table thead th { text-align:left; padding:7px 10px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-mw-table .frz-mw-cb, .frz-beta #frzMyWork .list-cb-cell { display:none; }   /* no bulk-select in My Work */
+  .frz-beta .frz-mw-table tr.list-row { cursor:pointer; }
+  .frz-beta .frz-mw-table tr.list-row:hover { background:var(--frz-bg-app); }
+  .frz-beta .frz-mw-empty { padding:24px; text-align:center; color:var(--frz-text-muted); }
+
   @media (prefers-reduced-motion: reduce) { .frz-beta { --frz-anim:0s; } }
 </style>
 <script>
@@ -14686,6 +14696,7 @@ if ('serviceWorker' in navigator) {
     list:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M5.5 3.5h9M5.5 8h9M5.5 12.5h9"/><circle cx="2.5" cy="3.5" r="1"/><circle cx="2.5" cy="8" r="1"/><circle cx="2.5" cy="12.5" r="1"/></svg>',
     planning:'<svg class="frz-ic" viewBox="0 0 16 16"><circle cx="8" cy="9" r="5"/><path d="M8 6.5V9l1.8 1.3"/><path d="M6.5 1.5h3"/></svg>',
     dashboard:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2" y="2" width="5.2" height="5.2" rx="1.2"/><rect x="8.8" y="2" width="5.2" height="5.2" rx="1.2"/><rect x="2" y="8.8" width="5.2" height="5.2" rx="1.2"/><rect x="8.8" y="8.8" width="5.2" height="5.2" rx="1.2"/></svg>',
+    mywork:'<svg class="frz-ic" viewBox="0 0 16 16"><circle cx="8" cy="5" r="2.6"/><path d="M3 13.2c0-2.4 2.2-3.8 5-3.8s5 1.4 5 3.8"/></svg>',
     flag:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M2 3h12l-4.5 5.2V13l-3 1.6V8.2z"/></svg>',
     settings:'<svg class="frz-ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4"/></svg>',
     admin:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M2.5 6.5h11M6 3v3.5"/></svg>',
@@ -14708,7 +14719,8 @@ if ('serviceWorker' in navigator) {
     kanban:   { chips:['owner','type'],                     extra:['status','assignee'], opts:['hideEmpty'] },
     list:     { chips:['owner','assignee','type','status'], extra:[], opts:['columns'] },
     planning: { chips:['owner','status'],                   extra:['type','assignee'], opts:[] },
-    dashboard:{ chips:['owner','range'],                    extra:[], opts:[] }
+    dashboard:{ chips:['owner','range'],                    extra:[], opts:[] },
+    'my-work':{ chips:[],                                   extra:[], opts:[] }   // Stage 3a: fixed filter, no chips
   };
   var PROJ_COLORS = ['#0059A9','#65B1E3','#2E8B6F','#C0700B','#8E4FB0','#C0392B','#0E7C86'];
   // Feature B: items eligible for sprint planning (single editable list).
@@ -14840,6 +14852,23 @@ if ('serviceWorker' in navigator) {
     ['kanbanBoard','listView','dashboardView','planningView','itemPageOverlay'].forEach(function(id){
       var el = document.getElementById(id); if (el) content.appendChild(el);
     });
+    // Stage 3a: My Work panel — a beta-owned view (assignee = me, not terminal).
+    // Reuses the production List row markup (_listRowHtml) but renders + sorts in
+    // the beta module since priority/due aren't server-sortable columns.
+    var mw = document.createElement('div');
+    mw.id = 'frzMyWork'; mw.style.display = 'none';
+    mw.innerHTML =
+      '<div id="frzMyWorkCount" class="frz-mw-count"></div>'+
+      '<table class="frz-mw-table"><thead><tr>'+
+        '<th class="frz-mw-cb"></th><th>Key</th><th>Type</th><th>Name</th><th>Status</th>'+
+        '<th>Priority</th><th>Owner</th><th>Assignee</th><th style="text-align:center">Pts</th><th>Sprint</th>'+
+      '</tr></thead><tbody id="frzMyWorkBody"></tbody></table>';
+    content.appendChild(mw);
+    document.getElementById('frzMyWorkBody').addEventListener('click', function(e){
+      if (e.target.closest('input,button,a')) return;
+      var tr = e.target.closest('tr.list-row'); if(!tr) return;
+      var id = parseInt(tr.getAttribute('data-id'),10); if(id) openItem(id);
+    });
     // The item overlay carries inline position:fixed/inset/z-index:900 that scoped
     // CSS can't beat without !important — neutralize via JS so it flows INSIDE the
     // shell content, and hide the item's own header (the shell top bar replaces it).
@@ -14901,6 +14930,13 @@ if ('serviceWorker' in navigator) {
     var nav = document.getElementById('frzViewNav');
     nav.querySelectorAll('.frz-item').forEach(function(b){ b.remove(); });
     var admin = _val('isAdmin', false);
+    // Stage 3a: My Work pinned at the top of the views section
+    var mwb = document.createElement('button');
+    mwb.className='frz-item'; mwb.setAttribute('data-nav','view:my-work');
+    mwb.setAttribute('aria-current', String(state.view==='my-work' && !state.onItem));
+    mwb.title='My Work';
+    mwb.innerHTML = IC.mywork + '<span>My Work</span><span class="frz-count">'+myWorkItems().length+'</span>';
+    nav.appendChild(mwb);
     VIEW_KEYS.filter(function(v){ return v!=='planning' || admin; }).forEach(function(v){
       var b = document.createElement('button');
       b.className = 'frz-item'; b.setAttribute('data-nav','view:'+v);
@@ -15130,10 +15166,53 @@ if ('serviceWorker' in navigator) {
     var lg=document.getElementById('ganttLegend'); if(lg) lg.style.display='none';
     var sw=document.getElementById('searchWrap'); if(sw){ sw.style.display=''; }   // always show beta search
   }
+  // ════════ My Work (Stage 3a) ════════
+  function myWorkItems(){
+    var me = (uname()||'').toLowerCase();
+    if(!me) return [];
+    var ps = _val('projects',[])||[];
+    return ps.filter(function(p){
+      return !p.archived && p.assignee && String(p.assignee).toLowerCase()===me && !isTermStatus(p.status);
+    });
+  }
+  function _mwDue(p){ return p.revised || p.due || ''; }   // effective/current target date
+  function myWorkSort(a,b){
+    var pa=(+a.priority)||99, pb=(+b.priority)||99; if(pa!==pb) return pa-pb;   // priority: 1=Urgent first
+    var da=_mwDue(a), db=_mwDue(b);
+    if(da!==db){ if(!da) return 1; if(!db) return -1; return da<db?-1:1; }       // due asc, blanks last
+    return String(a.name||'').toLowerCase().localeCompare(String(b.name||'').toLowerCase());
+  }
+  function renderMyWork(){
+    var body=document.getElementById('frzMyWorkBody'); if(!body) return;
+    var items=myWorkItems().slice().sort(myWorkSort);
+    var cnt=document.getElementById('frzMyWorkCount');
+    if(cnt) cnt.textContent = items.length+' open item'+(items.length!==1?'s':'')+' assigned to you';
+    body.innerHTML = items.length
+      ? items.map(function(it){ return _call('_listRowHtml', it, 0); }).join('')
+      : '<tr><td colspan="10" class="frz-mw-empty">Nothing assigned to you right now.</td></tr>';
+  }
+  function setMyWork(){
+    state.onItem=false; state.itemId=null; state.view='my-work';
+    root.classList.remove('on-item');
+    var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
+    // hide every production view container (initViewSelect won't run for my-work)
+    var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
+    ['kanbanBoard','listView','dashboardView','planningView'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    var mw=document.getElementById('frzMyWork'); if(mw) mw.style.display='';
+    setProjectPanel();
+    applyChromeHiding();
+    document.getElementById('frzLeft').innerHTML='<span class="frz-title">My Work</span><span class="frz-crumbs">· assigned to me</span>';
+    document.getElementById('frzBadges').innerHTML='';
+    document.getElementById('frzFilterBar').innerHTML='';   // fixed filter — no chip bar
+    renderRail();
+    renderMyWork();
+  }
   function setView(view, opts){
     opts = opts||{};
+    if(view==='my-work'){ return setMyWork(); }
     state.onItem=false; state.itemId=null;
     root.classList.remove('on-item');
+    var _mw=document.getElementById('frzMyWork'); if(_mw) _mw.style.display='none';
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     state.view = view;
     setProjectPanel();
@@ -15180,6 +15259,7 @@ if ('serviceWorker' in navigator) {
     // applyViewMode() restores them when we navigate back to a view.
     var _gv=document.querySelector('.gantt-outer'); if(_gv) _gv.style.display='none';
     ['kanbanBoard','listView','dashboardView','planningView'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    var _mw=document.getElementById('frzMyWork'); if(_mw) _mw.style.display='none';
     // Render content via the ORIGINAL openItemPage (avoid recursing our override); we own history
     if (_origOpenItemPage) _origOpenItemPage(id, {push:false}); else _call('openItemPage', id, {push:false});
     // Guaranteed de-indigo: reused item-page markup uses inline background/color/
@@ -15229,14 +15309,14 @@ if ('serviceWorker' in navigator) {
     var path = u.pathname.replace(/\/+$/,'');
     var m = path.match(/^\/beta\/item\/(\d+)/);
     if (m){ state.itemFromApp = !replace; openItem(parseInt(m[1],10), {push:!replace}); return; }
-    var vm = path.match(/^\/beta\/(gantt|kanban|list|planning|dashboard)/);
+    var vm = path.match(/^\/beta\/(gantt|kanban|list|planning|dashboard|my-work)/);
     var view = vm ? vm[1] : (lastView()||'gantt');
     if (view==='planning'){ var pm=path.match(/^\/beta\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
     applyURLToFilters(view, u.searchParams);
     setView(view);
     if (replace) history.replaceState({frzView:view},'',url); else history.pushState({frzView:view},'',url);
     lset('frazil_beta_lastview_'+uname(), view);
-    rerender();
+    if (view!=='my-work') rerender();   // My Work renders itself; skip the production view render
     syncURL(true); // normalize URL to current filter state
   }
   function lastView(){ return ls('frazil_beta_lastview_'+uname()); }
@@ -15248,7 +15328,7 @@ if ('serviceWorker' in navigator) {
       var v = lastView()||'gantt'; setView(v); history.replaceState({frzView:v},'','/beta/'+v); state.itemFromApp=true; openItem(parseInt(m[1],10), {push:true}); return;
     }
     if (qItem){ var v2=lastView()||'gantt'; setView(v2); history.replaceState({frzView:v2},'','/beta/'+v2); state.itemFromApp=true; openItem(parseInt(qItem,10), {push:true}); return; }
-    var vm = path.match(/^\/beta\/(gantt|kanban|list|planning|dashboard)/);
+    var vm = path.match(/^\/beta\/(gantt|kanban|list|planning|dashboard|my-work)/);
     if (!vm){ // /beta -> last used (default gantt)
       var lv = lastView()||'gantt';
       applyDefaultCollapse(lv);
@@ -15260,7 +15340,7 @@ if ('serviceWorker' in navigator) {
     applyURLToFilters(vm[1], new URLSearchParams(location.search));
     setView(vm[1]);
     lset('frazil_beta_lastview_'+uname(), vm[1]);
-    rerender();
+    if (vm[1]!=='my-work') rerender();   // My Work renders itself
     history.replaceState({frzView:vm[1]},'',location.pathname+location.search);
   }
   window.addEventListener('popstate', function(e){
@@ -15761,8 +15841,10 @@ if ('serviceWorker' in navigator) {
     var needEstimate = !(+p.dueWeeks > 0);
     var needPoints = (p.storyPoints==null || p.storyPoints==='');
     var needPromote = needsFloorPromotion(p.status);   // Stage 1b: below-floor/Inactive → promote to Approved
-    // include needPromote so the modal opens to show the status change even when no inputs are missing
-    return { needStart:needStart, needEstimate:needEstimate, needPoints:needPoints, needPromote:needPromote, any:(needStart||needEstimate||needPoints||needPromote) };
+    var needAssignee = !p.assignee;                    // Stage 3a: offer (optional) assignee while unset
+    // include needPromote/needAssignee so the modal opens to show the status change / offer assignee
+    // even when no required inputs are missing
+    return { needStart:needStart, needEstimate:needEstimate, needPoints:needPoints, needPromote:needPromote, needAssignee:needAssignee, any:(needStart||needEstimate||needPoints||needPromote||needAssignee) };
   }
   function backlogItems(){
     var fDev=getSelectedDevs(), fType=getSelectedTypes(), fSt=getSelectedStatuses();
@@ -15868,6 +15950,7 @@ if ('serviceWorker' in navigator) {
     if(vals.start!=null && vals.start!==p.start){ logs.push(['Start date',(p.start||'(none)'),vals.start]); patch.start=vals.start; }
     if(vals.dueWeeks!=null && +vals.dueWeeks!==+p.dueWeeks){ logs.push(['Time estimate',((p.dueWeeks||'(none)')+'w'),(vals.dueWeeks+'w')]); patch.dueWeeks=+vals.dueWeeks; }
     if(vals.storyPoints!=null && String(vals.storyPoints)!==String(p.storyPoints==null?'':p.storyPoints)){ logs.push(['Story points',(p.storyPoints==null||p.storyPoints===''?'(none)':p.storyPoints),vals.storyPoints]); patch.storyPoints=+vals.storyPoints; }
+    if(vals.assignee!=null && String(vals.assignee)!==String(p.assignee||'')){ logs.push(['Assignee',(p.assignee||'(none)'),(vals.assignee||'(none)')]); patch.assignee=vals.assignee; }   // Stage 3a
     // Stage 1b: readiness floor — promote below-floor/Inactive items to Approved (never demote)
     if(needsFloorPromotion(p.status)){ var _ap=approvedStatusName(); if(_ap && _ap!==p.status){ logs.push(['Status',(p.status||'(none)'),_ap]); patch.status=_ap; } }
     var prevSprint = (p.sprintId && sprintById(p.sprintId)) ? sprintById(p.sprintId).name : (p.sprintId||'(none)');
@@ -15898,13 +15981,17 @@ if ('serviceWorker' in navigator) {
     if(need.needStart) rows += '<div style="margin-bottom:12px"><label class="frz-lbl">Start date</label><input type="date" class="frz-fld" id="frzRdStart" value="'+(sprint.startDate||todayStr())+'"></div>';
     if(need.needEstimate) rows += '<div style="margin-bottom:12px"><label class="frz-lbl">Time estimate (weeks) — required</label><input type="number" min="0.25" step="0.25" class="frz-fld" id="frzRdEst" placeholder="e.g. 2"></div>';
     if(need.needPoints) rows += '<div style="margin-bottom:12px"><label class="frz-lbl">Story points — required</label><input type="number" min="0" step="1" class="frz-fld" id="frzRdPts" placeholder="e.g. 5"></div>';
+    // Stage 3a: optional Assignee (encourage assignee usage; never required)
+    var _rdUsers = _val('users',[])||[];
+    var _rdAopts = '<option value="">— Unassigned —</option>' + _rdUsers.map(function(u){ var un=(u&&u.username)||u; return '<option value="'+escA(un)+'" '+(((p.assignee||'')===un)?'selected':'')+'>'+esc(un)+'</option>'; }).join('');
+    rows += '<div style="margin-bottom:12px"><label class="frz-lbl">Assignee — optional</label><select class="frz-fld" id="frzRdAssignee">'+_rdAopts+'</select></div>';
     rows += need.needPromote
       ? '<div class="frz-rd-info">Status will change: <b>'+esc(p.status||'—')+'</b> → <b>'+esc(approvedStatusName())+'</b></div>'
       : '<div class="frz-rd-info">Status: <b>'+esc(p.status||'—')+'</b> <span style="color:var(--frz-text-muted)">(unchanged)</span></div>';
     rows += '<div class="frz-rd-info">Sprint will be set to <b>'+esc(sprint.name)+'</b></div>';
     bg.innerHTML='<div class="frz-modal" style="width:440px">'+
       '<div class="frz-modal-hd">Make sprint-ready<button class="frz-iconbtn" id="frzRdClose">✕</button></div>'+
-      '<div class="frz-modal-bd"><div style="font-size:12px;color:var(--frz-text-muted);margin-bottom:12px">'+esc(p.name||'')+' needs a few fields before it can join '+esc(sprint.name)+'.</div>'+rows+'</div>'+
+      '<div class="frz-modal-bd"><div style="font-size:12px;color:var(--frz-text-muted);margin-bottom:12px">Review '+esc(p.name||'')+' before adding it to '+esc(sprint.name)+'.</div>'+rows+'</div>'+
       '<div class="frz-modal-ft"><span class="frz-modal-err" id="frzRdErr"></span><button class="frz-viewopt" id="frzRdCancel">Cancel</button><button class="frz-newitem" id="frzRdSave">Add to sprint</button></div>'+
     '</div>';
     root.appendChild(bg);
@@ -15918,6 +16005,7 @@ if ('serviceWorker' in navigator) {
       if(need.needStart){ var sv=bg.querySelector('#frzRdStart').value; if(!sv){ err.textContent='Start date is required.'; return; } vals.start=sv; }
       if(need.needEstimate){ var ev=parseFloat(bg.querySelector('#frzRdEst').value); if(!(ev>0)){ err.textContent='Enter a time estimate.'; return; } vals.dueWeeks=ev; }
       if(need.needPoints){ var pv=bg.querySelector('#frzRdPts').value; if(pv===''||isNaN(+pv)){ err.textContent='Enter story points.'; return; } vals.storyPoints=+pv; }
+      var aSel=bg.querySelector('#frzRdAssignee'); if(aSel) vals.assignee=aSel.value;   // Stage 3a (optional)
       close(); applySprintReady(p, sprint, vals);
     });
     setTimeout(function(){ var f=bg.querySelector('input'); if(f) f.focus(); },0);
