@@ -1923,7 +1923,16 @@ ATTACH_BUCKET    = os.environ.get("ATTACH_BUCKET", "frazil-flow-attachments")
 
 def _s3_client():
     import boto3  # lazy — server.py still loads without boto3 in dev/test
-    return boto3.client("s3", region_name=AWS_REGION)
+    from botocore.config import Config
+    # Force SigV4 + virtual-hosted regional addressing so presigned URLs point at
+    # the bucket's real regional host (…s3.us-west-2.amazonaws.com) and carry an
+    # X-Amz-Signature. The default global endpoint + SigV2 triggers a region
+    # redirect that surfaces as a (misleading) CORS error in the browser.
+    return boto3.client(
+        "s3",
+        region_name=AWS_REGION,
+        config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}),
+    )
 
 def _sanitize_filename(name: str) -> str:
     """Reduce to a safe basename of [A-Za-z0-9._-]; never empty."""
