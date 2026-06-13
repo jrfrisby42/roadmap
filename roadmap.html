@@ -15103,9 +15103,11 @@ if ('serviceWorker' in navigator) {
     reflow();
   }
   function reflow(){
-    // CONSTRAINT 4: views measure their container — nudge them after layout changes
+    // CONSTRAINT 4: views measure their container — nudge them after layout changes.
+    // Skip the view re-render while an item page is open, or it would repaint the
+    // underlying view (e.g. Planning) on top of the item.
     try { window.dispatchEvent(new Event('resize')); } catch(e){}
-    requestAnimationFrame(function(){ try { window.dispatchEvent(new Event('resize')); } catch(e){} _call('renderCurrentView'); });
+    requestAnimationFrame(function(){ try { window.dispatchEvent(new Event('resize')); } catch(e){} if(!state.onItem) _call('renderCurrentView'); });
   }
 
   // ════════ item detail ════════
@@ -15662,6 +15664,7 @@ if ('serviceWorker' in navigator) {
   function addDaysStr(s, n){ var d=new Date((s||todayStr())+'T00:00:00'); d.setDate(d.getDate()+n); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 
   function renderBetaPlanning(){
+    if(state.onItem) return;   // never re-show/repaint planning while an item page is open
     var host = document.getElementById('planningView'); if(!host) return;
     host.style.display='flex'; host.style.flexDirection='column'; host.style.height='100%'; host.style.minHeight='0';
     var tab = state.planTab||'plan';
