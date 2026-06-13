@@ -14706,6 +14706,23 @@ if ('serviceWorker' in navigator) {
   .frz-mention-menu { position:fixed; z-index:100000; min-width:160px; max-height:220px; overflow:auto; background:#fff; border:1px solid #C9D6E3; border-radius:8px; box-shadow:0 10px 28px rgba(20,40,63,.22); padding:4px; }
   .frz-mention-menu .frz-mm-opt { display:block; width:100%; text-align:left; border:0; background:none; cursor:pointer; padding:6px 10px; border-radius:6px; font-family:'Lato',sans-serif; font-size:13px; color:#14283F; }
   .frz-mention-menu .frz-mm-opt:hover, .frz-mention-menu .frz-mm-opt.is-active { background:#E7F1FA; color:#0059A9; }
+  /* Stage 4a — tabbed Settings */
+  .frz-beta .frz-settings { width:680px; }
+  .frz-beta .frz-set-wrap { display:flex; min-height:320px; max-height:78vh; }
+  .frz-beta .frz-set-tabs { width:178px; flex-shrink:0; border-right:1px solid var(--frz-border); padding:10px; display:flex; flex-direction:column; gap:2px; background:var(--frz-bg-rail); }
+  .frz-beta .frz-set-tab { text-align:left; border:0; background:none; cursor:pointer; font:inherit; font-size:13.5px; font-weight:500; color:var(--frz-text-secondary); padding:9px 12px; border-radius:8px; }
+  .frz-beta .frz-set-tab:hover { background:#EBF2F9; color:var(--frz-text); }
+  .frz-beta .frz-set-tab.is-active { background:var(--frz-accent-soft); color:var(--frz-accent); font-weight:700; }
+  .frz-beta .frz-set-body { flex:1; padding:20px 24px; overflow:auto; }
+  .frz-beta .frz-set-panel { display:none; }
+  .frz-beta .frz-set-panel.is-active { display:block; }
+  .frz-beta .frz-set-panel h2 { margin:0 0 14px; }
+  .frz-beta .frz-set-stub { font-size:13px; color:var(--frz-text-muted); line-height:1.6; }
+  .frz-beta #frzSettingsModal .btn-save { background:#0059A9; }        /* de-indigo the relocated Save */
+  .frz-beta #frzSettingsModal .modal-actions { margin-top:18px; }
+  /* Stage 4b — bulk "Add to release" button (in the reused list bulk bar) */
+  .frz-beta #frzBulkRelease { padding:5px 14px; font-size:12px; border:1px solid #0059A9; border-radius:6px; background:#0059A9; color:#fff; cursor:pointer; font-weight:700; }
+  .frz-beta #frzBulkRelease:hover { background:#004A8F; }
 
   @media (prefers-reduced-motion: reduce) { .frz-beta { --frz-anim:0s; } }
 </style>
@@ -15263,6 +15280,7 @@ if ('serviceWorker' in navigator) {
       '<span class="frz-crumbs">· '+esc(state.project==='__all__'?'All projects':state.project)+'</span>';
     document.getElementById('frzBadges').innerHTML='';
     renderBar();
+    if(view==='list') ensureBulkReleaseBtn();   // Stage 4b: bulk "Add to release" in the list bulk bar
     renderRail();
     reflow();
   }
@@ -15577,7 +15595,7 @@ if ('serviceWorker' in navigator) {
     document.getElementById('frzAddProj').addEventListener('click', function(e){ e.stopPropagation(); _call('showToast','Add project — coming soon'); });
     document.getElementById('frzAddBoard').addEventListener('click', function(e){ e.stopPropagation(); openBoardEditor(null); });
     document.getElementById('frzNewItem').addEventListener('click', function(){ _call('openProjectModal', null); });
-    document.getElementById('frzSettings').addEventListener('click', function(){ _call('openMyAccount'); });
+    document.getElementById('frzSettings').addEventListener('click', openSettings);   // Stage 4a: tabbed Settings
     document.getElementById('frzAdmin').addEventListener('click', function(){ _call('openAdminPanel','devTab'); });
     var av=document.getElementById('frzAvatar'), am=document.getElementById('frzAcctMenu');
     av.addEventListener('click', function(e){ e.stopPropagation(); am.hidden=!am.hidden; });
@@ -16285,6 +16303,22 @@ if ('serviceWorker' in navigator) {
   }
   // Inject a Release selector into the item page Details (beta-only; production
   // renderItemPage is not edited). Idempotent — safe to call after re-renders.
+  // Single source of truth for linking an item to a release — used by BOTH the
+  // item-page Release field AND the List bulk action (Stage 4b). One PUT + one
+  // history entry per item; no parallel bulk-write path.
+  function linkItemToRelease(p, rid){
+    rid = rid || '';
+    if((p.release||'')===rid) return Promise.resolve(p);   // no-op
+    var ps=_val('projects',[])||[]; var i=ps.findIndex(function(x){return x.id===p.id;});
+    var prev=p.release?(releaseById(p.release)?releaseById(p.release).name:p.release):'(none)';
+    var nextName=rid?(releaseById(rid)?releaseById(rid).name:rid):'(none)';
+    var patch=Object.assign({}, p, {release:rid, _username:_call('getUsername')});
+    return API.put('/api/projects/'+p.id, patch).then(function(updated){
+      if(i>-1) ps[i]=updated; p.release=rid;
+      _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Release: '+prev+' → '+nextName, null, null);
+      return updated;
+    });
+  }
   function injectReleaseField(p){
     var fields=document.getElementById('ipFields'); if(!fields || !p) return;
     var canEdit = (_val('isAdmin',false)||_val('isEditor',false));
@@ -16295,11 +16329,7 @@ if ('serviceWorker' in navigator) {
       var opts='<option value="">— None —</option>'+_releases.map(function(r){ return '<option value="'+escA(r.id)+'" '+(p.release===r.id?'selected':'')+'>'+esc(r.name)+'</option>'; }).join('');
       wrap.innerHTML=lbl+'<select id="frzReleaseSel" style="font:inherit;font-size:13px;border:1px solid var(--frz-border-strong);border-radius:6px;padding:5px 8px;color:var(--frz-text);background:var(--frz-bg-surface)">'+opts+'</select>';
       wrap.querySelector('#frzReleaseSel').addEventListener('change', function(){
-        var rid=this.value; var ps=_val('projects',[])||[]; var i=ps.findIndex(function(x){return x.id===p.id;});
-        var prev=p.release?(releaseById(p.release)?releaseById(p.release).name:p.release):'(none)';
-        var nextName=rid?(releaseById(rid)?releaseById(rid).name:rid):'(none)';
-        var patch=Object.assign({}, p, {release:rid, _username:_call('getUsername')});
-        API.put('/api/projects/'+p.id, patch).then(function(updated){ if(i>-1) ps[i]=updated; p.release=rid; _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Release: '+prev+' → '+nextName, null, null); }).catch(function(){ _call('showToast','Release update failed','error'); });
+        linkItemToRelease(p, this.value).catch(function(){ _call('showToast','Release update failed','error'); });
       });
     } else {
       var cur=p.release?(releaseById(p.release)?releaseById(p.release).name:p.release):'';
@@ -16598,6 +16628,93 @@ if ('serviceWorker' in navigator) {
     });
     el.addEventListener('keydown', function(e){ if(e.key==='Escape') _closeMention(); });
     el.addEventListener('blur', function(){ setTimeout(_closeMention,150); });
+  }
+
+  // ════════ Stage 4a — Tabbed Settings panel ════════
+  function buildSettingsPanel(){
+    if(document.getElementById('frzSettingsModal')) return;
+    var admin=_val('isAdmin',false);
+    var bg=document.createElement('div'); bg.className='frz-modal-bg'; bg.id='frzSettingsModal'; bg.style.display='none';
+    bg.innerHTML='<div class="frz-modal frz-settings">'+
+      '<div class="frz-modal-hd">Settings<button class="frz-iconbtn" id="frzSetClose">✕</button></div>'+
+      '<div class="frz-set-wrap">'+
+        '<div class="frz-set-tabs">'+
+          '<button class="frz-set-tab is-active" data-settab="account">My Account</button>'+
+          '<button class="frz-set-tab" data-settab="notifs">Notifications</button>'+
+          (admin?'<button class="frz-set-tab" data-settab="admin">Admin</button>':'')+
+        '</div>'+
+        '<div class="frz-set-body">'+
+          '<div class="frz-set-panel is-active" id="frzSetPanel_account"></div>'+
+          '<div class="frz-set-panel" id="frzSetPanel_notifs"><div class="frz-set-stub">Notification preferences are coming soon. For now, notifications show in the bell menu in the top bar.</div></div>'+
+          (admin?'<div class="frz-set-panel" id="frzSetPanel_admin"><div class="frz-set-stub">Workspace administration — users, statuses, products, Jira, and data tools — live in the full Admin panel.<br><br><button class="frz-newitem" id="frzSetAdminOpen">Open Admin panel</button></div></div>':'')+
+        '</div>'+
+      '</div>';
+    root.appendChild(bg);
+    // Relocate the existing My Account content into tab 1 (move, don't rebuild):
+    // the production form keeps its IDs + save handler intact, just lives here now.
+    var acct=document.querySelector('#myAccountModalBg .modal'), dest=bg.querySelector('#frzSetPanel_account');
+    if(acct && dest){ while(acct.firstChild){ dest.appendChild(acct.firstChild); } }
+    bg.querySelector('#frzSetClose').addEventListener('click', closeSettings);
+    bg.addEventListener('mousedown', function(e){ if(e.target===bg) closeSettings(); });
+    bg.querySelectorAll('[data-settab]').forEach(function(b){ b.addEventListener('click', function(){ setSettingsTab(b.getAttribute('data-settab')); }); });
+    var ao=bg.querySelector('#frzSetAdminOpen'); if(ao) ao.addEventListener('click', function(){ closeSettings(); _call('openAdminPanel','devTab'); });   // same destination as the rail Admin entry
+    var cancel=document.getElementById('myAccountCancelBtn'); if(cancel) cancel.addEventListener('click', closeSettings);   // relocated Cancel closes the panel
+  }
+  function setSettingsTab(t){
+    var bg=document.getElementById('frzSettingsModal'); if(!bg) return;
+    bg.querySelectorAll('[data-settab]').forEach(function(b){ b.classList.toggle('is-active', b.getAttribute('data-settab')===t); });
+    bg.querySelectorAll('.frz-set-panel').forEach(function(p){ p.classList.remove('is-active'); });
+    var panel=bg.querySelector('#frzSetPanel_'+t); if(panel) panel.classList.add('is-active');
+  }
+  function openSettings(){
+    buildSettingsPanel();
+    // Reuse the production populate verbatim (it fills the now-relocated fields),
+    // then hide the emptied production modal-bg so it never flashes.
+    try { document.getElementById('myAccountBtn').click(); document.getElementById('myAccountModalBg').classList.remove('open'); } catch(e){}
+    setSettingsTab('account');
+    var bg=document.getElementById('frzSettingsModal'); if(bg) bg.style.display='';
+  }
+  function closeSettings(){ var bg=document.getElementById('frzSettingsModal'); if(bg) bg.style.display='none'; }
+
+  // ════════ Stage 4b — List multi-select → release linking ════════
+  function ensureBulkReleaseBtn(){
+    var bar=document.getElementById('listBulkBar'); if(!bar || document.getElementById('frzBulkRelease')) return;
+    var b=document.createElement('button'); b.id='frzBulkRelease'; b.type='button'; b.textContent='Add to release';
+    bar.appendChild(b);
+    b.addEventListener('click', openBulkReleasePicker);
+  }
+  function openBulkReleasePicker(){
+    var ids=Array.from(_val('_listSelected', new Set())||[]);
+    if(!ids.length){ _call('showToast','Select at least one item'); return; }
+    if(!_releases.length){ _call('showToast','No releases yet — create one in Planning → Releases'); return; }
+    var bg=document.createElement('div'); bg.className='frz-modal-bg';
+    var opts=_releases.map(function(r){ return '<option value="'+escA(r.id)+'">'+esc(r.name)+(r.state?(' · '+esc(r.state)):'')+'</option>'; }).join('');
+    bg.innerHTML='<div class="frz-modal" style="width:420px">'+
+      '<div class="frz-modal-hd">Add '+ids.length+' item'+(ids.length!==1?'s':'')+' to a release<button class="frz-iconbtn" id="frzBrClose">✕</button></div>'+
+      '<div class="frz-modal-bd"><label class="frz-lbl">Release</label><select class="frz-fld" id="frzBrSel">'+opts+'</select>'+
+        '<div class="frz-rd-info" style="border-top:0">Sets each item’s Release field and logs the change to its history.</div></div>'+
+      '<div class="frz-modal-ft"><span class="frz-modal-err" id="frzBrErr"></span><button class="frz-viewopt" id="frzBrCancel">Cancel</button><button class="frz-newitem" id="frzBrSave">Link to release</button></div>'+
+    '</div>';
+    root.appendChild(bg);
+    function close(){ bg.remove(); }
+    bg.querySelector('#frzBrClose').addEventListener('click', close);
+    bg.querySelector('#frzBrCancel').addEventListener('click', close);
+    bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
+    bg.querySelector('#frzBrSave').addEventListener('click', function(){
+      var rid=bg.querySelector('#frzBrSel').value; if(!rid) return;
+      var btn=this; btn.disabled=true; btn.textContent='Linking…';
+      var ps=_val('projects',[])||[]; var done=0, chain=Promise.resolve();
+      ids.forEach(function(id){ chain=chain.then(function(){ var p=ps.filter(function(x){return x.id===id;})[0]; if(!p) return; return linkItemToRelease(p, rid).then(function(){ done++; }); }); });
+      chain.then(function(){
+        close();
+        var rn=releaseById(rid)?releaseById(rid).name:rid;
+        _call('showToast','Linked '+done+' item'+(done!==1?'s':'')+' to '+rn);
+        try { var sel=_val('_listSelected', null); if(sel&&sel.clear) sel.clear(); } catch(e){}
+        _call('renderList');                                          // clears checkboxes + hides bulk bar
+        if(state.view==='planning' && state.planTab==='releases'){ var bd=document.getElementById('frzPlanBody'); if(bd) renderReleasesTab(bd); }
+        renderRail();
+      }).catch(function(){ btn.disabled=false; btn.textContent='Link to release'; bg.querySelector('#frzBrErr').textContent='Some items failed to link.'; });
+    });
   }
 
   function onResize(){
