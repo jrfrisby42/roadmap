@@ -14446,8 +14446,8 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-brand { height:var(--frz-topbar-h); display:flex; align-items:center; gap:10px; padding:0 14px; border-bottom:1px solid var(--frz-border); flex-shrink:0; }
   .frz-beta .frz-logo { height:42px; width:auto; flex-shrink:0; display:block; }   /* sized so the wordmark "f" ~matches the collapsed f-mark for a seamless swap */
   .frz-beta .frz-logo-mark { display:none; }                         /* mark hidden when expanded */
-  .frz-beta.is-collapsed .frz-logo-full { display:none; }            /* wordmark hidden when collapsed */
-  .frz-beta.is-collapsed .frz-logo-mark { display:block; height:auto; max-width:40px; margin:0 auto; }
+  .frz-beta.is-collapsed-ui .frz-logo-full { display:none; }            /* wordmark hidden when collapsed */
+  .frz-beta.is-collapsed-ui .frz-logo-mark { display:block; height:auto; max-width:40px; margin:0 auto; }
   .frz-beta .frz-brand-name { font-weight:700; font-size:15px; white-space:nowrap; color:var(--frz-text); }
   .frz-beta .frz-beta-pill { font-size:11px; font-weight:700; color:var(--frz-accent); background:var(--frz-accent-soft); border-radius:999px; padding:2px 8px; white-space:nowrap; }
   .frz-beta .frz-scroll { flex:1; overflow-y:auto; padding:10px 8px; }
@@ -14467,14 +14467,14 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-footer { border-top:1px solid var(--frz-border); padding:8px; flex-shrink:0; }
 
   /* Collapsed rail */
-  .frz-beta.is-collapsed .frz-item { justify-content:center; padding:9px 0; }
-  .frz-beta.is-collapsed .frz-item span, .frz-beta.is-collapsed .frz-item .frz-count,
-  .frz-beta.is-collapsed .frz-heading, .frz-beta.is-collapsed .frz-brand-name,
-  .frz-beta.is-collapsed .frz-beta-pill, .frz-beta.is-collapsed .frz-dot,
-  .frz-beta.is-collapsed .frz-rowmenu { display:none; }
-  .frz-beta.is-collapsed .frz-brand { justify-content:center; padding:0; }
-  .frz-beta.is-collapsed .frz-logo { height:auto; max-width:40px; }
-  .frz-beta.is-collapsed .frz-section--saved, .frz-beta.is-collapsed .frz-section--projects, .frz-beta.is-collapsed .frz-section--boards { display:none; }
+  .frz-beta.is-collapsed-ui .frz-item { justify-content:center; padding:9px 0; }
+  .frz-beta.is-collapsed-ui .frz-item span, .frz-beta.is-collapsed-ui .frz-item .frz-count,
+  .frz-beta.is-collapsed-ui .frz-heading, .frz-beta.is-collapsed-ui .frz-brand-name,
+  .frz-beta.is-collapsed-ui .frz-beta-pill, .frz-beta.is-collapsed-ui .frz-dot,
+  .frz-beta.is-collapsed-ui .frz-rowmenu { display:none; }
+  .frz-beta.is-collapsed-ui .frz-brand { justify-content:center; padding:0; }
+  .frz-beta.is-collapsed-ui .frz-logo { height:auto; max-width:40px; }
+  .frz-beta.is-collapsed-ui .frz-section--saved, .frz-beta.is-collapsed-ui .frz-section--projects, .frz-beta.is-collapsed-ui .frz-section--boards { display:none; }
 
   /* Main column */
   .frz-beta .frz-main { display:flex; flex-direction:column; min-width:0; min-height:0; }
@@ -15254,11 +15254,27 @@ if ('serviceWorker' in navigator) {
     if (pref==='e'){ setCollapsed(false,true); return; }
     setCollapsed(view==='gantt', true); // auto default: collapsed on gantt
   }
+  function _reducedMotion(){ try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(e){ return false; } }
   function setCollapsed(c, silent){
     state.collapsed = c;
-    root.classList.toggle('is-collapsed', c);
+    var instant = silent || _reducedMotion();
+    if (c){
+      // shrink the column now (animated); hide labels/sections only AFTER the
+      // column finishes, so the content doesn't pop out before the rail closes.
+      root.classList.add('is-collapsed');
+      if (instant) root.classList.add('is-collapsed-ui');
+      else setTimeout(function(){ if (state.collapsed) root.classList.add('is-collapsed-ui'); }, 200);
+    } else {
+      // restore the expanded layout immediately, then widen (reveal).
+      root.classList.remove('is-collapsed-ui');
+      root.classList.remove('is-collapsed');
+    }
     if (!silent) lset(railKey(), c?'c':'e');
-    reflow();
+    // Re-render the view to the FINAL column width AFTER the transition settles —
+    // rendering mid-animation sized it to an intermediate width (the abrupt close).
+    try { window.dispatchEvent(new Event('resize')); } catch(e){}
+    var doRender = function(){ try { window.dispatchEvent(new Event('resize')); } catch(e){} if(!state.onItem) _call('renderCurrentView'); };
+    if (instant) doRender(); else setTimeout(doRender, 210);
   }
   function toggleCollapse(){ setCollapsed(!state.collapsed, false); }
 
@@ -16115,7 +16131,7 @@ if ('serviceWorker' in navigator) {
   function onResize(){
     var narrow = window.innerWidth < 900;
     root.classList.toggle('frz-narrow', narrow);
-    if (narrow && !state.collapsed && ls(railKey())!=='e'){ /* auto-collapse below 900 unless user forced expanded */ root.classList.add('is-collapsed'); state.collapsed=true; }
+    if (narrow && !state.collapsed && ls(railKey())!=='e'){ /* auto-collapse below 900 unless user forced expanded */ root.classList.add('is-collapsed'); root.classList.add('is-collapsed-ui'); state.collapsed=true; }
   }
 
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
