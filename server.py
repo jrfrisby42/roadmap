@@ -1873,6 +1873,42 @@ def put_sprints(body = Body(...), auth: dict = Depends(require_auth)):
     write_audit(team, "beta:sprints", auth["username"], changes={"count": len(sprints)})
     return {"sprints": sprints}
 
+# ── Beta: Releases (shared, global per team) ──────────────────────────────────
+# Additive, /beta-only. Releases are stored in the config table under key
+# 'releases'. Items reference a release via an optional `release` field. Any
+# logged-in user may manage releases for now (require_auth). Production untouched.
+_RELEASE_STATES = {"Unreleased", "Released"}
+
+def _read_releases(team: str):
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='releases'").fetchone()
+    try:
+        return json.loads(row["value"]) if row else []
+    except Exception:
+        return []
+
+@app.get("/api/releases")
+def get_releases(auth: dict = Depends(require_auth)):
+    return {"releases": _read_releases(auth["team"])}
+
+@app.put("/api/releases")
+def put_releases(body = Body(...), auth: dict = Depends(require_auth)):
+    team = auth["team"]
+    releases = body.get("releases") if isinstance(body, dict) else body
+    if not isinstance(releases, list):
+        raise HTTPException(422, "releases must be a list")
+    for r in releases:
+        if not isinstance(r, dict) or not r.get("id") or not (r.get("name") or "").strip():
+            raise HTTPException(422, "each release needs an id and a name")
+        if r.get("state") not in _RELEASE_STATES:
+            raise HTTPException(422, f"invalid release state {r.get('state')!r}")
+    with db(team) as c:
+        c.execute("INSERT INTO config(key,value) VALUES('releases',?) "
+                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                  (json.dumps(releases),))
+    write_audit(team, "beta:releases", auth["username"], changes={"count": len(releases)})
+    return {"releases": releases}
+
 # ── Import ────────────────────────────────────────────────────────────────────
 @app.post("/api/import")
 def bulk_import(body: dict = Body(...), auth: dict = Depends(require_role("admin"))):
