@@ -1909,6 +1909,142 @@ def put_releases(body = Body(...), auth: dict = Depends(require_auth)):
     write_audit(team, "beta:releases", auth["username"], changes={"count": len(releases)})
     return {"releases": releases}
 
+# ── Attachments (S3, /beta — Stage 2a) ────────────────────────────────────────
+# Files live in a private S3 bucket. The browser uploads DIRECTLY to S3 with a
+# short-lived presigned PUT (file never proxies through the backend); downloads
+# use presigned GET. Deletes are server-side only. Credentials come from the
+# EC2 instance role (same pattern as SES) — never hardcoded, never in client
+# code, never logged. Attachment metadata is stored on the item JSON blob
+# (p.attachments) so there is no schema migration.
+import uuid as _uuid
+
+MAX_ATTACH_BYTES = 50 * 1024 * 1024  # 50 MB, enforced server-side (refuse to sign) + client-side
+ATTACH_BUCKET    = os.environ.get("ATTACH_BUCKET", "frazil-flow-attachments")
+
+def _s3_client():
+    import boto3  # lazy — server.py still loads without boto3 in dev/test
+    return boto3.client("s3", region_name=AWS_REGION)
+
+def _sanitize_filename(name: str) -> str:
+    """Reduce to a safe basename of [A-Za-z0-9._-]; never empty."""
+    base = (name or "file").strip().replace("\\", "/").split("/")[-1]
+    base = re.sub(r"[^A-Za-z0-9._-]", "_", base)
+    base = base.lstrip(".") or "file"   # avoid hidden/empty names
+    return base[:200]
+
+def _attachment_key(pid: int, u: str, name: str) -> str:
+    """items/{itemId}/{uuid}/{sanitized-filename} — uuid is its own path segment."""
+    return f"items/{pid}/{u}/{_sanitize_filename(name)}"
+
+def _get_item_blob(c, pid: int) -> dict:
+    row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Item not found")
+    return json.loads(row["data"])
+
+@app.post("/api/items/{pid}/attachments/presign")
+def presign_attachment(pid: int, body: dict = Body(...),
+                       auth: dict = Depends(require_role("admin", "editor"))):
+    """Validate + return a short-lived presigned PUT URL. Records nothing yet."""
+    team = auth["team"]
+    filename = body.get("filename") or "file"
+    content_type = body.get("contentType") or "application/octet-stream"
+    try:
+        size = int(body.get("size") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(422, "size must be an integer")
+    # Server-side size guard — refuse to sign an oversized declared upload.
+    if size > MAX_ATTACH_BYTES:
+        raise HTTPException(413, f"File exceeds the 50 MB limit ({size} bytes).")
+    with db(team) as c:
+        _get_item_blob(c, pid)  # 404 if the item doesn't exist
+    att_id = _uuid.uuid4().hex
+    key = _attachment_key(pid, att_id, filename)
+    try:
+        url = _s3_client().generate_presigned_url(
+            "put_object",
+            Params={"Bucket": ATTACH_BUCKET, "Key": key, "ContentType": content_type},
+            ExpiresIn=300,
+        )
+    except Exception as e:
+        log.warning("[Attach] presign PUT failed for item %s: %s", pid, e)
+        raise HTTPException(502, "Could not presign the upload (storage unavailable).")
+    return {"attId": att_id, "key": key, "url": url, "name": _sanitize_filename(filename)}
+
+@app.post("/api/items/{pid}/attachments")
+def add_attachment(pid: int, body: dict = Body(...),
+                   auth: dict = Depends(require_role("admin", "editor"))):
+    """Record an attachment on the item blob after the browser's direct S3 PUT."""
+    team = auth["team"]
+    username = body.get("_username") or auth["username"]
+    att_id = body.get("attId"); key = body.get("key")
+    if not att_id or not key:
+        raise HTTPException(422, "attId and key are required")
+    rec = {
+        "id": att_id, "key": key,
+        "name": (body.get("name") or "file"),  # TRUE original filename
+        "contentType": body.get("contentType") or "application/octet-stream",
+        "size": int(body.get("size") or 0),
+        "by": username,
+        "at": datetime.now(timezone.utc).isoformat(),
+    }
+    with db(team) as c:
+        p = _get_item_blob(c, pid)
+        atts = p.get("attachments") or []
+        atts.append(rec)
+        p["attachments"] = atts
+        _save_project(c, pid, p)
+    write_audit(team, "attachment:add", username, pid, p.get("name", ""), changes={"file": rec["name"]})
+    return rec
+
+@app.get("/api/items/{pid}/attachments")
+def list_attachments(pid: int, auth: dict = Depends(require_auth)):
+    """List attachments, each with a short-lived presigned GET URL (orig name + type)."""
+    team = auth["team"]
+    with db(team) as c:
+        p = _get_item_blob(c, pid)
+    atts = p.get("attachments") or []
+    out = []
+    cli = None
+    for a in atts:
+        url = None
+        try:
+            if cli is None:
+                cli = _s3_client()
+            url = cli.generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": ATTACH_BUCKET, "Key": a["key"],
+                    "ResponseContentDisposition": f'inline; filename="{a.get("name", "file")}"',
+                    "ResponseContentType": a.get("contentType", "application/octet-stream"),
+                },
+                ExpiresIn=300,
+            )
+        except Exception as e:
+            log.warning("[Attach] presign GET failed for %s: %s", a.get("key"), e)
+        out.append({**a, "url": url})
+    return {"attachments": out}
+
+@app.delete("/api/items/{pid}/attachments/{att_id}")
+def delete_attachment(pid: int, att_id: str,
+                      auth: dict = Depends(require_role("admin", "editor"))):
+    """Remove the object from S3 (server-side) and the metadata from the blob."""
+    team = auth["team"]; username = auth["username"]
+    with db(team) as c:
+        p = _get_item_blob(c, pid)
+        atts = p.get("attachments") or []
+        target = next((a for a in atts if a.get("id") == att_id), None)
+        if not target:
+            raise HTTPException(404, "Attachment not found")
+        p["attachments"] = [a for a in atts if a.get("id") != att_id]
+        _save_project(c, pid, p)
+    try:
+        _s3_client().delete_object(Bucket=ATTACH_BUCKET, Key=target["key"])
+    except Exception as e:
+        log.warning("[Attach] S3 delete failed for %s: %s", target.get("key"), e)
+    write_audit(team, "attachment:delete", username, pid, p.get("name", ""), changes={"file": target.get("name")})
+    return {"deleted": att_id, "name": target.get("name")}
+
 # ── Import ────────────────────────────────────────────────────────────────────
 @app.post("/api/import")
 def bulk_import(body: dict = Body(...), auth: dict = Depends(require_role("admin"))):

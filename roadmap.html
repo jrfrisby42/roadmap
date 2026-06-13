@@ -14644,6 +14644,33 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-prog-bar { height:100%; background:var(--frz-sky); border-radius:999px; }
   .frz-beta .frz-prog-txt { font-size:11px; color:var(--frz-text-muted); white-space:nowrap; }
   .frz-beta .frz-rel-row .frz-tbl-detail { grid-column:1 / -1; margin:6px -14px -11px; }
+  /* Stage 2a — Attachments (item page, beta-injected) */
+  .frz-beta .frz-att-upbtn { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); color:var(--frz-accent); font-weight:700; font-size:12px; border-radius:7px; padding:5px 12px; cursor:pointer; }
+  .frz-beta .frz-att-upbtn:hover { background:var(--frz-accent-soft); }
+  .frz-beta .frz-att-drop { border:1.5px dashed var(--frz-border-strong); border-radius:8px; padding:14px; text-align:center; font-size:12.5px; color:var(--frz-text-muted); cursor:pointer; transition:border-color .1s, background .1s, color .1s; }
+  .frz-beta .frz-att-drop:hover, .frz-beta .frz-att-drop.frz-drag { border-color:var(--frz-accent); background:var(--frz-accent-soft); color:var(--frz-accent); }
+  .frz-beta .frz-att-grid { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
+  .frz-beta .frz-att-thumb { position:relative; width:96px; }
+  .frz-beta .frz-att-thumb img { width:96px; height:72px; object-fit:cover; border-radius:6px; border:1px solid var(--frz-border); display:block; background:var(--frz-bg-app); }
+  .frz-beta .frz-att-cap { font-size:10.5px; color:var(--frz-text-muted); margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .frz-beta .frz-att-file { display:flex; align-items:center; gap:10px; width:100%; padding:8px 10px; border:1px solid var(--frz-border); border-radius:8px; text-decoration:none; }
+  .frz-beta .frz-att-ic { width:28px; height:28px; flex-shrink:0; border-radius:6px; background:var(--frz-accent-soft); color:var(--frz-accent); display:grid; place-items:center; font-size:10px; font-weight:700; }
+  .frz-beta .frz-att-meta { min-width:0; flex:1; display:flex; flex-direction:column; }
+  .frz-beta .frz-att-nm { font-size:13px; color:var(--frz-text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .frz-beta .frz-att-sz { font-size:11px; color:var(--frz-text-muted); }
+  .frz-beta .frz-att-del { border:0; background:none; cursor:pointer; color:var(--frz-text-muted); font-size:13px; line-height:1; padding:2px 6px; border-radius:6px; opacity:0; transition:opacity .1s; }
+  .frz-beta .frz-att-thumb:hover .frz-att-del, .frz-beta .frz-att-file:hover .frz-att-del { opacity:1; }
+  .frz-beta .frz-att-thumb .frz-att-del { position:absolute; top:3px; right:3px; background:rgba(20,40,63,.72); color:#fff; }
+  .frz-beta .frz-att-empty { font-size:12px; color:var(--frz-text-muted); padding:2px 0; }
+  /* Stage 2b — Sprint history (item page, beta-injected) */
+  .frz-beta .frz-sh-row { display:flex; align-items:center; gap:8px; font-size:12.5px; padding:6px 0; border-top:1px solid var(--frz-border); }
+  .frz-beta .frz-sh-row:first-child { border-top:0; }
+  .frz-beta .frz-sh-nm { color:var(--frz-text); font-weight:600; }
+  .frz-beta .frz-sh-oc { margin-left:auto; font-size:11px; font-weight:700; padding:1px 9px; border-radius:999px; white-space:nowrap; }
+  .frz-beta .frz-sh-current { background:var(--frz-accent-soft); color:var(--frz-accent); }
+  .frz-beta .frz-sh-completed { background:#DDF3E6; color:#1B8A4B; }
+  .frz-beta .frz-sh-carried { background:#FBEAD0; color:#B5710C; }
+  .frz-beta .frz-sh-returned { background:#E7EEF5; color:var(--frz-text-secondary); }
 
   @media (prefers-reduced-motion: reduce) { .frz-beta { --frz-anim:0s; } }
 </style>
@@ -15175,6 +15202,9 @@ if ('serviceWorker' in navigator) {
     var ck=document.getElementById('frzCrumbKey'); if(ck) ck.addEventListener('click', function(){ try{ navigator.clipboard.writeText(p.itemKey); _call('showToast','Copied '+p.itemKey); }catch(e){} });
     // Feature C: inject the Release selector into the item Details (beta-only; idempotent)
     injectReleaseField(p); setTimeout(function(){ injectReleaseField(p); }, 400);
+    // Stage 2: inject Attachments + Sprint-history sections (beta-only; idempotent)
+    injectSprintHistory(p); injectAttachments(p);
+    setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); }, 500);
     renderBar();
     document.getElementById('frzContent').scrollTop = 0;
     // Drop focus to a neutral place so the shell shortcuts ([ and /) work immediately
@@ -15841,6 +15871,11 @@ if ('serviceWorker' in navigator) {
     if(needsFloorPromotion(p.status)){ var _ap=approvedStatusName(); if(_ap && _ap!==p.status){ logs.push(['Status',(p.status||'(none)'),_ap]); patch.status=_ap; } }
     var prevSprint = (p.sprintId && sprintById(p.sprintId)) ? sprintById(p.sprintId).name : (p.sprintId||'(none)');
     logs.push(['Sprint', prevSprint, sprint.name]);
+    // Stage 2b: append to the sprint HISTORY (migration-aware via _histClone).
+    var hist=_histClone(p);
+    hist.forEach(function(h){ if(!h.outcome && h.sprintId!==sprint.id) h.outcome='returned-to-backlog'; });
+    if(!hist.some(function(h){ return h.sprintId===sprint.id && !h.outcome; })) hist.push({sprintId:sprint.id, addedAt:todayStr(), outcome:''});
+    patch.sprintHistory = hist;
     patch.sprintId = sprint.id; patch._username = _call('getUsername');
     API.put('/api/projects/'+p.id, patch).then(function(updated){
       if(i>-1) ps[i]=updated;
@@ -15851,7 +15886,8 @@ if ('serviceWorker' in navigator) {
   function removeFromSprint(id){
     var ps=_val('projects',[])||[]; var p=ps.filter(function(x){return x.id===id;})[0]; if(!p) return;
     var i=ps.findIndex(function(x){return x.id===id;});
-    var patch=Object.assign({}, p, {sprintId:'', _username:_call('getUsername')});
+    var hist=_histClone(p); _histCloseOpen(hist, p.sprintId, 'returned-to-backlog');   // Stage 2b
+    var patch=Object.assign({}, p, {sprintId:'', sprintHistory:hist, _username:_call('getUsername')});
     API.put('/api/projects/'+id, patch).then(function(updated){ if(i>-1) ps[i]=updated; _call('logActionOnItem', id, p.name||'', p.dev||'', p.product||'', 'Sprint planning: removed from sprint (returned to backlog)', null, null); refreshPlan(); }).catch(function(){ _call('showToast','Remove failed','error'); });
   }
   function openReadyModal(p, sprint, need){
@@ -15950,23 +15986,33 @@ if ('serviceWorker' in navigator) {
   }
   function doCompleteSprint(sp, unfinished, choice){
     var ps=_val('projects',[])||[];
+    var allItems=sprintItems(sp.id);                    // Stage 2b: also stamp finished items' history
+    var unfIds={}; unfinished.forEach(function(p){ unfIds[p.id]=true; });
     function finalize(){
       sp.carryOver = unfinished.length; sp.state='Completed';
       saveSprints(function(){ refreshPlan(); _call('showToast','Sprint completed'+(unfinished.length?(' · '+unfinished.length+' carried over'):'')); }).catch(function(){ sp.state='Active'; });
     }
-    if(!unfinished.length){ finalize(); return; }
     var targetId='', targetName='';
-    if(choice==='next'){
+    if(unfinished.length && choice==='next'){
       var nxt=plannedSprint();
       if(!nxt){ nxt={ id:'sp'+Date.now(), name:nextSprintName(), goal:'', startDate:addDaysStr(sp.endDate,1), endDate:addDaysStr(addDaysStr(sp.endDate,1),14), state:'Planned', scope:'global', carryOver:0 }; _sprints.push(nxt); }
       targetId=nxt.id; targetName=nxt.name;
     }
     var chain=Promise.resolve();
-    unfinished.forEach(function(p){
+    allItems.forEach(function(p){
       chain=chain.then(function(){
         var i=ps.findIndex(function(x){return x.id===p.id;});
-        var patch=Object.assign({}, p, {sprintId:targetId, _username:_call('getUsername')});
-        return API.put('/api/projects/'+p.id, patch).then(function(updated){ if(i>-1) ps[i]=updated; _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Sprint planning: '+sp.name+' completed → '+(choice==='next'?('moved to '+targetName):'returned to backlog'), null, null); });
+        var hist=_histClone(p); var patch, logMsg=null;     // Stage 2b: close this sprint's open history entry
+        if(unfIds[p.id]){
+          _histCloseOpen(hist, sp.id, (choice==='next'?'carried-over':'returned-to-backlog'));
+          if(choice==='next') hist.push({sprintId:targetId, addedAt:todayStr(), outcome:''});
+          patch=Object.assign({}, p, {sprintId:targetId, sprintHistory:hist, _username:_call('getUsername')});
+          logMsg='Sprint planning: '+sp.name+' completed → '+(choice==='next'?('moved to '+targetName):'returned to backlog');
+        } else {
+          _histCloseOpen(hist, sp.id, 'completed');
+          patch=Object.assign({}, p, {sprintHistory:hist, _username:_call('getUsername')});   // finished: sprintId unchanged
+        }
+        return API.put('/api/projects/'+p.id, patch).then(function(updated){ if(i>-1) ps[i]=updated; if(logMsg) _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', logMsg, null, null); });
       });
     });
     chain.then(finalize).catch(function(){ _call('showToast','Some items failed to update','error'); finalize(); });
@@ -16126,6 +16172,129 @@ if ('serviceWorker' in navigator) {
       var cur=p.release?(releaseById(p.release)?releaseById(p.release).name:p.release):'';
       wrap.innerHTML=lbl+'<span style="font-size:13px;color:var(--frz-text)">'+esc(cur||'—')+'</span>';
     }
+  }
+
+  // ════════ Stage 2a — Attachments (item page) ════════
+  var MAX_ATTACH_BYTES = 50*1024*1024;
+  function fmtBytes(n){ n=+n||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(0)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
+  function attExt(name){ var m=/\.([A-Za-z0-9]+)$/.exec(name||''); return m?m[1].toUpperCase().slice(0,4):'FILE'; }
+  function injectAttachments(p){
+    if(!p) return;
+    var notes=document.getElementById('ipNotes');
+    var anchor = notes ? notes.parentElement.parentElement : document.getElementById('ipFieldsCard');
+    if(!anchor || !anchor.parentNode) return;
+    var card=document.getElementById('frzAttachCard');
+    if(!card){
+      card=document.createElement('div'); card.id='frzAttachCard';
+      card.style.cssText='border:1px solid var(--border);border-radius:10px;overflow:hidden';
+      card.innerHTML=''
+        +'<div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between">'
+          +'Attachments<button type="button" class="frz-att-upbtn" id="frzAttUp" style="display:none">+ Upload</button>'
+        +'</div>'
+        +'<div style="padding:14px 16px">'
+          +'<div class="frz-att-drop" id="frzAttDrop" style="display:none">Drop files here, click to browse, or paste a screenshot</div>'
+          +'<input type="file" id="frzAttInput" multiple style="display:none">'
+          +'<div class="frz-att-grid" id="frzAttList"></div>'
+        +'</div>';
+      anchor.parentNode.insertBefore(card, anchor.nextSibling);
+    }
+    var canEdit=(_val('isAdmin',false)||_val('isEditor',false));
+    var up=card.querySelector('#frzAttUp'), drop=card.querySelector('#frzAttDrop'), input=card.querySelector('#frzAttInput');
+    up.style.display = canEdit?'inline-flex':'none';
+    drop.style.display = canEdit?'block':'none';
+    if(canEdit && !card._wired){
+      card._wired=true;
+      up.addEventListener('click', function(){ input.click(); });
+      drop.addEventListener('click', function(){ input.click(); });
+      input.addEventListener('change', function(){ [].slice.call(this.files||[]).forEach(function(f){ uploadAttachment(p, f); }); this.value=''; });
+      drop.addEventListener('dragover', function(e){ e.preventDefault(); drop.classList.add('frz-drag'); });
+      drop.addEventListener('dragleave', function(){ drop.classList.remove('frz-drag'); });
+      drop.addEventListener('drop', function(e){ e.preventDefault(); drop.classList.remove('frz-drag'); [].slice.call((e.dataTransfer&&e.dataTransfer.files)||[]).forEach(function(f){ uploadAttachment(p,f); }); });
+      // Clipboard paste of an image — required for screenshots. Wired on the
+      // attachments card AND the description (Ctrl/Cmd+V while focused in either).
+      var onPaste=function(e){
+        var items=(e.clipboardData&&e.clipboardData.items)||[]; var handled=false;
+        for(var k=0;k<items.length;k++){ if(items[k].kind==='file' && /^image\//.test(items[k].type||'')){ var f=items[k].getAsFile(); if(f){ handled=true; uploadAttachment(p, f); } } }
+        if(handled) e.preventDefault();
+      };
+      card.addEventListener('paste', onPaste);
+      var notesEl=document.getElementById('ipNotes'); if(notesEl && !notesEl._frzAttPaste){ notesEl._frzAttPaste=true; notesEl.addEventListener('paste', onPaste); }
+    }
+    loadAttachments(p);
+  }
+  function loadAttachments(p){
+    var list=document.getElementById('frzAttList'); if(!list) return;
+    API.get('/api/items/'+p.id+'/attachments').then(function(res){
+      var atts=(res&&res.attachments)||[];
+      if(!atts.length){ list.innerHTML='<div class="frz-att-empty">No attachments yet.</div>'; return; }
+      var canEdit=(_val('isAdmin',false)||_val('isEditor',false));
+      list.innerHTML=atts.map(function(a){
+        var isImg=/^image\//.test(a.contentType||'');
+        var del=canEdit?'<button type="button" class="frz-att-del" data-del="'+escA(a.id)+'" title="Remove">✕</button>':'';
+        if(isImg && a.url){
+          return '<div class="frz-att-thumb"><a href="'+escA(a.url)+'" target="_blank" rel="noopener"><img src="'+escA(a.url)+'" alt="'+escA(a.name)+'"></a>'+del+'<div class="frz-att-cap" title="'+escA(a.name)+'">'+esc(a.name)+'</div></div>';
+        }
+        var open=a.url?('href="'+escA(a.url)+'" target="_blank" rel="noopener"'):'';
+        return '<a class="frz-att-file" '+open+'><span class="frz-att-ic">'+esc(attExt(a.name))+'</span><span class="frz-att-meta"><span class="frz-att-nm" title="'+escA(a.name)+'">'+esc(a.name)+'</span><span class="frz-att-sz">'+fmtBytes(a.size)+'</span></span>'+del+'</a>';
+      }).join('');
+      list.querySelectorAll('[data-del]').forEach(function(b){ b.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); var id=this.getAttribute('data-del'); var a=atts.filter(function(x){return x.id===id;})[0]; deleteAttachment(p, id, a?a.name:''); }); });
+    }).catch(function(){ list.innerHTML='<div class="frz-att-empty">Could not load attachments.</div>'; });
+  }
+  function uploadAttachment(p, file){
+    if(!file) return;
+    if(file.size>MAX_ATTACH_BYTES){ _call('showToast','"'+(file.name||'file')+'" exceeds the 50 MB limit.','error'); return; }
+    var name=file.name||('pasted-'+String(file.type||'image').replace('/','.'));
+    _call('showToast','Uploading '+name+'…');
+    API.post('/api/items/'+p.id+'/attachments/presign', {filename:name, contentType:file.type||'application/octet-stream', size:file.size})
+    .then(function(pre){
+      return fetch(pre.url, {method:'PUT', body:file, headers:{'Content-Type':file.type||'application/octet-stream'}}).then(function(r){
+        if(!r.ok) throw new Error('storage upload failed ('+r.status+')');
+        return API.post('/api/items/'+p.id+'/attachments', {attId:pre.attId, key:pre.key, name:name, contentType:file.type||'application/octet-stream', size:file.size, _username:_call('getUsername')});
+      });
+    })
+    .then(function(){ _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Attachment added: '+name, null, null); loadAttachments(p); _call('showToast','Attached '+name); })
+    .catch(function(e){ _call('showToast','Upload failed: '+(e&&e.message||''),'error'); });
+  }
+  function deleteAttachment(p, attId, name){
+    if(!confirm('Remove '+(name||'this attachment')+'?')) return;
+    API.del('/api/items/'+p.id+'/attachments/'+attId)
+    .then(function(){ _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Attachment removed: '+(name||attId), null, null); loadAttachments(p); })
+    .catch(function(e){ _call('showToast','Remove failed: '+(e&&e.message||''),'error'); });
+  }
+
+  // ════════ Stage 2b — Multi-sprint history ════════
+  function itemSprintHistory(p){
+    // Ordered history of every sprint this item has been in. Migration: a legacy
+    // item with a current sprint but no recorded history gets a synthesized
+    // "current" seed entry (never a blank list); it is persisted lazily on the
+    // next sprint action via _histClone (no mass write).
+    if(p && Array.isArray(p.sprintHistory) && p.sprintHistory.length) return p.sprintHistory;
+    if(p && p.sprintId){ var sp=sprintById(p.sprintId); return [{sprintId:p.sprintId, addedAt:(sp&&sp.startDate)||'', outcome:''}]; }
+    return [];
+  }
+  function _histClone(p){ return itemSprintHistory(p).map(function(h){ return {sprintId:h.sprintId, addedAt:h.addedAt||'', outcome:h.outcome||''}; }); }
+  function _histCloseOpen(hist, sprintId, outcome){ for(var k=0;k<hist.length;k++){ if(hist[k].sprintId===sprintId && !hist[k].outcome){ hist[k].outcome=outcome; return true; } } return false; }
+  var _OUTCOME_META={ '':{label:'current',cls:'frz-sh-current'}, 'completed':{label:'completed',cls:'frz-sh-completed'}, 'carried-over':{label:'carried over',cls:'frz-sh-carried'}, 'returned-to-backlog':{label:'returned to backlog',cls:'frz-sh-returned'} };
+  function injectSprintHistory(p){
+    if(!p) return;
+    var anchor=document.getElementById('ipFieldsCard'); if(!anchor||!anchor.parentNode) return;
+    var hist=itemSprintHistory(p);
+    var card=document.getElementById('frzSprintHistCard');
+    if(!hist.length){ if(card) card.remove(); return; }
+    if(!card){
+      card=document.createElement('div'); card.id='frzSprintHistCard';
+      card.style.cssText='border:1px solid var(--border);border-radius:10px;overflow:hidden';
+      anchor.parentNode.insertBefore(card, anchor.nextSibling);
+    }
+    var rows=hist.map(function(h){
+      var sp=sprintById(h.sprintId); var nm=sp?sp.name:(h.sprintId||'—');
+      var m=_OUTCOME_META[h.outcome]||_OUTCOME_META[''];
+      var when=h.addedAt?'<span style="font-size:11px;color:var(--muted)">added '+esc(h.addedAt)+'</span>':'';
+      return '<div class="frz-sh-row"><span class="frz-sh-nm">'+esc(nm)+'</span> '+when+'<span class="frz-sh-oc '+m.cls+'">'+esc(m.label)+'</span></div>';
+    }).join('');
+    card.innerHTML=''
+      +'<div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px">Sprint history</div>'
+      +'<div style="padding:10px 16px">'+rows+'</div>';
   }
 
   function onResize(){
