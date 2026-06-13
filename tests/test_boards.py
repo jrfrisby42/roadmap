@@ -56,3 +56,18 @@ def test_board_requires_columns_and_statuses(client, team, admin_headers):
 def test_board_requires_name_and_id(client, team, admin_headers):
     assert client.put("/api/boards", json={"boards": [_board(name="")]},
                       headers=admin_headers).status_code == 422
+
+
+def test_board_column_order_round_trips(client, team, admin_headers):
+    # 1c: reordering columns and saving must persist the new order.
+    cols = [{"name": n, "statuses": [s], "dropStatus": s}
+            for n, s in [("To Do", "New"), ("Doing", "In Progress"), ("Done", "Released")]]
+    b = {"id": "bo", "name": "Flow", "position": 0, "columns": cols}
+    client.put("/api/boards", json={"boards": [b]}, headers=admin_headers)
+    got = client.get("/api/boards", headers=admin_headers).json()["boards"][0]
+    assert [c["name"] for c in got["columns"]] == ["To Do", "Doing", "Done"]
+    # reorder (move Done to front) and re-save
+    b["columns"] = [cols[2], cols[0], cols[1]]
+    client.put("/api/boards", json={"boards": [b]}, headers=admin_headers)
+    got2 = client.get("/api/boards", headers=admin_headers).json()["boards"][0]
+    assert [c["name"] for c in got2["columns"]] == ["Done", "To Do", "Doing"]
