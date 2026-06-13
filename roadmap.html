@@ -14582,6 +14582,41 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-bcard-name { font-size:12px; font-weight:700; color:var(--frz-text); line-height:1.3; }
   .frz-beta .frz-bcard-meta { font-size:11px; color:var(--frz-text-muted); margin-top:3px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 
+  /* ── Beta Planning (Feature B) ── */
+  .frz-beta .frz-plan-tabs { display:flex; gap:4px; padding:10px 14px 0; flex-shrink:0; }
+  .frz-beta .frz-plan-tab { border:0; background:none; cursor:pointer; font:inherit; font-size:13px; font-weight:600; color:var(--frz-text-secondary); padding:7px 14px; border-radius:8px 8px 0 0; border-bottom:2px solid transparent; }
+  .frz-beta .frz-plan-tab:hover { color:var(--frz-text); }
+  .frz-beta .frz-plan-tab.is-active { color:var(--frz-accent); border-bottom-color:var(--frz-accent); }
+  .frz-beta .frz-plan-body { flex:1; min-height:0; display:flex; gap:14px; padding:12px 14px; overflow:hidden; }
+  .frz-beta .frz-plan-stub { margin:auto; color:var(--frz-text-muted); font-size:13px; }
+  .frz-beta .frz-plan-pane { display:flex; flex-direction:column; min-height:0; border:1px solid var(--frz-border); border-radius:10px; background:var(--frz-bg-surface); overflow:hidden; }
+  .frz-beta .frz-plan-backlog { flex:0 0 55%; }
+  .frz-beta .frz-plan-sprint { flex:1; }
+  .frz-beta .frz-plan-sprint.frz-drop { outline:2px dashed var(--frz-accent); outline-offset:-4px; }
+  .frz-beta .frz-plan-pane-hd { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--frz-border); font-size:13px; font-weight:800; color:var(--frz-text); flex-shrink:0; }
+  .frz-beta .frz-plan-count { font-size:11px; font-weight:600; color:var(--frz-text-muted); background:#E7EEF5; border-radius:999px; padding:1px 8px; }
+  .frz-beta .frz-plan-list { flex:1; min-height:0; overflow-y:auto; padding:8px; }
+  .frz-beta .frz-plan-empty { color:var(--frz-text-muted); font-size:12.5px; padding:18px; text-align:center; }
+  .frz-beta .frz-bl-row, .frz-beta .frz-sp-card { display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--frz-border); border-radius:8px; background:var(--frz-bg-surface); margin-bottom:6px; cursor:grab; }
+  .frz-beta .frz-sp-card { cursor:default; }
+  .frz-beta .frz-bl-row:hover { border-color:var(--frz-accent-soft-border); }
+  .frz-beta .frz-bl-main { flex:1; min-width:0; cursor:pointer; }
+  .frz-beta .frz-bl-name { font-size:13px; font-weight:600; color:var(--frz-text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .frz-beta .frz-bl-meta { font-size:11px; color:var(--frz-text-muted); margin-top:2px; }
+  .frz-beta .frz-bl-add { opacity:0; border:1px solid var(--frz-accent); background:var(--frz-accent-soft); color:var(--frz-accent); font:inherit; font-size:11px; font-weight:700; padding:3px 9px; border-radius:6px; cursor:pointer; white-space:nowrap; flex-shrink:0; }
+  .frz-beta .frz-bl-row:hover .frz-bl-add { opacity:1; }
+  .frz-beta .frz-sp-remove { opacity:.5; border:0; background:none; color:var(--frz-text-muted); cursor:pointer; font-size:13px; line-height:1; padding:2px 5px; flex-shrink:0; }
+  .frz-beta .frz-sp-card:hover .frz-sp-remove { opacity:1; }
+  .frz-beta .frz-sprint-badge { font-size:10px; font-weight:700; padding:2px 9px; border-radius:999px; }
+  .frz-beta .frz-sprint-meta { padding:8px 14px; font-size:12px; color:var(--frz-text-secondary); border-bottom:1px solid var(--frz-border); flex-shrink:0; }
+  .frz-beta .frz-sprint-cap { font-size:11px; color:var(--frz-text-muted); margin-top:3px; }
+  .frz-beta .frz-sprint-empty { margin:auto; text-align:center; color:var(--frz-text-muted); padding:30px; }
+  .frz-beta .frz-sprint-empty p { margin-bottom:12px; font-size:13px; }
+  .frz-beta .frz-legacy-tag { font-size:10px; font-weight:600; color:var(--frz-text-muted); background:#EEF2F6; border-radius:5px; padding:1px 6px; }
+  .frz-beta .frz-rd-info { font-size:12.5px; color:var(--frz-text); padding:7px 0; border-top:1px solid var(--frz-border); }
+  .frz-beta.frz-narrow .frz-plan-body { flex-direction:column; overflow-y:auto; }
+  .frz-beta.frz-narrow .frz-plan-backlog { flex:0 0 auto; max-height:50%; }
+
   @media (prefers-reduced-motion: reduce) { .frz-beta { --frz-anim:0s; } }
 </style>
 <script>
@@ -14617,10 +14652,14 @@ if ('serviceWorker' in navigator) {
     gantt:    { chips:['owner','type','status'],            extra:['assignee'], opts:['groupby','legend','capacity'] },
     kanban:   { chips:['owner','type'],                     extra:['status','assignee'], opts:['hideEmpty'] },
     list:     { chips:['owner','assignee','type','status'], extra:[], opts:['columns'] },
-    planning: { chips:['owner','status'],                   extra:['type','assignee'], opts:['newSession','history'] },
+    planning: { chips:['owner','status'],                   extra:['type','assignee'], opts:[] },
     dashboard:{ chips:['owner','range'],                    extra:[], opts:[] }
   };
   var PROJ_COLORS = ['#0059A9','#65B1E3','#2E8B6F','#C0700B','#8E4FB0','#C0392B','#0E7C86'];
+  // Feature B: items eligible for sprint planning (single editable list).
+  var PLANNABLE_TYPES = ['Feature','Enhancement','Bug Fix','Task'];
+  // Sprint-state badge tints — deliberately NOT the item-status palette.
+  var SPRINT_BADGE = { Planned:'background:#EEF2F6;color:#4A6178', Active:'background:var(--frz-accent-soft);color:var(--frz-accent)', Completed:'background:#E4F3EA;color:#1E7B46' };
   var LOGO = 'https://frazil.com/frazil/wp-content/uploads/2021/02/Frazil_Website_Nav_Logo@2x.png';
 
   function _g(name){ try { return (typeof window[name]==='function') ? window[name]() : (eval(name))(); } catch(e){ return null; } }
@@ -14628,9 +14667,9 @@ if ('serviceWorker' in navigator) {
   function _val(name, dflt){ try { var v = eval(name); return (v===undefined?dflt:v); } catch(e){ return dflt; } }
 
   var root, _origOpenItemPage = null, _origRenderKanban = null;
-  var _boards = [], _betaHideEmpty = false;
+  var _boards = [], _betaHideEmpty = false, _sprints = [], _origRenderPlanning = null;
   var state = {
-    view:'gantt', collapsed:false, project:'__all__', board:'__all__',
+    view:'gantt', collapsed:false, project:'__all__', board:'__all__', planTab:'plan',
     saved:[], onItem:false, itemId:null, pop:null, itemFromApp:false
   };
 
@@ -14760,11 +14799,18 @@ if ('serviceWorker' in navigator) {
       if (root && state.view==='kanban' && state.board && state.board!=='__all__') return renderBetaKanban();
       return _origRenderKanban.apply(this, arguments);
     };
+    // Wrap renderPlanningBoard: beta planning renders the tabbed Plan/Sprints/Releases
+    // UI; off-beta falls through to the untouched production planning board.
+    _origRenderPlanning = window.renderPlanningBoard;
+    window.renderPlanningBoard = function(){
+      if (root && state.view==='planning') return renderBetaPlanning();
+      return _origRenderPlanning.apply(this, arguments);
+    };
     wire();
     renderRail();
     onResize();
-    // Load shared boards first so a ?board= deep link mounts correctly, then route.
-    loadBoards(function(){ routeFromLocation(true); });
+    // Load shared boards + sprints first so deep links mount correctly, then route.
+    loadBoards(function(){ loadSprints(function(){ routeFromLocation(true); }); });
   }
 
   // ════════ rail ════════
@@ -14826,6 +14872,28 @@ if ('serviceWorker' in navigator) {
       .catch(function(e){ _call('showToast','Save failed: '+(e&&e.message||''),'error'); throw e; });
   }
   function activeBoard(){ return _boards.filter(function(b){ return b.id===state.board; })[0] || null; }
+
+  // ════════ sprints data (Feature B) ════════
+  function loadSprints(done){
+    API.get('/api/sprints').then(function(d){ _sprints = (d && d.sprints) || []; })
+      .catch(function(){ _sprints = []; })
+      .then(function(){ if(done) done(); });
+  }
+  function saveSprints(done){
+    return API.put('/api/sprints', { sprints: _sprints })
+      .then(function(d){ _sprints = (d && d.sprints) || _sprints; if(done) done(); })
+      .catch(function(e){ _call('showToast','Sprint save failed: '+(e&&e.message||''),'error'); throw e; });
+  }
+  function sprintById(id){ return _sprints.filter(function(s){ return s.id===id; })[0] || null; }
+  function activeSprint(){ return _sprints.filter(function(s){ return s.state==='Active'; })[0] || null; }
+  function plannedSprint(){ return _sprints.filter(function(s){ return s.state==='Planned'; })[0] || null; }
+  function currentSprint(){ return activeSprint() || plannedSprint(); }
+  function sprintItems(sid){ return (_val('projects',[])||[]).filter(function(p){ return !p.archived && p.sprintId===sid; }); }
+  function inNonCompletedSprint(p){ var s=sprintById(p.sprintId); return !!(s && s.state!=='Completed'); }
+  function isPlannable(p){ return PLANNABLE_TYPES.indexOf(p.type)>=0 && !p.parent && (p.recurrence||'none')==='none'; }
+  function isTerm(s){ return !!_call('isTerminalStatus', s); }
+  function nextSprintName(){ return 'Sprint '+(_sprints.length+1); }
+
   function renderBoardNav(){
     var bn = document.getElementById('frzBoardNav'); if(!bn) return;
     bn.querySelectorAll('.frz-item').forEach(function(b){ b.remove(); });
@@ -14938,7 +15006,9 @@ if ('serviceWorker' in navigator) {
     });
     if (view==='kanban' && state.board && state.board!=='__all__') params.set('board', state.board);  // board is URL state
     var qs = params.toString();
-    var url = '/beta/'+view + (qs?('?'+qs):'');
+    var base = '/beta/'+view;
+    if (view==='planning' && state.planTab && state.planTab!=='plan') base = '/beta/planning/'+state.planTab;  // planning sub-tab is URL state
+    var url = base + (qs?('?'+qs):'');
     var st = { frzView:view };
     if (replace) history.replaceState(st,'',url); else history.pushState(st,'',url);
   }
@@ -15061,6 +15131,7 @@ if ('serviceWorker' in navigator) {
     if (m){ state.itemFromApp = !replace; openItem(parseInt(m[1],10), {push:!replace}); return; }
     var vm = path.match(/^\/beta\/(gantt|kanban|list|planning|dashboard)/);
     var view = vm ? vm[1] : (lastView()||'gantt');
+    if (view==='planning'){ var pm=path.match(/^\/beta\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
     applyURLToFilters(view, u.searchParams);
     setView(view);
     if (replace) history.replaceState({frzView:view},'',url); else history.pushState({frzView:view},'',url);
@@ -15084,6 +15155,7 @@ if ('serviceWorker' in navigator) {
       navigate('/beta/'+lv + location.search, true);
       return;
     }
+    if (vm[1]==='planning'){ var pm=path.match(/^\/beta\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
     applyDefaultCollapse(vm[1]);
     applyURLToFilters(vm[1], new URLSearchParams(location.search));
     setView(vm[1]);
@@ -15099,6 +15171,7 @@ if ('serviceWorker' in navigator) {
       var path = location.pathname.replace(/\/+$/,'');
       var vm = path.match(/^\/beta\/(gantt|kanban|list|planning|dashboard)/);
       var view = vm? vm[1] : (st.frzView || state.view);
+      if (view==='planning'){ var pm=path.match(/^\/beta\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
       applyURLToFilters(view, new URLSearchParams(location.search));
       setView(view);
       rerender();
@@ -15537,6 +15610,272 @@ if ('serviceWorker' in navigator) {
     });
     renderCols(); updateUnassigned();
     setTimeout(function(){ nameEl.focus(); }, 0);
+  }
+
+  // ════════ Planning (Feature B): tabbed Plan / Sprints / Releases ════════
+  var PRIO_LBL={1:'Urgent',2:'High',3:'Medium',4:'Low'}, PRIO_CLR={1:'#e8394a',2:'#e87000',3:'#e8c000',4:'#22b96e'};
+  function fmtD(d){ try{ var x=new Date(d+'T00:00:00'); return x.toLocaleDateString('en-US',{month:'short',day:'numeric'}); }catch(e){ return d; } }
+  function todayStr(){ var d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+  function addDaysStr(s, n){ var d=new Date((s||todayStr())+'T00:00:00'); d.setDate(d.getDate()+n); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+
+  function renderBetaPlanning(){
+    var host = document.getElementById('planningView'); if(!host) return;
+    host.style.display='flex'; host.style.flexDirection='column'; host.style.height='100%'; host.style.minHeight='0';
+    var tab = state.planTab||'plan';
+    host.innerHTML =
+      '<div class="frz-plan-tabs">'+
+        '<button class="frz-plan-tab '+(tab==='plan'?'is-active':'')+'" data-plantab="plan">Plan</button>'+
+        '<button class="frz-plan-tab '+(tab==='sprints'?'is-active':'')+'" data-plantab="sprints">Sprints</button>'+
+        '<button class="frz-plan-tab '+(tab==='releases'?'is-active':'')+'" data-plantab="releases">Releases</button>'+
+      '</div>'+
+      '<div class="frz-plan-body" id="frzPlanBody"></div>';
+    host.querySelectorAll('[data-plantab]').forEach(function(b){
+      b.addEventListener('click', function(){ var t=b.getAttribute('data-plantab'); navigate('/beta/planning'+(t==='plan'?'':'/'+t), false); });
+    });
+    var body = document.getElementById('frzPlanBody');
+    if(tab==='plan') renderPlanTab(body);
+    else body.innerHTML = '<div class="frz-plan-stub">The '+(tab==='sprints'?'Sprints':'Releases')+' tab arrives in the next build (Feature C).</div>';
+  }
+
+  function sprintReady(p, sprint){
+    var needStart = !p.start || (!!sprint.startDate && p.start < sprint.startDate);
+    var needEstimate = !(+p.dueWeeks > 0);
+    var needPoints = (p.storyPoints==null || p.storyPoints==='');
+    return { needStart:needStart, needEstimate:needEstimate, needPoints:needPoints, any:(needStart||needEstimate||needPoints) };
+  }
+  function backlogItems(){
+    var fDev=getSelectedDevs(), fType=getSelectedTypes(), fSt=getSelectedStatuses();
+    return (_val('projects',[])||[]).filter(function(p){
+      if(p.archived) return false;
+      if(!inScope(p)) return false;
+      if(!isPlannable(p)) return false;
+      if(isTerm(p.status)) return false;
+      if(inNonCompletedSprint(p)) return false;
+      if(fDev && fDev.indexOf(p.dev||'')<0) return false;
+      if(fType && fType.indexOf(p.type||'')<0) return false;
+      if(fSt && fSt.indexOf(p.status)<0) return false;
+      return true;
+    }).sort(function(a,b){
+      var pa=(a.priority&&+a.priority>0)?+a.priority:100, pb=(b.priority&&+b.priority>0)?+b.priority:100;
+      if(pa!==pb) return pa-pb;
+      return (a.itemKey||'').localeCompare(b.itemKey||'');
+    });
+  }
+  function renderPlanTab(host){
+    var sprint = currentSprint();
+    var bl = backlogItems();
+    host.innerHTML =
+      '<div class="frz-plan-pane frz-plan-backlog">'+
+        '<div class="frz-plan-pane-hd">Backlog <span class="frz-plan-count">'+bl.length+'</span></div>'+
+        '<div class="frz-plan-list" id="frzBacklogList">'+ (bl.length? bl.map(backlogRow).join('') : '<div class="frz-plan-empty">No plannable items in the backlog.</div>') +'</div>'+
+      '</div>'+
+      '<div class="frz-plan-pane frz-plan-sprint" id="frzSprintPane">'+ sprintPaneHTML(sprint) +'</div>';
+    wirePlanTab(sprint);
+  }
+  function backlogRow(p){
+    var prio = (p.priority&&PRIO_LBL[p.priority]) ? '<span style="color:'+PRIO_CLR[p.priority]+';font-weight:700;font-size:11px">'+PRIO_LBL[p.priority]+'</span>' : '';
+    var meta = [p.type, (p.storyPoints!=null&&p.storyPoints!==''?p.storyPoints+'pt':''), (+p.dueWeeks>0?p.dueWeeks+'w':''), p.dev||'Unassigned'].filter(Boolean).join(' · ');
+    var legacy = (p.sprintId && !sprintById(p.sprintId)) ? ' <span class="frz-legacy-tag" title="Legacy sprint label (preserved)">'+esc(p.sprintId)+'</span>' : '';
+    return '<div class="frz-bl-row" draggable="true" data-id="'+p.id+'">'+
+      '<div class="frz-bl-main" data-open="'+p.id+'">'+
+        '<div class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key">'+esc(p.itemKey)+'</span> ':'')+esc(p.name||'')+legacy+'</div>'+
+        '<div class="frz-bl-meta">'+prio+((prio&&meta)?' · ':'')+esc(meta)+'</div>'+
+      '</div>'+
+      '<button class="frz-bl-add" data-add="'+p.id+'" title="Add to sprint">Add →</button>'+
+    '</div>';
+  }
+  function sprintPaneHTML(sprint){
+    if(!sprint){
+      return '<div class="frz-plan-pane-hd">Sprint</div><div class="frz-sprint-empty"><p>No sprint planned yet.</p><button class="frz-newitem" id="frzPlanSprint">+ Plan a sprint</button></div>';
+    }
+    var items = sprintItems(sprint.id);
+    var pts = items.reduce(function(s,p){ return s + (+p.storyPoints||0); },0);
+    var est = items.reduce(function(s,p){ return s + (+p.dueWeeks||0); },0);
+    var done = items.filter(function(p){ return isTerm(p.status); }).length;
+    var badge = '<span class="frz-sprint-badge" style="'+(SPRINT_BADGE[sprint.state]||'')+'">'+esc(sprint.state)+'</span>';
+    var actions = '';
+    if(sprint.state==='Planned') actions = '<button class="frz-newitem" id="frzStartSprint">Start sprint</button>';
+    else if(sprint.state==='Active') actions = '<button class="frz-viewopt" id="frzCompleteSprint">Complete sprint</button>';
+    var cards = items.length ? items.map(sprintCard).join('') : '<div class="frz-plan-empty">Drag items here, or use “Add →” in the backlog.</div>';
+    return '<div class="frz-plan-pane-hd">'+esc(sprint.name)+' '+badge+'<span class="frz-spacer"></span>'+actions+'</div>'+
+      '<div class="frz-sprint-meta">'+(sprint.startDate?fmtD(sprint.startDate):'—')+' → '+(sprint.endDate?fmtD(sprint.endDate):'—')+(sprint.goal?(' · '+esc(sprint.goal)):'')+
+        '<div class="frz-sprint-cap">'+items.length+' items · '+pts+' pts · '+est+'w · '+done+'/'+items.length+' done</div></div>'+
+      '<div class="frz-plan-list" id="frzSprintList">'+cards+'</div>';
+  }
+  function sprintCard(p){
+    var st = p.status ? '<span class="'+(_call('statusCls',p.status)||'')+'" style="padding:0 7px;border-radius:9px;font-size:10px;font-weight:700">'+esc(p.status)+'</span>' : '';
+    var meta = [(p.storyPoints!=null&&p.storyPoints!==''?p.storyPoints+'pt':''),(+p.dueWeeks>0?p.dueWeeks+'w':''),p.dev||'Unassigned'].filter(Boolean).join(' · ');
+    return '<div class="frz-sp-card">'+
+      '<div class="frz-bl-main" data-open="'+p.id+'"><div class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key">'+esc(p.itemKey)+'</span> ':'')+esc(p.name||'')+'</div>'+
+      '<div class="frz-bl-meta">'+esc(meta)+' '+st+'</div></div>'+
+      '<button class="frz-sp-remove" data-remove="'+p.id+'" title="Remove from sprint">✕</button>'+
+    '</div>';
+  }
+  function wirePlanTab(sprint){
+    var host = document.getElementById('frzPlanBody'); if(!host) return;
+    host.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(e){ if(e.target.closest('[data-add],[data-remove]')) return; navigate('/beta/item/'+el.getAttribute('data-open'), false); }); });
+    host.querySelectorAll('[data-add]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); addToSprint(+b.getAttribute('data-add')); }); });
+    host.querySelectorAll('[data-remove]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); removeFromSprint(+b.getAttribute('data-remove')); }); });
+    var ps=document.getElementById('frzPlanSprint'); if(ps) ps.addEventListener('click', openCreateSprint);
+    var ss=document.getElementById('frzStartSprint'); if(ss) ss.addEventListener('click', startSprint);
+    var cs=document.getElementById('frzCompleteSprint'); if(cs) cs.addEventListener('click', completeSprint);
+    var dragId=null;
+    host.querySelectorAll('.frz-bl-row').forEach(function(row){
+      row.addEventListener('dragstart', function(e){ dragId=+row.dataset.id; e.dataTransfer.effectAllowed='move'; try{ e.dataTransfer.setData('text/plain', String(dragId)); }catch(_){} row.style.opacity='0.4'; });
+      row.addEventListener('dragend', function(){ row.style.opacity=''; dragId=null; });
+    });
+    var pane=document.getElementById('frzSprintPane');
+    if(pane && sprint){
+      pane.addEventListener('dragover', function(e){ e.preventDefault(); pane.classList.add('frz-drop'); });
+      pane.addEventListener('dragleave', function(){ pane.classList.remove('frz-drop'); });
+      pane.addEventListener('drop', function(e){ e.preventDefault(); pane.classList.remove('frz-drop'); var id=dragId||(+((e.dataTransfer&&e.dataTransfer.getData('text/plain'))||0)); if(id) addToSprint(id); });
+    }
+  }
+  function refreshPlan(){ var body=document.getElementById('frzPlanBody'); if(body && state.view==='planning' && state.planTab==='plan') renderPlanTab(body); renderRail(); }
+
+  function addToSprint(id){
+    var sprint = currentSprint();
+    if(!sprint){ _call('showToast','Plan a sprint first'); return; }
+    var ps=_val('projects',[])||[]; var p=ps.filter(function(x){return x.id===id;})[0]; if(!p) return;
+    var need = sprintReady(p, sprint);
+    if(!need.any){ applySprintReady(p, sprint, {}); return; }   // already ready → add silently
+    openReadyModal(p, sprint, need);
+  }
+  function applySprintReady(p, sprint, vals){
+    var ps=_val('projects',[])||[]; var i=ps.findIndex(function(x){return x.id===p.id;});
+    var logs=[]; var patch=Object.assign({}, p);
+    if(vals.start!=null && vals.start!==p.start){ logs.push(['Start date',(p.start||'(none)'),vals.start]); patch.start=vals.start; }
+    if(vals.dueWeeks!=null && +vals.dueWeeks!==+p.dueWeeks){ logs.push(['Time estimate',((p.dueWeeks||'(none)')+'w'),(vals.dueWeeks+'w')]); patch.dueWeeks=+vals.dueWeeks; }
+    if(vals.storyPoints!=null && String(vals.storyPoints)!==String(p.storyPoints==null?'':p.storyPoints)){ logs.push(['Story points',(p.storyPoints==null||p.storyPoints===''?'(none)':p.storyPoints),vals.storyPoints]); patch.storyPoints=+vals.storyPoints; }
+    var prevSprint = (p.sprintId && sprintById(p.sprintId)) ? sprintById(p.sprintId).name : (p.sprintId||'(none)');
+    logs.push(['Sprint', prevSprint, sprint.name]);
+    patch.sprintId = sprint.id; patch._username = _call('getUsername');
+    API.put('/api/projects/'+p.id, patch).then(function(updated){
+      if(i>-1) ps[i]=updated;
+      logs.forEach(function(l){ _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Sprint planning: '+l[0]+' '+l[1]+' → '+l[2], null, null); });
+      refreshPlan();
+    }).catch(function(e){ _call('showToast','Add failed: '+(e&&e.message||''),'error'); });
+  }
+  function removeFromSprint(id){
+    var ps=_val('projects',[])||[]; var p=ps.filter(function(x){return x.id===id;})[0]; if(!p) return;
+    var i=ps.findIndex(function(x){return x.id===id;});
+    var patch=Object.assign({}, p, {sprintId:'', _username:_call('getUsername')});
+    API.put('/api/projects/'+id, patch).then(function(updated){ if(i>-1) ps[i]=updated; _call('logActionOnItem', id, p.name||'', p.dev||'', p.product||'', 'Sprint planning: removed from sprint (returned to backlog)', null, null); refreshPlan(); }).catch(function(){ _call('showToast','Remove failed','error'); });
+  }
+  function openReadyModal(p, sprint, need){
+    closePop();
+    var bg=document.createElement('div'); bg.className='frz-modal-bg';
+    var rows='';
+    if(need.needStart) rows += '<div style="margin-bottom:12px"><label class="frz-lbl">Start date</label><input type="date" class="frz-fld" id="frzRdStart" value="'+(sprint.startDate||todayStr())+'"></div>';
+    if(need.needEstimate) rows += '<div style="margin-bottom:12px"><label class="frz-lbl">Time estimate (weeks) — required</label><input type="number" min="0.25" step="0.25" class="frz-fld" id="frzRdEst" placeholder="e.g. 2"></div>';
+    if(need.needPoints) rows += '<div style="margin-bottom:12px"><label class="frz-lbl">Story points — required</label><input type="number" min="0" step="1" class="frz-fld" id="frzRdPts" placeholder="e.g. 5"></div>';
+    rows += '<div class="frz-rd-info">Status: <b>'+esc(p.status||'—')+'</b> <span style="color:var(--frz-text-muted)">(unchanged)</span></div>';
+    rows += '<div class="frz-rd-info">Sprint will be set to <b>'+esc(sprint.name)+'</b></div>';
+    bg.innerHTML='<div class="frz-modal" style="width:440px">'+
+      '<div class="frz-modal-hd">Make sprint-ready<button class="frz-iconbtn" id="frzRdClose">✕</button></div>'+
+      '<div class="frz-modal-bd"><div style="font-size:12px;color:var(--frz-text-muted);margin-bottom:12px">'+esc(p.name||'')+' needs a few fields before it can join '+esc(sprint.name)+'.</div>'+rows+'</div>'+
+      '<div class="frz-modal-ft"><span class="frz-modal-err" id="frzRdErr"></span><button class="frz-viewopt" id="frzRdCancel">Cancel</button><button class="frz-newitem" id="frzRdSave">Add to sprint</button></div>'+
+    '</div>';
+    root.appendChild(bg);
+    function close(){ bg.remove(); }
+    bg.querySelector('#frzRdClose').addEventListener('click', close);
+    bg.querySelector('#frzRdCancel').addEventListener('click', close);
+    bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
+    bg.querySelector('#frzRdSave').addEventListener('click', function(){
+      var err=bg.querySelector('#frzRdErr'); err.textContent='';
+      var vals={};
+      if(need.needStart){ var sv=bg.querySelector('#frzRdStart').value; if(!sv){ err.textContent='Start date is required.'; return; } vals.start=sv; }
+      if(need.needEstimate){ var ev=parseFloat(bg.querySelector('#frzRdEst').value); if(!(ev>0)){ err.textContent='Enter a time estimate.'; return; } vals.dueWeeks=ev; }
+      if(need.needPoints){ var pv=bg.querySelector('#frzRdPts').value; if(pv===''||isNaN(+pv)){ err.textContent='Enter story points.'; return; } vals.storyPoints=+pv; }
+      close(); applySprintReady(p, sprint, vals);
+    });
+    setTimeout(function(){ var f=bg.querySelector('input'); if(f) f.focus(); },0);
+  }
+  function openCreateSprint(){
+    closePop();
+    var start=todayStr(), end=addDaysStr(start,14);
+    var bg=document.createElement('div'); bg.className='frz-modal-bg';
+    bg.innerHTML='<div class="frz-modal" style="width:460px">'+
+      '<div class="frz-modal-hd">Plan a sprint<button class="frz-iconbtn" id="frzCsClose">✕</button></div>'+
+      '<div class="frz-modal-bd">'+
+        '<div style="margin-bottom:12px"><label class="frz-lbl">Name</label><input class="frz-fld" id="frzCsName" value="'+escA(nextSprintName())+'"></div>'+
+        '<div style="display:flex;gap:12px;margin-bottom:12px"><div style="flex:1"><label class="frz-lbl">Start</label><input type="date" class="frz-fld" id="frzCsStart" value="'+start+'"></div><div style="flex:1"><label class="frz-lbl">End</label><input type="date" class="frz-fld" id="frzCsEnd" value="'+end+'"></div></div>'+
+        '<div><label class="frz-lbl">Goal (optional)</label><input class="frz-fld" id="frzCsGoal" placeholder="Sprint goal…"></div>'+
+      '</div>'+
+      '<div class="frz-modal-ft"><span class="frz-modal-err" id="frzCsErr"></span><button class="frz-viewopt" id="frzCsCancel">Cancel</button><button class="frz-newitem" id="frzCsSave">Create sprint</button></div>'+
+    '</div>';
+    root.appendChild(bg);
+    function close(){ bg.remove(); }
+    bg.querySelector('#frzCsClose').addEventListener('click', close);
+    bg.querySelector('#frzCsCancel').addEventListener('click', close);
+    bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
+    bg.querySelector('#frzCsStart').addEventListener('change', function(){ bg.querySelector('#frzCsEnd').value = addDaysStr(this.value,14); });
+    bg.querySelector('#frzCsSave').addEventListener('click', function(){
+      var err=bg.querySelector('#frzCsErr'); err.textContent='';
+      var name=bg.querySelector('#frzCsName').value.trim(); if(!name){ err.textContent='Name is required.'; return; }
+      var s=bg.querySelector('#frzCsStart').value, e=bg.querySelector('#frzCsEnd').value;
+      if(!s||!e){ err.textContent='Start and end dates are required.'; return; }
+      var sp={ id:'sp'+Date.now(), name:name, goal:bg.querySelector('#frzCsGoal').value.trim(), startDate:s, endDate:e, state:'Planned', scope:'global', carryOver:0 };
+      _sprints.push(sp);
+      var btn=bg.querySelector('#frzCsSave'); btn.disabled=true;
+      saveSprints(function(){ close(); refreshPlan(); }).catch(function(){ btn.disabled=false; err.textContent='Save failed.'; });
+    });
+    setTimeout(function(){ bg.querySelector('#frzCsName').focus(); },0);
+  }
+  function startSprint(){
+    var sp=currentSprint(); if(!sp || sp.state!=='Planned') return;
+    if(activeSprint()){ _call('showToast','Another sprint is already Active — complete it first.','error'); return; }
+    if(sprintItems(sp.id).length<1){ _call('showToast','Add at least one item before starting.','error'); return; }
+    sp.state='Active';
+    saveSprints(function(){ refreshPlan(); _call('showToast','Sprint started'); }).catch(function(){ sp.state='Planned'; });
+  }
+  function completeSprint(){
+    var sp=currentSprint(); if(!sp || sp.state!=='Active') return;
+    var items=sprintItems(sp.id);
+    var unfinished=items.filter(function(p){ return !isTerm(p.status); });
+    if(!unfinished.length){ doCompleteSprint(sp, [], 'none'); return; }
+    closePop();
+    var bg=document.createElement('div'); bg.className='frz-modal-bg';
+    bg.innerHTML='<div class="frz-modal" style="width:460px">'+
+      '<div class="frz-modal-hd">Complete '+esc(sp.name)+'<button class="frz-iconbtn" id="frzCpClose">✕</button></div>'+
+      '<div class="frz-modal-bd"><div style="margin-bottom:12px"><b>'+unfinished.length+'</b> of <b>'+items.length+'</b> items are not Done/Released. What should happen to them?</div>'+
+        '<label class="frz-pop-opt"><input type="radio" name="frzCarry" value="next" checked> Move to the next sprint</label>'+
+        '<label class="frz-pop-opt"><input type="radio" name="frzCarry" value="backlog"> Return to the backlog</label>'+
+      '</div>'+
+      '<div class="frz-modal-ft"><span class="frz-modal-err" id="frzCpErr"></span><button class="frz-viewopt" id="frzCpCancel">Cancel</button><button class="frz-newitem" id="frzCpSave">Complete sprint</button></div>'+
+    '</div>';
+    root.appendChild(bg);
+    function close(){ bg.remove(); }
+    bg.querySelector('#frzCpClose').addEventListener('click', close);
+    bg.querySelector('#frzCpCancel').addEventListener('click', close);
+    bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
+    bg.querySelector('#frzCpSave').addEventListener('click', function(){
+      var choice=(bg.querySelector('input[name=frzCarry]:checked')||{}).value||'next';
+      bg.querySelector('#frzCpSave').disabled=true; close(); doCompleteSprint(sp, unfinished, choice);
+    });
+  }
+  function doCompleteSprint(sp, unfinished, choice){
+    var ps=_val('projects',[])||[];
+    function finalize(){
+      sp.carryOver = unfinished.length; sp.state='Completed';
+      saveSprints(function(){ refreshPlan(); _call('showToast','Sprint completed'+(unfinished.length?(' · '+unfinished.length+' carried over'):'')); }).catch(function(){ sp.state='Active'; });
+    }
+    if(!unfinished.length){ finalize(); return; }
+    var targetId='', targetName='';
+    if(choice==='next'){
+      var nxt=plannedSprint();
+      if(!nxt){ nxt={ id:'sp'+Date.now(), name:nextSprintName(), goal:'', startDate:addDaysStr(sp.endDate,1), endDate:addDaysStr(addDaysStr(sp.endDate,1),14), state:'Planned', scope:'global', carryOver:0 }; _sprints.push(nxt); }
+      targetId=nxt.id; targetName=nxt.name;
+    }
+    var chain=Promise.resolve();
+    unfinished.forEach(function(p){
+      chain=chain.then(function(){
+        var i=ps.findIndex(function(x){return x.id===p.id;});
+        var patch=Object.assign({}, p, {sprintId:targetId, _username:_call('getUsername')});
+        return API.put('/api/projects/'+p.id, patch).then(function(updated){ if(i>-1) ps[i]=updated; _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Sprint planning: '+sp.name+' completed → '+(choice==='next'?('moved to '+targetName):'returned to backlog'), null, null); });
+      });
+    });
+    chain.then(finalize).catch(function(){ _call('showToast','Some items failed to update','error'); finalize(); });
   }
 
   function onResize(){

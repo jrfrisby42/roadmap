@@ -1832,6 +1832,47 @@ def put_boards(body = Body(...), auth: dict = Depends(require_auth)):
     write_audit(team, "beta:boards", auth["username"], changes={"count": len(boards)})
     return {"boards": boards}
 
+# ── Beta: Sprints (shared, global per team; single Active) ────────────────────
+# Additive, /beta-only. Sprints are stored in the config table under key 'sprints'.
+# Items reference a sprint via their existing sprintId field. Any logged-in user
+# may manage sprints for now (require_auth). Production is untouched.
+_SPRINT_STATES = {"Planned", "Active", "Completed"}
+
+def _read_sprints(team: str):
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='sprints'").fetchone()
+    try:
+        return json.loads(row["value"]) if row else []
+    except Exception:
+        return []
+
+@app.get("/api/sprints")
+def get_sprints(auth: dict = Depends(require_auth)):
+    return {"sprints": _read_sprints(auth["team"])}
+
+@app.put("/api/sprints")
+def put_sprints(body = Body(...), auth: dict = Depends(require_auth)):
+    team = auth["team"]
+    sprints = body.get("sprints") if isinstance(body, dict) else body
+    if not isinstance(sprints, list):
+        raise HTTPException(422, "sprints must be a list")
+    active = 0
+    for s in sprints:
+        if not isinstance(s, dict) or not s.get("id") or not (s.get("name") or "").strip():
+            raise HTTPException(422, "each sprint needs an id and a name")
+        if s.get("state") not in _SPRINT_STATES:
+            raise HTTPException(422, f"invalid sprint state {s.get('state')!r}")
+        if s.get("state") == "Active":
+            active += 1
+    if active > 1:
+        raise HTTPException(422, "only one sprint may be Active at a time")
+    with db(team) as c:
+        c.execute("INSERT INTO config(key,value) VALUES('sprints',?) "
+                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                  (json.dumps(sprints),))
+    write_audit(team, "beta:sprints", auth["username"], changes={"count": len(sprints)})
+    return {"sprints": sprints}
+
 # ── Import ────────────────────────────────────────────────────────────────────
 @app.post("/api/import")
 def bulk_import(body: dict = Body(...), auth: dict = Depends(require_role("admin"))):
