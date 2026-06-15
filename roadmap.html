@@ -8578,9 +8578,9 @@ function _listRowHtml(it, depth){
     ? `<input type="checkbox" class="list-cb" data-id="${it.id}" ${_listSelected.has(it.id)?'checked':''}>` : '';
   return `<tr class="list-row" data-id="${it.id}" data-depth="${depth}" data-expanded="0" style="cursor:pointer;border-top:1px solid var(--row-sep)">
     <td class="list-cb-cell" style="padding:7px 10px;width:32px">${cb}</td>
-    <td style="${firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${chevron}${_listCell(it.itemKey)}</td>
+    <td style="${firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${chevron}${it.product ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${projectColor(it.product)};margin-right:7px;vertical-align:middle;flex-shrink:0" title="${escA(it.product)}"></span>` : ''}${_listCell(it.itemKey)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.type)}</td>
-    <td style="padding:7px 10px">${it.product ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${projectColor(it.product)};margin-right:7px;vertical-align:middle;flex-shrink:0" title="${escA(it.product)}"></span>` : ''}${_listCell(it.name)} ${getItemActivityIndicator(it.id)}</td>
+    <td style="padding:7px 10px">${_listCell(it.name)} ${getItemActivityIndicator(it.id)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(it.status)}</span>` : '—'}</td>
     <td style="padding:7px 10px;white-space:nowrap">${(it.priority && PRIO_LABELS[it.priority]) ? `<span style="background:${PRIO_COLORS[it.priority]}22;color:${PRIO_COLORS[it.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[it.priority])}</span>` : '—'}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.dev)}</td>
