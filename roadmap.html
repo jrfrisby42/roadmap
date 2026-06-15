@@ -9636,7 +9636,13 @@ function updateActivityBadge(){
     countEl.style.display = count > 0 ? 'inline' : 'none';
     countEl.textContent   = count > 99 ? '99+' : String(count);
   }
-  if(openEl) openEl.textContent = openActivities().length > 0 ? String(openActivities().length) : '';
+  if(openEl){
+    // Match the scoped list (item 6): when /beta scopes the Activity Center to a
+    // project, the count reflects only that project's open items.
+    const projScope = window._acProjectScope || '';
+    const openN = openActivities().filter(a => !projScope || a.project === projScope).length;
+    openEl.textContent = openN > 0 ? String(openN) : '';
+  }
 }
 
 // Mark all open items as Read when AC is opened
@@ -14557,6 +14563,10 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-topbar { height:var(--frz-topbar-h); display:flex; align-items:center; gap:10px; padding:0 14px; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-surface); flex-shrink:0; }
   .frz-beta .frz-collapse { width:30px; height:30px; border:0; background:transparent; cursor:pointer; border-radius:8px; color:var(--frz-text-secondary); display:grid; place-items:center; flex-shrink:0; }
   .frz-beta .frz-collapse:hover { background:var(--frz-bg-app); }
+  /* Collapse toggle lives in the rail now: right side of the brand when expanded
+     (vertically centered with the logo), top of the icon list when collapsed. */
+  .frz-beta .frz-brand .frz-collapse { margin-left:auto; }
+  .frz-beta.is-collapsed-ui .frz-scroll .frz-collapse { margin:0 auto 6px; }
   .frz-beta .frz-collapse svg { width:16px; height:16px; }
   .frz-beta .frz-topbar-left { display:flex; align-items:center; gap:8px; min-width:0; }
   .frz-beta .frz-title { font-weight:700; font-size:15px; white-space:nowrap; }
@@ -14975,6 +14985,7 @@ if ('serviceWorker' in navigator) {
             '<img class="frz-logo frz-logo-mark" src="'+FLOW_LOGO_MARK+'" alt="Flow">'+
           '</a>'+
           '<span class="frz-beta-pill">Beta</span>'+
+          '<button class="frz-collapse" id="frzCollapse" aria-label="Toggle navigation" title="Toggle navigation [">'+IC.collapse+'</button>'+
         '</div>'+
         '<div class="frz-scroll">'+
           '<nav class="frz-section" id="frzViewNav" aria-label="Views"><div class="frz-heading">VIEWS</div></nav>'+
@@ -14989,7 +15000,6 @@ if ('serviceWorker' in navigator) {
       '</aside>'+
       '<div class="frz-main">'+
         '<header class="frz-topbar">'+
-          '<button class="frz-collapse" id="frzCollapse" aria-label="Toggle navigation" title="Toggle navigation [">'+IC.collapse+'</button>'+
           '<div class="frz-topbar-left" id="frzLeft"></div>'+
           '<div class="frz-topbar-right">'+
             '<div class="frz-badges" id="frzBadges"></div>'+
@@ -15605,6 +15615,13 @@ if ('serviceWorker' in navigator) {
     setCollapsed(view==='gantt', true); // auto default: collapsed on gantt
   }
   function _reducedMotion(){ try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(e){ return false; } }
+  // Collapse toggle relocates: brand (right side) when expanded → top of the
+  // icon list when collapsed.
+  function _placeCollapseBtn(collapsed){
+    var btn=document.getElementById('frzCollapse'); if(!btn || !root) return;
+    if(collapsed){ var sc=root.querySelector('.frz-scroll'); if(sc && btn.parentNode!==sc) sc.insertBefore(btn, sc.firstChild); }
+    else { var br=root.querySelector('.frz-brand'); if(br && btn.parentNode!==br) br.appendChild(btn); }
+  }
   function setCollapsed(c, silent){
     state.collapsed = c;
     var instant = silent || _reducedMotion();
@@ -15612,12 +15629,13 @@ if ('serviceWorker' in navigator) {
       // shrink the column now (animated); hide labels/sections only AFTER the
       // column finishes, so the content doesn't pop out before the rail closes.
       root.classList.add('is-collapsed');
-      if (instant) root.classList.add('is-collapsed-ui');
-      else setTimeout(function(){ if (state.collapsed) root.classList.add('is-collapsed-ui'); }, 200);
+      if (instant){ root.classList.add('is-collapsed-ui'); _placeCollapseBtn(true); }
+      else setTimeout(function(){ if (state.collapsed){ root.classList.add('is-collapsed-ui'); _placeCollapseBtn(true); } }, 200);
     } else {
       // restore the expanded layout immediately, then widen (reveal).
       root.classList.remove('is-collapsed-ui');
       root.classList.remove('is-collapsed');
+      _placeCollapseBtn(false);
     }
     if (!silent) lset(railKey(), c?'c':'e');
     // Re-render the view to the FINAL column width AFTER the transition settles —
