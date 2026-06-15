@@ -13,10 +13,12 @@ def _mk(client, headers, **fields):
     return client.post("/api/projects", json=body, headers=headers).json()
 
 
-def test_no_prefix_no_key(client, team, admin_headers):
+def test_no_prefix_uses_default(client, team, admin_headers):
+    # A product with no keyPrefix (or no product) still gets a key under the
+    # default prefix, so every item is addressable.
     _set_products(client, admin_headers, [{"name": "Fraznet", "builtin": True}])
     item = _mk(client, admin_headers, product="Fraznet")
-    assert not item.get("itemKey")     # product has no prefix → no key
+    assert item.get("itemKey") == f"{server.DEFAULT_KEY_PREFIX}-1"
 
 
 def test_key_assigned_and_increments(client, team, admin_headers):
@@ -47,7 +49,8 @@ def test_key_indexed_column(client, team, admin_headers):
 
 
 def test_backfill_on_prefix_save(client, team, admin_headers):
-    # Items created before a prefix exists have no key...
+    # With no product prefix items get default-prefix keys; since the default IS
+    # "FRAZ", defining a "FRAZ" prefix here leaves them as FRAZ-1/FRAZ-2.
     _set_products(client, admin_headers, [{"name": "Fraznet", "builtin": True}])
     p1 = _mk(client, admin_headers, product="Fraznet")["id"]
     p2 = _mk(client, admin_headers, product="Fraznet")["id"]

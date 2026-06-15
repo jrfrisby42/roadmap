@@ -2161,6 +2161,24 @@ function renderCurrentView(){
   else render();
 }
 
+// ── Single sources of truth ───────────────────────────────────────────────
+// Priority order for ALL sorting: Urgent(1) → High(2) → Medium(3) → Low(4),
+// blank/none always last. Used by every priority sort (List server-side mirrors
+// this order; My Work + planning backlog read priorityRank()).
+const PRIORITY_RANK = { 1:0, 2:1, 3:2, 4:3 };
+function priorityRank(pr){ const n = parseInt(pr, 10); return PRIORITY_RANK[n] !== undefined ? PRIORITY_RANK[n] : 99; }
+
+// Project (product) color — single source. Picked from PROJECT_PALETTE in
+// Admin → Projects; unset projects get a stable per-name fallback so they still
+// differ. EVERY place that shows a project color must read projectColor().
+const PROJECT_PALETTE = ['#0059A9','#65B1E3','#0E7C86','#2E8B6F','#C0700B','#C0392B','#8E4FB0','#4A6178'];
+function projectColor(name){
+  const prod = (products||[]).find(p => (p.name||p) === name);
+  if(prod && prod.color) return prod.color;
+  let h = 0; const s = String(name||''); for(let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) >>> 0;
+  return PROJECT_PALETTE[h % PROJECT_PALETTE.length];
+}
+
 // Update the priority select's text color to match the selected priority
 const PRIORITY_COLORS = {'1':'#e8394a','2':'#e87000','3':'#c09000','4':'#22b96e','':'#888'};
 function updatePrioritySelectColor(sel){
@@ -6986,6 +7004,11 @@ function startEditProduct(i){
         <input class="dev-edit-inp" id="pei_prefix_${i}" value="${escA(p.keyPrefix||'')}" placeholder="e.g. FRAZ" maxlength="8" style="flex:1;text-transform:uppercase" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')">
       </div>
       <div style="font-size:10px;color:var(--muted)">Generates item keys like <b>${escA(p.keyPrefix||'KEY')}-142</b>. Saving assigns keys to existing items in this project.</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <label style="font-size:11px;color:var(--muted);min-width:84px">Color</label>
+        <input type="hidden" id="pei_color_${i}" value="${escA(p.color||'')}">
+        <div id="pei_swatches_${i}" style="display:flex;gap:6px;flex-wrap:wrap">${PROJECT_PALETTE.map(c=>`<button type="button" onclick="pickProductColor(${i},'${c}')" data-sw="${c}" title="${c}" style="width:20px;height:20px;border-radius:50%;background:${c};cursor:pointer;border:2px solid ${(p.color||'').toLowerCase()===c.toLowerCase()?'var(--text)':'transparent'};box-shadow:0 0 0 1px var(--border);padding:0"></button>`).join('')}</div>
+      </div>
       <div>
         <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Workflow Statuses (used in Kanban columns)</div>
         <div id="pei_statuses_${i}" style="display:flex;flex-wrap:wrap;align-items:center">${statusCheckboxes}</div>
@@ -6993,6 +7016,13 @@ function startEditProduct(i){
       </div>
     </div>`;
   document.getElementById(`pei_${i}`)?.focus();
+}
+
+function pickProductColor(i, c){
+  const h = document.getElementById(`pei_color_${i}`); if(h) h.value = c;
+  document.querySelectorAll(`#pei_swatches_${i} [data-sw]`).forEach(b=>{
+    b.style.border = '2px solid ' + (b.getAttribute('data-sw').toLowerCase()===c.toLowerCase() ? 'var(--text)' : 'transparent');
+  });
 }
 
 function saveEditProduct(i){
@@ -7005,6 +7035,8 @@ function saveEditProduct(i){
     const pref = prefEl.value.trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
     if(pref) products[i].keyPrefix = pref; else delete products[i].keyPrefix;
   }
+  const colEl = document.getElementById(`pei_color_${i}`);
+  if(colEl){ const col = colEl.value.trim(); if(col) products[i].color = col; else delete products[i].color; }
   // Save selected statuses
   const statusCks = document.querySelectorAll(`#pei_statuses_${i} input[type=checkbox]`);
   const selectedStatuses = [...statusCks].filter(c=>c.checked||c.disabled).map(c=>c.value);
@@ -7792,8 +7824,10 @@ function renderAcOpen(){
   const ownerFilter = getCurrentOwnerFilter();
   // Sort: user-generated first (by severity then newest), system-generated at bottom (newest)
   const isSystemActivity = a => a.source === 'System' || a.created_by === 'System';
+  const projScope = window._acProjectScope || '';   // set by /beta from the rail project (item 6); empty = all
   let items = openActivities()
     .filter(a => !ownerFilter || a.owner === ownerFilter)
+    .filter(a => !projScope || a.project === projScope)
     .sort((a,b) => {
       const aSys = isSystemActivity(a) ? 1 : 0;
       const bSys = isSystemActivity(b) ? 1 : 0;
@@ -7938,6 +7972,7 @@ function renderAcHistory(){
   const type  = document.getElementById('acFilterType')?.value;
   const owner = document.getElementById('acFilterOwner')?.value;
   const ownerFilter = getCurrentOwnerFilter();
+  const projScope = window._acProjectScope || '';   // set by /beta from the rail project (item 6)
 
   const AC_HISTORY_TYPES = new Set([
     'At Risk', 'Blocked', 'Flagged Issue', 'Needs Decision', 'Needs Date Check',
@@ -7948,6 +7983,7 @@ function renderAcHistory(){
   let items = [...activities]
     .filter(a => {
       if(!AC_HISTORY_TYPES.has(a.activity_type)) return false;
+      if(projScope && a.project !== projScope) return false;
       // Hide system auto-cleared entries — these are housekeeping, not user actions
       if(a.resolved_by === 'System' && (a.action_taken||'').startsWith('Auto-cleared')) return false;
       // Hide admin config changes (Team Settings) — these belong in the audit log, not AC
@@ -8544,7 +8580,7 @@ function _listRowHtml(it, depth){
     <td class="list-cb-cell" style="padding:7px 10px;width:32px">${cb}</td>
     <td style="${firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${chevron}${_listCell(it.itemKey)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.type)}</td>
-    <td style="padding:7px 10px">${_listCell(it.name)}</td>
+    <td style="padding:7px 10px">${it.product ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${projectColor(it.product)};margin-right:7px;vertical-align:middle;flex-shrink:0" title="${escA(it.product)}"></span>` : ''}${_listCell(it.name)} ${getItemActivityIndicator(it.id)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(it.status)}</span>` : '—'}</td>
     <td style="padding:7px 10px;white-space:nowrap">${(it.priority && PRIO_LABELS[it.priority]) ? `<span style="background:${PRIO_COLORS[it.priority]}22;color:${PRIO_COLORS[it.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[it.priority])}</span>` : '—'}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.dev)}</td>
@@ -14059,12 +14095,28 @@ async function boot(){
   populateProductSelect();
   populateTypeSelect();
   populateAssigneeDrop();
-  initViewSelect(); // sets viewMode and calls render() or renderKanban()
-  applyMobileViewDefault(); // on small screens, default to Kanban
-  initSearch();     // wire search input
-  loadSavedViews(); // load user's saved views from localStorage
-  applyDefaultViewIfSet(); // apply default view if one is set
-  checkItemPageParam(); // open item page if ?item= in URL
+  if (location.pathname.startsWith('/beta')) {
+    // The /beta Flow shell drives ALL rendering + routing. Skip classic's initial
+    // view render (and default-view / ?item= handling) so it can't flash a classic
+    // view before the shell mounts over it. Keep viewMode + the select coherent
+    // for when the shell later calls initViewSelect. Re-show the loading overlay
+    // (boot hid it at the /api/all step) so it covers the gap until the shell
+    // mounts and hides it — no blank flash. Fallback timer guarantees the overlay
+    // lifts even if the shell script fails to mount.
+    try { viewMode = sessionStorage.getItem('frazil_view') || 'gantt'; } catch(e){ viewMode = 'gantt'; }
+    const _vs = document.getElementById('viewSelect'); if(_vs) _vs.value = viewMode;
+    initSearch();     // wire the shared search input (the shell relocates it)
+    loadSavedViews(); // harmless; the classic saved-view menu is hidden under the shell
+    showLoading(true);
+    setTimeout(() => showLoading(false), 6000);
+  } else {
+    initViewSelect(); // sets viewMode and calls render() or renderKanban()
+    applyMobileViewDefault(); // on small screens, default to Kanban
+    initSearch();     // wire search input
+    loadSavedViews(); // load user's saved views from localStorage
+    applyDefaultViewIfSet(); // apply default view if one is set
+    checkItemPageParam(); // open item page if ?item= in URL
+  }
 
   // Load activities and run auto-notifications (non-blocking)
   loadActivities().then(()=>{
@@ -14794,6 +14846,11 @@ if ('serviceWorker' in navigator) {
   body.dark-mode .frz-mention-menu .frz-mm-opt { color:#eef0fa; }
   body.dark-mode .frz-mention-menu .frz-mm-opt:hover,
   body.dark-mode .frz-mention-menu .frz-mm-opt.is-active { background:#15314a; color:#4da3e8; }
+  /* Item 8: the Flow logos are blue with white outlines on transparent — on the
+     dark rail the dark-blue fill loses contrast. Sit them on a light rounded chip
+     (mirrors how they read on the light rail) so they stay crisp. */
+  body.dark-mode .frz-beta .frz-brandlink { display:inline-flex; align-items:center; background:#eef4fa; border-radius:9px; padding:3px 9px; }
+  body.dark-mode .frz-beta.is-collapsed-ui .frz-brandlink { padding:4px; }
 </style>
 <script>
 (function(){
@@ -14891,11 +14948,11 @@ if ('serviceWorker' in navigator) {
     // synchronous, by the time this async poll observes currentUser truthy the
     // entire boot tail has completed, so build() runs LAST and isn't clobbered.
     var lw = document.getElementById('loginWall');
-    var lo = document.getElementById('loadingOverlay');
     var loggedIn = !!_val('currentUser', '');
     var loginVisible = lw && getComputedStyle(lw).display !== 'none';
-    var loadingVisible = lo && getComputedStyle(lo).display !== 'none';
-    return loggedIn && !loginVisible && !loadingVisible && Array.isArray(_val('projects', null));
+    // NOTE: deliberately NOT gating on the loading overlay — on /beta, boot keeps
+    // it up to cover the mount gap, and build() hides it once the shell renders.
+    return loggedIn && !loginVisible && Array.isArray(_val('projects', null));
   }
   function whenReady(cb){ if (ready()) cb(); else setTimeout(function(){ whenReady(cb); }, 60); }
 
@@ -15029,6 +15086,32 @@ if ('serviceWorker' in navigator) {
       if (root && state.view==='planning') return renderBetaPlanning();
       return _origRenderPlanning.apply(this, arguments);
     };
+    // Wrap the Activity Center open so it scopes to the rail's selected project
+    // (item 6). Empty scope = all projects. The notification bell is untouched.
+    if (window.openActivityCenter && !window._frzWrapAC){
+      window._frzWrapAC = true;
+      var _origOpenAC = window.openActivityCenter;
+      window.openActivityCenter = function(){
+        window._acProjectScope = (root && state.project && state.project!=='__all__') ? state.project : '';
+        return _origOpenAC.apply(this, arguments);
+      };
+    }
+    // Wrap the production flag submit so the beta item-page flag banner refreshes
+    // right after a flag is written (reuses the production write path verbatim).
+    if (window.submitFlagIssue && !window._frzWrapFlag){
+      window._frzWrapFlag = true;
+      var _origSubmitFlag = window.submitFlagIssue;
+      window.submitFlagIssue = function(){
+        var r = _origSubmitFlag.apply(this, arguments);
+        Promise.resolve(r).then(function(){
+          if (state.onItem && state.itemId!=null){
+            var pp=(_val('projects',[])||[]).filter(function(x){return x.id===state.itemId;})[0];
+            if(pp) injectFlag(pp);
+          }
+        }).catch(function(){});
+        return r;
+      };
+    }
     wire();
     renderRail();
     onResize();
@@ -15036,7 +15119,7 @@ if ('serviceWorker' in navigator) {
     loadNotifs();
     _notifTimer = setInterval(loadNotifs, 60000);
     // Load shared boards + sprints + releases first so deep links mount correctly, then route.
-    loadBoards(function(){ loadSprints(function(){ loadReleases(function(){ routeFromLocation(true); }); }); });
+    loadBoards(function(){ loadSprints(function(){ loadReleases(function(){ routeFromLocation(true); _call('showLoading', false); }); }); });
   }
 
   // ════════ rail ════════
@@ -15080,14 +15163,14 @@ if ('serviceWorker' in navigator) {
     var allBtn = document.createElement('button');
     allBtn.className='frz-item'; allBtn.setAttribute('data-proj','__all__');
     allBtn.setAttribute('aria-current', String(state.project==='__all__'));
-    allBtn.innerHTML = '<span class="frz-dot" style="background:'+PROJ_COLORS[0]+'"></span><span>All projects</span><span class="frz-count">'+scopeAllCount()+'</span>';
+    allBtn.innerHTML = '<span class="frz-dot" style="background:var(--frz-accent)"></span><span>All projects</span><span class="frz-count">'+scopeAllCount()+'</span>';
     pn.appendChild(allBtn);
     products.forEach(function(pr, i){
       var name = pr.name || pr;
       var b = document.createElement('button');
       b.className='frz-item'; b.setAttribute('data-proj', name);
       b.setAttribute('aria-current', String(state.project===name));
-      b.innerHTML = '<span class="frz-dot" style="background:'+PROJ_COLORS[(i+1)%PROJ_COLORS.length]+'"></span><span>'+esc(name)+'</span><span class="frz-count">'+projItems(name).length+'</span>';
+      b.innerHTML = '<span class="frz-dot" style="background:'+(_call('projectColor',name)||PROJ_COLORS[(i+1)%PROJ_COLORS.length])+'"></span><span>'+esc(name)+'</span><span class="frz-count">'+projItems(name).length+'</span>';
       pn.appendChild(b);
     });
     // boards + saved filters
@@ -15307,7 +15390,7 @@ if ('serviceWorker' in navigator) {
   }
   function _mwDue(p){ return p.revised || p.due || ''; }   // effective/current target date
   function myWorkSort(a,b){
-    var pa=(+a.priority)||99, pb=(+b.priority)||99; if(pa!==pb) return pa-pb;   // priority: 1=Urgent first
+    var pa=_call('priorityRank',a.priority), pb=_call('priorityRank',b.priority); if(pa!==pb) return pa-pb;   // shared order: Urgent first, blank last
     var da=_mwDue(a), db=_mwDue(b);
     if(da!==db){ if(!da) return 1; if(!db) return -1; return da<db?-1:1; }       // due asc, blanks last
     return String(a.name||'').toLowerCase().localeCompare(String(b.name||'').toLowerCase());
@@ -15401,25 +15484,34 @@ if ('serviceWorker' in navigator) {
     _debrandItem(); setTimeout(_debrandItem, 500);
     // top bar: Back + breadcrumb
     var p = ps.filter(function(x){return x.id===id;})[0] || {};
-    var crumbKey = p.itemKey ? '<span class="frz-crumb-key" id="frzCrumbKey" title="Copy key">'+esc(p.itemKey)+'</span> › ' : '';
+    // Breadcrumb: Project(dot) › [PARENT-KEY ›] ITEM-KEY  (no item name — matches Jira).
+    // Parent is the subtask→parent relationship ONLY (p.parent), never recurrence_parent.
+    var _ps = _val('projects',[])||[];
+    var parent = (p.parent!=null) ? _ps.filter(function(x){return x.id===p.parent;})[0] : null;
+    var projDot = '<span class="frz-dot" style="background:'+(_call('projectColor', p.product)||'var(--frz-accent)')+';margin-right:2px"></span>';
+    var parentCrumb = parent ? '<span class="frz-crumb-key frz-crumb-parent" id="frzParentCrumb" title="Open parent">'+(parent.itemKey?esc(parent.itemKey):esc(parent.name||'parent'))+'</span> › ' : '';
+    var selfCrumb = '<span class="frz-crumb-key" id="frzCrumbKey"'+(p.itemKey?' title="Copy key"':'')+'>'+(p.itemKey?esc(p.itemKey):esc(p.name||''))+'</span>';   // key, or name fallback if keyless
     document.getElementById('frzLeft').innerHTML =
       '<button class="frz-back" id="frzBack">'+IC.back+' Back</button>'+
-      '<span class="frz-crumbs"><span>'+esc(p.product||'—')+'</span> › '+crumbKey+'<span class="frz-crumb-name">'+esc(p.name||'')+'</span></span>';
+      '<span class="frz-crumbs">'+projDot+'<span>'+esc(p.product||'—')+'</span> › '+parentCrumb+selfCrumb+'</span>';
     // status + priority badges (production colors, untouched)
     var badges='';
     if (p.status) badges += '<span class="'+(_call('statusCls',p.status)||'')+'" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px">'+esc(p.status)+'</span>';
     var PL={1:'Urgent',2:'High',3:'Medium',4:'Low'}, PC={1:'#e8394a',2:'#e87000',3:'#e8c000',4:'#22b96e'};
     if (p.priority && PL[p.priority]) badges += '<span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;background:'+PC[p.priority]+'22;color:'+PC[p.priority]+'">'+PL[p.priority]+'</span>';
     badges += '<button class="frz-watch" id="frzWatchBtn" title="Watch this item">'+IC.bell+'<span>Watch</span></button>';   // Stage 3b
+    badges += '<button class="frz-watch" id="frzFlagBtn" title="Flag an issue"><svg class="frz-ic" viewBox="0 0 16 16" style="width:13px;height:13px"><path d="M4 14V3M4 3.5C5.5 2.5 7 2.5 8.5 3.5S11.5 4.5 13 3.5V9c-1.5 1-3 1-4.5 0S5.5 8 4 9"/></svg><span>Flag</span></button>';   // item 4: reuse production flag dialog
     document.getElementById('frzBadges').innerHTML = badges;
     loadWatchState(id);
+    var fb=document.getElementById('frzFlagBtn'); if(fb) fb.addEventListener('click', function(){ _call('openFlagIssue', id); });
     document.getElementById('frzBack').addEventListener('click', goBack);
-    var ck=document.getElementById('frzCrumbKey'); if(ck) ck.addEventListener('click', function(){ try{ navigator.clipboard.writeText(p.itemKey); _call('showToast','Copied '+p.itemKey); }catch(e){} });
+    var ck=document.getElementById('frzCrumbKey'); if(ck && p.itemKey) ck.addEventListener('click', function(){ try{ navigator.clipboard.writeText(p.itemKey); _call('showToast','Copied '+p.itemKey); }catch(e){} });
+    var pc=document.getElementById('frzParentCrumb'); if(pc && parent) pc.addEventListener('click', function(){ openItem(parent.id); });
     // Feature C: inject the Release selector into the item Details (beta-only; idempotent)
     injectReleaseField(p); setTimeout(function(){ injectReleaseField(p); }, 400);
     // Stage 2: inject Attachments + Sprint-history sections (beta-only; idempotent)
-    injectSprintHistory(p); injectAttachments(p);
-    setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); }, 500);
+    injectSprintHistory(p); injectAttachments(p); injectFlag(p);
+    setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); injectFlag(p); }, 500);
     // Stage 3b: wire @mention typeahead on the comment box + description (idempotent)
     setTimeout(function(){ attachMentionInput(document.getElementById('ipCommentText')); attachMentionRich(document.getElementById('ipNotes')); }, 300);
     renderBar();
@@ -15657,7 +15749,13 @@ if ('serviceWorker' in navigator) {
       var savedBtn = e.target.closest && e.target.closest('[data-saved]');
       if (savedBtn){ var s=state.saved.filter(function(x){return x.id===savedBtn.getAttribute('data-saved');})[0]; if(s) applySaved(s); return; }
       var proj = e.target.closest && e.target.closest('[data-proj]');
-      if (proj){ setProject(proj.getAttribute('data-proj')); return; }
+      if (proj){
+        // item 9: selecting a project takes you to the List, scoped to it.
+        var pn=proj.getAttribute('data-proj');
+        state.project = pn; lset(projKey(), pn);   // setView→setProjectPanel applies this to the product filter
+        navigate('/beta/list');
+        return;
+      }
       var boardMenu = e.target.closest && e.target.closest('[data-boardmenu]');
       if (boardMenu){ e.stopPropagation(); boardRowMenu(boardMenu); return; }
       var boardBtn = e.target.closest && e.target.closest('[data-board]');
@@ -15800,7 +15898,7 @@ if ('serviceWorker' in navigator) {
         var pts=(p.storyPoints!=null&&p.storyPoints!=='')?(esc(p.storyPoints)+' pts'):'';
         return '<div class="frz-bcard" draggable="true" data-id="'+p.id+'" onclick="openItemPage('+p.id+')">'
           + (p.itemKey?'<div class="frz-bcard-key">'+esc(p.itemKey)+'</div>':'')
-          + '<div class="frz-bcard-name">'+esc(p.name||'')+'</div>'
+          + '<div class="frz-bcard-name">'+esc(p.name||'')+' '+(_call('getItemActivityIndicator', p.id)||'')+'</div>'
           + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' · '+pts:'')+(badge?' '+badge:'')+'</div>'
           + '</div>';
       }).join('');
@@ -16013,7 +16111,7 @@ if ('serviceWorker' in navigator) {
       if(fSt && fSt.indexOf(p.status)<0) return false;
       return true;
     }).sort(function(a,b){
-      var pa=(a.priority&&+a.priority>0)?+a.priority:100, pb=(b.priority&&+b.priority>0)?+b.priority:100;
+      var pa=_call('priorityRank',a.priority), pb=_call('priorityRank',b.priority);   // shared order: Urgent first, blank last
       if(pa!==pb) return pa-pb;
       return (a.itemKey||'').localeCompare(b.itemKey||'');
     });
@@ -16433,6 +16531,35 @@ if ('serviceWorker' in navigator) {
   var MAX_ATTACH_BYTES = 50*1024*1024;
   function fmtBytes(n){ n=+n||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(0)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
   function attExt(name){ var m=/\.([A-Za-z0-9]+)$/.exec(name||''); return m?m[1].toUpperCase().slice(0,4):'FILE'; }
+  // ════════ Flag Issue — surfaces the EXISTING production flag (an activity) ════
+  // Flag = an open activity of one of these types (production model + write path).
+  var FLAG_TYPES = ['At Risk','Needs Decision','Blocked'];
+  function itemFlag(id){
+    var acts=_val('activities',[])||[];   // newest-first (server returns id DESC)
+    for(var i=0;i<acts.length;i++){ var a=acts[i]; if(a.item_id===id && (a.status==='Open'||a.status==='Read') && FLAG_TYPES.indexOf(a.activity_type)>=0) return a; }
+    return null;
+  }
+  function injectFlag(p){
+    if(!p) return;
+    var notes=document.getElementById('ipNotes');
+    var anchor = notes ? notes.parentElement.parentElement : document.getElementById('ipFieldsCard');
+    if(!anchor || !anchor.parentNode) return;
+    var container=anchor.parentNode;
+    var f=itemFlag(p.id), banner=document.getElementById('frzFlagBanner');
+    if(!f){ if(banner) banner.remove(); return; }
+    var COL={'Blocked':'#e8394a','At Risk':'#e8394a','Needs Decision':'#3b8fd4'};
+    var col=COL[f.activity_type]||'#e8a000';
+    if(!banner){
+      banner=document.createElement('div'); banner.id='frzFlagBanner';
+      banner.style.cssText='margin:0 0 12px;padding:9px 14px;border-radius:8px;font-size:13px;cursor:pointer;line-height:1.4';
+      banner.title='Open in Activity Center';
+      container.insertBefore(banner, container.firstChild);
+      banner.addEventListener('click', function(){ _call('openConflictActivityModal', p.id); });
+    }
+    banner.style.background=col+'1a'; banner.style.border='1px solid '+col+'66'; banner.style.color=col;
+    banner.innerHTML='<span style="font-weight:800">⚑ '+esc(f.activity_type)+'</span> '+esc(f.message||'')+(f.note?' <span style="opacity:.75">— '+esc(f.note)+'</span>':'');
+  }
+
   function injectAttachments(p){
     if(!p) return;
     var notes=document.getElementById('ipNotes');
