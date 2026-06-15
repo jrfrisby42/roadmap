@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Frazil Roadmap — Left Rail Navigation Mockup</title>
+<style>
+  :root {
+    --bg-app: #F5F8FB;
+    --bg-surface: #FFFFFF;
+    --bg-rail: #FAFCFE;
+    --border: #E1E8F0;
+    --border-strong: #C9D6E3;
+
+    --accent: #0059A9;
+    --accent-hover: #004A8F;
+    --accent-soft: #E7F1FA;
+    --accent-soft-border: #C3DCF1;
+    --sky: #65B1E3;             /* logo swoosh blue: highlights, info, progress */
+
+    --text: #14283F;
+    --text-secondary: #4A6178;
+    --text-muted: #8298AD;
+
+    --radius-chip: 999px;
+    --radius-control: 8px;
+    --topbar-h: 52px;
+    --rail-w: 232px;
+    --rail-w-collapsed: 56px;
+
+    --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg-app); color: var(--text); font-size: 14px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+  svg { stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* ── App frame: rail + main ─────────────────────────────── */
+  .app {
+    display: grid;
+    grid-template-columns: var(--rail-w) 1fr;
+    height: 620px;                 /* demo height; real app: 100vh */
+    max-width: 1200px;
+    margin: 16px auto;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    background: var(--bg-surface);
+    box-shadow: 0 1px 4px rgba(20,40,63,.05);
+    transition: grid-template-columns .18s ease;
+  }
+  .app.is-collapsed { grid-template-columns: var(--rail-w-collapsed) 1fr; }
+
+  /* ── Left rail ──────────────────────────────────────────── */
+  .rail {
+    background: var(--bg-rail);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .rail__brand {
+    height: var(--topbar-h);
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .brand__logo { height: 26px; width: auto; flex-shrink: 0; }
+  .brand__beta {
+    font-size: 11px; font-weight: 700; color: var(--accent);
+    background: var(--accent-soft); border-radius: 999px;
+    padding: 2px 8px; white-space: nowrap;
+  }
+  .brand__mark {
+    width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+    background: linear-gradient(135deg, #65B1E3, #0059A9);
+    color: #fff; font-weight: 800; font-size: 15px; font-style: italic;
+    display: grid; place-items: center;
+  }
+  .brand__name { font-weight: 700; font-size: 15px; white-space: nowrap; }
+
+  .rail__scroll { flex: 1; overflow-y: auto; padding: 10px 8px; }
+
+  .rail__section { margin-bottom: 18px; }
+  .rail__heading {
+    font-size: 11px; font-weight: 700; letter-spacing: .07em;
+    color: var(--text-muted);
+    padding: 0 10px 6px;
+    white-space: nowrap;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .rail__heading button {
+    border: 0; background: none; cursor: pointer; color: var(--text-muted);
+    font-size: 14px; line-height: 1; padding: 0 2px;
+  }
+  .rail__heading button:hover { color: var(--accent); }
+
+  .rail__item {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%;
+    border: 0; background: transparent; cursor: pointer;
+    font: inherit; font-size: 13.5px; font-weight: 500;
+    color: var(--text-secondary);
+    padding: 7px 10px;
+    border-radius: 8px;
+    white-space: nowrap;
+    transition: background .1s ease, color .1s ease;
+  }
+  .rail__item:hover { background: #EBF2F9; color: var(--text); }
+  .rail__item[aria-current="true"] {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .rail__item svg { width: 16px; height: 16px; flex-shrink: 0; }
+  .rail__item .count {
+    margin-left: auto;
+    font-size: 11.5px; font-weight: 600;
+    color: var(--text-muted);
+    background: #E7EEF5;
+    border-radius: 999px;
+    padding: 1px 7px;
+  }
+  .rail__item[aria-current="true"] .count { background: #D2E5F6; color: var(--accent); }
+
+  .rail__dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+  .rail__footer {
+    border-top: 1px solid var(--border);
+    padding: 8px;
+    flex-shrink: 0;
+  }
+
+  /* collapsed rail: hide labels, center icons */
+  .is-collapsed .rail__item { justify-content: center; padding: 9px 0; }
+  .is-collapsed .rail__item span,
+  .is-collapsed .rail__item .count,
+  .is-collapsed .rail__heading,
+  .is-collapsed .brand__name,
+  .is-collapsed .brand__beta,
+  .is-collapsed .rail__dot { display: none; }
+  .is-collapsed .rail__brand { justify-content: center; padding: 0; }
+  .is-collapsed .brand__logo { height: auto; max-width: 40px; }
+  .is-collapsed .rail__section--saved, .is-collapsed .rail__section--projects { display: none; }
+
+  /* ── Main column ────────────────────────────────────────── */
+  .main { display: flex; flex-direction: column; min-width: 0; }
+
+  .topbar {
+    height: var(--topbar-h);
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-surface);
+    flex-shrink: 0;
+  }
+  .topbar__collapse {
+    width: 30px; height: 30px;
+    border: 0; background: transparent; cursor: pointer;
+    border-radius: 8px; color: var(--text-secondary);
+    display: grid; place-items: center;
+  }
+  .topbar__collapse:hover { background: var(--bg-app); }
+  .topbar__collapse svg { width: 16px; height: 16px; }
+
+  .topbar__title { font-weight: 700; font-size: 15px; }
+  .topbar__crumbs { color: var(--text-muted); font-size: 13px; display: flex; gap: 6px; align-items: center; }
+
+  .topbar__right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+  .search {
+    display: flex; align-items: center; gap: 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-control);
+    padding: 5px 10px;
+    width: 210px;
+    color: var(--text-muted);
+  }
+  .search:focus-within { border-color: var(--accent); }
+  .search svg { width: 14px; height: 14px; flex-shrink: 0; }
+  .search input { border: 0; outline: 0; font: inherit; font-size: 13px; width: 100%; color: var(--text); }
+  .search kbd { font-family: inherit; font-size: 11px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; background: var(--bg-app); }
+
+  .btn-primary {
+    border: 0; background: var(--accent); color: #fff; cursor: pointer;
+    font: inherit; font-size: 13px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 13px; border-radius: var(--radius-control);
+    white-space: nowrap;
+  }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-primary svg { width: 13px; height: 13px; stroke-width: 2.2; }
+
+  .avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: #0059A9; color: #fff;
+    font-size: 12px; font-weight: 700;
+    display: grid; place-items: center;
+    cursor: pointer; border: 0;
+  }
+
+  /* ── Filter row (owned by each view) ────────────────────── */
+  .filterbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-surface);
+    overflow-x: auto; scrollbar-width: none;
+    flex-shrink: 0;
+  }
+  .filterbar::-webkit-scrollbar { display: none; }
+  .filterbar__spacer { flex: 1; }
+
+  .chip {
+    border: 1px solid var(--border-strong); background: var(--bg-surface);
+    font: inherit; font-size: 13px; color: var(--text-secondary);
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px 4px 12px;
+    border-radius: var(--radius-chip);
+    cursor: pointer; white-space: nowrap;
+  }
+  .chip:hover { border-color: var(--accent); }
+  .chip__label { color: var(--text-muted); font-weight: 500; }
+  .chip__value { color: var(--text); font-weight: 600; }
+  .chip--active { background: var(--accent-soft); border-color: var(--accent-soft-border); }
+  .chip--active .chip__value { color: var(--accent); }
+  .chip__clear {
+    width: 14px; height: 14px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--accent); color: #fff;
+    font-size: 10px; font-weight: 700; border: 0; cursor: pointer; padding: 0;
+  }
+  .chip__caret { width: 12px; height: 12px; stroke: var(--text-muted); stroke-width: 2; }
+
+  .chip--ghost { border-style: dashed; color: var(--text-muted); }
+  .chip--ghost:hover { color: var(--accent); }
+  .chip--ghost svg { width: 12px; height: 12px; stroke-width: 2; }
+
+  .viewopt {
+    border: 1px solid var(--border-strong); background: var(--bg-surface);
+    font: inherit; font-size: 12.5px; font-weight: 600; color: var(--text-secondary);
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: var(--radius-control);
+    cursor: pointer; white-space: nowrap;
+  }
+  .viewopt:hover { border-color: var(--accent); color: var(--accent); }
+  .viewopt svg { width: 13px; height: 13px; }
+
+  /* ── Content placeholder ────────────────────────────────── */
+  .content {
+    flex: 1;
+    display: grid; place-items: center;
+    color: var(--text-muted); font-size: 13px;
+    background: repeating-linear-gradient(45deg, transparent, transparent 12px, rgba(20,40,63,.025) 12px, rgba(20,40,63,.025) 24px);
+  }
+
+  /* ── Demo page notes ────────────────────────────────────── */
+  .demo-note { max-width: 1200px; margin: 26px auto 0; padding: 0 4px; }
+  .demo-note h2 { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
+  .demo-note p { color: var(--text-secondary); font-size: 13.5px; max-width: 80ch; }
+  body > .demo-note:first-child { margin-top: 30px; }
+</style>
+</head>
+<body>
+
+<div class="demo-note">
+  <h2>Left-rail navigation — click views, saved filters, and the collapse toggle (⟨⟩)</h2>
+  <p>Views, projects, and saved filters live in the rail. The top bar is quiet: context title, search, New item, user. Filters live in a per-view filter row above the content. Toggle the rail collapsed to see what Gantt gets back.</p>
+</div>
+
+<div class="app" id="app">
+  <!-- ═══ LEFT RAIL ═══ -->
+  <aside class="rail">
+    <div class="rail__brand">
+      <!-- PRODUCTION: use the real Frazil script-logo asset from the current
+           app header (e.g. /assets/frazil-logo.svg). The span below is a
+           stand-in for this offline mockup ONLY — never ship a generated
+           mark. Collapsed rail keeps the Frazil logo too, scaled to fit. -->
+      <img class="brand__logo" src="/assets/frazil-logo.svg" alt="Frazil"
+           onerror="this.style.display='none'; this.nextElementSibling.style.display='grid';">
+      <span class="brand__mark" style="display:none">f</span>
+      <span class="brand__name">Roadmap</span>
+      <span class="brand__beta">Beta</span>
+    </div>
+
+    <div class="rail__scroll">
+      <!-- Views -->
+      <nav class="rail__section" aria-label="Views" id="viewNav">
+        <div class="rail__heading">VIEWS</div>
+        <button class="rail__item" data-view="Gantt" aria-current="true">
+          <svg viewBox="0 0 16 16"><path d="M2 4h8M2 8h11M2 12h6"/><rect x="5" y="2.8" width="5" height="2.4" rx="1.2"/><rect x="7" y="6.8" width="6" height="2.4" rx="1.2"/><rect x="4" y="10.8" width="4" height="2.4" rx="1.2"/></svg>
+          <span>Gantt</span>
+        </button>
+        <button class="rail__item" data-view="Kanban" aria-current="false">
+          <svg viewBox="0 0 16 16"><rect x="2" y="2" width="3.4" height="12" rx="1"/><rect x="6.3" y="2" width="3.4" height="8" rx="1"/><rect x="10.6" y="2" width="3.4" height="10" rx="1"/></svg>
+          <span>Kanban</span>
+        </button>
+        <button class="rail__item" data-view="List" aria-current="false">
+          <svg viewBox="0 0 16 16"><path d="M5.5 3.5h9M5.5 8h9M5.5 12.5h9"/><circle cx="2.5" cy="3.5" r="1"/><circle cx="2.5" cy="8" r="1"/><circle cx="2.5" cy="12.5" r="1"/></svg>
+          <span>List</span><span class="count">127</span>
+        </button>
+        <button class="rail__item" data-view="Planning" aria-current="false">
+          <svg viewBox="0 0 16 16"><path d="M3 13V8M8 13V3M13 13v-7"/><path d="M2 14h12"/></svg>
+          <span>Planning</span><span class="count">12</span>
+        </button>
+        <button class="rail__item" data-view="Dashboard" aria-current="false">
+          <svg viewBox="0 0 16 16"><rect x="2" y="2" width="5.2" height="5.2" rx="1.2"/><rect x="8.8" y="2" width="5.2" height="5.2" rx="1.2"/><rect x="2" y="8.8" width="5.2" height="5.2" rx="1.2"/><rect x="8.8" y="8.8" width="5.2" height="5.2" rx="1.2"/></svg>
+          <span>Dashboard</span>
+        </button>
+      </nav>
+
+      <!-- Projects -->
+      <nav class="rail__section rail__section--projects" aria-label="Projects">
+        <div class="rail__heading">PROJECTS <button title="Add project">＋</button></div>
+        <button class="rail__item" aria-current="false">
+          <span class="rail__dot" style="background:#0059A9"></span><span>Fraznet</span><span class="count">127</span>
+        </button>
+        <button class="rail__item" aria-current="false">
+          <span class="rail__dot" style="background:#65B1E3"></span><span>Coremark</span><span class="count">31</span>
+        </button>
+      </nav>
+
+      <!-- Saved filters: the payoff of the whole pattern -->
+      <nav class="rail__section rail__section--saved" aria-label="Saved filters" id="savedNav">
+        <div class="rail__heading">SAVED FILTERS <button title="Save current filters">＋</button></div>
+        <button class="rail__item" data-saved="wasatch-bugs">
+          <svg viewBox="0 0 16 16"><path d="M2 3h12l-4.5 5.2V13l-3 1.6V8.2z"/></svg>
+          <span>Wasatch bugs in testing</span>
+        </button>
+        <button class="rail__item" data-saved="my-week">
+          <svg viewBox="0 0 16 16"><path d="M2 3h12l-4.5 5.2V13l-3 1.6V8.2z"/></svg>
+          <span>Delayed this month</span>
+        </button>
+      </nav>
+    </div>
+
+    <div class="rail__footer">
+      <button class="rail__item">
+        <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4"/></svg>
+        <span>Settings</span>
+      </button>
+      <button class="rail__item">
+        <svg viewBox="0 0 16 16"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M2.5 6.5h11M6 3v3.5"/></svg>
+        <span>Admin</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ═══ MAIN ═══ -->
+  <div class="main">
+    <!-- Slim top bar: no filters here -->
+    <header class="topbar">
+      <button class="topbar__collapse" id="collapseBtn" aria-label="Toggle navigation" title="Toggle navigation [">
+        <svg viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M6 2.5v11"/></svg>
+      </button>
+      <span class="topbar__title" id="viewTitle">Gantt</span>
+      <span class="topbar__crumbs" id="crumbs">· Fraznet</span>
+
+      <div class="topbar__right">
+        <label class="search">
+          <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+          <input type="search" placeholder="Search items…" aria-label="Search items">
+          <kbd>/</kbd>
+        </label>
+        <button class="btn-primary">
+          <svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>
+          New item
+        </button>
+        <button class="avatar" aria-label="Account">JR</button>
+      </div>
+    </header>
+
+    <!-- Per-view filter row -->
+    <div class="filterbar" id="filterbar"></div>
+
+    <div class="content" id="contentLabel">Gantt view content renders here — collapse the rail and this gains 176px of timeline</div>
+  </div>
+</div>
+
+<div class="demo-note">
+  <h2>Why this layout</h2>
+  <p><strong>Top bar:</strong> identity + global actions only (search, New item, account). It never changes between views, so nothing jumps.
+  <strong>Filter row:</strong> owned by each view — shared chips first, "+ Filter" for the long tail, view-specific controls (Group by, Columns, Range) pinned right, and "Save filter" turns the current chip set into a one-click entry in the rail.
+  <strong>Rail:</strong> Views with live counts, Projects, Saved filters, Settings/Admin at the bottom. Collapses to a 56px icon rail (default collapsed on Gantt) with <kbd>[</kbd> as the shortcut.</p>
+</div>
+
+<script>
+  const FILTERS = {
+    Gantt: {
+      chips: [
+        { label: "Owner", value: "3 selected", active: true },
+        { label: "Type", value: "All" },
+        { label: "Status", value: "All" },
+      ],
+      opts: ["Group by: Owner", "Legend", "Capacity"]
+    },
+    Kanban: {
+      chips: [
+        { label: "Owner", value: "3 selected", active: true },
+        { label: "Type", value: "All" },
+      ],
+      opts: ["Hide empty columns"]
+    },
+    List: {
+      chips: [
+        { label: "Owner", value: "3 selected", active: true },
+        { label: "Assignee", value: "All" },
+        { label: "Type", value: "All" },
+        { label: "Status", value: "All" },
+      ],
+      opts: ["Columns: 6 shown"]
+    },
+    Planning: {
+      chips: [
+        { label: "Owner", value: "3 selected", active: true },
+        { label: "Statuses", value: "All" },
+      ],
+      opts: ["New session", "History"]
+    },
+    Dashboard: {
+      chips: [
+        { label: "Owner", value: "3 selected", active: true },
+        { label: "Range", value: "May 13 – Jun 12", active: true },
+      ],
+      opts: []
+    },
+  };
+
+  // Saved filters apply a chip set + jump to a view
+  const SAVED = {
+    "wasatch-bugs": { view: "List", chips: [
+      { label: "Owner", value: "Wasatch", active: true },
+      { label: "Type", value: "Bug Fix", active: true },
+      { label: "Status", value: "In Testing", active: true },
+    ], opts: ["Columns: 6 shown"] },
+    "my-week": { view: "Gantt", chips: [
+      { label: "Owner", value: "3 selected", active: true },
+      { label: "Status", value: "Delayed", active: true },
+    ], opts: ["Group by: Owner", "Legend", "Capacity"] },
+  };
+
+  const app = document.getElementById("app");
+  const bar = document.getElementById("filterbar");
+  const title = document.getElementById("viewTitle");
+  const content = document.getElementById("contentLabel");
+  const viewBtns = [...document.querySelectorAll("#viewNav .rail__item")];
+
+  const chipHTML = c => `
+    <button class="chip ${c.active ? "chip--active" : ""}">
+      <span class="chip__label">${c.label}</span>
+      <span class="chip__value">${c.value}</span>
+      ${c.active
+        ? '<span class="chip__clear" role="button" aria-label="Clear filter">×</span>'
+        : '<svg class="chip__caret" viewBox="0 0 12 12"><path d="M3 4.5l3 3 3-3"/></svg>'}
+    </button>`;
+
+  function renderBar(view, override) {
+    const cfg = override || FILTERS[view];
+    bar.innerHTML =
+      cfg.chips.map(chipHTML).join("") +
+      `<button class="chip chip--ghost"><svg viewBox="0 0 12 12"><path d="M6 2v8M2 6h8"/></svg> Filter</button>` +
+      (cfg.chips.some(c => c.active)
+        ? `<button class="chip chip--ghost">Save filter</button>` : "") +
+      `<span class="filterbar__spacer"></span>` +
+      cfg.opts.map(o => `<button class="viewopt">${o}</button>`).join("");
+  }
+
+  function setView(view, override) {
+    viewBtns.forEach(b => b.setAttribute("aria-current", b.dataset.view === view));
+    title.textContent = view;
+    content.textContent = view === "Gantt"
+      ? "Gantt view content renders here — collapse the rail and this gains 176px of timeline"
+      : view + " view content renders here";
+    renderBar(view, override);
+  }
+
+  viewBtns.forEach(b => b.addEventListener("click", () => setView(b.dataset.view)));
+
+  document.querySelectorAll("#savedNav .rail__item").forEach(b => {
+    b.addEventListener("click", () => {
+      const s = SAVED[b.dataset.saved];
+      setView(s.view, s);
+    });
+  });
+
+  const collapseBtn = document.getElementById("collapseBtn");
+  collapseBtn.addEventListener("click", () => app.classList.toggle("is-collapsed"));
+  document.addEventListener("keydown", e => {
+    if (e.key === "[" && document.activeElement.tagName !== "INPUT") {
+      e.preventDefault(); app.classList.toggle("is-collapsed");
+    }
+    if (e.key === "/" && document.activeElement.tagName !== "INPUT") {
+      e.preventDefault(); document.querySelector(".search input").focus();
+    }
+  });
+
+  setView("Gantt");
+</script>
+</body>
+</html>

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Frazil Roadmap</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path fill='%235b4fff' d='M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z'/></svg>">
+<link rel="icon" type="image/png" href="/favicon.png">
 <!-- PWA: installable standalone app -->
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#5b4fff">
@@ -14718,6 +14718,14 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-set-panel.is-active { display:block; }
   .frz-beta .frz-set-panel h2 { margin:0 0 14px; }
   .frz-beta .frz-set-stub { font-size:13px; color:var(--frz-text-muted); line-height:1.6; }
+  .frz-beta .frz-set-row { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:14px 0; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-set-row-title { font-size:13.5px; font-weight:600; color:var(--frz-text); }
+  .frz-beta .frz-set-row-sub { font-size:12px; color:var(--frz-text-muted); margin-top:2px; }
+  .frz-beta .frz-theme-seg { display:inline-flex; border:1px solid var(--frz-border-strong); border-radius:var(--frz-radius-control); overflow:hidden; flex-shrink:0; }
+  .frz-beta .frz-theme-seg button { border:0; background:var(--frz-bg-surface); color:var(--frz-text-secondary); font:inherit; font-size:13px; font-weight:600; padding:7px 18px; cursor:pointer; }
+  .frz-beta .frz-theme-seg button + button { border-left:1px solid var(--frz-border-strong); }
+  .frz-beta .frz-theme-seg button:hover { color:var(--frz-text); }
+  .frz-beta .frz-theme-seg button.is-active { background:var(--frz-accent); color:#fff; }
   .frz-beta #frzSettingsModal .btn-save { background:#0059A9; }        /* de-indigo the relocated Save */
   .frz-beta #frzSettingsModal .modal-actions { margin-top:18px; }
   /* Stage 4b — bulk "Add to release" button (in the reused list bulk bar) */
@@ -14725,6 +14733,43 @@ if ('serviceWorker' in navigator) {
   .frz-beta #frzBulkRelease:hover { background:#004A8F; }
 
   @media (prefers-reduced-motion: reduce) { .frz-beta { --frz-anim:0s; } }
+
+  /* ════════ Dark mode — Flow shell ════════════════════════════════════════
+     body.dark-mode is toggled by the production setTheme()/applyDarkMode()
+     (shared localStorage key 'frazil_dark_mode', applied on load by the IIFE
+     near the top of this file). The reused production views inside #frzContent
+     already restyle via the production dark-mode rules at the top of the file;
+     here we re-point the shell's OWN --frz-* palette (and --accent, for the
+     de-indigo'd reused subtree) so the rail, top bar, filter bar, modals and
+     popovers go dark too. These selectors out-specify the base .frz-beta rules,
+     so no !important is needed. */
+  body.dark-mode .frz-beta {
+    --frz-bg-app:#0f1117; --frz-bg-surface:#181b26; --frz-bg-rail:#14161f;
+    --frz-border:#2b3042; --frz-border-strong:#3d4358;
+    --frz-accent:#4da3e8; --frz-accent-hover:#65b1e3; --frz-accent-soft:#15314a;
+    --frz-accent-soft-border:#24506f; --frz-sky:#65b1e3;
+    --frz-text:#eef0fa; --frz-text-secondary:#b8c0e0; --frz-text-muted:#8088b0;
+    --accent:#4da3e8;   /* keep the reused production subtree Flow-blue, brightened for dark */
+  }
+  /* Hardcoded light backgrounds in the shell that aren't var-driven. */
+  body.dark-mode .frz-beta .frz-item:hover,
+  body.dark-mode .frz-beta .frz-set-tab:hover { background:#222637; }
+  body.dark-mode .frz-beta .frz-item .frz-count,
+  body.dark-mode .frz-beta .frz-plan-count,
+  body.dark-mode .frz-beta .frz-legacy-tag,
+  body.dark-mode .frz-beta .frz-prog { background:#272b44; }
+  body.dark-mode .frz-beta .frz-item[aria-current="true"] .frz-count { background:#15314a; }
+  body.dark-mode .frz-beta .frz-bcard { background:var(--frz-bg-surface); }
+  body.dark-mode .frz-beta .frz-pop input[type=date] { background:var(--frz-bg-surface); }
+  body.dark-mode .frz-beta .frz-sh-completed { background:#15331f; color:#5fcf8a; }
+  body.dark-mode .frz-beta .frz-sh-carried   { background:#332714; color:#e0a94d; }
+  body.dark-mode .frz-beta .frz-sh-returned  { background:#272b44; color:var(--frz-text-secondary); }
+  /* The @mention typeahead is appended to <body> (above the shell), so it is
+     intentionally unscoped — restyle it directly under body.dark-mode. */
+  body.dark-mode .frz-mention-menu { background:#181b26; border-color:#3d4358; }
+  body.dark-mode .frz-mention-menu .frz-mm-opt { color:#eef0fa; }
+  body.dark-mode .frz-mention-menu .frz-mm-opt:hover,
+  body.dark-mode .frz-mention-menu .frz-mm-opt.is-active { background:#15314a; color:#4da3e8; }
 </style>
 <script>
 (function(){
@@ -14980,14 +15025,22 @@ if ('serviceWorker' in navigator) {
     var nav = document.getElementById('frzViewNav');
     nav.querySelectorAll('.frz-item').forEach(function(b){ b.remove(); });
     var admin = _val('isAdmin', false);
-    // Stage 3a: My Work pinned at the top of the views section
-    var mwb = document.createElement('button');
-    mwb.className='frz-item'; mwb.setAttribute('data-nav','view:my-work');
-    mwb.setAttribute('aria-current', String(state.view==='my-work' && !state.onItem));
-    mwb.title='My Work';
-    mwb.innerHTML = IC.mywork + '<span>My Work</span><span class="frz-count">'+myWorkItems().length+'</span>';
-    nav.appendChild(mwb);
-    VIEW_KEYS.filter(function(v){ return v!=='planning' || admin; }).forEach(function(v){
+    var viewer = _val('isViewer', false);
+    // Stage 3a: My Work pinned at the top of the views section — but only when
+    // you actually have assigned, non-terminal work (assignee is mostly empty
+    // today, so this hides a dead link for most users). Keep it visible if it's
+    // the active view so completing your last item can't strand you on it.
+    var mwCount = myWorkItems().length;
+    if(mwCount>0 || (state.view==='my-work' && !state.onItem)){
+      var mwb = document.createElement('button');
+      mwb.className='frz-item'; mwb.setAttribute('data-nav','view:my-work');
+      mwb.setAttribute('aria-current', String(state.view==='my-work' && !state.onItem));
+      mwb.title='My Work';
+      mwb.innerHTML = IC.mywork + '<span>My Work</span><span class="frz-count">'+mwCount+'</span>';
+      nav.appendChild(mwb);
+    }
+    // Viewers can't see Kanban (CLAUDE.md role rule); Planning is admin-only.
+    VIEW_KEYS.filter(function(v){ return (v!=='planning' || admin) && (v!=='kanban' || !viewer); }).forEach(function(v){
       var b = document.createElement('button');
       b.className = 'frz-item'; b.setAttribute('data-nav','view:'+v);
       b.setAttribute('aria-current', String(state.view===v && !state.onItem));
@@ -15016,6 +15069,9 @@ if ('serviceWorker' in navigator) {
     // boards + saved filters
     renderBoardNav();
     renderSavedNav();
+    // Boards are Kanban column-layouts — hide the whole section from viewers,
+    // who can't see Kanban at all.
+    var bnav = document.getElementById('frzBoardNav'); if(bnav) bnav.style.display = viewer ? 'none' : '';
     // admin visibility
     document.getElementById('frzAdmin').style.display = _val('isAdmin', false) ? '' : 'none';
     var ni = document.getElementById('frzNewItem');
@@ -15260,6 +15316,7 @@ if ('serviceWorker' in navigator) {
   function setView(view, opts){
     opts = opts||{};
     if(view==='my-work'){ return setMyWork(); }
+    if(view==='kanban' && _val('isViewer', false)) view='gantt';   // viewers never see Kanban (safety net; callers also redirect)
     state.onItem=false; state.itemId=null;
     root.classList.remove('on-item');
     var _mw=document.getElementById('frzMyWork'); if(_mw) _mw.style.display='none';
@@ -15366,6 +15423,7 @@ if ('serviceWorker' in navigator) {
     if (m){ state.itemFromApp = !replace; openItem(parseInt(m[1],10), {push:!replace}); return; }
     var vm = path.match(/^\/beta\/(gantt|kanban|list|planning|dashboard|my-work)/);
     var view = vm ? vm[1] : (lastView()||'gantt');
+    if (view==='kanban' && _val('isViewer', false)){ navigate('/beta/gantt', replace); return; }   // viewers can't see Kanban
     if (view==='planning'){ var pm=path.match(/^\/beta\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
     applyURLToFilters(view, u.searchParams);
     setView(view);
@@ -15390,6 +15448,7 @@ if ('serviceWorker' in navigator) {
       navigate('/beta/'+lv + location.search, true);
       return;
     }
+    if (vm[1]==='kanban' && _val('isViewer', false)){ navigate('/beta/gantt', true); return; }   // viewers can't see Kanban
     if (vm[1]==='planning'){ var pm=path.match(/^\/beta\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
     applyDefaultCollapse(vm[1]);
     applyURLToFilters(vm[1], new URLSearchParams(location.search));
@@ -16633,20 +16692,28 @@ if ('serviceWorker' in navigator) {
   // ════════ Stage 4a — Tabbed Settings panel ════════
   function buildSettingsPanel(){
     if(document.getElementById('frzSettingsModal')) return;
-    var admin=_val('isAdmin',false);
     var bg=document.createElement('div'); bg.className='frz-modal-bg'; bg.id='frzSettingsModal'; bg.style.display='none';
     bg.innerHTML='<div class="frz-modal frz-settings">'+
       '<div class="frz-modal-hd">Settings<button class="frz-iconbtn" id="frzSetClose">✕</button></div>'+
       '<div class="frz-set-wrap">'+
         '<div class="frz-set-tabs">'+
           '<button class="frz-set-tab is-active" data-settab="account">My Account</button>'+
+          '<button class="frz-set-tab" data-settab="appearance">Appearance</button>'+
           '<button class="frz-set-tab" data-settab="notifs">Notifications</button>'+
-          (admin?'<button class="frz-set-tab" data-settab="admin">Admin</button>':'')+
         '</div>'+
         '<div class="frz-set-body">'+
           '<div class="frz-set-panel is-active" id="frzSetPanel_account"></div>'+
+          '<div class="frz-set-panel" id="frzSetPanel_appearance">'+
+            '<h2>Appearance</h2>'+
+            '<div class="frz-set-row">'+
+              '<div><div class="frz-set-row-title">Theme</div><div class="frz-set-row-sub">Choose how Flow looks. Saved on this device.</div></div>'+
+              '<div class="frz-theme-seg" id="frzThemeSeg">'+
+                '<button type="button" data-theme="light">Light</button>'+
+                '<button type="button" data-theme="dark">Dark</button>'+
+              '</div>'+
+            '</div>'+
+          '</div>'+
           '<div class="frz-set-panel" id="frzSetPanel_notifs"><div class="frz-set-stub">Notification preferences are coming soon. For now, notifications show in the bell menu in the top bar.</div></div>'+
-          (admin?'<div class="frz-set-panel" id="frzSetPanel_admin"><div class="frz-set-stub">Workspace administration — users, statuses, products, Jira, and data tools — live in the full Admin panel.<br><br><button class="frz-newitem" id="frzSetAdminOpen">Open Admin panel</button></div></div>':'')+
         '</div>'+
       '</div>';
     root.appendChild(bg);
@@ -16657,7 +16724,15 @@ if ('serviceWorker' in navigator) {
     bg.querySelector('#frzSetClose').addEventListener('click', closeSettings);
     bg.addEventListener('mousedown', function(e){ if(e.target===bg) closeSettings(); });
     bg.querySelectorAll('[data-settab]').forEach(function(b){ b.addEventListener('click', function(){ setSettingsTab(b.getAttribute('data-settab')); }); });
-    var ao=bg.querySelector('#frzSetAdminOpen'); if(ao) ao.addEventListener('click', function(){ closeSettings(); _call('openAdminPanel','devTab'); });   // same destination as the rail Admin entry
+    // Appearance tab — theme control reuses the production setTheme() (toggles
+    // body.dark-mode + persists 'frazil_dark_mode'). The shell chrome restyles
+    // via the body.dark-mode .frz-beta rules; reused views via the production rules.
+    var seg=bg.querySelector('#frzThemeSeg');
+    if(seg){
+      var syncThemeSeg=function(){ var dark=document.body.classList.contains('dark-mode'); seg.querySelectorAll('button').forEach(function(b){ b.classList.toggle('is-active', b.getAttribute('data-theme')===(dark?'dark':'light')); }); };
+      seg.querySelectorAll('button').forEach(function(b){ b.addEventListener('click', function(){ _call('setTheme', b.getAttribute('data-theme')); syncThemeSeg(); }); });
+      syncThemeSeg();
+    }
     var cancel=document.getElementById('myAccountCancelBtn'); if(cancel) cancel.addEventListener('click', closeSettings);   // relocated Cancel closes the panel
   }
   function setSettingsTab(t){
