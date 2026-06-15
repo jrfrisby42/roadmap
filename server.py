@@ -1960,6 +1960,11 @@ import uuid as _uuid
 
 MAX_ATTACH_BYTES = 50 * 1024 * 1024  # 50 MB, enforced server-side (refuse to sign) + client-side
 ATTACH_BUCKET    = os.environ.get("ATTACH_BUCKET", "frazil-flow-attachments")
+# Optional SSE-KMS key (ARN / alias / key-id). When set, presigned PUTs are
+# signed to encrypt the object with this CMK and the browser replays the
+# matching x-amz-server-side-encryption* headers (see presign_attachment).
+# Leave unset when the bucket applies default encryption on its own.
+ATTACH_KMS_KEY_ID = os.environ.get("ATTACH_KMS_KEY_ID") or None
 
 def _s3_client():
     import boto3  # lazy — server.py still loads without boto3 in dev/test
@@ -2009,16 +2014,24 @@ def presign_attachment(pid: int, body: dict = Body(...),
         _get_item_blob(c, pid)  # 404 if the item doesn't exist
     att_id = _uuid.uuid4().hex
     key = _attachment_key(pid, att_id, filename)
+    params = {"Bucket": ATTACH_BUCKET, "Key": key, "ContentType": content_type}
+    # Headers the browser MUST replay on its PUT — they are part of the SigV4
+    # signature, so the upload 403s if they're missing or don't match.
+    put_headers = {"Content-Type": content_type}
+    if ATTACH_KMS_KEY_ID:
+        params["ServerSideEncryption"] = "aws:kms"
+        params["SSEKMSKeyId"] = ATTACH_KMS_KEY_ID
+        put_headers["x-amz-server-side-encryption"] = "aws:kms"
+        put_headers["x-amz-server-side-encryption-aws-kms-key-id"] = ATTACH_KMS_KEY_ID
     try:
         url = _s3_client().generate_presigned_url(
-            "put_object",
-            Params={"Bucket": ATTACH_BUCKET, "Key": key, "ContentType": content_type},
-            ExpiresIn=300,
+            "put_object", Params=params, ExpiresIn=300,
         )
     except Exception as e:
         log.warning("[Attach] presign PUT failed for item %s: %s", pid, e)
         raise HTTPException(502, "Could not presign the upload (storage unavailable).")
-    return {"attId": att_id, "key": key, "url": url, "name": _sanitize_filename(filename)}
+    return {"attId": att_id, "key": key, "url": url,
+            "name": _sanitize_filename(filename), "headers": put_headers}
 
 @app.post("/api/items/{pid}/attachments")
 def add_attachment(pid: int, body: dict = Body(...),

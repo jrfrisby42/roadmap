@@ -16469,7 +16469,10 @@ if ('serviceWorker' in navigator) {
     _call('showToast','Uploading '+name+'…');
     API.post('/api/items/'+p.id+'/attachments/presign', {filename:name, contentType:file.type||'application/octet-stream', size:file.size})
     .then(function(pre){
-      return fetch(pre.url, {method:'PUT', body:file, headers:{'Content-Type':file.type||'application/octet-stream'}}).then(function(r){
+      // Replay exactly the headers the server signed (Content-Type, plus the
+      // SSE-KMS headers when the bucket is encrypted) — a mismatch 403s the PUT.
+      var putHeaders = pre.headers || {'Content-Type':file.type||'application/octet-stream'};
+      return fetch(pre.url, {method:'PUT', body:file, headers:putHeaders}).then(function(r){
         if(!r.ok) throw new Error('storage upload failed ('+r.status+')');
         return API.post('/api/items/'+p.id+'/attachments', {attId:pre.attId, key:pre.key, name:name, contentType:file.type||'application/octet-stream', size:file.size, _username:_call('getUsername')});
       });
