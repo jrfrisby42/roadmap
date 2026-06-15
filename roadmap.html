@@ -13047,6 +13047,7 @@ function renderItemPage(p){
     if(notesSaveBtn) notesSaveBtn.style.display  = 'none';
     if(!p.description) notesEl.innerHTML = '<span style="color:var(--muted);font-size:12px">No description</span>';
   }
+  rehydrateInlineImages(p.id);   // resolve any inline <img data-att-key> to fresh presigned URLs (classic + beta)
 
   // Feature Flags — unified card (manual + Jira-sourced)
   renderItemPageFeatureFlags(p);
@@ -13243,12 +13244,35 @@ async function deleteItemPageComment(id){
   } catch(e){ showToast('Failed to delete comment'); }
 }
 
+// Inline description images are stored as <img data-att-key="..."> (a stable
+// attachment reference) WITHOUT a src — S3 access is via short-lived presigned
+// URLs that would expire if persisted. This resolves each to a fresh presigned
+// GET at display time. Lives in production so both the classic UI and /beta
+// render inline images; only /beta can ADD them (it owns the attachments UI).
+// No-op (and no network call) when the description has no inline images.
+function rehydrateInlineImages(pid){
+  const notesEl = document.getElementById('ipNotes');
+  if(!notesEl) return;
+  const imgs = notesEl.querySelectorAll('img[data-att-key]');
+  if(!imgs.length) return;
+  API.get('/api/items/'+pid+'/attachments').then(res=>{
+    const map = {};
+    ((res && res.attachments) || []).forEach(a=>{ if(a.key) map[a.key] = a.url; });
+    imgs.forEach(im=>{ const k = im.getAttribute('data-att-key'); if(map[k]) im.src = map[k]; });
+  }).catch(()=>{});
+}
+
 async function saveItemPageNotes(){
   if(!_itemPageId) return;
   const p = projects.find(x=>x.id===_itemPageId);
   if(!p) return;
   const oldDescription = p.description || '';
-  p.description = document.getElementById('ipNotes').innerHTML;
+  // Persist WITHOUT the transient presigned <img> src — store only the stable
+  // data-att-key (re-resolved on display by rehydrateInlineImages). Sanitize a
+  // clone so the live editor keeps showing the image.
+  const _nClone = document.getElementById('ipNotes').cloneNode(true);
+  _nClone.querySelectorAll('img[data-att-key]').forEach(im=>im.removeAttribute('src'));
+  p.description = _nClone.innerHTML;
   try {
     await API.put('/api/projects/'+_itemPageId, {...p, _username:getUsername()});
     // Sync description to Jira if changed — append roadmap notes
@@ -15437,10 +15461,19 @@ if ('serviceWorker' in navigator) {
     var path = location.pathname.replace(/\/+$/,'');
     var m = path.match(/^\/beta\/item\/(\d+)/);
     var qItem = new URLSearchParams(location.search).get('item');
-    if (m){ // synthesize a view entry beneath the item so Back returns to a view
-      var v = lastView()||'gantt'; setView(v); history.replaceState({frzView:v},'','/beta/'+v); state.itemFromApp=true; openItem(parseInt(m[1],10), {push:true}); return;
+    // Deep link straight to an item: open it directly and leave a /beta/{view}
+    // entry beneath in history so Back returns to a view. We do NOT render that
+    // view now — it would flash (e.g. Gantt) before the item overlay covers it;
+    // it renders lazily on the Back popstate instead. openItem hides the view
+    // containers + renders the rail/bar itself, so no eager setView is needed.
+    if (m){
+      var v = lastView()||'gantt'; state.view=v; applyChromeHiding();
+      history.replaceState({frzView:v},'','/beta/'+v); state.itemFromApp=true; openItem(parseInt(m[1],10), {push:true}); return;
     }
-    if (qItem){ var v2=lastView()||'gantt'; setView(v2); history.replaceState({frzView:v2},'','/beta/'+v2); state.itemFromApp=true; openItem(parseInt(qItem,10), {push:true}); return; }
+    if (qItem){
+      var v2 = lastView()||'gantt'; state.view=v2; applyChromeHiding();
+      history.replaceState({frzView:v2},'','/beta/'+v2); state.itemFromApp=true; openItem(parseInt(qItem,10), {push:true}); return;
+    }
     var vm = path.match(/^\/beta\/(gantt|kanban|list|planning|dashboard|my-work)/);
     if (!vm){ // /beta -> last used (default gantt)
       var lv = lastView()||'gantt';
@@ -16436,7 +16469,9 @@ if ('serviceWorker' in navigator) {
       // attachments card AND the description (Ctrl/Cmd+V while focused in either).
       var onPaste=function(e){
         var items=(e.clipboardData&&e.clipboardData.items)||[]; var handled=false;
-        for(var k=0;k<items.length;k++){ if(items[k].kind==='file' && /^image\//.test(items[k].type||'')){ var f=items[k].getAsFile(); if(f){ handled=true; uploadAttachment(p, f); } } }
+        // Paste in the description -> inline image; paste on the attachments card -> plain attachment.
+        var inDesc=(e.currentTarget && e.currentTarget.id==='ipNotes');
+        for(var k=0;k<items.length;k++){ if(items[k].kind==='file' && /^image\//.test(items[k].type||'')){ var f=items[k].getAsFile(); if(f){ handled=true; if(inDesc) pasteInlineImage(p, f); else uploadAttachment(p, f); } } }
         if(handled) e.preventDefault();
       };
       card.addEventListener('paste', onPaste);
@@ -16462,23 +16497,51 @@ if ('serviceWorker' in navigator) {
       list.querySelectorAll('[data-del]').forEach(function(b){ b.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); var id=this.getAttribute('data-del'); var a=atts.filter(function(x){return x.id===id;})[0]; deleteAttachment(p, id, a?a.name:''); }); });
     }).catch(function(){ list.innerHTML='<div class="frz-att-empty">Could not load attachments.</div>'; });
   }
+  // Returns a Promise resolving to the attachment record {attId,key,name,...}
+  // on success (null/throws on failure) so the inline-paste path can reference it.
   function uploadAttachment(p, file){
-    if(!file) return;
-    if(file.size>MAX_ATTACH_BYTES){ _call('showToast','"'+(file.name||'file')+'" exceeds the 50 MB limit.','error'); return; }
+    if(!file) return Promise.resolve(null);
+    if(file.size>MAX_ATTACH_BYTES){ _call('showToast','"'+(file.name||'file')+'" exceeds the 50 MB limit.','error'); return Promise.resolve(null); }
     var name=file.name||('pasted-'+String(file.type||'image').replace('/','.'));
+    var ct=file.type||'application/octet-stream';
     _call('showToast','Uploading '+name+'…');
-    API.post('/api/items/'+p.id+'/attachments/presign', {filename:name, contentType:file.type||'application/octet-stream', size:file.size})
+    var rec=null;
+    return API.post('/api/items/'+p.id+'/attachments/presign', {filename:name, contentType:ct, size:file.size})
     .then(function(pre){
+      rec={attId:pre.attId, key:pre.key, name:name, contentType:ct, size:file.size};
       // Replay exactly the headers the server signed (Content-Type, plus the
       // SSE-KMS headers when the bucket is encrypted) — a mismatch 403s the PUT.
-      var putHeaders = pre.headers || {'Content-Type':file.type||'application/octet-stream'};
+      var putHeaders = pre.headers || {'Content-Type':ct};
       return fetch(pre.url, {method:'PUT', body:file, headers:putHeaders}).then(function(r){
         if(!r.ok) throw new Error('storage upload failed ('+r.status+')');
-        return API.post('/api/items/'+p.id+'/attachments', {attId:pre.attId, key:pre.key, name:name, contentType:file.type||'application/octet-stream', size:file.size, _username:_call('getUsername')});
+        return API.post('/api/items/'+p.id+'/attachments', {attId:pre.attId, key:pre.key, name:name, contentType:ct, size:file.size, _username:_call('getUsername')});
       });
     })
-    .then(function(){ _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Attachment added: '+name, null, null); loadAttachments(p); _call('showToast','Attached '+name); })
-    .catch(function(e){ _call('showToast','Upload failed: '+(e&&e.message||''),'error'); });
+    .then(function(){ _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Attachment added: '+name, null, null); loadAttachments(p); _call('showToast','Attached '+name); return rec; })
+    .catch(function(e){ _call('showToast','Upload failed: '+(e&&e.message||''),'error'); throw e; });
+  }
+  // Paste-into-description: drop the image inline at the caret (instant local
+  // preview), upload it as an attachment, then tag it with its stable key and
+  // persist. rehydrateInlineImages swaps the local blob for a presigned URL.
+  function pasteInlineImage(p, file){
+    var notesEl=document.getElementById('ipNotes'); if(!notesEl) return;
+    var img=document.createElement('img');
+    img.alt=file.name||'image';
+    img.style.cssText='max-width:100%;height:auto;border-radius:6px;display:block;margin:8px 0;opacity:.45';
+    try { img.src=URL.createObjectURL(file); } catch(e){}
+    var sel=window.getSelection(), placed=false;
+    if(sel && sel.rangeCount && notesEl.contains(sel.anchorNode)){
+      var r=sel.getRangeAt(0); r.deleteContents(); r.insertNode(img);
+      r.setStartAfter(img); r.collapse(true); sel.removeAllRanges(); sel.addRange(r); placed=true;
+    }
+    if(!placed) notesEl.appendChild(img);
+    uploadAttachment(p, file).then(function(rec){
+      if(!rec){ if(img.parentNode) img.parentNode.removeChild(img); return; }
+      img.setAttribute('data-att-key', rec.key);
+      img.style.opacity='';
+      _call('rehydrateInlineImages', p.id);   // swap blob preview -> presigned URL
+      _call('saveItemPageNotes');              // persist the <img data-att-key> into the description
+    }).catch(function(){ if(img.parentNode) img.parentNode.removeChild(img); });
   }
   function deleteAttachment(p, attId, name){
     if(!confirm('Remove '+(name||'this attachment')+'?')) return;

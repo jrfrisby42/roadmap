@@ -1554,6 +1554,16 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
         changes = {k: {"from": old.get(k), "to": v}
                    for k, v in body.items()
                    if old.get(k) != v and k not in {"jiraTickets","description"}}
+        # Attachments live in the blob but are managed ONLY by the attachment
+        # endpoints — a wholesale item PUT carries the client's (often stale)
+        # copy, so force the server-authoritative value through (mirror of the
+        # watchers table rationale). Prevents a full PUT from wiping an
+        # attachment that was just added in the same session.
+        old_atts = old.get("attachments")
+        if old_atts is not None:
+            body["attachments"] = old_atts
+        else:
+            body.pop("attachments", None)
         _save_project(c, pid, body)
     write_audit(team, "update", username, pid, body.get("name",""), changes or None)
     body["id"] = pid

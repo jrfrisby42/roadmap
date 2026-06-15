@@ -70,6 +70,27 @@ def test_add_list_delete_roundtrip(client, team, admin_headers):
     assert client.get(f"/api/items/{pid}/attachments", headers=admin_headers).json()["attachments"] == []
 
 
+def test_attachments_survive_full_blob_put(client, team, admin_headers):
+    """A wholesale item PUT carrying a stale (attachment-less) body must NOT wipe
+    attachments — they're managed only by the attachment endpoints (mirror of the
+    watchers regression guard). Regression: inline-image paste added an attachment
+    then immediately PUT the item to save the description, clobbering it."""
+    pid = _mk(client, admin_headers)
+    client.post(f"/api/items/{pid}/attachments",
+                json={"attId": "att1", "key": f"items/{pid}/att1/a.png",
+                      "name": "a.png", "contentType": "image/png", "size": 1234},
+                headers=admin_headers)
+    # Simulate the client saving the description with a stale in-memory item
+    # (no 'attachments' key, or an empty list).
+    client.put(f"/api/projects/{pid}",
+               json={"name": "Item", "status": "Planned",
+                     "description": '<img data-att-key="items/%d/att1/a.png">' % pid,
+                     "attachments": []},
+               headers=admin_headers)
+    lst = client.get(f"/api/items/{pid}/attachments", headers=admin_headers).json()["attachments"]
+    assert len(lst) == 1 and lst[0]["id"] == "att1", "full PUT wiped the attachment"
+
+
 def test_add_requires_attid_and_key(client, team, admin_headers):
     pid = _mk(client, admin_headers)
     assert client.post(f"/api/items/{pid}/attachments", json={"name": "a.png"},
