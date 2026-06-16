@@ -15579,6 +15579,18 @@ if ('serviceWorker' in navigator) {
     var dc=document.getElementById('ipFieldsCard'); if(dc) dc.style.display='none';   // empty production Details card
     var scard=sched?sched.parentElement:null; if(scard) scard.style.display='none';   // empty production Schedule card
   }
+  // Move the RTE toolbar (Bold / Italic / List) up into the Description header,
+  // grouped on the right next to the Save button. Idempotent; role-based show/hide
+  // of the toolbar + Save is still driven by renderItemPage (we only relocate).
+  function _frzMoveDescTools(){
+    var save=document.getElementById('ipNotesSaveBtn'), tb=document.getElementById('ipNotesToolbar');
+    if(!save || !tb) return;
+    var header=save.parentElement; if(!header) return;
+    var grp=header.querySelector('.frz-desc-tools');
+    if(!grp){ grp=document.createElement('div'); grp.className='frz-desc-tools'; grp.style.cssText='display:flex;align-items:center;gap:8px'; header.appendChild(grp); }
+    if(tb.parentElement!==grp){ tb.style.marginBottom='0'; grp.appendChild(tb); }
+    if(save.parentElement!==grp){ grp.appendChild(save); }
+  }
   // MAIN-COLUMN order — idempotent; safe to call after async injects (Attachments,
   // Sprint history) without disturbing the rail.
   function _frzOrderMain(){
@@ -15586,6 +15598,7 @@ if ('serviceWorker' in navigator) {
     var leftCol=deps.parentElement;
     var grid=deps.closest('[style*="grid-template-columns"]'); if(grid && !grid.id) grid.id='frzItemGrid';
     _frzEnsureCommentsCard(leftCol);
+    _frzMoveDescTools();
     function cardOf(id){ var e=document.getElementById(id); while(e && e.parentElement!==leftCol) e=e.parentElement; return (e&&e.parentElement===leftCol)?e:null; }
     [ cardOf('ipNotes'), document.getElementById('frzAttachCard'), document.getElementById('frzCommentsCard'),
       document.getElementById('ipFeatureFlagsCard'), document.getElementById('ipSubtasksCard'),
