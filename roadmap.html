@@ -14862,7 +14862,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta #itemPageOverlay > div:last-child { max-width:none !important; }      /* fill the content area between the rails */
   .frz-beta #frzItemGrid { grid-template-columns:minmax(0,1fr) 320px !important; gap:20px !important; padding:18px 22px !important; }
   .frz-beta.frz-narrow #frzItemGrid { grid-template-columns:1fr !important; }     /* stack at narrow widths */
-  .frz-beta #ipNotes { min-height:440px; }                                        /* Description as the focal point (2× the prior height) */
+  .frz-beta #ipNotes { min-height:440px !important; }                             /* Description focal point (2×); !important beats the inline min-height:120px */
   .frz-beta .frz-rail-group { border:1px solid var(--frz-border); border-radius:10px; overflow:hidden; }
   .frz-beta .frz-rail-ghead { padding:10px 14px; background:var(--frz-bg-surface); border-bottom:1px solid var(--frz-border); font-size:11px; font-weight:900; color:var(--frz-text); text-transform:uppercase; letter-spacing:.5px; }
   .frz-beta .frz-rail-gbody { padding:14px; display:flex; flex-direction:column; gap:12px; }
@@ -15559,12 +15559,12 @@ if ('serviceWorker' in navigator) {
       if(stWrap.firstElementChild) stWrap.firstElementChild.style.display='none';
       var stVal=stWrap.querySelector('.ip-edit') || stWrap.children[1];
       var stSpan=stVal && stVal.querySelector('span');
-      if(stSpan){ stSpan.style.background=''; stSpan.style.border=''; stSpan.style.padding='3px 12px'; stSpan.style.borderRadius='12px'; stSpan.style.fontWeight='700'; stSpan.style.display='inline-block'; }
+      if(stSpan){ stSpan.style.background=''; stSpan.style.border=''; stSpan.style.padding='3px 12px'; stSpan.style.borderRadius='12px'; stSpan.style.fontWeight='700'; stSpan.style.display='inline-flex'; stSpan.style.alignItems='center'; }
       if(stVal && stVal.classList.contains('ip-edit')){
-        stVal.style.cssText += ';cursor:pointer;display:inline-flex;align-items:center';
-        if(!stVal.querySelector('.frz-st-caret')){
+        stVal.style.cssText += ';cursor:pointer';
+        if(stSpan && !stSpan.querySelector('.frz-st-caret')){
           var car=document.createElement('span'); car.className='frz-st-caret'; car.textContent='▾';
-          car.style.cssText='margin-left:6px;color:var(--frz-text-muted);font-size:11px;font-weight:700'; stVal.appendChild(car);
+          car.style.cssText='margin-left:6px;font-size:10px;line-height:1;opacity:.85'; stSpan.appendChild(car);   // caret inside the pill, inherits its color
         }
       }
     }
