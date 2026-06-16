@@ -12662,6 +12662,9 @@ function _ipBeginEdit(cell){
     cell.innerHTML = `<input type="text" value="${escA(cur??'')}" style="${bs}">`;
   }
   const ctrl = cell.firstElementChild; ctrl.focus(); try { ctrl.select && ctrl.select(); } catch(e){}
+  // Open the native dropdown on the first click (/beta only — classic unchanged).
+  // We're inside the originating click handler, so showPicker() is user-activated.
+  if(kind==='select' && location.pathname.startsWith('/beta')){ try { ctrl.showPicker && ctrl.showPicker(); } catch(e){} }
   let done = false;
   const fresh = ()=> projects.find(x=>x.id===_itemPageId);
   const cancel = ()=>{ if(done) return; done=true; const fr=fresh(); if(fr) renderItemPage(fr); };
