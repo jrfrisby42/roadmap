@@ -636,6 +636,7 @@ def init_team_db(team: str):
                               "Revised Estimate","Partner Delays","Other"],
             "deferReasons":  ["Not Ready","Deprioritised","Waiting on External",
                               "Resource Unavailable","Other"],
+            "departments":  [],
             "products":     [{"name":"Fraznet","builtin":True},
                              {"name":"HubSpot","builtin":True}],
             "users":        [{"username":"admin","password":_get_init_password(team),
@@ -696,6 +697,7 @@ def _migrate_config_keys(team: str):
                           "Revised Estimate","Partner Delays","Other"],
         "deferReasons":  ["Not Ready","Deprioritised","Waiting on External",
                           "Resource Unavailable","Other"],
+        "departments":   [],
         "statusIsDefault":  {},
         "statusIsDeferred": {},
         "jiraSyncConfig":   {"enabled": False, "intervalMinutes": 30},
@@ -1338,6 +1340,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "statusIsTesting": cfg("statusIsTesting") or {},
             "changeReasons": cfg("changeReasons") or [],
             "deferReasons": cfg("deferReasons") or [],
+            "departments": cfg("departments") or [],
             "jiraProjectMapping": cfg("jiraProjectMapping") or {},
             "jiraStatusMapping": cfg("jiraStatusMapping") or {},
             "jiraTypeMapping": cfg("jiraTypeMapping") or {},
@@ -1512,6 +1515,43 @@ def _backfill_all_teams_keys():
                 print(f"[ItemKeys] boot backfill failed for {_entry}: {e}")
 _backfill_all_teams_keys()
 
+# ── Departments (multi-value free-text field + shared master list) ────────────
+def _normalize_departments(arr):
+    """Trim, drop empties, case-insensitive dedup preserving first-seen casing."""
+    out, seen = [], set()
+    for d in (arr or []):
+        if not isinstance(d, str):
+            continue
+        d = d.strip()
+        if not d:
+            continue
+        k = d.casefold()
+        if k in seen:
+            continue
+        seen.add(k); out.append(d)
+    return out
+
+def _union_departments(team, item_depts):
+    """Union an item's departments into the shared `departments` config list
+    (case-insensitive, first-seen casing). Lets editors create departments by
+    typing them on a ticket — same key the admin config path would write."""
+    item_depts = _normalize_departments(item_depts)
+    if not item_depts:
+        return
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='departments'").fetchone()
+        cur = json.loads(row["value"]) if row else []
+        if not isinstance(cur, list):
+            cur = []
+        seen = {str(d).casefold() for d in cur if isinstance(d, str)}
+        changed = False
+        for d in item_depts:
+            if d.casefold() not in seen:
+                cur.append(d); seen.add(d.casefold()); changed = True
+        if changed:
+            c.execute("INSERT INTO config(key,value) VALUES('departments',?) "
+                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(cur),))
+
 @app.post("/api/projects")
 def create_project(body: dict, auth: dict = Depends(require_role("admin", "editor"))):
     team = auth["team"]
@@ -1522,10 +1562,16 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     # so the persisted value matches what we return (not just the response).
     if "parallelResources" in body:
         body["parallelResources"] = round_up_to_quarter(body["parallelResources"])
+    if "departments" in body:
+        body["departments"] = _normalize_departments(body.get("departments"))
     with db(team) as c:
         _assign_item_key(c, body)
         body["id"] = _insert_project(c, body)
     write_audit(team, "create", username, body["id"], body.get("name",""))
+    try:
+        _union_departments(team, body.get("departments"))   # persist any new departments (best-effort)
+    except Exception as e:
+        log.warning(f"[Departments] union after create failed for item {body['id']}: {e}")
     # Stage 3b: notifications (post-commit, best-effort — never fail the create)
     try:
         _add_watchers(team, body["id"], [username, body.get("assignee")])
@@ -1585,8 +1631,14 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
             body["attachments"] = old_atts
         else:
             body.pop("attachments", None)
+        if "departments" in body:
+            body["departments"] = _normalize_departments(body.get("departments"))
         _save_project(c, pid, body)
     write_audit(team, "update", username, pid, body.get("name",""), changes or None)
+    try:
+        _union_departments(team, body.get("departments"))   # persist any new departments (best-effort)
+    except Exception as e:
+        log.warning(f"[Departments] union after update failed for item {pid}: {e}")
     body["id"] = pid
     # Stage 3b: notifications (post-commit, best-effort — never fail/roll back the update)
     try:
@@ -1812,7 +1864,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "ownerCapacity","statusIgnoreConflicts","typeIgnoreConflicts","productIgnoreConflicts",
               "statusIsActive","statusIsTerminal",
               "statusIsDefault","statusIsDeferred",
-              "changeReasons","deferReasons",
+              "changeReasons","deferReasons","departments",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting"}
 
