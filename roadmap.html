@@ -14586,6 +14586,8 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-collapse svg { width:16px; height:16px; }
   .frz-beta .frz-topbar-left { display:flex; align-items:center; gap:8px; min-width:0; }
   .frz-beta .frz-title { font-weight:700; font-size:15px; white-space:nowrap; }
+  .frz-beta .frz-title-ic { display:inline-flex; align-items:center; color:var(--frz-accent); flex-shrink:0; }
+  .frz-beta .frz-title-ic .frz-ic { width:17px; height:17px; }
   .frz-beta .frz-crumbs { color:var(--frz-text-muted); font-size:13px; display:flex; gap:6px; align-items:center; min-width:0; }
   .frz-beta .frz-crumbs .frz-crumb-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:340px; }
   .frz-beta .frz-crumb-key { color:var(--frz-accent); font-weight:700; cursor:pointer; }
@@ -14638,6 +14640,11 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-content > #listView,
   .frz-beta .frz-content > #dashboardView,
   .frz-beta .frz-content > #planningView { min-height:0; }
+  /* Gantt: lift the chart plotting area to the surface color (white in light /
+     dark surface in dark) so the UNCHANGED gray group-bands, row separators, and
+     column headers read with more contrast against it. Beta-scoped; classic Gantt
+     keeps showing the app background behind its rows. */
+  .frz-beta .chart-panel, .frz-beta .chart-wrap { background:var(--frz-bg-surface); }
   /* Item overlay rendered inline inside the shell, not full-screen */
   .frz-beta .frz-content > #itemPageOverlay { position:static; inset:auto; z-index:auto; height:auto; min-height:100%; }
   .frz-beta.on-item .frz-filterbar { display:none; }
@@ -14686,6 +14693,10 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-bcard-key { font-size:10px; font-family:monospace; color:var(--frz-text-muted); }
   .frz-beta .frz-bcard-name { font-size:12px; font-weight:700; color:var(--frz-text); line-height:1.3; }
   .frz-beta .frz-bcard-meta { font-size:11px; color:var(--frz-text-muted); margin-top:3px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  /* Canonical card footer chips — pts (neutral) vs weeks (accent) stay visually distinct */
+  .frz-beta .frz-bchip { display:inline-flex; align-items:center; font-size:10px; font-weight:700; line-height:1; padding:2px 6px; border-radius:9px; }
+  .frz-beta .frz-bchip-pts { background:rgba(128,128,128,0.15); color:var(--frz-text-secondary); }
+  .frz-beta .frz-bchip-wk { background:var(--frz-accent-soft); color:var(--frz-accent); }
 
   /* ── Beta Planning (Feature B) ── */
   .frz-beta .frz-plan-tabs { display:flex; gap:4px; padding:10px 14px 0; flex-shrink:0; }
@@ -14909,7 +14920,7 @@ if ('serviceWorker' in navigator) {
   if (!location.pathname.startsWith('/beta')) return;
 
   var IC = {
-    gantt:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M2 4h8M2 8h11M2 12h6"/><rect x="5" y="2.8" width="5" height="2.4" rx="1.2"/><rect x="7" y="6.8" width="6" height="2.4" rx="1.2"/><rect x="4" y="10.8" width="4" height="2.4" rx="1.2"/></svg>',
+    gantt:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2" y="3" width="6.5" height="2.6" rx="1.3"/><circle cx="10.4" cy="4.3" r="1" fill="currentColor" stroke="none"/><rect x="4" y="7" width="6.5" height="2.6" rx="1.3"/><circle cx="12.4" cy="8.3" r="1" fill="currentColor" stroke="none"/><rect x="2" y="11" width="4.5" height="2.6" rx="1.3"/><circle cx="8.4" cy="12.3" r="1" fill="currentColor" stroke="none"/></svg>',
     kanban:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2" y="2" width="3.4" height="12" rx="1"/><rect x="6.3" y="2" width="3.4" height="8" rx="1"/><rect x="10.6" y="2" width="3.4" height="10" rx="1"/></svg>',
     list:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M5.5 3.5h9M5.5 8h9M5.5 12.5h9"/><circle cx="2.5" cy="3.5" r="1"/><circle cx="2.5" cy="8" r="1"/><circle cx="2.5" cy="12.5" r="1"/></svg>',
     planning:'<svg class="frz-ic" viewBox="0 0 16 16"><circle cx="8" cy="9" r="5"/><path d="M8 6.5V9l1.8 1.3"/><path d="M6.5 1.5h3"/></svg>',
@@ -15140,11 +15151,12 @@ if ('serviceWorker' in navigator) {
       if (!root) return _origOpenItemPage.apply(this, arguments);   // pre-build (boot deep link) → original
       openItem(id, { push: !(opts && opts.push===false) });
     };
-    // Wrap renderKanban: an active custom board renders our board layout; the
-    // built-in "All statuses" board falls through to the untouched original.
+    // Wrap renderKanban: in beta, EVERY board (incl. "All statuses") renders through
+    // renderBetaKanban so all boards share one canonical card. The production
+    // renderKanban is no longer called in beta — and is left untouched for classic.
     _origRenderKanban = window.renderKanban;
     window.renderKanban = function(){
-      if (root && state.view==='kanban' && state.board && state.board!=='__all__') return renderBetaKanban();
+      if (root && state.view==='kanban') return renderBetaKanban();
       return _origRenderKanban.apply(this, arguments);
     };
     // Wrap renderPlanningBoard: beta planning renders the tabbed Plan/Sprints/Releases
@@ -15457,6 +15469,11 @@ if ('serviceWorker' in navigator) {
   }
 
   // ════════ view switching ════════
+  // Top-bar title with the view's rail icon on its left — a quick orientation cue
+  // (matches the collapsed rail glyph). iconKey is a VIEW_KEYS entry or 'home'.
+  function _titleHtml(iconKey, label){
+    return '<span class="frz-title-ic">'+(IC[iconKey]||'')+'</span><span class="frz-title">'+esc(label)+'</span>';
+  }
   function applyChromeHiding(){
     var tb=document.querySelector('.topbar'); if(tb) tb.style.display='none';
     var lg=document.getElementById('ganttLegend'); if(lg) lg.style.display='none';
@@ -15517,7 +15534,7 @@ if ('serviceWorker' in navigator) {
     API.get('/api/my/recent').then(function(d){
       if(state.view!=='my-home' || state.homeTab!=='recent') return;
       var items=((d&&d.items)||[]).map(function(r){ return _itemById(r.item_id); }).filter(Boolean);
-      _paintHome(items, items.length+' recently updated',
+      _paintHome(items, items.length+' recently viewed',
         'Nothing here yet — items you work on will show up.');
     }).catch(function(){ if(state.view==='my-home'&&state.homeTab==='recent') _paintHome([], '', 'Could not load recent items.'); });
   }
@@ -15531,7 +15548,7 @@ if ('serviceWorker' in navigator) {
     var home=document.getElementById('frzHome'); if(home) home.style.display='';
     setProjectPanel();
     applyChromeHiding();
-    document.getElementById('frzLeft').innerHTML='<span class="frz-title">My Home</span>';
+    document.getElementById('frzLeft').innerHTML=_titleHtml('home','My Home');
     document.getElementById('frzBadges').innerHTML='';
     document.getElementById('frzFilterBar').innerHTML='';   // fixed filter — no chip bar
     renderRail();
@@ -15557,7 +15574,7 @@ if ('serviceWorker' in navigator) {
     var titleTxt = VIEW_LABEL[view];
     if (view==='kanban' && state.board && state.board!=='__all__'){ var _b=activeBoard(); if(_b) titleTxt += ' · '+_b.name; }
     document.getElementById('frzLeft').innerHTML =
-      '<span class="frz-title">'+esc(titleTxt)+'</span>'+
+      _titleHtml(view, titleTxt)+
       '<span class="frz-crumbs">· '+esc(state.project==='__all__'?'All projects':state.project)+'</span>';
     document.getElementById('frzBadges').innerHTML='';
     renderBar();
@@ -16265,11 +16282,39 @@ if ('serviceWorker' in navigator) {
     if(!product) return '';
     return '<span class="frz-pdot" style="background:'+(_call('projectColor', product)||'var(--frz-accent)')+'" title="'+escA(product)+'"></span>';
   }
+  // Time estimate (weeks) for the card — single formatter. Reads dueWeeks, rounds
+  // to 1 decimal (trailing .0 stripped), and returns '' when there's no estimate
+  // so the chip is omitted entirely (no "—wk"/"0wk"/raw-float leaks).
+  function _fmtWeeks(p){
+    var n=parseFloat(p&&p.dueWeeks);
+    if(!n || isNaN(n) || n<=0) return '';
+    var r=Math.round(n*10)/10;
+    return (r%1===0 ? String(r) : r.toFixed(1))+' wk';
+  }
+  // THE canonical Kanban card — used by every column of every board. `multi` is
+  // true when the column maps >1 status (then we show the status badge; on a
+  // single-status column the badge is redundant with the column header).
+  function _betaCardHtml(p, multi){
+    var badge = multi ? '<span class="'+(_call('statusCls',p.status)||'')+'" style="padding:0 7px;border-radius:9px;font-size:10px;font-weight:700">'+esc(p.status)+'</span>' : '';
+    var pts=(p.storyPoints!=null&&p.storyPoints!=='')?'<span class="frz-bchip frz-bchip-pts">'+esc(p.storyPoints)+' pts</span>':'';
+    var wk=_fmtWeeks(p); var wkChip = wk ? '<span class="frz-bchip frz-bchip-wk">'+wk+'</span>' : '';
+    return '<div class="frz-bcard" draggable="true" data-id="'+p.id+'" onclick="openItemPage('+p.id+')">'
+      + (p.itemKey?'<div class="frz-bcard-key">'+_projDot(p.product)+esc(p.itemKey)+'</div>':'')
+      + '<div class="frz-bcard-name">'+esc(p.name||'')+' '+(_call('getItemActivityIndicator', p.id)||'')+'</div>'
+      + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+'</div>'
+      + '</div>';
+  }
   function renderBetaKanban(){
     var inner=document.getElementById('kanbanInner'); if(!inner) return;
-    var board=activeBoard();
-    if(!board){ if(_origRenderKanban) _origRenderKanban(); return; }
     var items=_kanbanFilteredItems();
+    var board=activeBoard();
+    if(!board){
+      // "All statuses" (no custom board selected): synthesize one column per
+      // non-terminal status, in global order — the exact column set production
+      // builds — so this board renders through the same path + canonical card.
+      var sts=getKanbanStatuses(items, getSelectedProducts())||(_val('statuses',[])||[]);
+      board={ columns: sts.map(function(s){ return {name:s, statuses:[s], dropStatus:s}; }) };
+    }
     var boardEl=document.getElementById('kanbanBoard');
     var shown=board.columns.map(function(col){ return { col:col, items: items.filter(function(p){ return (col.statuses||[]).indexOf(p.status)>=0; }).sort(_kanbanSort) }; });
     if(_betaHideEmpty) shown=shown.filter(function(s){ return s.items.length>0; });
@@ -16278,15 +16323,7 @@ if ('serviceWorker' in navigator) {
     var colW=Math.min(320,Math.max(180,Math.floor((available-14*(n-1))/n)));
     inner.innerHTML = shown.map(function(s){
       var col=s.col, multi=(col.statuses||[]).length>1;
-      var cards=s.items.map(function(p){
-        var badge = multi ? '<span class="'+(_call('statusCls',p.status)||'')+'" style="padding:0 7px;border-radius:9px;font-size:10px;font-weight:700">'+esc(p.status)+'</span>' : '';
-        var pts=(p.storyPoints!=null&&p.storyPoints!=='')?(esc(p.storyPoints)+' pts'):'';
-        return '<div class="frz-bcard" draggable="true" data-id="'+p.id+'" onclick="openItemPage('+p.id+')">'
-          + (p.itemKey?'<div class="frz-bcard-key">'+_projDot(p.product)+esc(p.itemKey)+'</div>':'')
-          + '<div class="frz-bcard-name">'+esc(p.name||'')+' '+(_call('getItemActivityIndicator', p.id)||'')+'</div>'
-          + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' · '+pts:'')+(badge?' '+badge:'')+'</div>'
-          + '</div>';
-      }).join('');
+      var cards=s.items.map(function(p){ return _betaCardHtml(p, multi); }).join('');
       return '<div class="kanban-col" style="width:'+colW+'px;min-width:160px;flex:1;background:var(--surface2);border-radius:10px;padding:10px">'
         + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;padding-bottom:8px;border-bottom:2px solid var(--frz-border-strong)">'
         + '<span style="font-size:12px;font-weight:900;color:var(--frz-text)">'+esc(col.name)+'</span>'
