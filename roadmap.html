@@ -14552,6 +14552,19 @@ if ('serviceWorker' in navigator) {
        properties resolve from the nearest ancestor, so overriding --accent HERE
        turns the entire reused subtree Frazil-blue — production :root is untouched. */
     --accent:#0059A9;
+    /* Same mechanism for chrome NEUTRALS: the reused production views are colored
+       by the classic warm-gray tokens (--surface #f5f5f7, --border #d8d8e0, etc.).
+       Remap them HERE to the blue-tinted Flow tokens so Gantt/Kanban/List/Dashboard/
+       item-page chrome matches Planning + the rail — /beta only, classic :root
+       untouched. Routes through the existing tokens (which carry dark-mode values),
+       so no parallel palette and no new hexes. Semantic colors (status/priority/
+       project dots, --bar-*, --accent2) are NOT neutrals and stay as production. */
+    --surface:var(--frz-bg-app);     /* recessed surfaces / card headers / row hover */
+    --surface2:var(--frz-bg-app);    /* deeper recess (e.g. Kanban columns) */
+    --border:var(--frz-border);      /* borders */
+    --row-sep:var(--frz-border);     /* row dividers */
+    --muted:var(--frz-text-muted);   /* muted / secondary label text */
+    --text:var(--frz-text);          /* primary body text */
     /* Low z-index on purpose: the shell is a full-viewport overlay over the
        (hidden) production body, but it must sit BELOW the production modal/overlay
        layer (.modal-bg is z-index:200, panels 800+, login 1000, loading 9999) so
@@ -14923,6 +14936,9 @@ if ('serviceWorker' in navigator) {
   .frz-beta #ipNotes { min-height:440px !important; }                             /* Description focal point (2×); !important beats the inline min-height:120px */
   .frz-beta .frz-rail-group { border:1px solid var(--frz-border); border-radius:10px; overflow:hidden; }
   .frz-beta .frz-rail-ghead { padding:10px 14px; background:var(--frz-bg-surface); border-bottom:1px solid var(--frz-border); font-size:11px; font-weight:900; color:var(--frz-text); text-transform:uppercase; letter-spacing:.5px; }
+  .frz-beta .frz-rail-ghead.has-menu { display:flex; align-items:center; justify-content:space-between; }
+  .frz-beta .frz-rail-menu-btn { border:0; background:none; cursor:pointer; color:var(--frz-text-muted); font-size:16px; line-height:1; padding:0 4px; border-radius:5px; }
+  .frz-beta .frz-rail-menu-btn:hover { background:var(--frz-bg-app); color:var(--frz-text); }
   .frz-beta .frz-rail-gbody { padding:14px; display:flex; flex-direction:column; gap:12px; }
   .frz-beta #frzRailStatus { border:0; }                                          /* status control sits bare at the top of the rail */
   .frz-beta #frzRailStatus .frz-rail-gbody { padding:0 2px; }
@@ -15653,9 +15669,50 @@ if ('serviceWorker' in navigator) {
     var st=document.createElement('div'); st.id='frzRailStatus'; st.className='frz-rail-group frz-rail-status';
     st.innerHTML='<div class="frz-rail-gbody" id="frzRailStatusBody"></div>';
     frag.appendChild(st);
-    frag.appendChild(grp('frzRailDetails','Details'));
+    var det=grp('frzRailDetails','Details');
+    // Admin-only item-actions (⋯) menu on the Details header — currently: Delete Item.
+    if(_val('isAdmin', false)){
+      var gh=det.querySelector('.frz-rail-ghead');
+      if(gh){
+        gh.classList.add('has-menu');
+        var mb=document.createElement('button');
+        mb.type='button'; mb.id='frzDetailsMenuBtn'; mb.className='frz-rail-menu-btn';
+        mb.setAttribute('aria-label','Item actions'); mb.title='Item actions';
+        mb.textContent='⋯';
+        mb.addEventListener('click', _frzDetailsMenu);
+        gh.appendChild(mb);
+      }
+    }
+    frag.appendChild(det);
     frag.appendChild(grp('frzRailSchedule','Schedule'));
     rightCol.insertBefore(frag, rightCol.firstChild);
+  }
+  // Details-header actions menu (admin only). One option for now: Delete Item.
+  function _frzDetailsMenu(e){
+    if(e){ e.preventDefault(); e.stopPropagation(); }
+    var btn=document.getElementById('frzDetailsMenuBtn'); if(!btn) return;
+    openPop(btn, function(pop){
+      var del=document.createElement('button');
+      del.type='button'; del.className='frz-pop-opt'; del.style.color='#C0392B';
+      del.textContent='Delete Item';
+      del.addEventListener('click', function(){ closePop(); _frzDeleteItem(); });
+      pop.appendChild(del);
+    });
+  }
+  // Delete the open item (admin), then return to the previous page via the shell's
+  // back nav. Reuses the production DELETE endpoint; drops the item from memory so
+  // the restored view repaints without it.
+  function _frzDeleteItem(){
+    var id=state.itemId; if(id==null) return;
+    var ps=_val('projects',[])||[];
+    var p=ps.filter(function(x){ return x.id===id; })[0];
+    var nm=(p&&p.name)||'this item';
+    if(!confirm('Delete "'+nm+'"? This cannot be undone.')) return;
+    API.del('/api/projects/'+id).then(function(){
+      var i=ps.findIndex(function(x){ return x.id===id; }); if(i>=0) ps.splice(i,1);
+      _call('showToast','Item deleted','success');
+      goBack();
+    }).catch(function(err){ _call('showToast','Delete failed: '+((err&&err.message)||err),'error'); });
   }
   // One tabbed Activity card [ Comments | History ] reusing the Planning tab
   // visual (.frz-plan-tabs/.frz-plan-tab). Built once: the existing comments
