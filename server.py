@@ -651,6 +651,9 @@ def init_team_db(team: str):
             "users":        [{"username":"admin","password":_get_init_password(team),
                               "builtin":True,"role":"admin","mustChangePassword":True}],
             "types":        [{"name":"Feature","color":""},{"name":"Enhancement","color":""},{"name":"Maintenance","color":""}],
+            # Per-type "Scheduled" flag (appears on Gantt + consumes capacity). Default
+            # every type ON so behavior is unchanged until an admin unchecks one.
+            "typeScheduled": {"Feature":True,"Enhancement":True,"Maintenance":True},
         }
         for k, v in defaults.items():
             c.execute("INSERT OR IGNORE INTO config(key,value) VALUES(?,?)",
@@ -740,6 +743,23 @@ def _migrate_config_keys(team: str):
                         (k, json.dumps(v))
                     )
                     print(f"[Migration] Seeded config key '{k}' for team '{team}'")
+        # typeScheduled: per-type "appears on Gantt + consumes capacity" flag. Seed
+        # to {every existing type: True} so behavior is unchanged until an admin
+        # unchecks one. Seed only when MISSING — never overwrite admin choices.
+        # (Types absent from the map still read as scheduled via isScheduledType,
+        # so types added later default to scheduled too.)
+        if "typeScheduled" not in existing:
+            _types = existing.get("types") or []
+            seeded = {}
+            for _t in _types:
+                _nm = _t.get("name") if isinstance(_t, dict) else _t
+                if _nm:
+                    seeded[_nm] = True
+            c.execute(
+                "INSERT INTO config(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING",
+                ("typeScheduled", json.dumps(seeded))
+            )
+            print(f"[Migration] Seeded config key 'typeScheduled' for team '{team}'")
     _migrated_teams.add(team)
 
 def _migrate_passwords(team: str):
@@ -823,7 +843,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.1.0"
+APP_VERSION = "4.1.1"
 
 app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
 
@@ -1339,6 +1359,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "ownerCapacity": cfg("ownerCapacity") or {},
             "statusIgnoreConflicts": cfg("statusIgnoreConflicts") or {},
             "typeIgnoreConflicts": cfg("typeIgnoreConflicts") or {},
+            "typeScheduled": cfg("typeScheduled") or {},
             "productIgnoreConflicts": cfg("productIgnoreConflicts") or {},
             "statusIsActive": cfg("statusIsActive") or {},
             "statusIsTerminal": cfg("statusIsTerminal") or {},
@@ -1871,6 +1892,7 @@ def bulk_update_items(body: dict = Body(...),
 # ── Config ────────────────────────────────────────────────────────────────────
 VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "ownerCapacity","statusIgnoreConflicts","typeIgnoreConflicts","productIgnoreConflicts",
+              "typeScheduled",
               "statusIsActive","statusIsTerminal",
               "statusIsDefault","statusIsDeferred",
               "changeReasons","deferReasons","departments",

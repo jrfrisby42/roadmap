@@ -2015,7 +2015,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.1.0';
+const APP_VERSION = '4.1.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2151,6 +2151,7 @@ let statusIsReleased = {}; // { [statusName]: bool } — exactly ONE true: marks
 let statusIsApproved = {}; // { [statusName]: bool } — exactly ONE true: marks the Approved status
 let statusIsTesting  = {}; // { [statusName]: bool } — exactly ONE true: marks the Testing status
 let typeIgnoreConflicts = {};   // { [typeName]: bool }
+let typeScheduled = {};         // { [typeName]: bool } — scheduled types appear on the Gantt + consume capacity; missing = scheduled (fail-safe)
 let productIgnoreConflicts = {}; // { [productName]: bool } — exempt a whole project from capacity-conflict accounting
 
 // Re-render whichever view is currently active (used by top-bar filter changes)
@@ -2544,6 +2545,7 @@ function buildCapacityUsageMap(){
     if(isTerminalStatus(p.status)) return;
     if(statusIgnoreConflicts[p.status]) return;
     if(productIgnoreConflicts[p.product]) return;
+    if(!isScheduledType(p.type || '')) return;   // Stage 3: non-scheduled types consume no capacity
     const owner = p.dev;
     if(!map[owner]) map[owner] = {};
     if(!window._capDetailMap[owner]) window._capDetailMap[owner] = {};
@@ -2887,6 +2889,7 @@ function computeConflictingIds(){
     if(statusIgnoreConflicts[p.status]) return;
     if(isTerminalStatus(p.status)) return;
     if(typeIgnoreConflicts[p.type]) return;
+    if(!isScheduledType(p.type || '')) return;   // Stage 3: non-scheduled types raise no conflicts
     if(productIgnoreConflicts[p.product]) return;
     const owner = p.dev || '';
     if(!owner) return;
@@ -2962,6 +2965,7 @@ function computeOwnerConflictDays(owner){
     if(p.hidden || p.dev !== owner || !p.start) return false;
     if(statusIgnoreConflicts[p.status] || isTerminalStatus(p.status)) return false;
     if(typeIgnoreConflicts[p.type]) return false;
+    if(!isScheduledType(p.type || '')) return false;   // Stage 3: non-scheduled types raise no conflicts
     if(productIgnoreConflicts[p.product]) return false;
     return !!conflictEndDate(p);
   });
@@ -3075,6 +3079,7 @@ function render(){
     (!fSt   || fSt.includes(p.status)) &&
     (!fProd || fProd.includes(p.product || '')) &&
     (!fType || fType.includes(p.type || '')) &&
+    isScheduledType(p.type || '') &&        // Stage 2: non-scheduled types are tracking-only — hidden from the Gantt baseline (composes with the user Type filter; untyped = scheduled, fail-safe)
     (!ownerScope || p.dev === ownerScope) &&
     itemMatchesSearch(p, searchQ)
   );
@@ -4873,6 +4878,7 @@ function openConflictModal(itemId){
     if(other.dev !== owner) return false;
     if(statusIgnoreConflicts[other.status]) return false;
     if(typeIgnoreConflicts[other.type]) return false;
+    if(!isScheduledType(other.type || '')) return false;   // Stage 3: non-scheduled types raise no conflicts
     if(productIgnoreConflicts[other.product]) return false;
     if(isParentChildOrSibling(item, other)) return false;
     const pairKey = [itemId, other.id].sort((a,b)=>a-b).join('-');
@@ -5662,6 +5668,7 @@ function capacityHealthClass(owner, dateStr){
     if(isTerminalStatus(p.status)) return;
     if(statusIgnoreConflicts[p.status]) return;
     if(productIgnoreConflicts[p.product]) return;
+    if(!isScheduledType(p.type || '')) return;   // Stage 3: non-scheduled types consume no capacity
     totalUnits += itemCapacityOnDay(p, d);
   });
   if(totalUnits <= 0) return 'cap-health-off';
@@ -6242,6 +6249,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       if(data.statusIsTesting)       statusIsTesting        = data.statusIsTesting;
       if(data.statusIgnoreConflicts) statusIgnoreConflicts = data.statusIgnoreConflicts;
       if(data.typeIgnoreConflicts)   typeIgnoreConflicts   = data.typeIgnoreConflicts;
+      if(data.typeScheduled)         typeScheduled         = data.typeScheduled;
       if(data.productIgnoreConflicts) productIgnoreConflicts = data.productIgnoreConflicts;
       // Don't import users unless explicitly present — protects login
       if(data.users && Array.isArray(data.users) && data.users.length){
@@ -6818,6 +6826,10 @@ function renderTypeList(){
           onchange="setTypeColor(${i}, this.value)">
         ${colorVal ? `<button type="button" onclick="setTypeColor(${i},'')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;padding:0" title="Clear color"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>` : ''}
       </label>
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;flex-shrink:0" title="Scheduled types appear on the Gantt and consume capacity; unscheduled types are tracking-only">
+        <input type="checkbox" onchange="toggleTypeScheduled(${i},this.checked)" ${isScheduledType(t.name)?'checked':''} style="accent-color:var(--accent);cursor:pointer">
+        Scheduled
+      </label>
       <label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;flex-shrink:0" title="Ignore capacity conflicts for this type">
         <input type="checkbox" onchange="toggleTypeIgnore(${i},this.checked)" ${ignored?'checked':''} style="accent-color:var(--accent);cursor:pointer">
         Ignore Conflicts
@@ -6905,6 +6917,20 @@ function setTestingStatus(i){
   saveConfig('statusIsTesting', statusIsTesting);
   renderStatusList();
   showToast(`"${statuses[i]}" is now the Testing status`);
+}
+
+// SINGLE read point for the per-type "Scheduled" flag. Missing/undefined = scheduled
+// (fail-safe), so every existing type and any newly-added type counts as scheduled
+// until an admin explicitly unchecks it. Consumers (Gantt/capacity) wire to this in
+// later stages — NEVER hardcode type names.
+function isScheduledType(typeName){
+  return typeScheduled[typeName] !== false;
+}
+
+function toggleTypeScheduled(i, val){
+  typeScheduled[types[i].name] = val;
+  saveConfig('typeScheduled', typeScheduled);
+  render();
 }
 
 function toggleTypeIgnore(i, val){
@@ -12500,7 +12526,7 @@ function renderCapacityHeatmap(items){
         if(dow===0||dow===6) continue;
         const dayStr = day.toISOString().slice(0,10);
         const dayEff = getEffectiveCapacity(owner, dayStr);
-        const units = projects.filter(p=>!p.hidden&&p.dev===owner&&!isTerminalStatus(p.status)&&!statusIgnoreConflicts[p.status]&&!productIgnoreConflicts[p.product])
+        const units = projects.filter(p=>!p.hidden&&p.dev===owner&&!isTerminalStatus(p.status)&&!statusIgnoreConflicts[p.status]&&!productIgnoreConflicts[p.product]&&isScheduledType(p.type||''))
           .reduce((s,p)=>s+itemCapacityOnDay(p,day),0);
         totalUnits += units / dayEff; // normalise to fraction of capacity
         sampledDays++;
@@ -14042,6 +14068,7 @@ async function boot(){
     // (full per-owner loading happens lazily when calendar is opened)
     statusIgnoreConflicts = data.statusIgnoreConflicts || {};
     typeIgnoreConflicts   = data.typeIgnoreConflicts   || {};
+    typeScheduled         = data.typeScheduled         || {};
     productIgnoreConflicts = data.productIgnoreConflicts || {};
     // Jira mappings (Team Settings)
     window._jiraProjectMappingData = data.jiraProjectMapping || {};
@@ -15552,6 +15579,7 @@ if ('serviceWorker' in navigator) {
     document.getElementById('frzBadges').innerHTML='';
     document.getElementById('frzFilterBar').innerHTML='';   // fixed filter — no chip bar
     renderRail();
+    _frzSyncSearchMode();   // top-bar search = global "Search items" (jump), like the item page
     renderHome();
   }
   function setView(view, opts){
@@ -16055,10 +16083,13 @@ if ('serviceWorker' in navigator) {
   }
   // Set the top-bar input's mode: global search on the item page, per-view filter
   // on a view (where the box mirrors the live #itemSearch filter value).
+  // Global "Search items" (jump) mode applies on the item page AND on My Home;
+  // every other view uses the per-view "Filter items" mirror.
+  function _searchGlobal(){ return state.onItem || state.view==='my-home'; }
   function _frzSyncSearchMode(){
     var fs=document.getElementById('frzSearch'), sb=document.getElementById('frzSearchResults'); if(!fs) return;
     if(sb) sb.hidden=true;
-    if(state.onItem){ fs.placeholder='Search items…'; fs.value=''; }
+    if(_searchGlobal()){ fs.placeholder='Search items…'; fs.value=''; }
     else { fs.placeholder='Filter items…'; var prod=document.getElementById('itemSearch'); fs.value=(prod&&prod.value)||''; }
   }
   function frzGlobalSearch(q){
@@ -16153,12 +16184,12 @@ if ('serviceWorker' in navigator) {
       // the production #itemSearch + renderCurrentView exactly as before Stage 1.
       si.addEventListener('input', function(){
         clearTimeout(_frzSearchTimer); var q=si.value;
-        if(state.onItem){ _frzSearchTimer=setTimeout(function(){ frzGlobalSearch(q); }, 250); }
+        if(_searchGlobal()){ _frzSearchTimer=setTimeout(function(){ frzGlobalSearch(q); }, 250); }
         else { sb.hidden=true; var prod=document.getElementById('itemSearch'); if(prod) prod.value=q; _frzSearchTimer=setTimeout(function(){ _call('renderCurrentView'); }, 280); }
       });
       si.addEventListener('keydown', function(e){
-        if(e.key==='Escape'){ si.value=''; sb.hidden=true; if(!state.onItem){ var prod=document.getElementById('itemSearch'); if(prod) prod.value=''; _call('renderCurrentView'); } }
-        else if(e.key==='Enter' && state.onItem){ var r=sb.querySelector('.frz-search-res'); if(r){ e.preventDefault(); _frzSearchJump(r.getAttribute('data-id')); } }
+        if(e.key==='Escape'){ si.value=''; sb.hidden=true; if(!_searchGlobal()){ var prod=document.getElementById('itemSearch'); if(prod) prod.value=''; _call('renderCurrentView'); } }
+        else if(e.key==='Enter' && _searchGlobal()){ var r=sb.querySelector('.frz-search-res'); if(r){ e.preventDefault(); _frzSearchJump(r.getAttribute('data-id')); } }
       });
       sb.addEventListener('click', function(e){ var r=e.target.closest && e.target.closest('.frz-search-res'); if(r) _frzSearchJump(r.getAttribute('data-id')); });
       document.addEventListener('click', function(e){ if(!sb.hidden && !(e.target.closest && e.target.closest('#frzSearchSlot'))) sb.hidden=true; });
