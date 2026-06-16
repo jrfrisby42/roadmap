@@ -16780,18 +16780,20 @@ if ('serviceWorker' in navigator) {
         (canEdit?'<button type="button" class="frz-dept-x" data-dept="'+escA(d)+'" title="Remove" style="border:0;background:none;color:var(--frz-accent);cursor:pointer;font-size:14px;line-height:1;padding:0 2px">×</button>':'')+'</span>';
     }).join('');
     var add = canEdit ?
-      '<span style="display:inline-flex;align-items:center;gap:4px">'+
-        '<input id="frzDeptInput" list="frzDeptList" placeholder="Add…" autocomplete="off" style="padding:3px 8px;font-size:12px;border:1px solid var(--frz-border-strong);border-radius:8px;background:var(--frz-bg-surface);color:var(--frz-text);outline:none;width:120px">'+
+      '<button type="button" id="frzDeptAddBtn" style="display:inline-flex;align-items:center;background:none;border:1px dashed var(--frz-border-strong);color:var(--frz-accent);padding:2px 9px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">+ Add</button>'+
+      '<span id="frzDeptAddRow" style="display:none;align-items:center;gap:4px">'+
+        '<input id="frzDeptInput" list="frzDeptList" placeholder="Department…" autocomplete="off" style="padding:3px 8px;font-size:12px;border:1px solid var(--frz-accent);border-radius:8px;background:var(--frz-bg-surface);color:var(--frz-text);outline:none;width:130px">'+
         '<datalist id="frzDeptList">'+(_val('departments',[])||[]).map(function(d){ return '<option value="'+escA(d)+'"></option>'; }).join('')+'</datalist>'+
         '<button type="button" id="frzDeptAdd" style="background:var(--frz-accent);color:#fff;border:none;padding:3px 9px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Add</button>'+
       '</span>' : '';
     wrap.innerHTML=lbl+'<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center">'+(chips||(canEdit?'':'<span style="font-size:13px;color:var(--frz-text)">—</span>'))+add+'</div>';
     if(canEdit){
       wrap.querySelectorAll('.frz-dept-x').forEach(function(b){ b.addEventListener('click', function(){ _removeDept(p, b.getAttribute('data-dept')); }); });
-      var inp=wrap.querySelector('#frzDeptInput'), btn=wrap.querySelector('#frzDeptAdd');
+      var addBtn=wrap.querySelector('#frzDeptAddBtn'), row=wrap.querySelector('#frzDeptAddRow'), inp=wrap.querySelector('#frzDeptInput'), btn=wrap.querySelector('#frzDeptAdd');
+      if(addBtn) addBtn.addEventListener('click', function(){ addBtn.style.display='none'; if(row) row.style.display='inline-flex'; if(inp) inp.focus(); });
       var add1=function(){ var v=(inp&&inp.value||'').trim(); if(v) _addDept(p, v); };
       if(btn) btn.addEventListener('click', add1);
-      if(inp) inp.addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); add1(); } });
+      if(inp) inp.addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); add1(); } else if(e.key==='Escape'){ if(row) row.style.display='none'; if(addBtn) addBtn.style.display='inline-flex'; } });
     }
   }
   function _addDept(p, val){
