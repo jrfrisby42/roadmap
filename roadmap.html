@@ -14804,6 +14804,9 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-watch:hover { border-color:var(--frz-accent); color:var(--frz-accent); }
   .frz-beta .frz-watch.is-on { background:var(--frz-accent-soft); border-color:var(--frz-accent-soft-border); color:var(--frz-accent); }
   .frz-beta .frz-mention { background:var(--frz-accent-soft); color:var(--frz-accent); border-radius:4px; padding:0 4px; font-weight:600; white-space:nowrap; }
+  /* The production `.rte-box *` rule forces description children to black text /
+     transparent bg with !important — restore the mention chip's blue in /beta. */
+  .frz-beta .rte-box .frz-mention { color:var(--frz-accent) !important; background:var(--frz-accent-soft) !important; }
   /* @mention typeahead menu — appended to <body> (above the shell), so NOT scoped under .frz-beta */
   .frz-mention-menu { position:fixed; z-index:100000; min-width:160px; max-height:220px; overflow:auto; background:#fff; border:1px solid #C9D6E3; border-radius:8px; box-shadow:0 10px 28px rgba(20,40,63,.22); padding:4px; }
   .frz-mention-menu .frz-mm-opt { display:block; width:100%; text-align:left; border:0; background:none; cursor:pointer; padding:6px 10px; border-radius:6px; font-family:'Lato',sans-serif; font-size:13px; color:#14283F; }
