@@ -583,6 +583,15 @@ def init_team_db(team: str):
             username    TEXT NOT NULL,
             PRIMARY KEY(item_id, username)
         );
+        -- Stage 6: per-user "viewed" trail (feeds the beta My Home → Recent merge).
+        -- One row per (user, item); the timestamp is upserted on each open.
+        CREATE TABLE IF NOT EXISTS recent_views (
+            username    TEXT NOT NULL,
+            item_id     INTEGER NOT NULL,
+            viewed_ts   TEXT NOT NULL,
+            PRIMARY KEY(username, item_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_recent_user ON recent_views(username, viewed_ts);
         """)
         # ── Live migrations: add new columns if they don't exist yet ─────────────
         for _col, _defn in [
@@ -814,7 +823,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.0.0"
+APP_VERSION = "4.1.0"
 
 app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
 
@@ -2314,6 +2323,67 @@ def unwatch_item(pid: int, auth: dict = Depends(require_auth)):
     with db(auth["team"]) as c:
         c.execute("DELETE FROM watchers WHERE item_id=? AND username=?", (pid, auth["username"]))
     return {"watching": False}
+
+@app.post("/api/items/{pid}/view")
+def record_view(pid: int, auth: dict = Depends(require_auth)):
+    """Record that the caller viewed an item (beta shell → My Home Recent trail).
+    Upserts the timestamp, then prunes to the newest ~100 per user. No
+    self-suppression: it's my own trail, so my views count. Best-effort."""
+    team = auth["team"]; me = auth["username"]
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")  # match audit_log.ts so the merge sorts cleanly
+    with db(team) as c:
+        c.execute("INSERT INTO recent_views(username,item_id,viewed_ts) VALUES(?,?,?) "
+                  "ON CONFLICT(username,item_id) DO UPDATE SET viewed_ts=excluded.viewed_ts",
+                  (me, pid, ts))
+        c.execute("DELETE FROM recent_views WHERE username=? AND item_id NOT IN "
+                  "(SELECT item_id FROM recent_views WHERE username=? ORDER BY viewed_ts DESC LIMIT 100)",
+                  (me, me))
+    return {"ok": True}
+
+# ── My Home (beta) read endpoints — additive, read-only, any authed user ──────
+# These back the /beta "My Home" landing's Watching + Recent tabs. The data lives
+# server-side (watchers table / audit_log), so the classic client never needs them.
+@app.get("/api/my/watching")
+def my_watching(auth: dict = Depends(require_auth)):
+    """Item ids the current user watches. Archived/deleted items are excluded via
+    the join to live, non-archived projects."""
+    team = auth["team"]; me = auth["username"]
+    with db(team) as c:
+        rows = c.execute(
+            "SELECT w.item_id FROM watchers w JOIN projects p ON p.id=w.item_id "
+            "WHERE w.username=? AND p.archived=0", (me,)).fetchall()
+    return {"items": [r["item_id"] for r in rows]}
+
+@app.get("/api/my/recent")
+def my_recent(auth: dict = Depends(require_auth)):
+    """Merged 'recently touched by me' trail, deduped by item (newest wins),
+    newest-first. Accepts MULTIPLE sources: 'worked' (my mutations in the audit
+    log) and 'viewed' (items I opened in the beta shell). Archived/deleted items
+    excluded via the join to live projects."""
+    team = auth["team"]; me = auth["username"]
+    merged = {}   # item_id -> {item_id, lastTouched, source}
+    def _merge(item_id, ts, source):
+        if item_id is None:
+            return
+        cur = merged.get(item_id)
+        if cur is None or (ts or "") > (cur["lastTouched"] or ""):
+            merged[item_id] = {"item_id": item_id, "lastTouched": ts, "source": source}
+    with db(team) as c:
+        worked = c.execute(
+            "SELECT a.project_id AS item_id, MAX(a.ts) AS ts "
+            "FROM audit_log a JOIN projects p ON p.id=a.project_id "
+            "WHERE a.username=? AND a.project_id IS NOT NULL AND p.archived=0 "
+            "GROUP BY a.project_id", (me,)).fetchall()
+        viewed = c.execute(
+            "SELECT v.item_id AS item_id, v.viewed_ts AS ts "
+            "FROM recent_views v JOIN projects p ON p.id=v.item_id "
+            "WHERE v.username=? AND p.archived=0", (me,)).fetchall()
+    for r in worked:
+        _merge(r["item_id"], r["ts"], "worked")
+    for r in viewed:
+        _merge(r["item_id"], r["ts"], "viewed")
+    items = sorted(merged.values(), key=lambda x: x["lastTouched"] or "", reverse=True)[:50]
+    return {"items": items}
 
 # ── Import ────────────────────────────────────────────────────────────────────
 @app.post("/api/import")
