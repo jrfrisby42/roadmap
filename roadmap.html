@@ -15555,6 +15555,9 @@ if ('serviceWorker' in navigator) {
       tC.setAttribute('aria-selected',c?'true':'false'); tH.setAttribute('aria-selected',!c?'true':'false');
       tC.setAttribute('tabindex',c?'0':'-1'); tH.setAttribute('tabindex',!c?'0':'-1');
       paneC.hidden=!c; paneH.hidden=c;
+      // Re-render the feed when History is shown — `activities` loads async after
+      // open, and the moved #ipActivity may have rendered before that resolved.
+      if(!c){ try { var iid=_val('_itemPageId', state.itemId); if(iid!=null) _call('renderItemPageActivity', iid); } catch(e){} }
     }
     tC.addEventListener('click',function(){ sel(true); });
     tH.addEventListener('click',function(){ sel(false); });
