@@ -14885,6 +14885,8 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-search-res:last-child { border-bottom:0; }
   .frz-beta .frz-search-res:hover, .frz-beta .frz-search-res.is-active { background:var(--frz-bg-app); }
   .frz-beta .frz-search-empty { padding:11px 12px; font-size:12px; color:var(--frz-text-muted); }
+  /* Stage 2: project-color dot (single source: projectColor); never tints key text */
+  .frz-beta .frz-pdot { display:inline-block; width:8px; height:8px; border-radius:50%; flex-shrink:0; vertical-align:middle; margin-right:6px; }
 </style>
 <script>
 (function(){
@@ -15977,6 +15979,7 @@ if ('serviceWorker' in navigator) {
       var items=(data&&data.items)||[];
       box.innerHTML = items.length ? items.map(function(it){
         return '<div class="frz-search-res" data-id="'+it.id+'">'+
+          _projDot(it.product)+
           (it.itemKey?'<span style="font-family:monospace;font-size:11px;color:var(--frz-text-muted);flex-shrink:0">'+esc(it.itemKey)+'</span>':'')+
           '<span style="font-size:13px;color:var(--frz-text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.name||'Untitled')+'</span>'+
           '<span style="font-size:11px;color:var(--frz-text-muted);flex-shrink:0">'+esc(it.status||'')+'</span>'+
@@ -16184,6 +16187,11 @@ if ('serviceWorker' in navigator) {
     if(pa!==pb) return pa-pb;
     return (+(b.dueWeeks)||0)-(+(a.dueWeeks)||0);
   }
+  // Stage 2: project-color dot (single source: projectColor). '' when no product.
+  function _projDot(product){
+    if(!product) return '';
+    return '<span class="frz-pdot" style="background:'+(_call('projectColor', product)||'var(--frz-accent)')+'" title="'+escA(product)+'"></span>';
+  }
   function renderBetaKanban(){
     var inner=document.getElementById('kanbanInner'); if(!inner) return;
     var board=activeBoard();
@@ -16201,7 +16209,7 @@ if ('serviceWorker' in navigator) {
         var badge = multi ? '<span class="'+(_call('statusCls',p.status)||'')+'" style="padding:0 7px;border-radius:9px;font-size:10px;font-weight:700">'+esc(p.status)+'</span>' : '';
         var pts=(p.storyPoints!=null&&p.storyPoints!=='')?(esc(p.storyPoints)+' pts'):'';
         return '<div class="frz-bcard" draggable="true" data-id="'+p.id+'" onclick="openItemPage('+p.id+')">'
-          + (p.itemKey?'<div class="frz-bcard-key">'+esc(p.itemKey)+'</div>':'')
+          + (p.itemKey?'<div class="frz-bcard-key">'+_projDot(p.product)+esc(p.itemKey)+'</div>':'')
           + '<div class="frz-bcard-name">'+esc(p.name||'')+' '+(_call('getItemActivityIndicator', p.id)||'')+'</div>'
           + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' · '+pts:'')+(badge?' '+badge:'')+'</div>'
           + '</div>';
@@ -16437,7 +16445,7 @@ if ('serviceWorker' in navigator) {
     var legacy = (p.sprintId && !sprintById(p.sprintId)) ? ' <span class="frz-legacy-tag" title="Legacy sprint label (preserved)">'+esc(p.sprintId)+'</span>' : '';
     return '<div class="frz-bl-row" draggable="true" data-id="'+p.id+'">'+
       '<div class="frz-bl-main" data-open="'+p.id+'">'+
-        '<div class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key">'+esc(p.itemKey)+'</span> ':'')+esc(p.name||'')+legacy+'</div>'+
+        '<div class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key">'+_projDot(p.product)+esc(p.itemKey)+'</span> ':'')+esc(p.name||'')+legacy+'</div>'+
         '<div class="frz-bl-meta">'+prio+((prio&&meta)?' · ':'')+esc(meta)+'</div>'+
       '</div>'+
       '<button class="frz-bl-add" data-add="'+p.id+'" title="Add to sprint">Add →</button>'+
@@ -16465,7 +16473,7 @@ if ('serviceWorker' in navigator) {
     var st = p.status ? '<span class="'+(_call('statusCls',p.status)||'')+'" style="padding:0 7px;border-radius:9px;font-size:10px;font-weight:700">'+esc(p.status)+'</span>' : '';
     var meta = [(p.storyPoints!=null&&p.storyPoints!==''?p.storyPoints+'pt':''),(+p.dueWeeks>0?p.dueWeeks+'w':''),p.dev||'Unassigned'].filter(Boolean).join(' · ');
     return '<div class="frz-sp-card">'+
-      '<div class="frz-bl-main" data-open="'+p.id+'"><div class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key">'+esc(p.itemKey)+'</span> ':'')+esc(p.name||'')+'</div>'+
+      '<div class="frz-bl-main" data-open="'+p.id+'"><div class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key">'+_projDot(p.product)+esc(p.itemKey)+'</span> ':'')+esc(p.name||'')+'</div>'+
       '<div class="frz-bl-meta">'+esc(meta)+' '+st+'</div></div>'+
       '<button class="frz-sp-remove" data-remove="'+p.id+'" title="Remove from sprint">✕</button>'+
     '</div>';
@@ -16674,7 +16682,7 @@ if ('serviceWorker' in navigator) {
   function miniItemRow(p, withStatus){
     var st = withStatus && p.status ? '<span class="'+(_call('statusCls',p.status)||'')+'" style="padding:0 7px;border-radius:9px;font-size:10px;font-weight:700">'+esc(p.status)+'</span>' : '';
     var meta=[(p.storyPoints!=null&&p.storyPoints!==''?p.storyPoints+'pt':''),(+p.dueWeeks>0?p.dueWeeks+'w':''),p.dev||''].filter(Boolean).join(' · ');
-    return '<div class="frz-mini-row" data-open="'+p.id+'"><span class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key">'+esc(p.itemKey)+'</span> ':'')+esc(p.name||'')+'</span> <span class="frz-bl-meta">'+esc(meta)+' '+st+'</span></div>';
+    return '<div class="frz-mini-row" data-open="'+p.id+'"><span class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key">'+_projDot(p.product)+esc(p.itemKey)+'</span> ':'')+esc(p.name||'')+'</span> <span class="frz-bl-meta">'+esc(meta)+' '+st+'</span></div>';
   }
   function renderSprintsTab(host){
     var sprints=_sprints.slice().sort(function(a,b){ return (b.startDate||'').localeCompare(a.startDate||'') || (b.id||'').localeCompare(a.id||''); });
