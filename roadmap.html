@@ -15264,6 +15264,11 @@ if ('serviceWorker' in navigator) {
       .catch(function(e){ _call('showToast','Save failed: '+(e&&e.message||''),'error'); throw e; });
   }
   function activeBoard(){ return _boards.filter(function(b){ return b.id===state.board; })[0] || null; }
+  // Stage 4: per-user default Kanban board. Loads when Kanban opens with no explicit
+  // ?board=; an explicit board click still overrides for that navigation.
+  function _defaultBoardKey(){ return 'frazil_beta_defaultboard_'+uname(); }
+  function _defaultBoard(){ var d=ls(_defaultBoardKey()); return (d && _boards.some(function(b){return b.id===d;})) ? d : '__all__'; }   // validate; deleted board → All statuses
+  function _setDefaultBoard(id){ if(id && id!=='__all__') lset(_defaultBoardKey(), id); else { try{ localStorage.removeItem(_defaultBoardKey()); }catch(e){} } renderBoardNav(); }
 
   // ════════ sprints data (Feature B) ════════
   function loadSprints(done){
@@ -15315,7 +15320,7 @@ if ('serviceWorker' in navigator) {
       var btn = document.createElement('button');
       btn.className='frz-item'; btn.setAttribute('data-board', b.id); btn.title=b.name;
       btn.setAttribute('aria-current', String(onKanban && state.board===b.id));
-      btn.innerHTML = KANBAN_IC + '<span>'+esc(b.name)+'</span><button class="frz-rowmenu" data-boardmenu="'+esc(b.id)+'" title="Edit / Duplicate / Delete">…</button>';
+      btn.innerHTML = KANBAN_IC + '<span>'+esc(b.name)+(b.id===_defaultBoard()?' <span style="color:var(--frz-accent)" title="Default board">★</span>':'')+'</span><button class="frz-rowmenu" data-boardmenu="'+esc(b.id)+'" title="Edit / Duplicate / Delete">…</button>';
       bn.appendChild(btn);
     });
   }
@@ -15421,7 +15426,7 @@ if ('serviceWorker' in navigator) {
   }
   function applyURLToFilters(view, qp){
     // board is URL state for the kanban view (navigation scope, not a chip)
-    if (view==='kanban') state.board = qp.get('board') || '__all__';
+    if (view==='kanban') state.board = qp.get('board') || _defaultBoard();   // Stage 4: fall back to the user's default board
     // reset filters this view cares about, then apply query params
     var keys = CFG[view].chips.slice();
     // ensure any param-bearing extra chips are shown
@@ -16273,6 +16278,8 @@ if ('serviceWorker' in navigator) {
     var id=btn.getAttribute('data-boardmenu'); var b=_boards.filter(function(x){return x.id===id;})[0]; if(!b) return;
     openPop(btn, function(pop){
       function mk(label,color,fn){ var x=document.createElement('button'); x.className='frz-pop-opt'; if(color)x.style.color=color; x.textContent=label; x.addEventListener('click',fn); return x; }
+      var isDef=(_defaultBoard()===id);
+      pop.appendChild(mk(isDef?'✓ Default board':'Set as default', isDef?'var(--frz-accent)':null, function(){ closePop(); _setDefaultBoard(isDef?null:id); }));
       pop.appendChild(mk('Edit',null,function(){ closePop(); openBoardEditor(b); }));
       pop.appendChild(mk('Duplicate',null,function(){ closePop(); duplicateBoard(b); }));
       pop.appendChild(mk('Delete','#C0392B',function(){ closePop(); if(confirm('Delete board "'+b.name+'"?')) deleteBoard(id); }));
