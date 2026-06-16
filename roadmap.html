@@ -15449,7 +15449,7 @@ if ('serviceWorker' in navigator) {
       '<span class="frz-crumbs">· '+esc(state.project==='__all__'?'All projects':state.project)+'</span>';
     document.getElementById('frzBadges').innerHTML='';
     renderBar();
-    if(view==='list') ensureBulkReleaseBtn();   // Stage 4b: bulk "Add to release" in the list bulk bar
+    if(view==='list'){ ensureBulkReleaseBtn(); applyListCols(); }   // Stage 4b bulk bar + column show/hide
     renderRail();
     reflow();
   }
@@ -15763,10 +15763,15 @@ if ('serviceWorker' in navigator) {
       if (savedBtn){ var s=state.saved.filter(function(x){return x.id===savedBtn.getAttribute('data-saved');})[0]; if(s) applySaved(s); return; }
       var proj = e.target.closest && e.target.closest('[data-proj]');
       if (proj){
-        // item 9: selecting a project takes you to the List, scoped to it.
         var pn=proj.getAttribute('data-proj');
-        state.project = pn; lset(projKey(), pn);   // setView→setProjectPanel applies this to the product filter
-        navigate('/beta/list');
+        if (state.onItem){
+          // From an item: jump to that project's List, scoped.
+          state.project = pn; lset(projKey(), pn);   // setView→setProjectPanel applies this to the product filter
+          navigate('/beta/list');
+        } else {
+          // On any view: just scope the current view to the project (stay put).
+          setProject(pn);
+        }
         return;
       }
       var boardMenu = e.target.closest && e.target.closest('[data-boardmenu]');
@@ -15848,7 +15853,41 @@ if ('serviceWorker' in navigator) {
       else _call('showToast','Hide empty columns applies to custom boards');
       return;
     }
-    if (o==='columns'){ _call('showToast','Available in the classic UI'); return; }
+    if (o==='columns'){ openListColsPop(el); return; }
+  }
+  // List column show/hide — toggled via a generated <style> using positional
+  // nth-child, so it needs NO edits to the production table markup. Per-user persisted.
+  var LIST_COLS = [
+    {key:'type', idx:3, label:'Type'}, {key:'status', idx:5, label:'Status'},
+    {key:'priority', idx:6, label:'Priority'}, {key:'owner', idx:7, label:'Owner'},
+    {key:'assignee', idx:8, label:'Assignee'}, {key:'points', idx:9, label:'Points'},
+    {key:'sprint', idx:10, label:'Sprint'}
+  ];
+  function _listColsKey(){ return 'frazil_beta_listcols_'+uname(); }
+  function hiddenListCols(){ try { return new Set(JSON.parse(ls(_listColsKey())||'[]')); } catch(e){ return new Set(); } }
+  function applyListCols(){
+    var hidden=hiddenListCols();
+    var css=LIST_COLS.filter(function(c){ return hidden.has(c.key); }).map(function(c){
+      return '#listView th:nth-child('+c.idx+'),#listView td:nth-child('+c.idx+'){display:none}';
+    }).join('');
+    var st=document.getElementById('frzListColStyle');
+    if(!st){ st=document.createElement('style'); st.id='frzListColStyle'; document.head.appendChild(st); }
+    st.textContent=css;
+  }
+  function openListColsPop(anchor){
+    var hidden=hiddenListCols();
+    openPop(anchor, function(pop){
+      pop.style.minWidth='168px';
+      LIST_COLS.forEach(function(c){
+        var lab=document.createElement('label'); lab.className='frz-pop-opt'; lab.style.cursor='pointer';
+        lab.innerHTML='<input type="checkbox" '+(hidden.has(c.key)?'':'checked')+' style="margin-right:8px;accent-color:var(--frz-accent)"> '+esc(c.label);
+        lab.querySelector('input').addEventListener('change', function(){
+          var h=hiddenListCols(); if(this.checked) h.delete(c.key); else h.add(c.key);
+          lset(_listColsKey(), JSON.stringify(Array.from(h))); applyListCols();
+        });
+        pop.appendChild(lab);
+      });
+    });
   }
   function setProject(name){
     state.project = name; lset(projKey(), name);
