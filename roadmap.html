@@ -15535,16 +15535,17 @@ if ('serviceWorker' in navigator) {
     body.appendChild(wrap); card.appendChild(head); card.appendChild(body);
     leftCol.appendChild(card);   // positioned by the main-column ordering below
   }
-  function _frzItemLayout(p){
+  // RAIL consolidation — DESTRUCTIVE refill, so it must run ONLY when ipFields /
+  // ipSchedule are freshly populated (i.e. from the renderItemPage wrapper). The
+  // Status guard bails if the source has already been drained (prevents wiping the
+  // rail on the post-inject / timeout passes, which don't re-render the source).
+  function _frzConsolidateRail(p){
     var io=document.getElementById('itemPageOverlay'); if(!io || !root || !state.onItem) return;
-    var jira=document.getElementById('ipJiraCard'), deps=document.getElementById('ipDepsCard');
-    if(!jira || !deps) return;
-    var rightCol=jira.parentElement, leftCol=deps.parentElement;
-    if(!rightCol || !leftCol) return;
-    var grid=deps.closest('[style*="grid-template-columns"]'); if(grid && !grid.id) grid.id='frzItemGrid';
-    // ---- RAIL: status + details + schedule groups (re-filled each render) ----
-    _frzEnsureRailGroups(rightCol);
+    var jira=document.getElementById('ipJiraCard'); if(!jira || !jira.parentElement) return;
+    var rightCol=jira.parentElement;
     var fields=document.getElementById('ipFields'), sched=document.getElementById('ipSchedule');
+    if(!_frzFieldByLabel(fields,'Status')) return;   // source not freshly rendered — don't wipe the rail
+    _frzEnsureRailGroups(rightCol);
     var sBody=document.getElementById('frzRailStatusBody'), dBody=document.getElementById('frzRailDetailsBody'), cBody=document.getElementById('frzRailScheduleBody');
     if(sBody) sBody.innerHTML=''; if(dBody) dBody.innerHTML=''; if(cBody) cBody.innerHTML='';
     if(p) injectReleaseField(p);   // (re)create the Release control in ipFields so it can move into Details
@@ -15557,7 +15558,13 @@ if ('serviceWorker' in navigator) {
     ['Code Complete','Due Date','Revised Due','Expected Date','Release Date'].forEach(function(l){ mv(cBody, _frzFieldByLabel(sched,l)); });
     var dc=document.getElementById('ipFieldsCard'); if(dc) dc.style.display='none';   // empty production Details card
     var scard=sched?sched.parentElement:null; if(scard) scard.style.display='none';   // empty production Schedule card
-    // ---- MAIN COLUMN order ----
+  }
+  // MAIN-COLUMN order — idempotent; safe to call after async injects (Attachments,
+  // Sprint history) without disturbing the rail.
+  function _frzOrderMain(){
+    var deps=document.getElementById('ipDepsCard'); if(!deps || !deps.parentElement) return;
+    var leftCol=deps.parentElement;
+    var grid=deps.closest('[style*="grid-template-columns"]'); if(grid && !grid.id) grid.id='frzItemGrid';
     _frzEnsureCommentsCard(leftCol);
     function cardOf(id){ var e=document.getElementById(id); while(e && e.parentElement!==leftCol) e=e.parentElement; return (e&&e.parentElement===leftCol)?e:null; }
     [ cardOf('ipNotes'), document.getElementById('frzAttachCard'), document.getElementById('frzCommentsCard'),
@@ -15566,6 +15573,8 @@ if ('serviceWorker' in navigator) {
     ].forEach(function(n){ if(n && n.parentElement===leftCol) leftCol.appendChild(n); });
     _debrandItem();
   }
+  // Full pass — only from the renderItemPage wrapper (source is fresh there).
+  function _frzItemLayout(p){ _frzConsolidateRail(p); _frzOrderMain(); }
 
   function openItem(id, opts){
     opts = opts||{};
@@ -15615,8 +15624,8 @@ if ('serviceWorker' in navigator) {
     // Release is now (re)placed by _frzItemLayout, which also consolidates the rail
     // and reorders the main column.
     injectSprintHistory(p); injectAttachments(p); injectFlag(p);
-    _frzItemLayout(p);
-    setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); injectFlag(p); _frzItemLayout(p); }, 500);
+    _frzOrderMain();   // rail is consolidated by the renderItemPage wrapper; here we only (re)order the main column for the just-injected cards
+    setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); injectFlag(p); _frzOrderMain(); }, 500);
     // Stage 3b: wire @mention typeahead on the comment box + description (idempotent)
     setTimeout(function(){ attachMentionInput(document.getElementById('ipCommentText')); attachMentionRich(document.getElementById('ipNotes')); }, 300);
     renderBar();
