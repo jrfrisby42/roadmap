@@ -13243,6 +13243,16 @@ function renderItemPageActivity(itemId){
   }).join('');
 }
 
+// Render a comment body with known @mentions styled. Reuses the .frz-mention
+// chip class (scoped under .frz-beta) so mentions show bold/Frazil-blue in /beta
+// and stay plain text in the classic UI — production display unchanged.
+function _renderCommentBody(body){
+  const safe = esc(body||'');
+  const valid = new Set((users||[]).map(u => (u&&u.username)||u).filter(Boolean));
+  return safe.replace(/@([A-Za-z0-9._-]+)/g, (m, name) =>
+    valid.has(name) ? `<span class="frz-mention">@${name}</span>` : m);
+}
+
 async function renderItemPageComments(itemId){
   const el = document.getElementById('ipCommentsList');
   const inputWrap = document.getElementById('ipCommentInput');
@@ -13267,7 +13277,7 @@ async function renderItemPageComments(itemId){
                 </button>` : ''}
           </span>
         </div>
-        <div style="font-size:13px;color:var(--text);line-height:1.5;white-space:pre-wrap">${esc(c.body)}</div>
+        <div style="font-size:13px;color:var(--text);line-height:1.5;white-space:pre-wrap">${_renderCommentBody(c.body)}</div>
       </div>`).join('');
   } catch(e){ el.innerHTML = `<div style="font-size:12px;color:var(--muted)">Could not load comments</div>`; }
 }
