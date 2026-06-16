@@ -14856,6 +14856,18 @@ if ('serviceWorker' in navigator) {
   body.dark-mode .frz-mention-menu .frz-mm-opt { color:#eef0fa; }
   body.dark-mode .frz-mention-menu .frz-mm-opt:hover,
   body.dark-mode .frz-mention-menu .frz-mm-opt.is-active { background:#15314a; color:#4da3e8; }
+
+  /* ── /beta item-page restructure: consolidated metadata rail + full-width main ── */
+  .frz-beta #ipMeta { display:none; }                                            /* drop redundant Owner·Type·Status subtitle */
+  .frz-beta #itemPageOverlay > div:last-child { max-width:none !important; }      /* fill the content area between the rails */
+  .frz-beta #frzItemGrid { grid-template-columns:minmax(0,1fr) 320px !important; gap:20px !important; padding:18px 22px !important; }
+  .frz-beta.frz-narrow #frzItemGrid { grid-template-columns:1fr !important; }     /* stack at narrow widths */
+  .frz-beta #ipNotes { min-height:220px; }                                        /* Description as the focal point */
+  .frz-beta .frz-rail-group { border:1px solid var(--frz-border); border-radius:10px; overflow:hidden; }
+  .frz-beta .frz-rail-ghead { padding:10px 14px; background:var(--frz-bg-surface); border-bottom:1px solid var(--frz-border); font-size:11px; font-weight:900; color:var(--frz-text); text-transform:uppercase; letter-spacing:.5px; }
+  .frz-beta .frz-rail-gbody { padding:14px; display:flex; flex-direction:column; gap:12px; }
+  .frz-beta #frzRailStatus { border:0; }                                          /* status control sits bare at the top of the rail */
+  .frz-beta #frzRailStatus .frz-rail-gbody { padding:0 2px; }
 </style>
 <script>
 (function(){
@@ -15091,6 +15103,17 @@ if ('serviceWorker' in navigator) {
       if (root && state.view==='planning') return renderBetaPlanning();
       return _origRenderPlanning.apply(this, arguments);
     };
+    // Wrap renderItemPage so the beta item-page restructure re-applies after every
+    // render (open AND each inline edit, which call renderItemPage directly).
+    if (window.renderItemPage && !window._frzWrapRender){
+      window._frzWrapRender = true;
+      var _origRenderItemPage = window.renderItemPage;
+      window.renderItemPage = function(){
+        var r = _origRenderItemPage.apply(this, arguments);
+        if (root && state.onItem){ try { _frzItemLayout(arguments[0]); } catch(e){} }
+        return r;
+      };
+    }
     // Wrap the Activity Center open so it scopes to the rail's selected project
     // (item 6). Empty scope = all projects. The notification bell is untouched.
     if (window.openActivityCenter && !window._frzWrapAC){
@@ -15468,6 +15491,82 @@ if ('serviceWorker' in navigator) {
       var s=el.getAttribute('style'); if(s) el.setAttribute('style', s.replace(/var\(--accent\)/g,'#0059A9'));
     });
   }
+
+  // ════════ Beta item-page restructure (consolidated metadata rail) ════════
+  // Reorganizes the REUSED production item page without editing its markup.
+  // Runs after every renderItemPage (wrapped in build) + after the beta injects;
+  // fully idempotent. Rail = Status / Details / Schedule / Jira / Admin (one
+  // column). Main = Description → Attachments → Comments → Feature Flags →
+  // Subtasks → Dependencies → Activity → Sprint history. Inline editing, admin
+  // gating and the change-reason prompt are untouched (they live in the
+  // production render/save path + a document-level .ip-edit delegate, so moving
+  // a field's node preserves all three).
+  function _frzFieldByLabel(container, label){
+    if(!container) return null;
+    var kids=container.children;
+    for(var i=0;i<kids.length;i++){ var f=kids[i].firstElementChild; if(f && (f.textContent||'').trim()===label) return kids[i]; }
+    return null;
+  }
+  function _frzEnsureRailGroups(rightCol){
+    if(document.getElementById('frzRailStatus')) return;
+    function grp(id,title){
+      var c=document.createElement('div'); c.className='frz-rail-group';
+      c.innerHTML='<div class="frz-rail-ghead">'+title+'</div><div class="frz-rail-gbody" id="'+id+'Body"></div>';
+      return c;
+    }
+    var frag=document.createDocumentFragment();
+    var st=document.createElement('div'); st.id='frzRailStatus'; st.className='frz-rail-group frz-rail-status';
+    st.innerHTML='<div class="frz-rail-gbody" id="frzRailStatusBody"></div>';
+    frag.appendChild(st);
+    frag.appendChild(grp('frzRailDetails','Details'));
+    frag.appendChild(grp('frzRailSchedule','Schedule'));
+    rightCol.insertBefore(frag, rightCol.firstChild);
+  }
+  function _frzEnsureCommentsCard(leftCol){
+    if(document.getElementById('frzCommentsCard')) return;
+    var list=document.getElementById('ipCommentsList'); if(!list) return;
+    var wrap=list.parentElement; if(!wrap) return;   // the comments sub-block inside the Activity card
+    var card=document.createElement('div'); card.id='frzCommentsCard';
+    card.style.cssText='border:1px solid var(--frz-border);border-radius:10px;overflow:hidden';
+    var head=document.createElement('div'); head.className='frz-rail-ghead'; head.textContent='Comments';
+    var body=document.createElement('div'); body.style.cssText='padding:14px 16px';
+    if(wrap.firstElementChild && /comments/i.test(wrap.firstElementChild.textContent||'')) wrap.firstElementChild.style.display='none';
+    wrap.style.borderTop='none'; wrap.style.padding='0';
+    body.appendChild(wrap); card.appendChild(head); card.appendChild(body);
+    leftCol.appendChild(card);   // positioned by the main-column ordering below
+  }
+  function _frzItemLayout(p){
+    var io=document.getElementById('itemPageOverlay'); if(!io || !root || !state.onItem) return;
+    var jira=document.getElementById('ipJiraCard'), deps=document.getElementById('ipDepsCard');
+    if(!jira || !deps) return;
+    var rightCol=jira.parentElement, leftCol=deps.parentElement;
+    if(!rightCol || !leftCol) return;
+    var grid=deps.closest('[style*="grid-template-columns"]'); if(grid && !grid.id) grid.id='frzItemGrid';
+    // ---- RAIL: status + details + schedule groups (re-filled each render) ----
+    _frzEnsureRailGroups(rightCol);
+    var fields=document.getElementById('ipFields'), sched=document.getElementById('ipSchedule');
+    var sBody=document.getElementById('frzRailStatusBody'), dBody=document.getElementById('frzRailDetailsBody'), cBody=document.getElementById('frzRailScheduleBody');
+    if(sBody) sBody.innerHTML=''; if(dBody) dBody.innerHTML=''; if(cBody) cBody.innerHTML='';
+    if(p) injectReleaseField(p);   // (re)create the Release control in ipFields so it can move into Details
+    function mv(body, node){ if(body && node) body.appendChild(node); }
+    mv(sBody, _frzFieldByLabel(fields,'Status'));
+    ['Assignee','Owner (Pod)','Priority','Type','Story Points','Sprint','Reporter','Key','Project'].forEach(function(l){ mv(dBody, _frzFieldByLabel(fields,l)); });
+    mv(dBody, document.getElementById('frzReleaseField'));
+    mv(cBody, _frzFieldByLabel(sched,'Start Date'));
+    ['Time Estimate','Test Period','Parallel Resources'].forEach(function(l){ mv(cBody, _frzFieldByLabel(fields,l)); });
+    ['Code Complete','Due Date','Revised Due','Expected Date','Release Date'].forEach(function(l){ mv(cBody, _frzFieldByLabel(sched,l)); });
+    var dc=document.getElementById('ipFieldsCard'); if(dc) dc.style.display='none';   // empty production Details card
+    var scard=sched?sched.parentElement:null; if(scard) scard.style.display='none';   // empty production Schedule card
+    // ---- MAIN COLUMN order ----
+    _frzEnsureCommentsCard(leftCol);
+    function cardOf(id){ var e=document.getElementById(id); while(e && e.parentElement!==leftCol) e=e.parentElement; return (e&&e.parentElement===leftCol)?e:null; }
+    [ cardOf('ipNotes'), document.getElementById('frzAttachCard'), document.getElementById('frzCommentsCard'),
+      document.getElementById('ipFeatureFlagsCard'), document.getElementById('ipSubtasksCard'),
+      document.getElementById('ipDepsCard'), cardOf('ipActivity'), document.getElementById('frzSprintHistCard')
+    ].forEach(function(n){ if(n && n.parentElement===leftCol) leftCol.appendChild(n); });
+    _debrandItem();
+  }
+
   function openItem(id, opts){
     opts = opts||{};
     var ps = _val('projects',[])||[];
@@ -15512,11 +15611,12 @@ if ('serviceWorker' in navigator) {
     document.getElementById('frzBack').addEventListener('click', goBack);
     var ck=document.getElementById('frzCrumbKey'); if(ck && p.itemKey) ck.addEventListener('click', function(){ try{ navigator.clipboard.writeText(p.itemKey); _call('showToast','Copied '+p.itemKey); }catch(e){} });
     var pc=document.getElementById('frzParentCrumb'); if(pc && parent) pc.addEventListener('click', function(){ openItem(parent.id); });
-    // Feature C: inject the Release selector into the item Details (beta-only; idempotent)
-    injectReleaseField(p); setTimeout(function(){ injectReleaseField(p); }, 400);
-    // Stage 2: inject Attachments + Sprint-history sections (beta-only; idempotent)
+    // Stage 2: inject Attachments + Sprint-history sections (beta-only; idempotent).
+    // Release is now (re)placed by _frzItemLayout, which also consolidates the rail
+    // and reorders the main column.
     injectSprintHistory(p); injectAttachments(p); injectFlag(p);
-    setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); injectFlag(p); }, 500);
+    _frzItemLayout(p);
+    setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); injectFlag(p); _frzItemLayout(p); }, 500);
     // Stage 3b: wire @mention typeahead on the comment box + description (idempotent)
     setTimeout(function(){ attachMentionInput(document.getElementById('ipCommentText')); attachMentionRich(document.getElementById('ipNotes')); }, 300);
     renderBar();
