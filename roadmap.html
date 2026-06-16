@@ -14874,6 +14874,17 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rail-gbody { padding:14px; display:flex; flex-direction:column; gap:12px; }
   .frz-beta #frzRailStatus { border:0; }                                          /* status control sits bare at the top of the rail */
   .frz-beta #frzRailStatus .frz-rail-gbody { padding:0 2px; }
+
+  /* ── Stage 1: top-bar GLOBAL search (jump to any item; not a per-view filter) ── */
+  .frz-beta .frz-search { position:relative; display:inline-flex; align-items:center; width:230px; height:32px; background:var(--frz-bg-surface); border:1px solid var(--frz-border-strong); border-radius:7px; box-sizing:border-box; }
+  .frz-beta .frz-search:focus-within { border-color:var(--frz-accent); }
+  .frz-beta .frz-search-ic { position:absolute; left:9px; color:var(--frz-text-muted); pointer-events:none; }
+  .frz-beta .frz-search input { flex:1; min-width:0; border:0; background:transparent; outline:none; font:inherit; font-size:13px; color:var(--frz-text); padding:0 10px 0 30px; border-radius:7px; }
+  .frz-beta .frz-search-results { position:absolute; top:calc(100% + 5px); right:0; width:340px; max-width:70vw; background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:8px; box-shadow:0 10px 30px rgba(20,40,63,.18); max-height:360px; overflow-y:auto; z-index:60; }
+  .frz-beta .frz-search-res { display:flex; align-items:center; gap:8px; padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-search-res:last-child { border-bottom:0; }
+  .frz-beta .frz-search-res:hover, .frz-beta .frz-search-res.is-active { background:var(--frz-bg-app); }
+  .frz-beta .frz-search-empty { padding:11px 12px; font-size:12px; color:var(--frz-text-muted); }
 </style>
 <script>
 (function(){
@@ -15016,7 +15027,11 @@ if ('serviceWorker' in navigator) {
           '<div class="frz-topbar-left" id="frzLeft"></div>'+
           '<div class="frz-topbar-right">'+
             '<div class="frz-badges" id="frzBadges"></div>'+
-            '<span id="frzSearchSlot"></span>'+
+            '<div id="frzSearchSlot" class="frz-search">'+
+              '<svg class="frz-search-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg>'+
+              '<input id="frzSearch" type="text" placeholder="Search items…" autocomplete="off" aria-label="Search items">'+
+              '<div id="frzSearchResults" class="frz-search-results" hidden></div>'+
+            '</div>'+
             '<div class="frz-bell-wrap">'+
               '<button class="frz-bell" id="frzBell" aria-label="Notifications" title="Notifications">'+IC.bell+'<span class="frz-bell-badge" id="frzBellBadge" hidden>0</span></button>'+
               '<div class="frz-notif" id="frzNotif" hidden></div>'+
@@ -15037,9 +15052,10 @@ if ('serviceWorker' in navigator) {
       '</div>';
     document.body.appendChild(root);
 
-    // Move the existing search box into the beta top bar (one search input, reused)
+    // The top bar is GLOBAL search (own #frzSearch). The production per-view filter
+    // (#searchWrap/#itemSearch) stays in the classic chrome, hidden in beta + untouched.
     var sw = document.getElementById('searchWrap');
-    if (sw) { document.getElementById('frzSearchSlot').appendChild(sw); sw.style.width='210px'; }
+    if (sw) sw.style.display='none';
 
     // Re-parent the five view containers + item overlay into the content host
     var content = document.getElementById('frzContent');
@@ -15411,7 +15427,7 @@ if ('serviceWorker' in navigator) {
   function applyChromeHiding(){
     var tb=document.querySelector('.topbar'); if(tb) tb.style.display='none';
     var lg=document.getElementById('ganttLegend'); if(lg) lg.style.display='none';
-    var sw=document.getElementById('searchWrap'); if(sw){ sw.style.display=''; }   // always show beta search
+    var sw=document.getElementById('searchWrap'); if(sw){ sw.style.display='none'; }   // beta uses its own #frzSearch; keep the production filter hidden
   }
   // ════════ My Work (Stage 3a) ════════
   function myWorkItems(){
@@ -15935,6 +15951,31 @@ if ('serviceWorker' in navigator) {
     });
   }
 
+  // ════════ Stage 1: top-bar global search ════════
+  // Reuses the /api/items?q= endpoint (the single search source) + openItem to jump.
+  var _frzSearchTimer=null;
+  function _frzSearchJump(id){
+    var sb=document.getElementById('frzSearchResults'), si=document.getElementById('frzSearch');
+    if(sb){ sb.hidden=true; sb.innerHTML=''; } if(si){ si.value=''; si.blur(); }
+    openItem(parseInt(id,10));
+  }
+  function frzGlobalSearch(q){
+    var box=document.getElementById('frzSearchResults'); if(!box) return;
+    q=(q||'').trim();
+    if(!q){ box.hidden=true; box.innerHTML=''; return; }
+    API.get('/api/items?q='+encodeURIComponent(q)+'&page_size=8&sort=updated_ts:desc').then(function(data){
+      var items=(data&&data.items)||[];
+      box.innerHTML = items.length ? items.map(function(it){
+        return '<div class="frz-search-res" data-id="'+it.id+'">'+
+          (it.itemKey?'<span style="font-family:monospace;font-size:11px;color:var(--frz-text-muted);flex-shrink:0">'+esc(it.itemKey)+'</span>':'')+
+          '<span style="font-size:13px;color:var(--frz-text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.name||'Untitled')+'</span>'+
+          '<span style="font-size:11px;color:var(--frz-text-muted);flex-shrink:0">'+esc(it.status||'')+'</span>'+
+        '</div>';
+      }).join('') : '<div class="frz-search-empty">No matches for "'+esc(q)+'"</div>';
+      box.hidden=false;
+    }).catch(function(){ box.hidden=true; });
+  }
+
   // ════════ wiring ════════
   function wire(){
     // delegated rail nav / projects / saved
@@ -15980,7 +16021,7 @@ if ('serviceWorker' in navigator) {
       var typing = !!(ae && (ae.tagName==='INPUT' || ae.tagName==='TEXTAREA' || ae.isContentEditable));
       if (typing) { if(e.key==='Escape' && state.pop) closePop(); return; }
       if (e.key==='['){ e.preventDefault(); toggleCollapse(); }
-      else if (e.key==='/'){ e.preventDefault(); var si=document.getElementById('itemSearch'); if(si) si.focus(); }
+      else if (e.key==='/'){ e.preventDefault(); var si=document.getElementById('frzSearch'); if(si) si.focus(); }
       else if (e.key==='Escape' && state.pop){ closePop(); }
     });
     document.getElementById('frzSaveBtn').addEventListener('click', function(e){ e.stopPropagation(); saveCurrent(this); });
@@ -16002,6 +16043,17 @@ if ('serviceWorker' in navigator) {
     document.getElementById('frzActivity').addEventListener('click', function(){ _call('openActivityCenter'); });
     document.getElementById('frzClassic').addEventListener('click', function(){ location.href='/'; });
     document.getElementById('frzLogout').addEventListener('click', function(){ _call('doLogout'); });
+    // Stage 1: top-bar GLOBAL search — find any item from any view and jump to it.
+    var si=document.getElementById('frzSearch'), sb=document.getElementById('frzSearchResults');
+    if(si && sb){
+      si.addEventListener('input', function(){ clearTimeout(_frzSearchTimer); var q=si.value; _frzSearchTimer=setTimeout(function(){ frzGlobalSearch(q); }, 250); });
+      si.addEventListener('keydown', function(e){
+        if(e.key==='Escape'){ sb.hidden=true; si.value=''; }
+        else if(e.key==='Enter'){ var r=sb.querySelector('.frz-search-res'); if(r){ e.preventDefault(); _frzSearchJump(r.getAttribute('data-id')); } }
+      });
+      sb.addEventListener('click', function(e){ var r=e.target.closest && e.target.closest('.frz-search-res'); if(r) _frzSearchJump(r.getAttribute('data-id')); });
+      document.addEventListener('click', function(e){ if(!sb.hidden && !(e.target.closest && e.target.closest('#frzSearchSlot'))) sb.hidden=true; });
+    }
     // arrow-key nav within the rail
     root.querySelector('.frz-rail').addEventListener('keydown', function(e){
       if (e.key!=='ArrowDown' && e.key!=='ArrowUp') return;
