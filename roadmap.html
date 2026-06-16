@@ -15555,10 +15555,16 @@ if ('serviceWorker' in navigator) {
       tC.setAttribute('aria-selected',c?'true':'false'); tH.setAttribute('aria-selected',!c?'true':'false');
       tC.setAttribute('tabindex',c?'0':'-1'); tH.setAttribute('tabindex',!c?'0':'-1');
       paneC.hidden=!c; paneH.hidden=c;
-      // Re-render the feed when History is shown — `activities` loads async after
-      // open, and the moved #ipActivity may have rendered before that resolved.
-      if(!c){ try { var iid=_val('_itemPageId', state.itemId); if(iid!=null) _call('renderItemPageActivity', iid); } catch(e){} }
+      if(!c) _frzRenderHistory();   // History shown → (re)anchor + render the feed
     }
+    // Ensure #ipActivity is inside the History pane and freshly rendered. `activities`
+    // loads async, and the feed may have been (re)rendered while the node was elsewhere.
+    function _frzRenderHistory(){
+      var ae=document.getElementById('ipActivity');
+      if(ae && ae.parentElement!==paneH) paneH.appendChild(ae);
+      try { var iid=_val('_itemPageId', state.itemId); if(iid!=null) _call('renderItemPageActivity', iid); } catch(e){}
+    }
+    _frzRenderHistory();   // populate once at build so it's ready before first click
     tC.addEventListener('click',function(){ sel(true); });
     tH.addEventListener('click',function(){ sel(false); });
     tabs.addEventListener('keydown',function(e){
