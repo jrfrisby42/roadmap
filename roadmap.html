@@ -15496,6 +15496,7 @@ if ('serviceWorker' in navigator) {
     renderBar();
     if(view==='list'){ ensureBulkReleaseBtn(); applyListCols(); }   // Stage 4b bulk bar + column show/hide
     renderRail();
+    _frzSyncSearchMode();   // top bar = per-view filter on a view
     reflow();
   }
   function reflow(){
@@ -15729,6 +15730,7 @@ if ('serviceWorker' in navigator) {
       history.pushState({ frzItem:id, itemPage:id, frzView:state.view }, '', '/beta/item/'+id);
     }
     renderRail();
+    _frzSyncSearchMode();   // top bar = global search on the item page
     reflow();
   }
   function goBack(){
@@ -15959,6 +15961,14 @@ if ('serviceWorker' in navigator) {
     if(sb){ sb.hidden=true; sb.innerHTML=''; } if(si){ si.value=''; si.blur(); }
     openItem(parseInt(id,10));
   }
+  // Set the top-bar input's mode: global search on the item page, per-view filter
+  // on a view (where the box mirrors the live #itemSearch filter value).
+  function _frzSyncSearchMode(){
+    var fs=document.getElementById('frzSearch'), sb=document.getElementById('frzSearchResults'); if(!fs) return;
+    if(sb) sb.hidden=true;
+    if(state.onItem){ fs.placeholder='Search items…'; fs.value=''; }
+    else { fs.placeholder='Filter items…'; var prod=document.getElementById('itemSearch'); fs.value=(prod&&prod.value)||''; }
+  }
   function frzGlobalSearch(q){
     var box=document.getElementById('frzSearchResults'); if(!box) return;
     q=(q||'').trim();
@@ -16046,10 +16056,16 @@ if ('serviceWorker' in navigator) {
     // Stage 1: top-bar GLOBAL search — find any item from any view and jump to it.
     var si=document.getElementById('frzSearch'), sb=document.getElementById('frzSearchResults');
     if(si && sb){
-      si.addEventListener('input', function(){ clearTimeout(_frzSearchTimer); var q=si.value; _frzSearchTimer=setTimeout(function(){ frzGlobalSearch(q); }, 250); });
+      // Item page → GLOBAL search (jump). Any view → the per-view FILTER, driving
+      // the production #itemSearch + renderCurrentView exactly as before Stage 1.
+      si.addEventListener('input', function(){
+        clearTimeout(_frzSearchTimer); var q=si.value;
+        if(state.onItem){ _frzSearchTimer=setTimeout(function(){ frzGlobalSearch(q); }, 250); }
+        else { sb.hidden=true; var prod=document.getElementById('itemSearch'); if(prod) prod.value=q; _frzSearchTimer=setTimeout(function(){ _call('renderCurrentView'); }, 280); }
+      });
       si.addEventListener('keydown', function(e){
-        if(e.key==='Escape'){ sb.hidden=true; si.value=''; }
-        else if(e.key==='Enter'){ var r=sb.querySelector('.frz-search-res'); if(r){ e.preventDefault(); _frzSearchJump(r.getAttribute('data-id')); } }
+        if(e.key==='Escape'){ si.value=''; sb.hidden=true; if(!state.onItem){ var prod=document.getElementById('itemSearch'); if(prod) prod.value=''; _call('renderCurrentView'); } }
+        else if(e.key==='Enter' && state.onItem){ var r=sb.querySelector('.frz-search-res'); if(r){ e.preventDefault(); _frzSearchJump(r.getAttribute('data-id')); } }
       });
       sb.addEventListener('click', function(e){ var r=e.target.closest && e.target.closest('.frz-search-res'); if(r) _frzSearchJump(r.getAttribute('data-id')); });
       document.addEventListener('click', function(e){ if(!sb.hidden && !(e.target.closest && e.target.closest('#frzSearchSlot'))) sb.hidden=true; });
