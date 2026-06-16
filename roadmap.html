@@ -14862,7 +14862,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta #itemPageOverlay > div:last-child { max-width:none !important; }      /* fill the content area between the rails */
   .frz-beta #frzItemGrid { grid-template-columns:minmax(0,1fr) 320px !important; gap:20px !important; padding:18px 22px !important; }
   .frz-beta.frz-narrow #frzItemGrid { grid-template-columns:1fr !important; }     /* stack at narrow widths */
-  .frz-beta #ipNotes { min-height:220px; }                                        /* Description as the focal point */
+  .frz-beta #ipNotes { min-height:440px; }                                        /* Description as the focal point (2× the prior height) */
   .frz-beta .frz-rail-group { border:1px solid var(--frz-border); border-radius:10px; overflow:hidden; }
   .frz-beta .frz-rail-ghead { padding:10px 14px; background:var(--frz-bg-surface); border-bottom:1px solid var(--frz-border); font-size:11px; font-weight:900; color:var(--frz-text); text-transform:uppercase; letter-spacing:.5px; }
   .frz-beta .frz-rail-gbody { padding:14px; display:flex; flex-direction:column; gap:12px; }
@@ -15551,6 +15551,23 @@ if ('serviceWorker' in navigator) {
     if(p) injectReleaseField(p);   // (re)create the Release control in ipFields so it can move into Details
     function mv(body, node){ if(body && node) body.appendChild(node); }
     mv(sBody, _frzFieldByLabel(fields,'Status'));
+    // Status → a colored status pill + caret (drop the "Status" label). The pill
+    // reuses the production status-badge color (statusCls) untouched; clearing the
+    // span's inline background:none reveals the filled badge.
+    var stWrap=sBody.firstElementChild;
+    if(stWrap){
+      if(stWrap.firstElementChild) stWrap.firstElementChild.style.display='none';
+      var stVal=stWrap.querySelector('.ip-edit') || stWrap.children[1];
+      var stSpan=stVal && stVal.querySelector('span');
+      if(stSpan){ stSpan.style.background=''; stSpan.style.border=''; stSpan.style.padding='3px 12px'; stSpan.style.borderRadius='12px'; stSpan.style.fontWeight='700'; stSpan.style.display='inline-block'; }
+      if(stVal && stVal.classList.contains('ip-edit')){
+        stVal.style.cssText += ';cursor:pointer;display:inline-flex;align-items:center';
+        if(!stVal.querySelector('.frz-st-caret')){
+          var car=document.createElement('span'); car.className='frz-st-caret'; car.textContent='▾';
+          car.style.cssText='margin-left:6px;color:var(--frz-text-muted);font-size:11px;font-weight:700'; stVal.appendChild(car);
+        }
+      }
+    }
     ['Assignee','Owner (Pod)','Priority','Type','Story Points','Sprint','Reporter','Key','Project'].forEach(function(l){ mv(dBody, _frzFieldByLabel(fields,l)); });
     mv(dBody, document.getElementById('frzReleaseField'));
     mv(cBody, _frzFieldByLabel(sched,'Start Date'));
