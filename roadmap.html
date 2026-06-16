@@ -15525,18 +15525,43 @@ if ('serviceWorker' in navigator) {
     frag.appendChild(grp('frzRailSchedule','Schedule'));
     rightCol.insertBefore(frag, rightCol.firstChild);
   }
-  function _frzEnsureCommentsCard(leftCol){
-    if(document.getElementById('frzCommentsCard')) return;
-    var list=document.getElementById('ipCommentsList'); if(!list) return;
-    var wrap=list.parentElement; if(!wrap) return;   // the comments sub-block inside the Activity card
-    var card=document.createElement('div'); card.id='frzCommentsCard';
+  // One tabbed Activity card [ Comments | History ] reusing the Planning tab
+  // visual (.frz-plan-tabs/.frz-plan-tab). Built once: the existing comments
+  // thread+post box and the #ipActivity feed are MOVED into the panes (they keep
+  // their ids, so postItemPageComment / renderItemPageComments / renderItemPageActivity
+  // keep working). Tab is a transient sub-view — never in the URL.
+  function _frzEnsureActivityTabs(leftCol){
+    if(document.getElementById('frzActivityCard')) return;
+    var activity=document.getElementById('ipActivity'), list=document.getElementById('ipCommentsList');
+    if(!activity || !list) return;
+    var prodCard=activity; while(prodCard && prodCard.parentElement!==leftCol) prodCard=prodCard.parentElement;   // the production "Activity & History" card
+    var cWrap=list.parentElement;   // comments block (thread + post box)
+    var card=document.createElement('div'); card.id='frzActivityCard';
     card.style.cssText='border:1px solid var(--frz-border);border-radius:10px;overflow:hidden';
-    var head=document.createElement('div'); head.className='frz-rail-ghead'; head.textContent='Comments';
-    var body=document.createElement('div'); body.style.cssText='padding:14px 16px';
-    if(wrap.firstElementChild && /comments/i.test(wrap.firstElementChild.textContent||'')) wrap.firstElementChild.style.display='none';
-    wrap.style.borderTop='none'; wrap.style.padding='0';
-    body.appendChild(wrap); card.appendChild(head); card.appendChild(body);
-    leftCol.appendChild(card);   // positioned by the main-column ordering below
+    var tabs=document.createElement('div'); tabs.className='frz-plan-tabs'; tabs.setAttribute('role','tablist'); tabs.setAttribute('aria-label','Activity'); tabs.style.cssText='padding:8px 10px 0;border-bottom:1px solid var(--frz-border)';
+    function mkTab(id,label,sel){ var b=document.createElement('button'); b.type='button'; b.id=id; b.className='frz-plan-tab'+(sel?' is-active':''); b.setAttribute('role','tab'); b.setAttribute('aria-selected',sel?'true':'false'); b.setAttribute('tabindex',sel?'0':'-1'); b.textContent=label; return b; }
+    var tC=mkTab('frzActTabComments','Comments',true), tH=mkTab('frzActTabHistory','History',false);
+    tabs.appendChild(tC); tabs.appendChild(tH);
+    var paneC=document.createElement('div'); paneC.id='frzActPaneComments'; paneC.setAttribute('role','tabpanel'); paneC.setAttribute('aria-labelledby','frzActTabComments'); paneC.style.cssText='padding:14px 16px';
+    var paneH=document.createElement('div'); paneH.id='frzActPaneHistory'; paneH.setAttribute('role','tabpanel'); paneH.setAttribute('aria-labelledby','frzActTabHistory'); paneH.hidden=true;
+    if(cWrap){ if(cWrap.firstElementChild && /comments/i.test(cWrap.firstElementChild.textContent||'')) cWrap.firstElementChild.style.display='none'; cWrap.style.borderTop='none'; cWrap.style.padding='0'; paneC.appendChild(cWrap); }
+    paneH.appendChild(activity);
+    card.appendChild(tabs); card.appendChild(paneC); card.appendChild(paneH);
+    leftCol.appendChild(card);
+    if(prodCard && prodCard.parentElement===leftCol) prodCard.style.display='none';   // hide the emptied production card
+    var oldCC=document.getElementById('frzCommentsCard'); if(oldCC) oldCC.remove();    // drop the prior standalone comments card
+    function sel(c){
+      tC.classList.toggle('is-active',c); tH.classList.toggle('is-active',!c);
+      tC.setAttribute('aria-selected',c?'true':'false'); tH.setAttribute('aria-selected',!c?'true':'false');
+      tC.setAttribute('tabindex',c?'0':'-1'); tH.setAttribute('tabindex',!c?'0':'-1');
+      paneC.hidden=!c; paneH.hidden=c;
+    }
+    tC.addEventListener('click',function(){ sel(true); });
+    tH.addEventListener('click',function(){ sel(false); });
+    tabs.addEventListener('keydown',function(e){
+      if(e.key!=='ArrowLeft' && e.key!=='ArrowRight') return;
+      e.preventDefault(); var goC=(e.key==='ArrowLeft'); sel(goC); (goC?tC:tH).focus();
+    });
   }
   // RAIL consolidation — DESTRUCTIVE refill, so it must run ONLY when ipFields /
   // ipSchedule are freshly populated (i.e. from the renderItemPage wrapper). The
@@ -15597,12 +15622,14 @@ if ('serviceWorker' in navigator) {
     var deps=document.getElementById('ipDepsCard'); if(!deps || !deps.parentElement) return;
     var leftCol=deps.parentElement;
     var grid=deps.closest('[style*="grid-template-columns"]'); if(grid && !grid.id) grid.id='frzItemGrid';
-    _frzEnsureCommentsCard(leftCol);
+    _frzEnsureActivityTabs(leftCol);
     _frzMoveDescTools();
     function cardOf(id){ var e=document.getElementById(id); while(e && e.parentElement!==leftCol) e=e.parentElement; return (e&&e.parentElement===leftCol)?e:null; }
-    [ cardOf('ipNotes'), document.getElementById('frzAttachCard'), document.getElementById('frzCommentsCard'),
+    // Description → Attachments → Activity (Comments|History) → Feature Flags →
+    // Subtasks → Dependencies → Sprint history.
+    [ cardOf('ipNotes'), document.getElementById('frzAttachCard'), document.getElementById('frzActivityCard'),
       document.getElementById('ipFeatureFlagsCard'), document.getElementById('ipSubtasksCard'),
-      document.getElementById('ipDepsCard'), cardOf('ipActivity'), document.getElementById('frzSprintHistCard')
+      document.getElementById('ipDepsCard'), document.getElementById('frzSprintHistCard')
     ].forEach(function(n){ if(n && n.parentElement===leftCol) leftCol.appendChild(n); });
     _debrandItem();
   }
