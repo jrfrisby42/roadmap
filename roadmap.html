@@ -2019,7 +2019,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.1.2';
+const APP_VERSION = '4.2.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2157,6 +2157,7 @@ let statusIsTesting  = {}; // { [statusName]: bool } — exactly ONE true: marks
 let statusIsBlocked  = {}; // { [statusName]: bool } — optional, at most ONE true: the Blocked status (empty = feature off)
 let typeIgnoreConflicts = {};   // { [typeName]: bool }
 let typeScheduled = {};         // { [typeName]: bool } — scheduled types appear on the Gantt + consume capacity; missing = scheduled (fail-safe)
+let richTextEditor = true;      // /beta Tiptap editor master switch (config). Default ON; admin can flip false to revert Description+Comments to the classic editor with no redeploy. Classic root ignores this.
 let productIgnoreConflicts = {}; // { [productName]: bool } — exempt a whole project from capacity-conflict accounting
 
 // Re-render whichever view is currently active (used by top-bar filter changes)
@@ -6257,6 +6258,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       if(data.statusIgnoreConflicts) statusIgnoreConflicts = data.statusIgnoreConflicts;
       if(data.typeIgnoreConflicts)   typeIgnoreConflicts   = data.typeIgnoreConflicts;
       if(data.typeScheduled)         typeScheduled         = data.typeScheduled;
+      if(data.richTextEditor !== undefined) richTextEditor  = data.richTextEditor !== false;
       if(data.productIgnoreConflicts) productIgnoreConflicts = data.productIgnoreConflicts;
       // Don't import users unless explicitly present — protects login
       if(data.users && Array.isArray(data.users) && data.users.length){
@@ -13472,6 +13474,9 @@ function rehydrateInlineImages(pid){
 }
 
 async function saveItemPageNotes(){
+  // /beta rich-text editor (Tiptap) owns save when mounted: getHTML→sanitize→PUT→Jira
+  // basic-subset. Null in classic / flag-off / fallback, so this path is then unchanged.
+  if(window._frzRichSave) return window._frzRichSave();
   if(!_itemPageId) return;
   const p = projects.find(x=>x.id===_itemPageId);
   if(!p) return;
@@ -14196,6 +14201,7 @@ async function boot(){
     statusIgnoreConflicts = data.statusIgnoreConflicts || {};
     typeIgnoreConflicts   = data.typeIgnoreConflicts   || {};
     typeScheduled         = data.typeScheduled         || {};
+    richTextEditor        = data.richTextEditor !== false;   // default ON; only an explicit false reverts to the classic editor
     productIgnoreConflicts = data.productIgnoreConflicts || {};
     // Jira mappings (Team Settings)
     window._jiraProjectMappingData = data.jiraProjectMapping || {};
@@ -15166,6 +15172,62 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-search-empty { padding:11px 12px; font-size:12px; color:var(--frz-text-muted); }
   /* Stage 2: project-color dot (single source: projectColor); never tints key text */
   .frz-beta .frz-pdot { display:inline-block; width:8px; height:8px; border-radius:50%; flex-shrink:0; vertical-align:middle; margin-right:6px; }
+
+  /* ── Rich-text editor (Stage 1) ─────────────────────────────────────────────
+     .frz-rte is the Description host (replaces .rte-box on /beta when the flag is on).
+     Rules target descendants generically so they apply BOTH inside the live editor
+     (.frz-rte .ProseMirror …) AND in the read-only render path (raw HTML in .frz-rte). */
+  /* Toolbar now lives in the Description card header (next to title + Save). flex:1 takes
+     the middle slack; the header itself wraps. Buttons opt out of the header's uppercase. */
+  .frz-beta .frz-rte-tb { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:3px; flex:0 1 auto; min-width:0; margin-left:auto; }
+  .frz-beta .frz-rte-btn { background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:5px; padding:3px 8px; font-size:12px; line-height:1.4; cursor:pointer; color:var(--frz-text); font-family:'Lato',sans-serif; font-weight:600; text-transform:none; letter-spacing:normal; }
+  .frz-beta .frz-rte-btn:hover { background:var(--frz-accent-soft); border-color:var(--frz-accent); }
+  .frz-beta .frz-rte-sep { width:1px; align-self:stretch; background:var(--frz-border); margin:2px 4px; }
+  .frz-beta .frz-rte .ProseMirror { min-height:120px; padding:10px 12px; outline:none; }
+  .frz-beta .frz-rte .ProseMirror:focus { outline:none; }
+  .frz-beta .frz-rte p { margin:.4em 0; }
+  .frz-beta .frz-rte h1 { font-size:20px; font-weight:800; margin:.5em 0 .3em; line-height:1.25; }
+  .frz-beta .frz-rte h2 { font-size:16px; font-weight:800; margin:.5em 0 .3em; line-height:1.3; }
+  .frz-beta .frz-rte h3 { font-size:14px; font-weight:700; margin:.5em 0 .3em; }
+  .frz-beta .frz-rte ul, .frz-beta .frz-rte ol { padding-left:22px; margin:.4em 0; }
+  .frz-beta .frz-rte li { margin:2px 0; }
+  .frz-beta .frz-rte li > p { margin:0; }
+  .frz-beta .frz-rte blockquote { border-left:3px solid var(--frz-border); margin:.5em 0; padding:2px 0 2px 12px; color:var(--frz-text-secondary); }
+  .frz-beta .frz-rte pre { background:var(--frz-bg-sunken); border:1px solid var(--frz-border); border-radius:6px; padding:10px 12px; overflow:auto; font-family:ui-monospace,Consolas,monospace; font-size:12px; }
+  .frz-beta .frz-rte code { font-family:ui-monospace,Consolas,monospace; font-size:.92em; }
+  .frz-beta .frz-rte :not(pre) > code { background:var(--frz-bg-sunken); border-radius:4px; padding:1px 4px; }
+  .frz-beta .frz-rte hr { border:0; border-top:1px solid var(--frz-border); margin:.8em 0; }
+  .frz-beta .frz-rte a { color:var(--frz-accent); text-decoration:underline; }
+  .frz-beta .frz-rte img { max-width:100%; height:auto; border-radius:6px; display:block; margin:8px 0; }
+  .frz-beta .frz-rte mark, .frz-beta .frz-rte .frz-hl { background:#fff3bf; padding:0 2px; border-radius:2px; color:inherit; }
+  .frz-beta .frz-rte iframe { max-width:100%; border:0; border-radius:8px; margin:8px 0; }
+  .frz-beta .frz-rte .frz-mention { background:var(--frz-accent-soft); color:var(--frz-accent); border-radius:4px; padding:0 4px; font-weight:600; white-space:nowrap; }
+  /* Block render CSS (Finding #1): tables/panels/expand must display correctly in the
+     read-only render path even before Stage 2 inserts them. Width-less table — no stretch. */
+  .frz-beta .frz-rte table { border-collapse:collapse; width:auto; max-width:100%; table-layout:auto; margin:8px 0; }
+  .frz-beta .frz-rte th, .frz-beta .frz-rte td { border:1px solid var(--frz-border-strong); padding:6px 9px; vertical-align:top; text-align:left; }
+  .frz-beta .frz-rte th { background:var(--frz-bg-sunken); font-weight:700; }
+  .frz-beta .frz-rte .frz-panel { border-radius:8px; padding:10px 12px; border:1px solid; margin:8px 0; }
+  .frz-beta .frz-rte .frz-panel > :first-child { margin-top:0; } .frz-beta .frz-rte .frz-panel > :last-child { margin-bottom:0; }
+  .frz-beta .frz-rte .frz-panel[data-variant=info] { background:#e7f1fa; border-color:#9cc4e8; }
+  .frz-beta .frz-rte .frz-panel[data-variant=success] { background:#e6f6ec; border-color:#9fd9b4; }
+  .frz-beta .frz-rte .frz-panel[data-variant=warning] { background:#fff4e0; border-color:#f0cf94; }
+  .frz-beta .frz-rte .frz-panel[data-variant=danger] { background:#fde8e8; border-color:#f0a9ad; }
+  .frz-beta .frz-rte .frz-panel[data-variant=purple] { background:#f1e9fb; border-color:#c9b3ec; }
+  .frz-beta .frz-rte details.frz-expand { border:1px solid var(--frz-border); border-radius:8px; padding:6px 10px; background:var(--frz-bg-app); margin:8px 0; }
+  .frz-beta .frz-rte details.frz-expand > summary { cursor:pointer; font-weight:700; }
+  /* Emoji popover (body-level, above the shell — like the mention menu) */
+  .frz-emoji-pop { position:fixed; z-index:100001; background:#fff; border:1px solid #C9D6E3; border-radius:8px; box-shadow:0 10px 28px rgba(20,40,63,.22); padding:6px; display:grid; grid-template-columns:repeat(8,1fr); gap:2px; max-width:300px; }
+  .frz-emoji-pop .frz-emoji { border:0; background:none; cursor:pointer; font-size:18px; padding:4px; border-radius:6px; line-height:1; }
+  .frz-emoji-pop .frz-emoji:hover { background:#E7F1FA; }
+  body.dark-mode .frz-emoji-pop { background:#181b26; border-color:#3d4358; }
+  body.dark-mode .frz-emoji-pop .frz-emoji:hover { background:#15314a; }
+  body.dark-mode .frz-beta .frz-rte mark, body.dark-mode .frz-beta .frz-rte .frz-hl { background:#6b5b14; color:#fff; }
+  body.dark-mode .frz-beta .frz-rte .frz-panel[data-variant=info] { background:#15314a; border-color:#2d5a86; }
+  body.dark-mode .frz-beta .frz-rte .frz-panel[data-variant=success] { background:#143a26; border-color:#2c6b45; }
+  body.dark-mode .frz-beta .frz-rte .frz-panel[data-variant=warning] { background:#3d3115; border-color:#6b5a2c; }
+  body.dark-mode .frz-beta .frz-rte .frz-panel[data-variant=danger] { background:#3d1a1c; border-color:#6b2f33; }
+  body.dark-mode .frz-beta .frz-rte .frz-panel[data-variant=purple] { background:#2a2042; border-color:#4d3d7a; }
 </style>
 <script>
 (function(){
@@ -16142,7 +16204,7 @@ if ('serviceWorker' in navigator) {
     _frzOrderMain();   // rail is consolidated by the renderItemPage wrapper; here we only (re)order the main column for the just-injected cards
     setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); injectFlag(p); _frzOrderMain(); }, 500);
     // Stage 3b: wire @mention typeahead on the comment box + description (idempotent)
-    setTimeout(function(){ attachMentionInput(document.getElementById('ipCommentText')); attachMentionRich(document.getElementById('ipNotes')); }, 300);
+    setTimeout(function(){ attachMentionInput(document.getElementById('ipCommentText')); frzInitDescription(p); }, 300);
     renderBar();
     document.getElementById('frzContent').scrollTop = 0;
     // Drop focus to a neutral place so the shell shortcuts ([ and /) work immediately
@@ -17445,6 +17507,7 @@ if ('serviceWorker' in navigator) {
         var items=(e.clipboardData&&e.clipboardData.items)||[]; var handled=false;
         // Paste in the description -> inline image; paste on the attachments card -> plain attachment.
         var inDesc=(e.currentTarget && e.currentTarget.id==='ipNotes');
+        if(inDesc && e.currentTarget._frzRich) return;   // Tiptap owns description paste (editorProps) — skip the classic DOM path
         var cur=_frzCurItem()||p;   // resolve the OPEN item fresh (these handlers are wired once)
         for(var k=0;k<items.length;k++){ if(items[k].kind==='file' && /^image\//.test(items[k].type||'')){ var f=items[k].getAsFile(); if(f){ handled=true; if(inDesc) pasteInlineImage(cur, f); else uploadAttachment(cur, f); } } }
         if(handled){ e.preventDefault(); }
@@ -17458,6 +17521,7 @@ if ('serviceWorker' in navigator) {
         // Drag-and-drop image files into the Description -> inline upload (same S3 pipeline).
         notesEl.addEventListener('dragover', function(e){ if(Array.prototype.indexOf.call((e.dataTransfer&&e.dataTransfer.types)||[], 'Files')>=0) e.preventDefault(); });
         notesEl.addEventListener('drop', function(e){
+          if(notesEl._frzRich) return;   // Tiptap owns description drop (editorProps)
           var files=[].slice.call((e.dataTransfer&&e.dataTransfer.files)||[]).filter(function(f){ return /^image\//.test(f.type||''); });
           if(!files.length) return;
           e.preventDefault();
@@ -17542,6 +17606,7 @@ if ('serviceWorker' in navigator) {
   // data:/blob:. On failure/oversize the placeholder img is removed (no sourceless <img>).
   function _frzAbsorbInlineImages(){
     var notesEl=document.getElementById('ipNotes'); if(!notesEl) return;
+    if(notesEl._frzRich) return;   // Tiptap handles image pastes through editorProps
     var p=_frzCurItem(); if(!p) return;
     [].slice.call(notesEl.querySelectorAll('img:not([data-att-key]):not([data-uploading])')).forEach(function(img){
       var src=img.getAttribute('src')||'';
@@ -17564,6 +17629,323 @@ if ('serviceWorker' in navigator) {
     API.del('/api/items/'+p.id+'/attachments/'+attId)
     .then(function(){ _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Attachment removed: '+(name||attId), null, null); loadAttachments(p); })
     .catch(function(e){ _call('showToast','Remove failed: '+(e&&e.message||''),'error'); });
+  }
+
+  // ════════ Rich-text editor (Tiptap) — Stage 1: Description ════════════════════
+  // Additive, beta-only, behind the server config flag `richTextEditor` (default ON).
+  // Flag OFF / CDN failure / viewer → the classic .rte-box contentEditable stands
+  // untouched. Storage is sanitized HTML (frzSanitize), so content written here still
+  // renders with the flag off. Reuses the existing S3 image pipeline (uploadAttachment)
+  // and the existing @mention menu (_openMentionMenu/_mentionUsers/_wireMentionKeys).
+  var _FRZ_RTE_VER = '2.27.2';                 // PINNED — verified to load no-build
+  function frzRteEnabled(){ return _val('richTextEditor', true) !== false; }
+
+  // ── Sanitizer (the REAL allowlist; mirrors spike.html) ───────────────────────
+  var _frzPurifyP = null;
+  function _frzLoadDOMPurify(){
+    if(window.DOMPurify){ _frzInstallPurifyHooks(); return Promise.resolve(window.DOMPurify); }
+    if(_frzPurifyP) return _frzPurifyP;
+    _frzPurifyP = new Promise(function(res, rej){
+      var s=document.createElement('script');
+      s.src='https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js';
+      s.onload=function(){ _frzInstallPurifyHooks(); res(window.DOMPurify); };
+      s.onerror=function(){ rej(new Error('DOMPurify load failed')); };
+      document.head.appendChild(s);
+    });
+    return _frzPurifyP;
+  }
+  var _FRZ_VIDEO_HOSTS=['www.youtube.com','youtube.com','www.youtube-nocookie.com','youtube-nocookie.com','player.vimeo.com','www.loom.com','loom.com'];
+  var _FRZ_CLASS_ALLOW={'frz-panel':1,'frz-expand':1,'frz-expand-body':1,'frz-mention':1,'frz-hl':1};
+  function frzHostAllowed(src){ try{ var u=new URL(src, location.href); return u.protocol==='https:' && _FRZ_VIDEO_HOSTS.indexOf(u.hostname)>=0; }catch(e){ return false; } }
+  var _frzHooksInstalled=false;
+  function _frzInstallPurifyHooks(){
+    if(_frzHooksInstalled || !window.DOMPurify) return; _frzHooksInstalled=true;
+    DOMPurify.addHook('uponSanitizeAttribute', function(node, data){
+      if(data.attrName==='class'){
+        var kept=(data.attrValue||'').split(/\s+/).filter(function(c){ return _FRZ_CLASS_ALLOW[c]; });
+        data.attrValue=kept.join(' ');
+      }
+    });
+    DOMPurify.addHook('uponSanitizeElement', function(node, data){
+      if(data.tagName==='iframe'){
+        var src=(node.getAttribute&&node.getAttribute('src'))||'';
+        if(!frzHostAllowed(src) && node.parentNode) node.parentNode.removeChild(node);
+      }
+    });
+  }
+  var _FRZ_SANI_CFG={
+    ALLOWED_TAGS:['p','br','strong','b','em','i','u','s','strike','code','pre','blockquote',
+      'h1','h2','h3','ul','ol','li','hr','a','img','span','mark','div',
+      'table','thead','tbody','tr','th','td','colgroup','col','details','summary','iframe'],
+    ALLOWED_ATTR:['href','target','rel','title','alt','src','colspan','rowspan','colwidth',
+      'class','data-att-key','data-u','data-title','data-variant','data-type','data-id','data-label',
+      'allow','allowfullscreen','frameborder','width','height'],
+    ALLOWED_URI_REGEXP:/^(?:https?:|mailto:|tel:|#)/i,    // blocks data:/blob:/javascript:
+    FORBID_ATTR:['style','onerror','onload','onclick','onmouseover'],
+    ADD_TAGS:['iframe']
+  };
+  function frzSanitize(html){
+    if(!window.DOMPurify){ var d=document.createElement('div'); d.textContent=html||''; return d.innerHTML; }
+    return DOMPurify.sanitize(html||'', _FRZ_SANI_CFG);
+  }
+
+  // ── Tiptap loader (pinned, ESM-from-CDN, cached) ─────────────────────────────
+  var _frzTiptapP=null;
+  function _frzLoadTiptap(){
+    if(_frzTiptapP) return _frzTiptapP;
+    var b='https://esm.sh/@tiptap/', V=_FRZ_RTE_VER;
+    _frzTiptapP=Promise.all([
+      import(b+'core@'+V), import(b+'starter-kit@'+V),
+      import(b+'extension-link@'+V), import(b+'extension-image@'+V),
+      import(b+'extension-highlight@'+V)
+    ]).then(function(m){
+      return { core:m[0], StarterKit:m[1].default, Link:m[2].default, Image:m[3].default, Highlight:m[4].default };
+    });
+    return _frzTiptapP;
+  }
+
+  // ── Jira basic-subset helpers (rich blocks are local-only) ───────────────────
+  // Strip local-only blocks (tables/panels/expand/images/iframes) so they never reach
+  // Jira AND don't perturb change-detection.
+  function _frzStripLocalOnly(html){
+    var d=document.createElement('div'); d.innerHTML=html||'';
+    [].slice.call(d.querySelectorAll('table, details.frz-expand, div.frz-panel, img, iframe')).forEach(function(n){ n.parentNode && n.parentNode.removeChild(n); });
+    return d.innerHTML;
+  }
+  // Normalized basic-subset text — the change-detection key. If only a local-only block
+  // changed, this string is identical → no Jira push (no phantom diff).
+  function _frzBasicSubsetText(html){
+    return _frzStripLocalOnly(html||'')
+      .replace(/<br\s*\/?>/gi,'\n').replace(/<\/p>/gi,'\n').replace(/<\/div>/gi,'\n')
+      .replace(/<li>/gi,'• ').replace(/<\/li>/gi,'\n').replace(/<[^>]+>/g,'')
+      .replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&')
+      .replace(/\s+/g,' ').trim();
+  }
+
+  var _curEd=null, _curNotesEl=null;
+
+  // ── Resolve inline-image presigned URLs INTO the editor's node attrs (transient;
+  // src is stripped on save, so the durable data-att-key is what persists). DOM-level
+  // rehydrate would be reverted by ProseMirror on the next render, hence a transaction.
+  function _frzRehydrateEditorImages(ed, pid){
+    var need=false;
+    ed.state.doc.descendants(function(n){ if(n.type.name==='image' && n.attrs['data-att-key'] && !n.attrs.src) need=true; });
+    if(!need) return;
+    API.get('/api/items/'+pid+'/attachments').then(function(res){
+      var map={}; ((res&&res.attachments)||[]).forEach(function(a){ if(a.key) map[a.key]=a.url; });
+      var tr=ed.state.tr, changed=false;
+      ed.state.doc.descendants(function(n,pos){
+        if(n.type.name==='image'){ var k=n.attrs['data-att-key'];
+          if(k && map[k] && n.attrs.src!==map[k]){ tr.setNodeMarkup(pos, undefined, Object.assign({}, n.attrs, {src:map[k]})); changed=true; } }
+      });
+      if(changed){ tr.setMeta('addToHistory', false); ed.view.dispatch(tr); }
+    }).catch(function(){});
+  }
+
+  // ── Save: getHTML → drop transient src → sanitize → PUT → Jira basic-subset push ─
+  function frzSaveDescription(){
+    var p=_frzCurItem(), ed=_curEd; if(!p || !ed) return Promise.resolve();
+    var tmp=document.createElement('div'); tmp.innerHTML=ed.getHTML();
+    [].slice.call(tmp.querySelectorAll('img[data-att-key]')).forEach(function(im){ im.removeAttribute('src'); });
+    var clean=frzSanitize(tmp.innerHTML);
+    var oldDesc=p.description||'';
+    if(clean===oldDesc) return Promise.resolve();   // dirty check — no redundant writes
+    p.description=clean;
+    return API.put('/api/projects/'+p.id, Object.assign({}, p, {_username:_call('getUsername')})).then(function(){
+      var jc=_val('jiraConfigured',false);
+      if(jc && p.jiraTickets && p.jiraTickets.length && _frzBasicSubsetText(oldDesc)!==_frzBasicSubsetText(clean)){
+        var basicHtml=_frzStripLocalOnly(clean);
+        p.jiraTickets.forEach(function(t){
+          (async function(){
+            try{
+              var existingText=await _call('fetchJiraDescriptionText', t);
+              var adf=_call('appendNotesToADF', existingText, basicHtml);
+              if(adf) await API.put('/api/jira/issue/'+t, { fields:{ description:adf } });
+            }catch(e){ console.warn('Jira description update failed:', e&&e.message); }
+          })();
+        });
+        API.post('/api/activities', { activity_type:'Jira Sync', source:'Roadmap',
+          item_id:p.id, item_name:p.name, owner:p.dev||'', project:p.product||'',
+          created_by:_call('getUsername'), message:'Notes appended to Jira description', status:'Auto-Cleared' }).catch(function(){});
+      }
+      _frzFlashSaved();
+    }).catch(function(){ _call('showToast','Failed to save description'); });
+  }
+  function _frzFlashSaved(){
+    var btn=document.getElementById('ipNotesSaveBtn'); if(!btn) return;
+    btn.textContent='Saved'; btn.style.background='#22b96e';
+    setTimeout(function(){ btn.textContent='Save'; btn.style.background='var(--accent)'; }, 1800);
+  }
+
+  // ── Mount the Tiptap editor into #ipNotes ────────────────────────────────────
+  function frzMountRichEditor(p, notesEl){
+    return Promise.all([_frzLoadTiptap(), _frzLoadDOMPurify()]).then(function(r){
+      var T=r[0], core=T.core, Editor=core.Editor, Node=core.Node;
+
+      // Mention: inline atom; round-trips <span class="frz-mention" data-u="…">@u</span>
+      var Mention=Node.create({
+        name:'mention', group:'inline', inline:true, atom:true, selectable:false,
+        addAttributes:function(){ return { user:{ default:'',
+          parseHTML:function(el){ return el.getAttribute('data-u')||''; },
+          renderHTML:function(a){ return { 'data-u':a.user }; } } }; },
+        parseHTML:function(){ return [{ tag:'span.frz-mention' }]; },
+        renderHTML:function(o){ return ['span', Object.assign({}, o.HTMLAttributes, { class:'frz-mention', contenteditable:'false' }), '@'+((o.node.attrs.user)||'')]; },
+        renderText:function(o){ return '@'+((o.node.attrs.user)||''); }
+      });
+      // Image: keep parent attrs + add durable data-att-key; never base64.
+      // parseHTML MUST match img[data-att-key] too — our stored images are src-LESS
+      // (src is a disposable presigned URL resolved at render), and the base Image
+      // extension only matches img[src], so a stored <img data-att-key> would be
+      // dropped on reload → next save persists the imageless doc (the vanish bug).
+      var Img=T.Image.extend({
+        addAttributes:function(){ var pa=(this.parent&&this.parent())||{};
+          return Object.assign({}, pa, { 'data-att-key':{ default:null,
+            parseHTML:function(el){ return el.getAttribute('data-att-key'); },
+            renderHTML:function(a){ return a['data-att-key']?{ 'data-att-key':a['data-att-key'] }:{}; } } }); },
+        parseHTML:function(){ return [{ tag:'img[src]' }, { tag:'img[data-att-key]' }]; }
+      }).configure({ allowBase64:false });
+      // Highlight → <mark class="frz-hl"> (matches the sanitizer + render CSS)
+      var HL=T.Highlight.extend({ renderHTML:function(o){ return ['mark', Object.assign({}, o.HTMLAttributes, { class:'frz-hl' }), 0]; } });
+
+      // Destroy any prior instance (item changed) and prep the host element.
+      if(notesEl._frzEd){ try{ notesEl._frzEd.destroy(); }catch(e){} notesEl._frzEd=null; }
+      notesEl.classList.remove('rte-box'); notesEl.classList.add('frz-rte');
+      notesEl.removeAttribute('contenteditable');
+      notesEl.innerHTML=''; notesEl.style.padding='0';   // .ProseMirror provides the padding (avoid double inset)
+      var oldTb=document.getElementById('ipNotesToolbar'); if(oldTb) oldTb.style.display='none';
+
+      var ed=new Editor({
+        element:notesEl,
+        extensions:[
+          // link:false — some StarterKit 2.27.x builds bundle Link; disable it so our
+          // configured Link (below) is the single, authoritative one (no duplicate-name throw).
+          T.StarterKit.configure({ heading:{ levels:[1,2,3] }, link:false }),
+          T.Link.configure({ openOnClick:false, autolink:true, HTMLAttributes:{ rel:'noopener nofollow', target:'_blank' } }),
+          Img, HL, Mention
+        ],
+        content:p.description||'',
+        editorProps:{
+          handlePaste:function(view, event){
+            var items=(event.clipboardData&&event.clipboardData.items)||[];
+            for(var i=0;i<items.length;i++){ if(items[i].kind==='file' && /^image\//.test(items[i].type||'')){ var f=items[i].getAsFile(); if(f){ _frzInsertImage(f); return true; } } }
+            return false;   // text/html paste handled by PM → tag-based formatting kept, inline style dropped
+          },
+          handleDrop:function(view, event){
+            var files=(event.dataTransfer&&event.dataTransfer.files)||[];
+            var imgs=[].slice.call(files).filter(function(f){ return /^image\//.test(f.type||''); });
+            if(imgs.length){ event.preventDefault(); imgs.forEach(_frzInsertImage); return true; }
+            return false;
+          }
+        }
+      });
+      notesEl._frzEd=ed; notesEl._frzRich=true; _curEd=ed; _curNotesEl=notesEl;
+      window._frzRichSave=frzSaveDescription;   // shared-path hook: saveItemPageNotes delegates here
+
+      _frzBuildToolbar(notesEl, ed);
+      _frzWireMentions(ed);
+      ed.on('blur', function(){ frzSaveDescription(); });
+      ed.on('update', function(){ var b=document.getElementById('ipNotesSaveBtn'); if(b) b.style.background='var(--accent)'; });
+      _frzRehydrateEditorImages(ed, p.id);
+      return ed;
+    });
+  }
+
+  function _frzInsertImage(file){
+    var p=_frzCurItem(), ed=_curEd; if(!p || !ed) return;
+    uploadAttachment(p, file).then(function(rec){
+      if(!rec) return;
+      ed.chain().focus().insertContent([{ type:'image', attrs:{ 'data-att-key':rec.key, alt:(file.name||'image') } }]).run();
+      setTimeout(function(){ _frzRehydrateEditorImages(ed, p.id); frzSaveDescription(); }, 0);
+    }).catch(function(){});
+  }
+
+  // Mention typeahead inside the editor — reuses the existing menu + capture-keydown.
+  function _frzWireMentions(ed){
+    ed.on('selectionUpdate', function(){ _frzMentionProbe(ed); });
+    ed.on('update', function(){ _frzMentionProbe(ed); });
+  }
+  function _frzMentionProbe(ed){
+    var sel=ed.state.selection; if(!sel.empty){ _closeMention(); return; }
+    var $f=sel.$from, before=$f.parent.textBetween(0, $f.parentOffset, '\n', '￼');
+    var mm=/(^|\s)@([A-Za-z0-9._-]*)$/.exec(before);
+    if(!mm){ _closeMention(); return; }
+    var prefix=mm[2], pos=sel.from, at=pos-prefix.length-1;
+    var users=_mentionUsers(prefix); if(!users.length){ _closeMention(); return; }
+    var c; try{ c=ed.view.coordsAtPos(pos); }catch(e){ return; }
+    _openMentionMenu(c.left, c.bottom+4, users, function(u){
+      ed.chain().focus().deleteRange({ from:at, to:pos }).insertContent([{ type:'mention', attrs:{ user:u } }, { type:'text', text:' ' }]).run();
+      _closeMention();
+    });
+  }
+
+  // Editor toolbar (core formatting) — replaces the 3-button execCommand toolbar.
+  var _FRZ_EMOJI=['\u{1F44D}','✅','❗','⚠️','\u{1F389}','\u{1F680}','\u{1F41B}','\u{1F525}','\u{1F4A1}','\u{1F4CC}','\u{1F440}','\u{1F64F}','\u{1F600}','\u{1F914}','\u{1F44F}','\u{1F4AA}','✨','\u{1F4DD}','✔️','❌','➕','\u{1F527}'];
+  function _frzBuildToolbar(notesEl, ed){
+    // Toolbar lives in the Description CARD HEADER. Find the header reliably as the
+    // Save button's own parent (the markup puts Save directly in the header) — deriving
+    // it from the card structure was fragile and dropped the toolbar after Save.
+    var save0=document.getElementById('ipNotesSaveBtn');
+    var header=save0&&save0.parentNode;
+    var old=header&&header.querySelector('.frz-rte-tb'); if(old&&old.parentNode) old.parentNode.removeChild(old);
+    var tb=document.createElement('div'); tb.className='frz-rte-tb';
+    function mk(label, title, fn){ var b=document.createElement('button'); b.type='button'; b.className='frz-rte-btn'; b.title=title; b.innerHTML=label; b.addEventListener('mousedown', function(e){ e.preventDefault(); }); b.addEventListener('click', function(){ fn(); }); tb.appendChild(b); return b; }
+    function sep(){ var s=document.createElement('span'); s.className='frz-rte-sep'; tb.appendChild(s); }
+    var C=function(){ return ed.chain().focus(); };
+    mk('<b>B</b>','Bold', function(){ C().toggleBold().run(); });
+    mk('<i>I</i>','Italic', function(){ C().toggleItalic().run(); });
+    mk('<s>S</s>','Strikethrough', function(){ C().toggleStrike().run(); });
+    mk('<span style="background:#fff3bf;padding:0 2px">H</span>','Highlight', function(){ C().toggleHighlight().run(); });
+    sep();
+    mk('H1','Heading 1', function(){ C().toggleHeading({level:1}).run(); });
+    mk('H2','Heading 2', function(){ C().toggleHeading({level:2}).run(); });
+    mk('H3','Heading 3', function(){ C().toggleHeading({level:3}).run(); });
+    sep();
+    mk('&bull; List','Bullet list', function(){ C().toggleBulletList().run(); });
+    mk('1. List','Numbered list', function(){ C().toggleOrderedList().run(); });
+    mk('&#10078; Quote','Quote', function(){ C().toggleBlockquote().run(); });
+    mk('&lt;/&gt;','Code block', function(){ C().toggleCodeBlock().run(); });
+    mk('&mdash;','Divider', function(){ C().setHorizontalRule().run(); });
+    sep();
+    mk('Link','Add / edit link', function(){ var prev=ed.getAttributes('link').href||''; var h=prompt('Link URL', prev); if(h===null) return; if(h==='') { C().unsetLink().run(); return; } C().extendMarkRange('link').setLink({ href:h }).run(); });
+    var emo=mk('\u{1F642}','Emoji', function(){ _frzToggleEmoji(emo, ed); });
+    // Insert immediately before Save so Save stays the LAST child (far right); the
+    // toolbar's margin-left:auto pushes the toolbar+Save group to the right edge.
+    if(header && save0){
+      header.style.flexWrap='wrap'; header.style.gap='8px';
+      header.insertBefore(tb, save0);
+    } else { notesEl.parentNode.insertBefore(tb, notesEl); }   // fallback to above-editor
+  }
+  function _frzToggleEmoji(anchor, ed){
+    var ex=document.getElementById('frzEmojiPop'); if(ex){ ex.parentNode.removeChild(ex); return; }
+    var pop=document.createElement('div'); pop.id='frzEmojiPop'; pop.className='frz-emoji-pop';
+    pop.innerHTML=_FRZ_EMOJI.map(function(e){ return '<button type="button" class="frz-emoji">'+e+'</button>'; }).join('');
+    var r=anchor.getBoundingClientRect(); pop.style.left=Math.round(r.left)+'px'; pop.style.top=Math.round(r.bottom+4)+'px';
+    document.body.appendChild(pop);
+    pop.querySelectorAll('.frz-emoji').forEach(function(b){ b.addEventListener('mousedown', function(e){ e.preventDefault(); ed.chain().focus().insertContent(b.textContent).run(); pop.parentNode&&pop.parentNode.removeChild(pop); }); });
+    setTimeout(function(){ document.addEventListener('mousedown', function h(ev){ if(pop && !pop.contains(ev.target) && ev.target!==anchor){ pop.parentNode&&pop.parentNode.removeChild(pop); document.removeEventListener('mousedown', h); } }); }, 0);
+  }
+
+  // Entry from openItem: decide editor vs classic fallback.
+  function frzInitDescription(p){
+    var notesEl=document.getElementById('ipNotes'); if(!notesEl) return;
+    var canEdit=(_val('isAdmin',false)||_val('isEditor',false));
+    if(!frzRteEnabled()){            // flag OFF → classic editor, exactly as before
+      window._frzRichSave=null; notesEl._frzRich=false;
+      attachMentionRich(notesEl);
+      return;
+    }
+    // flag ON: render description under .frz-rte so block CSS applies cleanly (edit + read-only).
+    notesEl.classList.remove('rte-box'); notesEl.classList.add('frz-rte');
+    if(!canEdit){ window._frzRichSave=null; notesEl._frzRich=false; return; }   // viewer: read-only display
+    frzMountRichEditor(p, notesEl).catch(function(err){
+      // graceful fallback — CDN/import failure: revert to the classic editor, no errors.
+      console.warn('Rich editor load failed — falling back to classic:', err&&err.message);
+      window._frzRichSave=null; notesEl._frzRich=false;
+      notesEl.classList.remove('frz-rte'); notesEl.classList.add('rte-box');
+      notesEl.setAttribute('contenteditable','true');
+      if(!(p.description||'')) notesEl.innerHTML=p.description||'';   // content already set by classic render
+      attachMentionRich(notesEl);
+    });
   }
 
   // ════════ Stage 2b — Multi-sprint history ════════

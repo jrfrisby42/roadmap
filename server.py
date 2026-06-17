@@ -658,6 +658,10 @@ def init_team_db(team: str):
             # the terminal (done) status. No readiness-floor seed — the default set has no
             # "ready" gate; admins flag one in Admin → Statuses if wanted. Admin-editable.
             "statusIsTerminal": {"Released": True},
+            # /beta rich-text editor (Tiptap) master switch. Default ON for the beta
+            # surface; flipping to False reverts Description+Comments to the classic
+            # lightweight editor with no redeploy. Classic root never reads this.
+            "richTextEditor": True,
         }
         for k, v in defaults.items():
             c.execute("INSERT OR IGNORE INTO config(key,value) VALUES(?,?)",
@@ -722,10 +726,11 @@ def _migrate_config_keys(team: str):
         "statusIsApproved": {},
         "statusIsTesting":  {},
         "statusIsBlocked":  {},
+        "richTextEditor":   True,
     }
     # Keys where False/0/empty-string is a valid intentional value — only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -862,7 +867,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.1.2"
+APP_VERSION = "4.2.0"
 
 app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
 
@@ -1394,7 +1399,10 @@ def get_all(auth: dict = Depends(require_auth)):
             "jiraProjectMapping": cfg("jiraProjectMapping") or {},
             "jiraStatusMapping": cfg("jiraStatusMapping") or {},
             "jiraTypeMapping": cfg("jiraTypeMapping") or {},
-            "jiraSyncConfig": cfg("jiraSyncConfig") or {}}
+            "jiraSyncConfig": cfg("jiraSyncConfig") or {},
+            # /beta rich-text editor master switch — boolean preserved (default ON when
+            # absent) so an admin's explicit False reaches the client and reverts the editor.
+            "richTextEditor": cfg_map.get("richTextEditor", True)}
 
 
 # ── Force-seed config keys (idempotent, for migration/repair) ─────────────────
@@ -1937,7 +1945,8 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "statusIsDefault","statusIsDeferred",
               "changeReasons","deferReasons","departments",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
-              "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked"}
+              "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
+              "richTextEditor"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",
