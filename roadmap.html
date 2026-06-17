@@ -2019,7 +2019,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.2.0';
+const APP_VERSION = '4.2.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -14971,8 +14971,9 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-mw-empty { padding:24px; text-align:center; color:var(--frz-text-muted); }
   /* Stage 3b — notifications bell + inbox */
   .frz-beta .frz-bell-wrap { position:relative; }
-  .frz-beta .frz-bell { position:relative; width:34px; height:34px; border:0; background:transparent; border-radius:8px; cursor:pointer; color:var(--frz-text-secondary); display:grid; place-items:center; }
+  .frz-beta .frz-bell { position:relative; width:34px; height:34px; border:0; background:transparent; border-radius:8px; cursor:pointer; color:var(--frz-text-secondary); display:inline-flex; align-items:center; justify-content:center; }
   .frz-beta .frz-bell:hover { background:var(--frz-bg-app); color:var(--frz-accent); }
+  .frz-beta .frz-bell .frz-ic { width:24px; height:24px; min-width:24px; flex:0 0 auto; stroke-width:1.6; display:block; }   /* enlarge the notification bell; flex:0 0 auto stops the flex item from shrinking */
   .frz-beta .frz-bell-badge { position:absolute; top:1px; right:1px; min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:#e8394a; color:#fff; font-size:10px; font-weight:800; line-height:16px; text-align:center; }
   .frz-beta .frz-notif { position:absolute; top:calc(100% + 8px); right:0; width:340px; max-height:70vh; overflow:auto; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:12px; box-shadow:0 12px 30px rgba(20,40,63,.18); z-index:50; }
   .frz-beta .frz-notif-hd { display:flex; align-items:center; justify-content:space-between; padding:11px 14px; border-bottom:1px solid var(--frz-border); font-weight:800; font-size:13px; color:var(--frz-text); position:sticky; top:0; background:var(--frz-bg-surface); }
@@ -15228,6 +15229,42 @@ if ('serviceWorker' in navigator) {
   body.dark-mode .frz-beta .frz-rte .frz-panel[data-variant=warning] { background:#3d3115; border-color:#6b5a2c; }
   body.dark-mode .frz-beta .frz-rte .frz-panel[data-variant=danger] { background:#3d1a1c; border-color:#6b2f33; }
   body.dark-mode .frz-beta .frz-rte .frz-panel[data-variant=purple] { background:#2a2042; border-color:#4d3d7a; }
+
+  /* Stage 2 — block toolbar dropdowns (Table ▾ / Panel ▾), body-level like the
+     emoji + mention menus (intentionally unscoped, above the shell). */
+  .frz-rte-pop { position:fixed; z-index:100001; background:#fff; border:1px solid #C9D6E3; border-radius:8px; box-shadow:0 10px 28px rgba(20,40,63,.22); padding:4px; min-width:160px; }
+  .frz-rte-pop-opt { display:block; width:100%; text-align:left; border:0; background:none; cursor:pointer; padding:6px 10px; border-radius:6px; font:13px 'Lato',sans-serif; color:#14283F; }
+  .frz-rte-pop-opt:hover { background:#E7F1FA; color:#0059A9; }
+  .frz-rte-pop-sep { height:1px; background:#E1E8F0; margin:4px 2px; }
+  body.dark-mode .frz-rte-pop { background:#181b26; border-color:#3d4358; }
+  body.dark-mode .frz-rte-pop-opt { color:#eef0fa; }
+  body.dark-mode .frz-rte-pop-opt:hover { background:#15314a; color:#4da3e8; }
+
+  /* Stage 2 — ROLLBACK FIDELITY (condition B): mirror the block render CSS to the
+     classic .rte-box path so flag-OFF /beta shows tables/panels/expand cleanly, not
+     cramped. !important is needed ONLY here to beat the production `.rte-box *`
+     rule (which forces background:transparent / font on every descendant) — same
+     precedent as the existing `.frz-beta .rte-box .frz-mention` override. Scoped under
+     .frz-beta so the production `/` root is untouched. */
+  .frz-beta .rte-box table { border-collapse:collapse; width:auto; max-width:100%; table-layout:auto; margin:8px 0; }
+  .frz-beta .rte-box th, .frz-beta .rte-box td { border:1px solid var(--frz-border-strong) !important; padding:6px 9px; vertical-align:top; text-align:left; font-size:13px !important; }
+  .frz-beta .rte-box th { background:var(--frz-bg-sunken) !important; font-weight:700; }
+  .frz-beta .rte-box mark, .frz-beta .rte-box .frz-hl { background:#fff3bf !important; padding:0 2px; border-radius:2px; color:inherit !important; }
+  .frz-beta .rte-box .frz-panel { border-radius:8px; padding:10px 12px; border:1px solid; margin:8px 0; font-size:13px !important; }
+  .frz-beta .rte-box .frz-panel > :first-child { margin-top:0; } .frz-beta .rte-box .frz-panel > :last-child { margin-bottom:0; }
+  .frz-beta .rte-box .frz-panel[data-variant=info]    { background:#e7f1fa !important; border-color:#9cc4e8; }
+  .frz-beta .rte-box .frz-panel[data-variant=success] { background:#e6f6ec !important; border-color:#9fd9b4; }
+  .frz-beta .rte-box .frz-panel[data-variant=warning] { background:#fff4e0 !important; border-color:#f0cf94; }
+  .frz-beta .rte-box .frz-panel[data-variant=danger]  { background:#fde8e8 !important; border-color:#f0a9ad; }
+  .frz-beta .rte-box .frz-panel[data-variant=purple]  { background:#f1e9fb !important; border-color:#c9b3ec; }
+  .frz-beta .rte-box details.frz-expand { border:1px solid var(--frz-border); border-radius:8px; padding:6px 10px; background:var(--frz-bg-app) !important; margin:8px 0; }
+  .frz-beta .rte-box details.frz-expand > summary { cursor:pointer; font-weight:700; }
+  body.dark-mode .frz-beta .rte-box mark, body.dark-mode .frz-beta .rte-box .frz-hl { background:#6b5b14 !important; color:#fff !important; }
+  body.dark-mode .frz-beta .rte-box .frz-panel[data-variant=info]    { background:#15314a !important; border-color:#2d5a86; }
+  body.dark-mode .frz-beta .rte-box .frz-panel[data-variant=success] { background:#143a26 !important; border-color:#2c6b45; }
+  body.dark-mode .frz-beta .rte-box .frz-panel[data-variant=warning] { background:#3d3115 !important; border-color:#6b5a2c; }
+  body.dark-mode .frz-beta .rte-box .frz-panel[data-variant=danger]  { background:#3d1a1c !important; border-color:#6b2f33; }
+  body.dark-mode .frz-beta .rte-box .frz-panel[data-variant=purple]  { background:#2a2042 !important; border-color:#4d3d7a; }
 </style>
 <script>
 (function(){
@@ -17697,9 +17734,12 @@ if ('serviceWorker' in navigator) {
     _frzTiptapP=Promise.all([
       import(b+'core@'+V), import(b+'starter-kit@'+V),
       import(b+'extension-link@'+V), import(b+'extension-image@'+V),
-      import(b+'extension-highlight@'+V)
+      import(b+'extension-highlight@'+V),
+      import(b+'extension-table@'+V), import(b+'extension-table-row@'+V),
+      import(b+'extension-table-cell@'+V), import(b+'extension-table-header@'+V)
     ]).then(function(m){
-      return { core:m[0], StarterKit:m[1].default, Link:m[2].default, Image:m[3].default, Highlight:m[4].default };
+      return { core:m[0], StarterKit:m[1].default, Link:m[2].default, Image:m[3].default, Highlight:m[4].default,
+               Table:m[5].default, TableRow:m[6].default, TableCell:m[7].default, TableHeader:m[8].default };
     });
     return _frzTiptapP;
   }
@@ -17807,6 +17847,32 @@ if ('serviceWorker' in navigator) {
       // Highlight → <mark class="frz-hl"> (matches the sanitizer + render CSS)
       var HL=T.Highlight.extend({ renderHTML:function(o){ return ['mark', Object.assign({}, o.HTMLAttributes, { class:'frz-hl' }), 0]; } });
 
+      // Colored info/callout panel → <div class="frz-panel" data-variant="…">. parseHTML
+      // matches div.frz-panel; renderHTML emits the SAME (class + data-variant) so it
+      // round-trips through the allowlist (which permits div.frz-panel[data-variant]).
+      var InfoPanel=Node.create({
+        name:'infoPanel', group:'block', content:'block+', defining:true,
+        addAttributes:function(){ return { variant:{ default:'info',
+          parseHTML:function(el){ return el.getAttribute('data-variant')||'info'; },
+          renderHTML:function(a){ return { 'data-variant':a.variant||'info' }; } } }; },
+        parseHTML:function(){ return [{ tag:'div.frz-panel' }]; },
+        renderHTML:function(o){ return ['div', Object.assign({}, o.HTMLAttributes, { class:'frz-panel' }), 0]; }
+      });
+      // Expand/collapse with a title → <details class="frz-expand" data-title="…">
+      //   <summary>title</summary><div class="frz-expand-body">…body…</div></details>.
+      // contentElement scopes parsing to the body div so the <summary> isn't re-parsed
+      // as content; title is carried on data-title (survives the allowlist).
+      var Expand=Node.create({
+        name:'expand', group:'block', content:'block+', defining:true,
+        addAttributes:function(){ return { title:{ default:'Details',
+          parseHTML:function(el){ return el.getAttribute('data-title')||'Details'; },
+          renderHTML:function(a){ return { 'data-title':a.title||'Details' }; } } }; },
+        parseHTML:function(){ return [{ tag:'details.frz-expand', contentElement:'div.frz-expand-body' }]; },
+        renderHTML:function(o){ return ['details', Object.assign({}, o.HTMLAttributes, { class:'frz-expand', open:'open' }),
+          ['summary', { contenteditable:'false' }, (o.node.attrs.title||'Details')],
+          ['div', { class:'frz-expand-body' }, 0]]; }
+      });
+
       // Destroy any prior instance (item changed) and prep the host element.
       if(notesEl._frzEd){ try{ notesEl._frzEd.destroy(); }catch(e){} notesEl._frzEd=null; }
       notesEl.classList.remove('rte-box'); notesEl.classList.add('frz-rte');
@@ -17821,7 +17887,11 @@ if ('serviceWorker' in navigator) {
           // configured Link (below) is the single, authoritative one (no duplicate-name throw).
           T.StarterKit.configure({ heading:{ levels:[1,2,3] }, link:false }),
           T.Link.configure({ openOnClick:false, autolink:true, HTMLAttributes:{ rel:'noopener nofollow', target:'_blank' } }),
-          Img, HL, Mention
+          // resizable:false — tables are structure-only / default-width (settled). Column
+          // widths use inline style, which the allowlist strips on save, so resizing would
+          // mislead (look applied, reset on reload). TableHeader/Row/Cell complete the set.
+          T.Table.configure({ resizable:false }), T.TableRow, T.TableHeader, T.TableCell,
+          Img, HL, Mention, InfoPanel, Expand
         ],
         content:p.description||'',
         editorProps:{
@@ -17908,6 +17978,28 @@ if ('serviceWorker' in navigator) {
     sep();
     mk('Link','Add / edit link', function(){ var prev=ed.getAttributes('link').href||''; var h=prompt('Link URL', prev); if(h===null) return; if(h==='') { C().unsetLink().run(); return; } C().extendMarkRange('link').setLink({ href:h }).run(); });
     var emo=mk('\u{1F642}','Emoji', function(){ _frzToggleEmoji(emo, ed); });
+    sep();
+    // Stage 2 blocks — tidy dropdowns (reuse the popover pattern). Table ops no-op
+    // gracefully when the caret isn't in a table.
+    var tableBtn=mk('▦ Table ▾','Table', function(){ _frzMenuPop(tableBtn, [
+      { label:'Insert table', fn:function(){ C().insertTable({ rows:3, cols:3, withHeaderRow:true }).run(); } },
+      { sep:true },
+      { label:'Add row', fn:function(){ C().addRowAfter().run(); } },
+      { label:'Add column', fn:function(){ C().addColumnAfter().run(); } },
+      { label:'Delete row', fn:function(){ C().deleteRow().run(); } },
+      { label:'Delete column', fn:function(){ C().deleteColumn().run(); } },
+      { sep:true },
+      { label:'Delete table', fn:function(){ C().deleteTable().run(); } }
+    ]); });
+    var panelBtn=mk('▤ Panel ▾','Info / callout panel', function(){ _frzMenuPop(panelBtn, [
+      { label:'Info (blue)',     fn:function(){ _frzInsertPanel(ed,'info'); } },
+      { label:'Success (green)', fn:function(){ _frzInsertPanel(ed,'success'); } },
+      { label:'Warning (amber)', fn:function(){ _frzInsertPanel(ed,'warning'); } },
+      { label:'Danger (red)',    fn:function(){ _frzInsertPanel(ed,'danger'); } },
+      { label:'Purple',          fn:function(){ _frzInsertPanel(ed,'purple'); } }
+    ]); });
+    mk('▸ Expand','Expand / collapse block', function(){ var t=prompt('Expand title','Details'); if(t===null) return;
+      C().insertContent({ type:'expand', attrs:{ title:(t||'Details') }, content:[{ type:'paragraph' }] }).run(); });
     // Insert immediately before Save so Save stays the LAST child (far right); the
     // toolbar's margin-left:auto pushes the toolbar+Save group to the right edge.
     if(header && save0){
@@ -17923,6 +18015,25 @@ if ('serviceWorker' in navigator) {
     document.body.appendChild(pop);
     pop.querySelectorAll('.frz-emoji').forEach(function(b){ b.addEventListener('mousedown', function(e){ e.preventDefault(); ed.chain().focus().insertContent(b.textContent).run(); pop.parentNode&&pop.parentNode.removeChild(pop); }); });
     setTimeout(function(){ document.addEventListener('mousedown', function h(ev){ if(pop && !pop.contains(ev.target) && ev.target!==anchor){ pop.parentNode&&pop.parentNode.removeChild(pop); document.removeEventListener('mousedown', h); } }); }, 0);
+  }
+  // Insert a colored info/callout panel (custom infoPanel node) with one empty paragraph.
+  function _frzInsertPanel(ed, variant){
+    ed.chain().focus().insertContent({ type:'infoPanel', attrs:{ variant:variant }, content:[{ type:'paragraph' }] }).run();
+  }
+  // Generic dropdown menu popover (Table / Panel) — same body-level pattern as the
+  // emoji popover. items: [{label,fn} | {sep:true}]. Toggles on repeat click.
+  function _frzMenuPop(anchor, items){
+    var ex=document.getElementById('frzRtePop'); if(ex){ ex.parentNode.removeChild(ex); return; }
+    var pop=document.createElement('div'); pop.id='frzRtePop'; pop.className='frz-rte-pop';
+    items.forEach(function(it){
+      if(it.sep){ var s=document.createElement('div'); s.className='frz-rte-pop-sep'; pop.appendChild(s); return; }
+      var b=document.createElement('button'); b.type='button'; b.className='frz-rte-pop-opt'; b.textContent=it.label;
+      b.addEventListener('mousedown', function(e){ e.preventDefault(); it.fn(); if(pop.parentNode) pop.parentNode.removeChild(pop); });
+      pop.appendChild(b);
+    });
+    var r=anchor.getBoundingClientRect(); pop.style.left=Math.round(r.left)+'px'; pop.style.top=Math.round(r.bottom+4)+'px';
+    document.body.appendChild(pop);
+    setTimeout(function(){ document.addEventListener('mousedown', function h(ev){ if(pop && !pop.contains(ev.target) && ev.target!==anchor){ if(pop.parentNode) pop.parentNode.removeChild(pop); document.removeEventListener('mousedown', h); } }); }, 0);
   }
 
   // Entry from openItem: decide editor vs classic fallback.
@@ -18082,12 +18193,16 @@ if ('serviceWorker' in navigator) {
 
   // ════════ Stage 3b — Watch toggle (item page) ════════
   function loadWatchState(id){
-    API.get('/api/items/'+id+'/watchers').then(function(d){ setWatchBtn(!!(d&&d.watching), (d&&d.watchers||[]).length); }).catch(function(){});
+    API.get('/api/items/'+id+'/watchers').then(function(d){ setWatchBtn(!!(d&&d.watching), (d&&d.watchers)||[]); }).catch(function(){});
   }
-  function setWatchBtn(watching, count){
+  function setWatchBtn(watching, watchers){
     var b=document.getElementById('frzWatchBtn'); if(!b) return;
+    watchers=watchers||[]; var count=watchers.length;
     b.classList.toggle('is-on', !!watching);
     b.innerHTML=IC.bell+'<span>'+(watching?'Watching':'Watch')+(count?(' · '+count):'')+'</span>';
+    // Hover tooltip: who is specifically watching this item, one per line (native
+    // title honors \n) for readability.
+    b.title = count ? ('Watching this item:\n'+watchers.map(function(w){ return '• '+w; }).join('\n')) : 'No one is watching this item yet';
     b.onclick=function(){
       var ep=watching?'unwatch':'watch';
       API.post('/api/items/'+state.itemId+'/'+ep,{}).then(function(){ loadWatchState(state.itemId); }).catch(function(){ _call('showToast','Could not update watch','error'); });
