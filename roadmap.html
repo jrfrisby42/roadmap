@@ -14543,7 +14543,7 @@ if ('serviceWorker' in navigator) {
      ════════════════════════════════════════════════════════════════════════ -->
 <style id="frzBetaStyle">
   .frz-beta {
-    --frz-bg-app:#F5F8FB; --frz-bg-surface:#FFFFFF; --frz-bg-rail:#FAFCFE;
+    --frz-bg-app:#F5F8FB; --frz-bg-surface:#FFFFFF; --frz-bg-rail:#FAFCFE; --frz-bg-elevated:#FFFFFF; --frz-shadow-card:0 2px 8px rgba(20,40,63,.06); --frz-header-tint:#ECF3FB;
     --frz-bg-sunken:#E6EEF6;   /* recessed lane (Kanban columns) — deeper than app so white cards read as draggable */
     --frz-border:#E1E8F0; --frz-border-strong:#C9D6E3;
     --frz-accent:#0059A9; --frz-accent-hover:#004A8F; --frz-accent-soft:#E7F1FA;
@@ -14655,7 +14655,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-newitem svg { width:13px; height:13px; stroke-width:2.2; }
   .frz-beta .frz-acct-wrap { position:relative; }
   .frz-beta .frz-avatar { width:30px; height:30px; border-radius:50%; background:var(--frz-accent); color:#fff; font-size:12px; font-weight:700; display:grid; place-items:center; cursor:pointer; border:0; }
-  .frz-beta .frz-acct-menu { position:absolute; top:calc(100% + 6px); right:0; background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:8px; box-shadow:0 8px 28px rgba(20,40,63,.15); min-width:170px; overflow:hidden; z-index:50; }
+  .frz-beta .frz-acct-menu { position:absolute; top:calc(100% + 6px); right:0; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:8px; box-shadow:0 8px 28px rgba(20,40,63,.15); min-width:170px; overflow:hidden; z-index:50; }
   .frz-beta .frz-acct-menu button { display:block; width:100%; text-align:left; border:0; background:none; cursor:pointer; font:inherit; font-size:13px; color:var(--frz-text); padding:10px 14px; }
   .frz-beta .frz-acct-menu button:hover { background:var(--frz-bg-app); }
 
@@ -14697,7 +14697,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta.on-item #itemPageOverlay > div:first-child { display:none; }
 
   /* Popovers (chip menus, legend, group-by, + filter) */
-  .frz-beta .frz-pop { position:fixed; background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:10px; box-shadow:0 10px 34px rgba(20,40,63,.18); z-index:50; min-width:200px; max-height:340px; overflow-y:auto; padding:6px; }
+  .frz-beta .frz-pop { position:fixed; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:10px; box-shadow:0 10px 34px rgba(20,40,63,.18); z-index:50; min-width:200px; max-height:340px; overflow-y:auto; padding:6px; }
   .frz-beta .frz-pop-opt { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:6px; cursor:pointer; font-size:13px; color:var(--frz-text); border:0; background:none; width:100%; text-align:left; }
   .frz-beta .frz-pop-opt:hover { background:var(--frz-bg-app); }
   .frz-beta .frz-pop-opt input { accent-color:var(--frz-accent); }
@@ -14845,7 +14845,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-bell { position:relative; width:34px; height:34px; border:0; background:transparent; border-radius:8px; cursor:pointer; color:var(--frz-text-secondary); display:grid; place-items:center; }
   .frz-beta .frz-bell:hover { background:var(--frz-bg-app); color:var(--frz-accent); }
   .frz-beta .frz-bell-badge { position:absolute; top:1px; right:1px; min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:#e8394a; color:#fff; font-size:10px; font-weight:800; line-height:16px; text-align:center; }
-  .frz-beta .frz-notif { position:absolute; top:calc(100% + 8px); right:0; width:340px; max-height:70vh; overflow:auto; background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:12px; box-shadow:0 12px 30px rgba(20,40,63,.18); z-index:50; }
+  .frz-beta .frz-notif { position:absolute; top:calc(100% + 8px); right:0; width:340px; max-height:70vh; overflow:auto; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:12px; box-shadow:0 12px 30px rgba(20,40,63,.18); z-index:50; }
   .frz-beta .frz-notif-hd { display:flex; align-items:center; justify-content:space-between; padding:11px 14px; border-bottom:1px solid var(--frz-border); font-weight:800; font-size:13px; color:var(--frz-text); position:sticky; top:0; background:var(--frz-bg-surface); }
   .frz-beta .frz-notif-all { border:0; background:none; color:var(--frz-accent); font-weight:700; font-size:11px; cursor:pointer; }
   .frz-beta .frz-notif-list { display:flex; flex-direction:column; }
@@ -14906,13 +14906,18 @@ if ('serviceWorker' in navigator) {
      popovers go dark too. These selectors out-specify the base .frz-beta rules,
      so no !important is needed. */
   body.dark-mode .frz-beta {
-    --frz-bg-app:#0f1117; --frz-bg-surface:#181b26; --frz-bg-rail:#14161f;
-    --frz-bg-sunken:#14171F;   /* recessed lane (Kanban columns), dark */
-    --frz-border:#2b3042; --frz-border-strong:#3d4358;
-    --frz-accent:#4da3e8; --frz-accent-hover:#65b1e3; --frz-accent-soft:#15314a;
+    /* Dark ramp — blue-navy, each step lifted for elevation separation. */
+    --frz-bg-app:#11151D; --frz-bg-surface:#1C2230; --frz-bg-rail:#161B26;
+    --frz-bg-elevated:#232A3A;   /* popovers/menus (and the modal, via token) */
+    --frz-bg-sunken:#181E2A;     /* recessed lane (Kanban columns), dark */
+    --frz-border:#3A4358; --frz-border-strong:#46536E;   /* lifted so card edges/dividers/rail edge read */
+    --frz-shadow-card:0 2px 10px rgba(0,0,0,.45);
+    --frz-header-tint:#232A3A;   /* subtle lift off the card surface (a hair lighter), not a glowing band — flagged for the dark ticket */
+    --frz-accent:#2F86DE; --frz-accent-hover:#4DA3E8; --frz-accent-soft:#15314a;
     --frz-accent-soft-border:#24506f; --frz-sky:#65b1e3;
-    --frz-text:#C9D6E8; --frz-text-secondary:#b8c0e0; --frz-text-muted:#8088b0;  /* primary text dulled to a soft light-blue (was glaring #eef0fa) */
-    --accent:#4da3e8;   /* keep the reused production subtree Flow-blue, brightened for dark */
+    --frz-text:#C9D6E8; --frz-text-secondary:#b8c0e0; --frz-text-muted:#8FA3C0;  /* primary text kept soft; muted blue-shifted off purple */
+    --accent:#2F86DE;   /* de-indigo'd reused subtree, dark accent */
+    --surface2:var(--frz-bg-surface);   /* dark: lift hijacked chrome buttons/hovers off the page (production button rule paints var(--surface2)) */
   }
   /* ── Body-level modal recolor (Flow shell active) ───────────────────────────
      Production modals (.modal-bg) open at <body> level, OUTSIDE .frz-beta, so
@@ -14922,16 +14927,16 @@ if ('serviceWorker' in navigator) {
      the modals read → Flow tokens. Mirrors the .frz-beta palette (keep in sync);
      classic root (no .frz-beta-active) is untouched. */
   body.frz-beta-active {
-    --frz-bg-app:#F5F8FB; --frz-bg-surface:#FFFFFF; --frz-bg-rail:#FAFCFE; --frz-bg-sunken:#E6EEF6;
+    --frz-bg-app:#F5F8FB; --frz-bg-surface:#FFFFFF; --frz-bg-rail:#FAFCFE; --frz-bg-elevated:#FFFFFF; --frz-bg-sunken:#E6EEF6; --frz-shadow-card:0 2px 8px rgba(20,40,63,.06); --frz-header-tint:#ECF3FB;
     --frz-border:#E1E8F0; --frz-border-strong:#C9D6E3;
     --frz-accent:#0059A9; --frz-accent-hover:#004A8F; --frz-accent-soft:#E7F1FA; --frz-accent-soft-border:#C3DCF1;
     --frz-text:#14283F; --frz-text-secondary:#4A6178; --frz-text-muted:#8298AD;
   }
   body.dark-mode.frz-beta-active {
-    --frz-bg-app:#0f1117; --frz-bg-surface:#181b26; --frz-bg-rail:#14161f; --frz-bg-sunken:#14171F;
-    --frz-border:#2b3042; --frz-border-strong:#3d4358;
-    --frz-accent:#4da3e8; --frz-accent-hover:#65b1e3; --frz-accent-soft:#15314a; --frz-accent-soft-border:#24506f;
-    --frz-text:#C9D6E8; --frz-text-secondary:#b8c0e0; --frz-text-muted:#8088b0;
+    --frz-bg-app:#11151D; --frz-bg-surface:#1C2230; --frz-bg-rail:#161B26; --frz-bg-elevated:#232A3A; --frz-bg-sunken:#181E2A;
+    --frz-border:#3A4358; --frz-border-strong:#46536E; --frz-shadow-card:0 2px 10px rgba(0,0,0,.45); --frz-header-tint:#232A3A;
+    --frz-accent:#2F86DE; --frz-accent-hover:#4DA3E8; --frz-accent-soft:#15314a; --frz-accent-soft-border:#24506f;
+    --frz-text:#C9D6E8; --frz-text-secondary:#b8c0e0; --frz-text-muted:#8FA3C0;
   }
   /* Remap the classic vars the body-level modals read → Flow tokens (kills the
      residual indigo accent + warm grays on every .modal-bg modal). */
@@ -14956,6 +14961,28 @@ if ('serviceWorker' in navigator) {
   body.dark-mode .frz-beta .frz-sh-completed { background:#15331f; color:#5fcf8a; }
   body.dark-mode .frz-beta .frz-sh-carried   { background:#332714; color:#e0a94d; }
   body.dark-mode .frz-beta .frz-sh-returned  { background:#272b44; color:var(--frz-text-secondary); }
+  /* Dark: visible rail↔content separator. */
+  body.dark-mode .frz-beta .frz-rail { border-right-color:var(--frz-border-strong); }
+  /* Item-page cards + rail groups read as raised surfaces — BOTH modes, token-driven.
+     Structure: #frzItemGrid → column → card. [coordination] Was dark-only (dark
+     ticket); now mode-agnostic via --frz-bg-surface + --frz-shadow-card. Dark token
+     VALUES are owned/untouched by the dark ticket. */
+  .frz-beta #frzItemGrid > div > div:not(.frz-rail-status),
+  .frz-beta .frz-rail-group:not(.frz-rail-status) { background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); border-radius:12px !important; }
+  /* No near-black peek behind the fixed shell. */
+  body.dark-mode.frz-beta-active { background:var(--frz-bg-app); }
+  /* Dark: re-assert the accent on beta PRIMARY buttons. The production rule
+     `body.dark-mode button:not(.primary):not(.btn-save)…{ background:var(--surface2)!important }`
+     is specificity (0,7,2); anchoring on element ids out-specifies it so these stay
+     Flow-blue (the prior class-only selectors lost the fight). */
+  body.dark-mode #frzNewItem,
+  body.dark-mode #frzAvatar,
+  body.dark-mode #frzBulkRelease,
+  body.dark-mode #frzDeptAdd,
+  body.dark-mode #frzFilterBar .frz-chip-clear,
+  body.dark-mode #frzSettingsModal .frz-theme-seg button.is-active {
+    background:var(--frz-accent) !important; color:#fff !important; border-color:var(--frz-accent) !important;
+  }
   /* The @mention typeahead is appended to <body> (above the shell), so it is
      intentionally unscoped — restyle it directly under body.dark-mode. */
   body.dark-mode .frz-mention-menu { background:#181b26; border-color:#3d4358; }
@@ -14968,6 +14995,16 @@ if ('serviceWorker' in navigator) {
   .frz-beta #itemPageOverlay > div:last-child { max-width:none !important; }      /* fill the content area between the rails */
   .frz-beta #frzItemGrid { grid-template-columns:minmax(0,1fr) 320px !important; gap:20px !important; padding:18px 22px !important; }
   .frz-beta.frz-narrow #frzItemGrid { grid-template-columns:1fr !important; }     /* stack at narrow widths */
+  /* Stage 1.5: sticky metadata rail (right column) — stays in view while the main
+     column scrolls (single scroll: #frzContent). Internal scroll ONLY when the
+     rail is taller than the viewport, so Admin/Jira stay reachable. */
+  /* Sticky metadata rail (right column) at NATURAL height — no internal scrollbar.
+     min-width:0 on both columns so the grid tracks (minmax(0,1fr) + 320px) actually
+     constrain their items — otherwise the main column's default min-width:auto lets
+     wide content push past its track and overlap the rail. */
+  .frz-beta #frzItemGrid > div:first-child { min-width:0; }
+  .frz-beta #frzItemGrid > div:last-child { position:sticky; top:20px; align-self:start; min-width:0; }
+  .frz-beta.frz-narrow #frzItemGrid > div:last-child { position:static; }   /* unpin when stacked */
   .frz-beta #ipNotes { min-height:440px !important; }                             /* Description focal point (2×); !important beats the inline min-height:120px */
   .frz-beta .frz-rail-group { border:1px solid var(--frz-border); border-radius:10px; overflow:hidden; }
   .frz-beta .frz-rail-ghead { padding:10px 14px; background:var(--frz-bg-surface); border-bottom:1px solid var(--frz-border); font-size:11px; font-weight:900; color:var(--frz-text); text-transform:uppercase; letter-spacing:.5px; }
@@ -14975,12 +15012,24 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rail-menu-btn { border:0; background:none; cursor:pointer; color:var(--frz-text-muted); font-size:16px; line-height:1; padding:0 4px; border-radius:5px; }
   .frz-beta .frz-rail-menu-btn:hover { background:var(--frz-bg-app); color:var(--frz-text); }
   .frz-beta .frz-rail-gbody { padding:14px; display:flex; flex-direction:column; gap:12px; }
+  /* Stage 1: anchored page header — key above title + status/priority chips below */
+  .frz-beta .frz-ip-key { font-family:monospace; font-size:12px; font-weight:700; letter-spacing:.5px; color:var(--frz-text-muted); margin-bottom:3px; }
+  .frz-beta .frz-ip-headchips { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px; }
   /* Item-page section headers white (match the rail group headers). Targets only the
      uppercase header bars (which carry background:var(--surface)) — not field inputs or
      the notes box. !important is needed to beat the reused production inline background. */
-  .frz-beta #itemPageOverlay [style*="text-transform:uppercase"][style*="background:var(--surface)"] { background:var(--frz-bg-surface) !important; }
-  .frz-beta #frzRailStatus { border:0; }                                          /* status control sits bare at the top of the rail */
-  .frz-beta #frzRailStatus .frz-rail-gbody { padding:0 2px; }
+  /* Stage 1.5: ONE shared section/group-header style for BOTH header systems —
+     the production card headers AND the rail group gheads — so none can drift.
+     Accent-blue label (token, mode-correct), NO filled bar, 12px/700, consistent
+     letter-spacing; keeps the existing hairline border-bottom. Admin's header
+     (literal #fff8f0, not var(--surface)) is unmatched → keeps its amber tint. */
+  .frz-beta .frz-rail-ghead,
+  .frz-beta #itemPageOverlay [style*="text-transform:uppercase"][style*="background:var(--surface)"] {
+    background:var(--frz-header-tint) !important; color:var(--frz-accent) !important;
+    font-size:12px !important; font-weight:700 !important; letter-spacing:.4px !important;
+  }
+  .frz-beta #frzRailStatus { border:0; overflow:visible; }                        /* status control sits bare; overflow:visible so the pill isn't clipped by the base .frz-rail-group overflow:hidden */
+  .frz-beta #frzRailStatus .frz-rail-gbody { padding:2px 2px; }
 
   /* ── Stage 1: top-bar GLOBAL search (jump to any item; not a per-view filter) ── */
   .frz-beta .frz-search { position:relative; display:inline-flex; align-items:center; width:230px; height:32px; background:var(--frz-bg-surface); border:1px solid var(--frz-border-strong); border-radius:7px; box-sizing:border-box; }
@@ -15875,7 +15924,26 @@ if ('serviceWorker' in navigator) {
     _debrandItem();
   }
   // Full pass — only from the renderItemPage wrapper (source is fresh there).
-  function _frzItemLayout(p){ _frzConsolidateRail(p); _frzOrderMain(); }
+  function _frzItemLayout(p){ _frzConsolidateRail(p); _frzOrderMain(); _frzItemHeader(p); }
+  // Stage 1: anchor the page header — item KEY above the title + status/priority
+  // DISPLAY chips below it (relocated from the top-bar corner). The status chip
+  // uses statusCls (same dynamic source as the badges) = the status color anchor.
+  // The rail remains the single EDITABLE status. Idempotent; runs on every render
+  // so the chips track edits.
+  function _frzItemHeader(p){
+    if(!p) return;
+    var title=document.getElementById('ipTitle'); if(!title) return;
+    var block=title.parentElement; if(!block) return;
+    var key=document.getElementById('frzIpKey');
+    if(!key){ key=document.createElement('div'); key.id='frzIpKey'; key.className='frz-ip-key'; block.insertBefore(key, title); }
+    key.textContent = p.itemKey || ''; key.style.display = p.itemKey ? '' : 'none';
+    var st = p.status ? '<span class="'+(_call('statusCls',p.status)||'')+'" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px">'+esc(p.status)+'</span>' : '';
+    var PL={1:'Urgent',2:'High',3:'Medium',4:'Low'}, PC={1:'#e8394a',2:'#e87000',3:'#e8c000',4:'#22b96e'};
+    var pr = (p.priority && PL[p.priority]) ? '<span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;background:'+PC[p.priority]+'22;color:'+PC[p.priority]+'">'+PL[p.priority]+'</span>' : '';
+    var row=document.getElementById('frzIpHeadChips');
+    if(!row){ row=document.createElement('div'); row.id='frzIpHeadChips'; row.className='frz-ip-headchips'; block.appendChild(row); }
+    row.innerHTML = st+pr; row.style.display = (st||pr) ? '' : 'none';
+  }
 
   function openItem(id, opts){
     opts = opts||{};
@@ -15911,11 +15979,10 @@ if ('serviceWorker' in navigator) {
     document.getElementById('frzLeft').innerHTML =
       '<button class="frz-back" id="frzBack">'+IC.back+' Back</button>'+
       '<span class="frz-crumbs">'+projDot+'<span>'+esc(p.product||'—')+'</span> › '+parentCrumb+selfCrumb+'</span>';
-    // status + priority badges (production colors, untouched)
+    // Stage 1: status + priority DISPLAY chips relocated into the page header
+    // (_frzItemHeader, via the render→_frzItemLayout chain); rail keeps the editable
+    // status. The top bar keeps only the action buttons.
     var badges='';
-    if (p.status) badges += '<span class="'+(_call('statusCls',p.status)||'')+'" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px">'+esc(p.status)+'</span>';
-    var PL={1:'Urgent',2:'High',3:'Medium',4:'Low'}, PC={1:'#e8394a',2:'#e87000',3:'#e8c000',4:'#22b96e'};
-    if (p.priority && PL[p.priority]) badges += '<span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;background:'+PC[p.priority]+'22;color:'+PC[p.priority]+'">'+PL[p.priority]+'</span>';
     badges += '<button class="frz-watch" id="frzWatchBtn" title="Watch this item">'+IC.bell+'<span>Watch</span></button>';   // Stage 3b
     badges += '<button class="frz-watch" id="frzFlagBtn" title="Flag an issue"><svg class="frz-ic" viewBox="0 0 16 16" style="width:13px;height:13px"><path d="M4 14V3M4 3.5C5.5 2.5 7 2.5 8.5 3.5S11.5 4.5 13 3.5V9c-1.5 1-3 1-4.5 0S5.5 8 4 9"/></svg><span>Flag</span></button>';   // item 4: reuse production flag dialog
     document.getElementById('frzBadges').innerHTML = badges;
