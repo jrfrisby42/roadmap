@@ -13011,9 +13011,8 @@ function _ipTypedLinksHtml(p, canEdit){
         : `<span style="font-size:10px;font-weight:700;color:var(--muted);width:104px;flex-shrink:0">${esc(meta.fwd)}</span>`}
       <button onclick="openItemPage(${t.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0;text-align:left;flex:1">${esc(t.name)}</button>
       ${canEdit
-        ? `<button onclick="ipToggleTypedLinkParallel(${l.id})" title="Toggle parallel / sequential" style="font-size:11px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:5px;padding:1px 8px;cursor:pointer">${l.parallel?'Parallel':'Sequential'}</button>
-           <button onclick="ipRemoveTypedLink(${l.id})" title="Remove link" style="background:none;border:none;color:var(--accent2);cursor:pointer;font-size:14px;padding:0 2px;line-height:1">✕</button>`
-        : `<span style="font-size:11px;color:var(--muted)">${l.parallel?'Parallel':'Sequential'}</span>`}
+        ? `<button onclick="ipRemoveTypedLink(${l.id})" title="Remove link" style="background:none;border:none;color:var(--accent2);cursor:pointer;font-size:14px;padding:0 2px;line-height:1">✕</button>`
+        : ''}
     </div>`);
   });
   // Incoming (stored on the OTHER item) — inverse label, read-only here.
@@ -13025,7 +13024,6 @@ function _ipTypedLinksHtml(p, canEdit){
       rows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border);opacity:.85">
         <span style="font-size:10px;font-weight:700;color:var(--muted);width:104px;flex-shrink:0">${esc(meta.inv)}</span>
         <button onclick="openItemPage(${x.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0;text-align:left;flex:1">${esc(x.name)}</button>
-        <span style="font-size:11px;color:var(--muted)" title="Managed on ${escA(x.name)}">${l.parallel?'Parallel':'Sequential'}</span>
       </div>`);
     });
   });
@@ -13040,7 +13038,6 @@ function _ipTypedLinksHtml(p, canEdit){
           <option value="">Item…</option>
           ${cands.map(x=>`<option value="${x.id}">${x.itemKey?esc(x.itemKey)+' · ':''}${esc(x.name)}</option>`).join('')}
         </select>
-        <label style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="ipTypedParallel" style="accent-color:var(--accent)">Parallel</label>
         <button onclick="ipAddTypedLink()" style="background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Add</button>
       </div></div>`;
   }
@@ -13052,14 +13049,13 @@ function ipAddTypedLink(){
   const p=projects.find(x=>x.id===_itemPageId); if(!p) return;
   const id=parseInt((document.getElementById('ipTypedItem')||{}).value||0,10);
   const type=(document.getElementById('ipTypedType')||{}).value||'related';
-  const parallel=!!(document.getElementById('ipTypedParallel')||{}).checked;
   if(!id) return;
   const links=Array.isArray(p.links)?p.links.slice():[];
   if(links.some(l=>l.id===id)){ showToast('Already linked'); return; }
-  links.push({id, type, parallel});
+  links.push({id, type});
   const t=projects.find(x=>x.id===id);
   saveItemPagePatch({links});
-  logActionOnItem(p.id, p.name, p.dev||'', p.product||'', `Linked: ${IP_LINK_TYPES[type].fwd} ${t?t.name:('#'+id)}${parallel?' (parallel)':''}`, null, null);
+  logActionOnItem(p.id, p.name, p.dev||'', p.product||'', `Linked: ${IP_LINK_TYPES[type].fwd} ${t?t.name:('#'+id)}`, null, null);
 }
 function ipRemoveTypedLink(id){
   const p=projects.find(x=>x.id===_itemPageId); if(!p||!Array.isArray(p.links)) return;
@@ -13072,10 +13068,6 @@ function ipChangeTypedLinkType(id, type){
   const t=projects.find(x=>x.id===id);
   saveItemPagePatch({links:p.links.map(l=> l.id===id ? {...l, type} : l)});
   logActionOnItem(p.id, p.name, p.dev||'', p.product||'', `Link type → ${IP_LINK_TYPES[type].fwd} ${t?t.name:('#'+id)}`, null, null);
-}
-function ipToggleTypedLinkParallel(id){
-  const p=projects.find(x=>x.id===_itemPageId); if(!p||!Array.isArray(p.links)) return;
-  saveItemPagePatch({links:p.links.map(l=> l.id===id ? {...l, parallel:!l.parallel} : l)});
 }
 
 function openItemPage(id, opts={}){
