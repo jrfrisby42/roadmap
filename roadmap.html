@@ -2154,6 +2154,7 @@ let statusIsDeferred = {}; // { [statusName]: bool } — exactly ONE true: assig
 let statusIsReleased = {}; // { [statusName]: bool } — exactly ONE true: marks the Released status
 let statusIsApproved = {}; // { [statusName]: bool } — exactly ONE true: marks the Approved status
 let statusIsTesting  = {}; // { [statusName]: bool } — exactly ONE true: marks the Testing status
+let statusIsBlocked  = {}; // { [statusName]: bool } — optional, at most ONE true: the Blocked status (empty = feature off)
 let typeIgnoreConflicts = {};   // { [typeName]: bool }
 let typeScheduled = {};         // { [typeName]: bool } — scheduled types appear on the Gantt + consume capacity; missing = scheduled (fail-safe)
 let productIgnoreConflicts = {}; // { [productName]: bool } — exempt a whole project from capacity-conflict accounting
@@ -2800,6 +2801,7 @@ const getDeferredStatus = () => statuses.find(s => statusIsDeferred[s]) || '';
 const getReleasedStatus = () => statuses.find(s => statusIsReleased[s]) || '';
 const getApprovedStatus = () => statuses.find(s => statusIsApproved[s]) || '';
 const getTestingStatus  = () => statuses.find(s => statusIsTesting[s])  || '';
+const getBlockedStatus  = () => statuses.find(s => statusIsBlocked[s])  || '';   // '' = no Blocked status defined (feature off)
 
 // ── CONFLICT ENGINE ──────────────────────────────────────────────────────────
 let _capacityNotifDebounce = null;
@@ -6251,6 +6253,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       if(data.statusIsReleased)      statusIsReleased      = data.statusIsReleased;
       if(data.statusIsApproved)      statusIsApproved      = data.statusIsApproved;
       if(data.statusIsTesting)       statusIsTesting        = data.statusIsTesting;
+      if(data.statusIsBlocked)       statusIsBlocked        = data.statusIsBlocked;
       if(data.statusIgnoreConflicts) statusIgnoreConflicts = data.statusIgnoreConflicts;
       if(data.typeIgnoreConflicts)   typeIgnoreConflicts   = data.typeIgnoreConflicts;
       if(data.typeScheduled)         typeScheduled         = data.typeScheduled;
@@ -6522,8 +6525,10 @@ function renderStatusList(){
   if(!statuses.length){ list.innerHTML='<div class="dev-empty">No statuses yet.</div>'; return; }
   const defaultStatus  = getDefaultStatus();
   const deferredStatus = getDeferredStatus();
+  // Hint: the drag order is the authoritative workflow rank
+  const orderHint = `<div style="padding:8px 13px 10px;font-size:11px;color:var(--muted);line-height:1.5">Drag the <b>⠿</b> handle to reorder — this order is the status <b>workflow sequence/rank</b>. <b>Approved</b> sets the readiness floor (items ordered before it are promoted when added to a sprint); <b>Terminal</b> marks completion.</div>`;
   // Header row
-  list.innerHTML = `<div style="display:flex;align-items:center;padding:6px 13px;border-bottom:2px solid var(--border);font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;gap:8px">
+  list.innerHTML = orderHint + `<div style="display:flex;align-items:center;padding:6px 13px;border-bottom:2px solid var(--border);font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;gap:8px">
     <span style="width:20px"></span>
     <span style="flex:1">Status</span>
     <span style="width:56px;text-align:center" title="Drives locking rules when item has an owner">Active</span>
@@ -6534,6 +6539,7 @@ function renderStatusList(){
     <span style="width:62px;text-align:center" title="Status used when item is released (one only)">Released</span>
     <span style="width:62px;text-align:center" title="Status used when item is approved (one only)">Approved</span>
     <span style="width:62px;text-align:center" title="Status used when item is in testing (one only)">Testing</span>
+    <span style="width:60px;text-align:center" title="Optional: the status an item moves to when flagged Blocked (at most one; empty = feature off)">Blocked</span>
     <span style="width:54px"></span>
   </div>` + statuses.map((s,i) => {
     const cnt        = projects.filter(p=>p.status===s).length;
@@ -6552,11 +6558,12 @@ function renderStatusList(){
     const isReleased = !!statusIsReleased[s];
     const isApproved = !!statusIsApproved[s];
     const isTesting2 = !!statusIsTesting[s];
+    const isBlocked2 = !!statusIsBlocked[s];
     const chk = (val, fn) => `<input type="checkbox" ${val?'checked':''} onchange="${fn}" style="accent-color:var(--accent);cursor:pointer;width:15px;height:15px">`;
     const radio = (val, fn, name) => `<input type="radio" name="${name}" ${val?'checked':''} onchange="${fn}" style="accent-color:var(--accent);cursor:pointer;width:15px;height:15px">`;
     return `<div class="dev-item" draggable="true" data-idx="${i}" style="gap:8px">
       <span class="drag-handle" title="Drag to reorder">⠿</span>
-      <span class="dev-nm" style="flex:1">${esc(s)}${tag}${isDef?` <span style="font-size:9px;background:rgba(91,79,255,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Default</span>`:''}${isDefer?` <span style="font-size:9px;background:rgba(232,160,0,0.12);color:#c06000;padding:1px 5px;border-radius:5px">Deferred</span>`:''}${isReleased?` <span style="font-size:9px;background:rgba(34,185,110,0.12);color:#22b96e;padding:1px 5px;border-radius:5px">Released</span>`:''}${isApproved?` <span style="font-size:9px;background:rgba(0,144,212,0.12);color:#0090d4;padding:1px 5px;border-radius:5px">Approved</span>`:''}${isTesting2?` <span style="font-size:9px;background:rgba(91,79,255,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Testing</span>`:''} <span style="font-size:10px;color:var(--muted);font-weight:400">(${cnt})</span></span>
+      <span class="dev-nm" style="flex:1">${esc(s)}${tag}${isDef?` <span style="font-size:9px;background:rgba(91,79,255,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Default</span>`:''}${isDefer?` <span style="font-size:9px;background:rgba(232,160,0,0.12);color:#c06000;padding:1px 5px;border-radius:5px">Deferred</span>`:''}${isReleased?` <span style="font-size:9px;background:rgba(34,185,110,0.12);color:#22b96e;padding:1px 5px;border-radius:5px">Released</span>`:''}${isApproved?` <span style="font-size:9px;background:rgba(0,144,212,0.12);color:#0090d4;padding:1px 5px;border-radius:5px">Approved</span>`:''}${isTesting2?` <span style="font-size:9px;background:rgba(91,79,255,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Testing</span>`:''}${isBlocked2?` <span style="font-size:9px;background:rgba(232,57,74,0.12);color:#e8394a;padding:1px 5px;border-radius:5px">Blocked</span>`:''} <span style="font-size:10px;color:var(--muted);font-weight:400">(${cnt})</span></span>
       <span style="width:56px;text-align:center">${chk(isActive,   `toggleStatusActive(${i},this.checked)`)}</span>
       <span style="width:60px;text-align:center">${chk(isTerm,     `toggleStatusTerminal(${i},this.checked)`)}</span>
       <span style="width:80px;text-align:center">${chk(ignored,    `toggleStatusIgnore(${i},this.checked)`)}</span>
@@ -6565,6 +6572,7 @@ function renderStatusList(){
       <span style="width:62px;text-align:center">${radio(isReleased,`setReleasedStatus(${i})`,  'statusReleased')}</span>
       <span style="width:62px;text-align:center">${radio(isApproved,`setApprovedStatus(${i})`,  'statusApproved')}</span>
       <span style="width:62px;text-align:center">${radio(isTesting2,`setTestingStatus(${i})`,   'statusTesting')}</span>
+      <span style="width:60px;text-align:center"><input type="radio" name="statusBlocked" ${isBlocked2?'checked':''} onclick="setBlockedStatus(${i})" title="Optional Blocked status — click again to clear" style="accent-color:#e8394a;cursor:pointer;width:15px;height:15px"></span>
       <button class="btn-ic" onclick="startEditStatus(${i})" title="Rename"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
       ${deleteBtn}
     </div>`;
@@ -6921,6 +6929,18 @@ function setTestingStatus(i){
   saveConfig('statusIsTesting', statusIsTesting);
   renderStatusList();
   showToast(`"${statuses[i]}" is now the Testing status`);
+}
+// Optional single-select: click the active one to clear (turns the Blocked-status
+// feature off). At most one Blocked status. Behavior wiring is Stage B.
+function setBlockedStatus(i){
+  if(!isAdmin) return;
+  const s = statuses[i];
+  const wasOn = !!statusIsBlocked[s];
+  statusIsBlocked = {};
+  if(!wasOn) statusIsBlocked[s] = true;
+  saveConfig('statusIsBlocked', statusIsBlocked);
+  renderStatusList();
+  showToast(wasOn ? 'Blocked status cleared' : `"${s}" is now the Blocked status`);
 }
 
 // SINGLE read point for the per-type "Scheduled" flag. Missing/undefined = scheduled
@@ -8087,6 +8107,20 @@ async function submitFlagIssue(){
     status: 'Open'
   });
   document.getElementById('flagIssueBg').classList.remove('open');
+  // Blocked binding: flagging Blocked moves the item to the designated Blocked status
+  // (if one is defined), stashing the prior status for one-click un-block. No Blocked
+  // status defined → flag stays a note (unchanged behavior).
+  const blockedStatus = getBlockedStatus();
+  if(document.getElementById('flagType').value === 'Blocked' && blockedStatus && p.status !== blockedStatus){
+    const prev = p.status;
+    p.preBlockStatus = prev;
+    p.status = blockedStatus;
+    try {
+      const updated = await API.put('/api/projects/'+p.id, {...p, _username:getUsername()});
+      const idx = projects.findIndex(x=>x.id===p.id); if(idx>=0) projects[idx]=updated;
+      logActionOnItem(p.id, p.name, p.dev||'', p.product||'', `Status: ${prev||'(none)'} → ${blockedStatus} (flagged Blocked)`, {status:prev}, {status:blockedStatus});
+    } catch(e){ if(typeof showToast==='function') showToast('Flagged, but moving to Blocked failed: '+(e.message||e),'error'); }
+  }
   await loadActivities();
   render(); // refresh warning icons
 }
@@ -14067,6 +14101,7 @@ async function boot(){
     statusIsReleased      = data.statusIsReleased      || {};
     statusIsApproved      = data.statusIsApproved      || {};
     statusIsTesting       = data.statusIsTesting       || {};
+    statusIsBlocked       = data.statusIsBlocked       || {};
 
     // Seed capacity override cache from any overrides stored with /api/all boot
     // (full per-owner loading happens lazily when calendar is opened)
@@ -15104,10 +15139,31 @@ if ('serviceWorker' in navigator) {
     'Released':      { rank:60, terminal:true  }
     // Inactive: intentionally absent — parking lot, no main-flow rank, NOT terminal.
   };
-  var READINESS_FLOOR_RANK = 30; // Approved
-  function statusRank(s){ var m=STATUS_META[s]; return (m && typeof m.rank==='number') ? m.rank : null; }
-  function isTermStatus(s){ var m=STATUS_META[s]; return !!(m && m.terminal); }                 // Released only today
-  function needsFloorPromotion(s){ var r=statusRank(s); return (r===null) || (r < READINESS_FLOOR_RANK); } // off-flow/Inactive or below floor
+  var READINESS_FLOOR_RANK = 30; // STATUS_META fallback floor (Approved) — used only when config is silent
+  // FLOW RANK = the admin's drag-order in Admin → Statuses (config `statuses`), so any
+  // team's custom status names work. Falls back to the hardcoded STATUS_META only for a
+  // status that isn't in the configured list.
+  function statusRank(s){
+    var arr=_val('statuses',[])||[]; var i=arr.indexOf(s);
+    if(i>=0) return i;
+    var m=STATUS_META[s]; return (m && typeof m.rank==='number') ? m.rank : null;
+  }
+  // TERMINAL = the per-team `statusIsTerminal` flag (Admin → Statuses "Terminal"). Falls
+  // back to STATUS_META only when the team hasn't flagged ANY terminal status.
+  function isTermStatus(s){
+    var m=_val('statusIsTerminal',{})||{}, any=false;
+    for(var k in m){ if(m[k]){ any=true; break; } }
+    if(any) return !!m[s];
+    var meta=STATUS_META[s]; return !!(meta && meta.terminal);
+  }
+  // READINESS FLOOR = the Approved-flagged status's rank. A status sitting BEFORE Approved
+  // in the drag order needs promotion when sprinted. Off-list → promote; no floor → none.
+  function needsFloorPromotion(s){
+    var fr=statusRank(approvedStatusName()), r=statusRank(s);
+    if(r===null) return true;
+    if(fr===null) return false;
+    return r < fr;
+  }
   function approvedStatusName(){ var a=_call('getApprovedStatus'); if(a) return a; for(var k in STATUS_META){ if(STATUS_META[k].rank===READINESS_FLOOR_RANK) return k; } return 'Approved'; }
   var LOGO = 'https://frazil.com/frazil/wp-content/uploads/2021/02/Frazil_Website_Nav_Logo@2x.png';
   // Flow brand marks (base64 data URIs, injected from f-logo.png / flow-logo.png).
@@ -15329,7 +15385,7 @@ if ('serviceWorker' in navigator) {
         Promise.resolve(r).then(function(){
           if (state.onItem && state.itemId!=null){
             var pp=(_val('projects',[])||[]).filter(function(x){return x.id===state.itemId;})[0];
-            if(pp) injectFlag(pp);
+            if(pp){ _call('renderItemPage', pp); injectFlag(pp); }   // re-render so a flag→Blocked status move shows immediately
           }
         }).catch(function(){});
         return r;
@@ -17224,7 +17280,43 @@ if ('serviceWorker' in navigator) {
       banner.addEventListener('click', function(){ _call('openConflictActivityModal', p.id); });
     }
     banner.style.background=col+'1a'; banner.style.border='1px solid '+col+'66'; banner.style.color=col;
-    banner.innerHTML='<span style="font-weight:800">⚑ '+esc(f.activity_type)+'</span> '+esc(f.message||'')+(f.note?' <span style="opacity:.75">— '+esc(f.note)+'</span>':'');
+    var unblockBtn='';
+    var _bs=_call('getBlockedStatus');
+    if(f.activity_type==='Blocked' && _bs && p.status===_bs){
+      unblockBtn=' <button class="frz-unblock-btn" data-unblock="'+p.id+'" style="margin-left:8px;border:0;background:'+col+';color:#fff;font:inherit;font-size:11px;font-weight:700;padding:3px 10px;border-radius:6px;cursor:pointer">Unblock…</button>';
+    }
+    banner.innerHTML='<span style="font-weight:800">⚑ '+esc(f.activity_type)+'</span> '+esc(f.message||'')+(f.note?' <span style="opacity:.75">— '+esc(f.note)+'</span>':'')+unblockBtn;
+    var _ub=banner.querySelector('.frz-unblock-btn');
+    if(_ub) _ub.addEventListener('click', function(e){ e.stopPropagation(); openUnblockPicker(p.id); });
+  }
+  // Un-block picker: choose the status to move to (defaults to the stashed preBlockStatus
+  // for one click). Changing the status server-side auto-clears the Blocked flag + stash.
+  function openUnblockPicker(id){
+    var ps=_val('projects',[])||[]; var p=ps.filter(function(x){return x.id===id;})[0]; if(!p) return;
+    var bs=_call('getBlockedStatus'); if(!bs) return;
+    var opts=(_val('statuses',[])||[]).filter(function(s){ return s!==bs; });   // can't unblock to Blocked
+    var def=p.preBlockStatus || _call('getDefaultStatus') || opts[0] || '';
+    var anchor=document.querySelector('.frz-unblock-btn[data-unblock="'+id+'"]') || document.getElementById('frzFlagBanner');
+    if(!anchor) return;
+    openPop(anchor, function(pop){
+      var hd=document.createElement('div'); hd.style.cssText='font-size:11px;color:var(--frz-text-muted);padding:4px 10px 6px'; hd.textContent='Unblock — move to:'; pop.appendChild(hd);
+      opts.forEach(function(s){
+        var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt'; b.textContent=s;
+        if(s===def){ b.style.fontWeight='700'; b.style.color='var(--frz-accent)'; }
+        b.addEventListener('click', function(){ closePop(); unblockTo(id, s); });
+        pop.appendChild(b);
+      });
+    });
+  }
+  function unblockTo(id, status){
+    var ps=_val('projects',[])||[]; var p=ps.filter(function(x){return x.id===id;})[0]; if(!p) return;
+    var prev=p.status; p.status=status; if('preBlockStatus' in p) delete p.preBlockStatus;
+    API.put('/api/projects/'+id, Object.assign({}, p, {_username:_call('getUsername')})).then(function(updated){
+      var i=ps.findIndex(function(x){return x.id===id;}); if(i>-1) ps[i]=updated;   // server cleared the flag + stash
+      _call('logActionOnItem', id, p.name||'', p.dev||'', p.product||'', 'Status: '+(prev||'(none)')+' → '+status+' (unblocked)', {status:prev}, {status:status});
+      var refresh=function(){ if(state.onItem && state.itemId===id){ var pp=(_val('projects',[])||[]).filter(function(x){return x.id===id;})[0]; if(pp){ _call('renderItemPage', pp); injectFlag(pp); } } else { rerender(); } };
+      var la=_call('loadActivities'); if(la && la.then){ la.then(refresh); } else { refresh(); }
+    }).catch(function(err){ p.status=prev; _call('showToast','Unblock failed: '+(err&&err.message||''),'error'); });
   }
 
   function injectAttachments(p){

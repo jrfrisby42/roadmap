@@ -654,6 +654,10 @@ def init_team_db(team: str):
             # Per-type "Scheduled" flag (appears on Gantt + consumes capacity). Default
             # every type ON so behavior is unchanged until an admin unchecks one.
             "typeScheduled": {"Feature":True,"Enhancement":True,"Maintenance":True},
+            # Status-flow anchor for the default set: drag-order is the rank; "Released" is
+            # the terminal (done) status. No readiness-floor seed — the default set has no
+            # "ready" gate; admins flag one in Admin → Statuses if wanted. Admin-editable.
+            "statusIsTerminal": {"Released": True},
         }
         for k, v in defaults.items():
             c.execute("INSERT OR IGNORE INTO config(key,value) VALUES(?,?)",
@@ -717,6 +721,7 @@ def _migrate_config_keys(team: str):
         "statusIsReleased": {},
         "statusIsApproved": {},
         "statusIsTesting":  {},
+        "statusIsBlocked":  {},
     }
     # Keys where False/0/empty-string is a valid intentional value — only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy
@@ -760,6 +765,20 @@ def _migrate_config_keys(team: str):
                 ("typeScheduled", json.dumps(seeded))
             )
             print(f"[Migration] Seeded config key 'typeScheduled' for team '{team}'")
+        # Status-flow anchors: the /beta flow rank reads the drag-ordered `statuses`, but
+        # terminal (done) + readiness-floor (Approved) come from these flags. Seed sensible
+        # defaults ONLY when unset AND the matching default-named status exists — never
+        # clobber a team that already configured (or uses custom names). Teams with custom
+        # names set these via Admin → Statuses; the beta helper falls back meanwhile.
+        _sts = existing.get("statuses") or []
+        for _flag, _name in (("statusIsTerminal", "Released"), ("statusIsApproved", "Approved")):
+            if _name in _sts and not existing.get(_flag):
+                c.execute(
+                    "INSERT INTO config(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (_flag, json.dumps({_name: True}))
+                )
+                print(f"[Migration] Seeded status-flow flag '{_flag}' for team '{team}'")
     _migrated_teams.add(team)
 
 def _migrate_passwords(team: str):
@@ -1368,6 +1387,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "statusIsReleased": cfg("statusIsReleased") or {},
             "statusIsApproved": cfg("statusIsApproved") or {},
             "statusIsTesting": cfg("statusIsTesting") or {},
+            "statusIsBlocked": cfg("statusIsBlocked") or {},
             "changeReasons": cfg("changeReasons") or [],
             "deferReasons": cfg("deferReasons") or [],
             "departments": cfg("departments") or [],
@@ -1635,10 +1655,12 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
         old = json.loads(row["data"])
 
         cfg = {r["key"]: json.loads(r["value"]) for r in c.execute(
-            "SELECT key, value FROM config WHERE key IN ('statusIsActive','statusIsReleased')"
+            "SELECT key, value FROM config WHERE key IN ('statusIsActive','statusIsReleased','statusIsBlocked')"
         ).fetchall()}
         active_map   = cfg.get("statusIsActive", {})
         released_map = cfg.get("statusIsReleased", {})
+        blocked_map  = cfg.get("statusIsBlocked", {})
+        blocked_status = next((k for k, v in (blocked_map or {}).items() if v), "")
 
         # Validate: parallelResources cannot be changed while item is in an active status
         current_status = old.get("status", "")
@@ -1663,6 +1685,10 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
             body.pop("attachments", None)
         if "departments" in body:
             body["departments"] = _normalize_departments(body.get("departments"))
+        # Blocked binding (additive): leaving the Blocked status clears the stashed
+        # pre-block status here; the open Blocked flag is auto-cleared post-commit below.
+        if blocked_status and body.get("status", "") != blocked_status:
+            body.pop("preBlockStatus", None)
         _save_project(c, pid, body)
     write_audit(team, "update", username, pid, body.get("name",""), changes or None)
     try:
@@ -1683,6 +1709,20 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
     # concurrent edit landing during the Jira call isn't clobbered.
     new_status = body.get("status", "")
     old_status = old.get("status", "")
+    # ── Blocked binding (post-commit, best-effort): when an item moves to ANY
+    # non-Blocked status, auto-clear its open Blocked flag so status ⇔ flag stay
+    # consistent. No-op unless a Blocked status is configured. Never fails the update. ──
+    if blocked_status and new_status != blocked_status:
+        try:
+            _ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            with db(team) as c:
+                c.execute(
+                    "UPDATE activities SET status='Auto-Cleared', resolved_by=?, resolved_ts=?, "
+                    "action_taken=? WHERE item_id=? AND activity_type='Blocked' AND status IN ('Open','Read')",
+                    (username or "System", _ts, "Auto-cleared: item moved out of the Blocked status", pid)
+                )
+        except Exception as e:
+            log.warning(f"[Blocked] flag-clear after update failed for item {pid}: {e}")
     tickets    = body.get("jiraTickets") or []
     if new_status != old_status and released_map.get(new_status) and tickets and jira_configured():
         try:
@@ -1897,7 +1937,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "statusIsDefault","statusIsDeferred",
               "changeReasons","deferReasons","departments",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
-              "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting"}
+              "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",
