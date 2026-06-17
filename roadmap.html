@@ -2019,7 +2019,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.1.1';
+const APP_VERSION = '4.1.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -12987,6 +12987,97 @@ function ipShowAddLink(){ const r=document.getElementById('ipAddLinkRow'); if(r)
 function ipLinkItem(){ const s=document.getElementById('ipLinkSelect'); const id=s?parseInt(s.value):0; if(!id) return; saveItemPagePatch({requires:id, parallel:false}); }
 function ipUnlinkRequires(){ saveItemPagePatch({requires:null, parallel:false}); }
 
+// ── Typed relationship links (/beta) — informational, separate from the scheduling
+// `requires` dependency. Stored as p.links=[{id,type,parallel}] on the SOURCE item;
+// the inverse is rendered on the target by scanning. Reuses the parallel concept.
+const IP_LINK_TYPES = {
+  related:    { fwd:'Related to',  inv:'Related to' },
+  blocks:     { fwd:'Blocks',      inv:'Blocked by' },
+  causes:     { fwd:'Causes',      inv:'Caused by' },
+  duplicates: { fwd:'Duplicates',  inv:'Duplicated by' }
+};
+function _ipTypedLinksHtml(p, canEdit){
+  if(!document.body.classList.contains('frz-beta-active')) return '';   // /beta-scoped
+  const links = Array.isArray(p.links) ? p.links : [];
+  const rows = [];
+  const typeOpts = (sel)=>Object.keys(IP_LINK_TYPES).map(k=>`<option value="${k}" ${k===sel?'selected':''}>${IP_LINK_TYPES[k].fwd}</option>`).join('');
+  // Outgoing (stored on this item) — editable here.
+  links.forEach(l=>{
+    const t = projects.find(x=>x.id===l.id); if(!t) return;
+    const meta = IP_LINK_TYPES[l.type]||IP_LINK_TYPES.related;
+    rows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
+      ${canEdit
+        ? `<select onchange="ipChangeTypedLinkType(${l.id}, this.value)" title="Relationship type" style="font-size:10px;font-weight:700;color:var(--muted);width:104px;flex-shrink:0;border:1px solid var(--border);border-radius:5px;background:var(--bg);padding:2px 4px;cursor:pointer">${typeOpts(l.type)}</select>`
+        : `<span style="font-size:10px;font-weight:700;color:var(--muted);width:104px;flex-shrink:0">${esc(meta.fwd)}</span>`}
+      <button onclick="openItemPage(${t.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0;text-align:left;flex:1">${esc(t.name)}</button>
+      ${canEdit
+        ? `<button onclick="ipToggleTypedLinkParallel(${l.id})" title="Toggle parallel / sequential" style="font-size:11px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:5px;padding:1px 8px;cursor:pointer">${l.parallel?'Parallel':'Sequential'}</button>
+           <button onclick="ipRemoveTypedLink(${l.id})" title="Remove link" style="background:none;border:none;color:var(--accent2);cursor:pointer;font-size:14px;padding:0 2px;line-height:1">✕</button>`
+        : `<span style="font-size:11px;color:var(--muted)">${l.parallel?'Parallel':'Sequential'}</span>`}
+    </div>`);
+  });
+  // Incoming (stored on the OTHER item) — inverse label, read-only here.
+  projects.forEach(x=>{
+    if(x.id===p.id || !Array.isArray(x.links)) return;
+    x.links.forEach(l=>{
+      if(l.id!==p.id) return;
+      const meta = IP_LINK_TYPES[l.type]||IP_LINK_TYPES.related;
+      rows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border);opacity:.85">
+        <span style="font-size:10px;font-weight:700;color:var(--muted);width:104px;flex-shrink:0">${esc(meta.inv)}</span>
+        <button onclick="openItemPage(${x.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0;text-align:left;flex:1">${esc(x.name)}</button>
+        <span style="font-size:11px;color:var(--muted)" title="Managed on ${escA(x.name)}">${l.parallel?'Parallel':'Sequential'}</span>
+      </div>`);
+    });
+  });
+  let add='';
+  if(canEdit){
+    const cands = projects.filter(x=> x.id!==p.id && !links.some(l=>l.id===x.id) && !x.archived).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+    add = `<div style="margin-top:2px">
+      <button onclick="ipShowAddTypedLink()" style="background:none;border:1px solid var(--border);color:var(--accent);padding:3px 10px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Add relationship</button>
+      <div id="ipAddTypedRow" style="display:none;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center">
+        <select id="ipTypedType" style="padding:6px 8px;font-size:12px;border:1px solid var(--accent);border-radius:6px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif">${typeOpts('related')}</select>
+        <select id="ipTypedItem" style="flex:1;min-width:150px;padding:6px 8px;font-size:13px;border:1px solid var(--accent);border-radius:6px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif">
+          <option value="">Item…</option>
+          ${cands.map(x=>`<option value="${x.id}">${x.itemKey?esc(x.itemKey)+' · ':''}${esc(x.name)}</option>`).join('')}
+        </select>
+        <label style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="ipTypedParallel" style="accent-color:var(--accent)">Parallel</label>
+        <button onclick="ipAddTypedLink()" style="background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Add</button>
+      </div></div>`;
+  }
+  if(!rows.length && !add) return '';
+  return `<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:6px">Relationships</div>` + rows.join('') + add;
+}
+function ipShowAddTypedLink(){ const r=document.getElementById('ipAddTypedRow'); if(r){ r.style.display='flex'; const s=document.getElementById('ipTypedItem'); if(s) s.focus(); } }
+function ipAddTypedLink(){
+  const p=projects.find(x=>x.id===_itemPageId); if(!p) return;
+  const id=parseInt((document.getElementById('ipTypedItem')||{}).value||0,10);
+  const type=(document.getElementById('ipTypedType')||{}).value||'related';
+  const parallel=!!(document.getElementById('ipTypedParallel')||{}).checked;
+  if(!id) return;
+  const links=Array.isArray(p.links)?p.links.slice():[];
+  if(links.some(l=>l.id===id)){ showToast('Already linked'); return; }
+  links.push({id, type, parallel});
+  const t=projects.find(x=>x.id===id);
+  saveItemPagePatch({links});
+  logActionOnItem(p.id, p.name, p.dev||'', p.product||'', `Linked: ${IP_LINK_TYPES[type].fwd} ${t?t.name:('#'+id)}${parallel?' (parallel)':''}`, null, null);
+}
+function ipRemoveTypedLink(id){
+  const p=projects.find(x=>x.id===_itemPageId); if(!p||!Array.isArray(p.links)) return;
+  const l=p.links.find(x=>x.id===id); const t=projects.find(x=>x.id===id);
+  saveItemPagePatch({links:p.links.filter(x=>x.id!==id)});
+  logActionOnItem(p.id, p.name, p.dev||'', p.product||'', `Unlinked: ${l?IP_LINK_TYPES[l.type].fwd:''} ${t?t.name:('#'+id)}`, null, null);
+}
+function ipChangeTypedLinkType(id, type){
+  const p=projects.find(x=>x.id===_itemPageId); if(!p||!Array.isArray(p.links)) return;
+  const t=projects.find(x=>x.id===id);
+  saveItemPagePatch({links:p.links.map(l=> l.id===id ? {...l, type} : l)});
+  logActionOnItem(p.id, p.name, p.dev||'', p.product||'', `Link type → ${IP_LINK_TYPES[type].fwd} ${t?t.name:('#'+id)}`, null, null);
+}
+function ipToggleTypedLinkParallel(id){
+  const p=projects.find(x=>x.id===_itemPageId); if(!p||!Array.isArray(p.links)) return;
+  saveItemPagePatch({links:p.links.map(l=> l.id===id ? {...l, parallel:!l.parallel} : l)});
+}
+
 function openItemPage(id, opts={}){
   const p = projects.find(x=>x.id===id);
   if(!p) return;
@@ -13215,7 +13306,8 @@ function renderItemPage(p){
         </div></div>`;
     }
   }
-  depsEl.innerHTML = (depRows.length ? depRows.join('') : (linkControl ? '' : `<div style="font-size:12px;color:var(--muted)">No dependencies</div>`)) + linkControl;
+  depsEl.innerHTML = depRows.join('') + linkControl + _ipTypedLinksHtml(p, depCanEdit);
+  if(!depsEl.innerHTML.trim()) depsEl.innerHTML = `<div style="font-size:12px;color:var(--muted)">No dependencies</div>`;
 
   // Subtasks (children) — own card with roll-up + inline create
   renderItemPageSubtasks(p);
@@ -13329,7 +13421,11 @@ async function renderItemPageComments(itemId){
       el.innerHTML = `<div style="font-size:12px;color:var(--muted)">No comments yet</div>`;
       return;
     }
-    el.innerHTML = data.map(c => `
+    // /beta renders newest-first (sort a copy by id DESC — autoincrement, so reliable
+    // regardless of server order); classic keeps its current oldest-first order.
+    const rows = document.body.classList.contains('frz-beta-active')
+      ? data.slice().sort((a,b)=>(b.id||0)-(a.id||0)) : data;
+    el.innerHTML = rows.map(c => `
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
           <span style="font-size:12px;font-weight:700;color:var(--accent)">${esc(c.author)}</span>
@@ -17357,11 +17453,26 @@ if ('serviceWorker' in navigator) {
         var items=(e.clipboardData&&e.clipboardData.items)||[]; var handled=false;
         // Paste in the description -> inline image; paste on the attachments card -> plain attachment.
         var inDesc=(e.currentTarget && e.currentTarget.id==='ipNotes');
-        for(var k=0;k<items.length;k++){ if(items[k].kind==='file' && /^image\//.test(items[k].type||'')){ var f=items[k].getAsFile(); if(f){ handled=true; if(inDesc) pasteInlineImage(p, f); else uploadAttachment(p, f); } } }
-        if(handled) e.preventDefault();
+        var cur=_frzCurItem()||p;   // resolve the OPEN item fresh (these handlers are wired once)
+        for(var k=0;k<items.length;k++){ if(items[k].kind==='file' && /^image\//.test(items[k].type||'')){ var f=items[k].getAsFile(); if(f){ handled=true; if(inDesc) pasteInlineImage(cur, f); else uploadAttachment(cur, f); } } }
+        if(handled){ e.preventDefault(); }
+        else if(inDesc){ setTimeout(function(){ _frzAbsorbInlineImages(); }, 0); }   // catch HTML / data: / blob: image pastes
       };
       card.addEventListener('paste', onPaste);
-      var notesEl=document.getElementById('ipNotes'); if(notesEl && !notesEl._frzAttPaste){ notesEl._frzAttPaste=true; notesEl.addEventListener('paste', onPaste); }
+      var notesEl=document.getElementById('ipNotes');
+      if(notesEl && !notesEl._frzAttPaste){
+        notesEl._frzAttPaste=true;
+        notesEl.addEventListener('paste', onPaste);
+        // Drag-and-drop image files into the Description -> inline upload (same S3 pipeline).
+        notesEl.addEventListener('dragover', function(e){ if(Array.prototype.indexOf.call((e.dataTransfer&&e.dataTransfer.types)||[], 'Files')>=0) e.preventDefault(); });
+        notesEl.addEventListener('drop', function(e){
+          var files=[].slice.call((e.dataTransfer&&e.dataTransfer.files)||[]).filter(function(f){ return /^image\//.test(f.type||''); });
+          if(!files.length) return;
+          e.preventDefault();
+          var cur=_frzCurItem()||p;
+          files.forEach(function(f){ pasteInlineImage(cur, f); });
+        });
+      }
     }
     loadAttachments(p);
   }
@@ -17413,6 +17524,7 @@ if ('serviceWorker' in navigator) {
     var notesEl=document.getElementById('ipNotes'); if(!notesEl) return;
     var img=document.createElement('img');
     img.alt=file.name||'image';
+    img.setAttribute('data-uploading','1');   // mark so a concurrent paste-absorb won't re-upload it
     img.style.cssText='max-width:100%;height:auto;border-radius:6px;display:block;margin:8px 0;opacity:.45';
     try { img.src=URL.createObjectURL(file); } catch(e){}
     var sel=window.getSelection(), placed=false;
@@ -17422,12 +17534,38 @@ if ('serviceWorker' in navigator) {
     }
     if(!placed) notesEl.appendChild(img);
     uploadAttachment(p, file).then(function(rec){
+      img.removeAttribute('data-uploading');
       if(!rec){ if(img.parentNode) img.parentNode.removeChild(img); return; }
       img.setAttribute('data-att-key', rec.key);
       img.style.opacity='';
       _call('rehydrateInlineImages', p.id);   // swap blob preview -> presigned URL
       _call('saveItemPageNotes');              // persist the <img data-att-key> into the description
-    }).catch(function(){ if(img.parentNode) img.parentNode.removeChild(img); });
+    }).catch(function(){ img.removeAttribute('data-uploading'); if(img.parentNode) img.parentNode.removeChild(img); });
+  }
+  // Resolve the currently-open item fresh (the paste/drop handlers are wired once,
+  // so a captured `p` would go stale across item opens).
+  function _frzCurItem(){ var id=state.itemId; return (_val('projects',[])||[]).filter(function(x){ return x.id===id; })[0] || null; }
+  // Absorb any inline data:/blob: image the browser inserted (HTML / data: paste) into the
+  // S3 pipeline → a durable <img data-att-key>. http(s) imgs are left as-is. Never persists
+  // data:/blob:. On failure/oversize the placeholder img is removed (no sourceless <img>).
+  function _frzAbsorbInlineImages(){
+    var notesEl=document.getElementById('ipNotes'); if(!notesEl) return;
+    var p=_frzCurItem(); if(!p) return;
+    [].slice.call(notesEl.querySelectorAll('img:not([data-att-key]):not([data-uploading])')).forEach(function(img){
+      var src=img.getAttribute('src')||'';
+      if(!/^(data:|blob:)/i.test(src)) return;
+      img.setAttribute('data-uploading','1'); img.style.opacity='.45';
+      fetch(src).then(function(r){ return r.blob(); }).then(function(blob){
+        var ext=((blob.type||'image/png').split('/')[1]||'png').split('+')[0];
+        var file=new File([blob], 'pasted-'+Date.now()+'.'+ext, {type:blob.type||'image/png'});
+        return uploadAttachment(p, file);
+      }).then(function(rec){
+        img.removeAttribute('data-uploading'); img.style.opacity='';
+        if(!rec){ if(img.parentNode) img.parentNode.removeChild(img); return; }
+        img.setAttribute('data-att-key', rec.key);
+        _call('rehydrateInlineImages', p.id); _call('saveItemPageNotes');
+      }).catch(function(){ img.removeAttribute('data-uploading'); if(img.parentNode) img.parentNode.removeChild(img); });
+    });
   }
   function deleteAttachment(p, attId, name){
     if(!confirm('Remove '+(name||'this attachment')+'?')) return;
