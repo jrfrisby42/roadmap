@@ -14540,6 +14540,7 @@ if ('serviceWorker' in navigator) {
 <style id="frzBetaStyle">
   .frz-beta {
     --frz-bg-app:#F5F8FB; --frz-bg-surface:#FFFFFF; --frz-bg-rail:#FAFCFE;
+    --frz-bg-sunken:#E6EEF6;   /* recessed lane (Kanban columns) — deeper than app so white cards read as draggable */
     --frz-border:#E1E8F0; --frz-border-strong:#C9D6E3;
     --frz-accent:#0059A9; --frz-accent-hover:#004A8F; --frz-accent-soft:#E7F1FA;
     --frz-accent-soft-border:#C3DCF1; --frz-sky:#65B1E3;
@@ -14902,12 +14903,42 @@ if ('serviceWorker' in navigator) {
      so no !important is needed. */
   body.dark-mode .frz-beta {
     --frz-bg-app:#0f1117; --frz-bg-surface:#181b26; --frz-bg-rail:#14161f;
+    --frz-bg-sunken:#14171F;   /* recessed lane (Kanban columns), dark */
     --frz-border:#2b3042; --frz-border-strong:#3d4358;
     --frz-accent:#4da3e8; --frz-accent-hover:#65b1e3; --frz-accent-soft:#15314a;
     --frz-accent-soft-border:#24506f; --frz-sky:#65b1e3;
-    --frz-text:#eef0fa; --frz-text-secondary:#b8c0e0; --frz-text-muted:#8088b0;
+    --frz-text:#C9D6E8; --frz-text-secondary:#b8c0e0; --frz-text-muted:#8088b0;  /* primary text dulled to a soft light-blue (was glaring #eef0fa) */
     --accent:#4da3e8;   /* keep the reused production subtree Flow-blue, brightened for dark */
   }
+  /* ── Body-level modal recolor (Flow shell active) ───────────────────────────
+     Production modals (.modal-bg) open at <body> level, OUTSIDE .frz-beta, so
+     they never inherit the shell's token remaps and keep classic indigo/grays.
+     On mount the shell tags <body> with .frz-beta-active; we (re)declare the Flow
+     palette here so the modal subtree can resolve it, then remap the classic vars
+     the modals read → Flow tokens. Mirrors the .frz-beta palette (keep in sync);
+     classic root (no .frz-beta-active) is untouched. */
+  body.frz-beta-active {
+    --frz-bg-app:#F5F8FB; --frz-bg-surface:#FFFFFF; --frz-bg-rail:#FAFCFE; --frz-bg-sunken:#E6EEF6;
+    --frz-border:#E1E8F0; --frz-border-strong:#C9D6E3;
+    --frz-accent:#0059A9; --frz-accent-hover:#004A8F; --frz-accent-soft:#E7F1FA; --frz-accent-soft-border:#C3DCF1;
+    --frz-text:#14283F; --frz-text-secondary:#4A6178; --frz-text-muted:#8298AD;
+  }
+  body.dark-mode.frz-beta-active {
+    --frz-bg-app:#0f1117; --frz-bg-surface:#181b26; --frz-bg-rail:#14161f; --frz-bg-sunken:#14171F;
+    --frz-border:#2b3042; --frz-border-strong:#3d4358;
+    --frz-accent:#4da3e8; --frz-accent-hover:#65b1e3; --frz-accent-soft:#15314a; --frz-accent-soft-border:#24506f;
+    --frz-text:#C9D6E8; --frz-text-secondary:#b8c0e0; --frz-text-muted:#8088b0;
+  }
+  /* Remap the classic vars the body-level modals read → Flow tokens (kills the
+     residual indigo accent + warm grays on every .modal-bg modal). */
+  body.frz-beta-active .modal-bg {
+    --accent:var(--frz-accent);
+    --surface:var(--frz-bg-app); --surface2:var(--frz-bg-app);
+    --border:var(--frz-border); --row-sep:var(--frz-border);
+    --muted:var(--frz-text-muted); --text:var(--frz-text);
+  }
+  /* The one literal-indigo chrome reachable in /beta: the loading spinner. */
+  body.frz-beta-active #loadingOverlay > div { border-color:var(--frz-border) !important; border-top-color:var(--frz-accent) !important; }
   /* Hardcoded light backgrounds in the shell that aren't var-driven. */
   body.dark-mode .frz-beta .frz-item:hover,
   body.dark-mode .frz-beta .frz-set-tab:hover { background:#222637; }
@@ -14940,6 +14971,10 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rail-menu-btn { border:0; background:none; cursor:pointer; color:var(--frz-text-muted); font-size:16px; line-height:1; padding:0 4px; border-radius:5px; }
   .frz-beta .frz-rail-menu-btn:hover { background:var(--frz-bg-app); color:var(--frz-text); }
   .frz-beta .frz-rail-gbody { padding:14px; display:flex; flex-direction:column; gap:12px; }
+  /* Item-page section headers white (match the rail group headers). Targets only the
+     uppercase header bars (which carry background:var(--surface)) — not field inputs or
+     the notes box. !important is needed to beat the reused production inline background. */
+  .frz-beta #itemPageOverlay [style*="text-transform:uppercase"][style*="background:var(--surface)"] { background:var(--frz-bg-surface) !important; }
   .frz-beta #frzRailStatus { border:0; }                                          /* status control sits bare at the top of the rail */
   .frz-beta #frzRailStatus .frz-rail-gbody { padding:0 2px; }
 
@@ -15122,6 +15157,7 @@ if ('serviceWorker' in navigator) {
         '<div class="frz-content" id="frzContent"><div class="frz-scrim" id="frzScrim"></div></div>'+
       '</div>';
     document.body.appendChild(root);
+    document.body.classList.add('frz-beta-active');   // recolor body-level production modals to the Flow palette (scoped; classic never sets this)
 
     // The top bar is GLOBAL search (own #frzSearch). The production per-view filter
     // (#searchWrap/#itemSearch) stays in the classic chrome, hidden in beta + untouched.
@@ -16412,7 +16448,7 @@ if ('serviceWorker' in navigator) {
     inner.innerHTML = shown.map(function(s){
       var col=s.col, multi=(col.statuses||[]).length>1;
       var cards=s.items.map(function(p){ return _betaCardHtml(p, multi); }).join('');
-      return '<div class="kanban-col" style="width:'+colW+'px;min-width:160px;flex:1;background:var(--surface2);border-radius:10px;padding:10px">'
+      return '<div class="kanban-col" style="width:'+colW+'px;min-width:160px;flex:1;background:var(--frz-bg-sunken);border-radius:10px;padding:10px">'
         + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;padding-bottom:8px;border-bottom:2px solid var(--frz-border-strong)">'
         + '<span style="font-size:12px;font-weight:900;color:var(--frz-text)">'+esc(col.name)+'</span>'
         + '<span style="font-size:10px;color:var(--frz-text-muted);background:rgba(128,128,128,0.15);padding:1px 6px;border-radius:8px">'+s.items.length+'</span>'
