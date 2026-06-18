@@ -6,12 +6,12 @@ This file gives Claude Code the context it needs to be useful immediately. Read 
 
 ## What this project is
 
-**Frazil Roadmap** is an internal, multi-tenant team roadmap / Gantt / Kanban / planning tool. It is live in production at `https://roadmap.frazil.app` (running on EC2). Current version is **4.0.0** (set in both `server.py` `APP_VERSION` and `roadmap.html` `const APP_VERSION`).
+**Frazil Roadmap** is an internal, multi-tenant team roadmap / Gantt / Kanban / planning tool. It is live in production at `https://roadmap.frazil.app` (running on EC2). Current version is **4.3.1** (set in both `server.py` `APP_VERSION` and `roadmap.html` `const APP_VERSION`).
 
 The whole app is **two files**:
 
-- `server.py` — FastAPI + SQLite backend (~3,600 lines)
-- `roadmap.html` — entire frontend: HTML, CSS, and JS in one file (~16,400 lines)
+- `server.py` — FastAPI + SQLite backend (~4,600 lines)
+- `roadmap.html` — entire frontend: HTML, CSS, and JS in one file (~18,700 lines)
 
 No build step. No bundler. No npm. The HTML file is served directly by FastAPI at `/`. This is intentional — it keeps deploy to a single `scp` of two files.
 
@@ -31,13 +31,14 @@ The `/beta` shell ("Flow") is a **route-gated, additive** left-rail UI built on 
 
 **Routing** (`navigate`/`routeFromLocation`/`syncURL` in the beta module): `/beta/{gantt|kanban|list|planning|dashboard|my-work}`, `/beta/item/:id` (deep-linkable item page), `/beta/planning/{sprints|releases}` (planning sub-tabs), `?board=` (kanban board scope). URLs are the state.
 
-**Features shipped in the shell (4.0.0):**
+**Features shipped in the shell (4.0.0 → 4.3.1):**
 - **Custom Kanban boards** — config key `boards`; per-board columns→statuses mapping with a drop-status; column ↑/↓ reorder.
 - **Planning rework** — tabbed Plan / Sprints / Releases. Sprints (config key `sprints`) with a readiness modal; Releases (config key `releases`) with progress bars.
 - **Ranked statuses + readiness floor** — `STATUS_META` in `roadmap.html` is the **single source of truth** for status rank + terminal-ness (Released is the only terminal status; Inactive is a non-terminal parking lot with no main-flow rank). Helpers `statusRank`/`isTermStatus`/`needsFloorPromotion`. Release progress + sprint completion read terminal-ness from here. (This is the beta-side ranking; the production status-flag config maps from rule 3 still apply.)
 - **Multi-sprint history** — `p.sprintHistory = [{sprintId, addedAt, outcome}]`; reconstructed from the activity log for legacy items (`_parseSprintActivities`).
 - **My Work** — rail entry / `/beta/my-work`; assignee == current user, non-terminal, sorted priority → due → name; client-side render reusing `_listRowHtml`.
-- **Notifications + @mentions + watchers** — bell/inbox in the top bar; `@` typeahead in comments + the description; Watch/Unwatch on the item page. **Server-generated** (see below).
+- **Notifications + @mentions + watchers** — bell/inbox in the top bar; `@` typeahead in comments + the description (works in both the classic input and the Tiptap editor — see Rich-text editor); Watch/Unwatch on the item page. **Server-generated** (see below).
+- **Rich-text editor (Tiptap) — Description + Comments + threads (4.2.0–4.3.1).** Description and the comment composer are a Tiptap/ProseMirror editor; comments support single-level reply threads. See the dedicated **"Rich-text editor"** section below before touching it.
 - **Tabbed Settings** — rail Settings opens a tabbed panel; tab 1 is the **relocated** My Account content; Notifications + Admin tabs are stubs (Admin opens the existing Admin panel).
 - **List multi-select → release linking** — "Add to release" in the list bulk bar; links each selected row via the shared `linkItemToRelease(p, rid)` (the same one the item-page Release field uses).
 - **Attachments (S3) — PAUSED.** The presign/confirm/list/delete endpoints + item-page Attachments UI exist but require an S3 bucket (`frazil-flow-attachments`, us-west-2, SigV4) + instance-role perms that are **not yet provisioned (pending KMS)**. The UI degrades gracefully (presign → toast) until then. Don't build on it until KMS is set up.
@@ -47,8 +48,32 @@ The `/beta` shell ("Flow") is a **route-gated, additive** left-rail UI built on 
 - Notifications/watchers: `GET /api/notifications`, `POST /api/notifications/read`, `GET /api/items/{id}/watchers`, `POST /api/items/{id}/watch` / `/unwatch`. Two new per-team tables: **`notifications`** (private per-user inbox) and **`watchers`** (kept OUT of the item blob, which `update_project` replaces wholesale). Both `CREATE TABLE IF NOT EXISTS` in `init_team_db`.
 - Attachments (paused): `POST /api/items/{id}/attachments/presign`, `POST /api/items/{id}/attachments`, `GET …/attachments`, `DELETE …/attachments/{attId}`.
 - **Notification generation is server-side**, hooked into `add_comment`, `update_project`, `create_project`, `commit_planning_session`, and `jira_pull_sync`. Every hook runs **after** the primary write commits and is wrapped best-effort (a notification failure can never fail/roll back the mutation). Self-notifications are suppressed; bulk Jira sync (`jira_pull_all`) sets `_suppressNotify` to avoid a backfill burst.
+- **Rich-text editor + comment threads (server side):** config flag **`richTextEditor`** (bool, default ON, in `VALID_KEYS` + `init_team_db` defaults + `_migrate_config_keys` presence-only seed + `get_all` returns the bool) — the master switch for the Tiptap editor. **`comments.parent_id`** (idempotent `ALTER TABLE` in `init_team_db`; NULL = top-level): `add_comment` accepts `parent_id` and **normalizes reply-to-reply to the thread root** (single level guaranteed); `_notify_on_comment` notifies the parent comment's author on a reply (new `"reply"` notification type, self-suppressed); `delete_comment` **cascade-deletes replies**. Comment bodies store sanitized rich HTML (`add_comment` stores verbatim — sanitization is client-side on save; mention notifications still resolve because the mention chip carries the literal `@name`).
+- **Natural `item_key` List sort:** `list_items` (`GET /api/items`) sorts the `item_key` column **numerically** — text prefix (case-insensitive) then the trailing integer as a number, computed before `LIMIT/OFFSET` so it's correct across pagination (FRAZ-1, FRAZ-2, … FRAZ-10, not FRAZ-1, FRAZ-10, FRAZ-2). Blanks last in both directions. Only the `item_key` sort branch; literal SQL, whitelisted column + sanitized direction. Shared endpoint → also fixes the classic `/` List.
 
 **Logo assets** are base64-embedded data URIs in the beta module (`FLOW_LOGO_FULL`/`FLOW_LOGO_MARK`) — there is no static file serving, consistent with the two-file deploy.
+
+---
+
+## Rich-text editor (Tiptap) — read before editing Description/Comments under /beta
+
+The item-page **Description** and **comment composer** (incl. reply threads) use a **Tiptap/ProseMirror** editor, beta-only, behind the **`richTextEditor`** config flag (default ON). It lives entirely in the beta module of `roadmap.html`. Flag OFF / viewer / CDN-load failure → the classic lightweight `.rte-box` editor + `#ipCommentText` input, unchanged.
+
+**Loading (no build step):** Tiptap is loaded as **ESM from CDN**, pinned — `@tiptap/*@2.27.2` via `esm.sh`, `dompurify@3.1.6` UMD via jsDelivr — by `_frzLoadTiptap()` / `_frzLoadDOMPurify()` (lazy, cached). There is **no UMD build of a full Tiptap editor**; ESM-from-CDN is the only no-build path. `esm.sh` is therefore a **prod runtime dependency for editing** (acceptable for beta; "self-host the editor bundles before real rollout" is on the record). A CDN/import failure degrades gracefully to the classic editor (never a blank box).
+
+**Shared factory:** `_frzMakeExtensions(T)` builds the extension set + custom nodes used by BOTH the description and comment editors (one definition, no fork). Custom nodes: **Mention** (`span.frz-mention[data-u]`), **Image** (extended with a durable `data-att-key`), **Highlight** (`mark.frz-hl`), **InfoPanel** (`div.frz-panel[data-variant]`), **Expand** (`details.frz-expand[data-title]` + `summary` + `div.frz-expand-body`). `_frzBuildToolbar(ed, opts)` is config-driven (`opts.buttons` set + `opts.place` callback): the description uses the full set in the card header; comments use a **trimmed** set (`_FRZ_TB_COMMENT`: bold/italic/strike, lists, link, image — no blocks).
+
+**Storage = sanitized HTML** through a strict **DOMPurify allowlist** (`frzSanitize` / `_FRZ_SANI_CFG`), applied on save. Explicit tag/attr allowlist; **no inline `style`** (so pasted colors/fonts/table-widths are dropped — intentional; tables are structure-only), no scripts/handlers, `data:`/`blob:` blocked, `class` filtered to a set (`frz-panel/frz-expand/frz-expand-body/frz-mention/frz-hl`), `iframe` **host-gated** to a video allowlist (YouTube/Vimeo/Loom). Old plain/HTML descriptions + comments render unchanged.
+
+**THE round-trip rule (hard-won — the "vanish on refresh" bug):** every custom node's **`parseHTML` must match the exact stored/sanitized form** and its **`renderHTML` must re-emit it**. A parse/render mismatch silently drops the node on reload, and the next save persists the loss. Examples already burned in: the Image node matches `img[data-att-key]` (not just `img[src]`) because stored images are **src-less** (the presigned `src` is disposable, resolved at render); panels/expand carry `data-variant`/`data-title`. Verify any node change with a **two-cycle** round-trip (insert → getHTML → sanitize → setContent → ×2 → identical).
+
+**Inline images** reuse the existing S3 attachment pipeline (`uploadAttachment`) — no second path. Stored as `<img data-att-key>` (no `src`); `_frzRehydrateEditorImages` (editor) / `rehydrateInlineImages` / `_frzRehydrateCommentImages` (rendered) resolve the key → a fresh presigned `src` at display; `src` is stripped again on save. **@mentions** reuse the existing menu (`_openMentionMenu`/`_mentionUsers`) + the document-capture keydown (`_wireMentionKeys`, installed by `_frzWireMentions`).
+
+**Jira description sync:** push a **basic subset only** (bold/italic/lists/links/code/quote/headings); rich blocks (tables/panels/expand/images) are **local-only** — `_frzStripLocalOnly` removes them and change-detection runs on a **normalized basic-subset string** (`_frzBasicSubsetText`), so editing only a local-only block produces **no phantom Jira diff**.
+
+**Comment threads (single-level):** `renderItemPageComments` delegates to **`_frzRenderThreads`** on `frz-beta-active` (classic stays flat) — top-level **newest-first**, replies nested + **chronological**, expanded by default with a collapse toggle. The reply composer reuses the shared editor (one open at a time) and posts with `parent_id`. The composer sits at the **top** of the thread (`_frzPlaceComposerTop`, re-applied on every render). `_renderCommentBody` renders a rich body (one that starts with a known block tag) sanitized inside `.frz-rte`; plain bodies keep the classic escape + `@mention` path. See the server side under "New `server.py` surface".
+
+**Throwaway spikes** `spike.html` (editor + tables torture test) and `spike-sanitize.html` (allowlist auto-asserts) are uncommitted dev artifacts — not deployed, not part of the two-file app.
 
 ---
 
@@ -98,9 +123,11 @@ How isolation works (see `tests/conftest.py`):
 - `TOKEN_SECRET` is pinned and Jira creds are blanked in `conftest.py` before import.
 - Each test gets a fresh uniquely-named team. Role-gating/business-logic tests mint tokens directly via `server.create_token(...)` to skip the login rate limiter; the login flow itself is covered in `test_auth.py`.
 
-Current coverage (`tests/`, ~166 tests): liveness; auth + role gating + login rate limit; the `testWeeks >= dueWeeks` 422; `parallelResources` rounding (create *and* update) + active-status lock; config `VALID_KEYS` allowlist + `/api/all` shape; capacity overrides (upsert/validation/ceiling/batch/delete/effective resolution); planning sessions (lifecycle, payload validation, and atomic commit applying Review/Sprint/Release/deferral status changes through the config-driven status-flag maps); and the `/beta` server surface — boards/sprints/releases endpoints + validation, attachments (size guard, filename/key shaping, auth, record/list/delete), and notifications (mention/assign/status/comment generation, self-suppression, mark-read, watch/unwatch, per-user privacy, and the watchers-survive-a-full-blob-PUT regression guard). Extend it when you touch those areas. Run `pytest` before any deploy.
+Current coverage (`tests/`, ~228 tests): liveness; auth + role gating + login rate limit; the `testWeeks >= dueWeeks` 422; `parallelResources` rounding (create *and* update) + active-status lock; config `VALID_KEYS` allowlist + `/api/all` shape; capacity overrides (upsert/validation/ceiling/batch/delete/effective resolution); planning sessions (lifecycle, payload validation, and atomic commit applying Review/Sprint/Release/deferral status changes through the config-driven status-flag maps); and the `/beta` server surface — boards/sprints/releases endpoints + validation, attachments (size guard, filename/key shaping, auth, record/list/delete), notifications (mention/assign/status/comment generation, self-suppression, mark-read, watch/unwatch, per-user privacy, and the watchers-survive-a-full-blob-PUT regression guard), the **`richTextEditor`** flag (default-on, admin-gate, presence-only migration), **comment threads** (`parent_id` + root normalization, reply-notifies-parent self-suppressed, mention-in-reply, cascade delete), and the **natural `item_key` List sort** (asc/desc order + correctness across pagination). Extend it when you touch those areas. Run `pytest` before any deploy.
 
-Not yet covered: Jira sync (would need HTTP mocking of `urllib`), recurrence spawning, comments/activities, and the S3 attachment happy-path (needs live creds/mock — paused on KMS). Good next targets.
+Frontend-only behavior (the Tiptap editor, sanitizer allowlist, node round-trips) has no pytest coverage — it was verified headlessly during the build via jsdom + the pinned packages (a throwaway harness, not committed). Re-verify node round-trips that way when changing the editor.
+
+Not yet covered: Jira sync (would need HTTP mocking of `urllib`), recurrence spawning, plain comments/activities, and the S3 attachment happy-path (needs live creds/mock — paused on KMS). Good next targets.
 
 ---
 
