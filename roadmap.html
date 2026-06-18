@@ -2019,7 +2019,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.3.1';
+const APP_VERSION = '4.4.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -14806,7 +14806,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-newitem svg { width:13px; height:13px; stroke-width:2.2; }
   .frz-beta .frz-acct-wrap { position:relative; }
   .frz-beta .frz-avatar { width:30px; height:30px; border-radius:50%; background:var(--frz-accent); color:#fff; font-size:12px; font-weight:700; display:grid; place-items:center; cursor:pointer; border:0; }
-  .frz-beta .frz-acct-menu { position:absolute; top:calc(100% + 6px); right:0; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:8px; box-shadow:0 8px 28px rgba(20,40,63,.15); min-width:170px; overflow:hidden; z-index:50; }
+  .frz-beta .frz-acct-menu { position:absolute; top:calc(100% + 6px); right:0; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:8px; box-shadow:0 8px 28px rgba(20,40,63,.15); min-width:170px; overflow:hidden; z-index:90; }
   .frz-beta .frz-acct-menu button { display:block; width:100%; text-align:left; border:0; background:none; cursor:pointer; font:inherit; font-size:13px; color:var(--frz-text); padding:10px 14px; }
   .frz-beta .frz-acct-menu button:hover { background:var(--frz-bg-app); }
 
@@ -14848,7 +14848,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta.on-item #itemPageOverlay > div:first-child { display:none; }
 
   /* Popovers (chip menus, legend, group-by, + filter) */
-  .frz-beta .frz-pop { position:fixed; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:10px; box-shadow:0 10px 34px rgba(20,40,63,.18); z-index:50; min-width:200px; max-height:340px; overflow-y:auto; padding:6px; }
+  .frz-beta .frz-pop { position:fixed; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:10px; box-shadow:0 10px 34px rgba(20,40,63,.18); z-index:90; min-width:200px; max-height:340px; overflow-y:auto; padding:6px; }
   .frz-beta .frz-pop-opt { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:6px; cursor:pointer; font-size:13px; color:var(--frz-text); border:0; background:none; width:100%; text-align:left; }
   .frz-beta .frz-pop-opt:hover { background:var(--frz-bg-app); }
   .frz-beta .frz-pop-opt input { accent-color:var(--frz-accent); }
@@ -14997,7 +14997,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-bell:hover { background:var(--frz-bg-app); color:var(--frz-accent); }
   .frz-beta .frz-bell .frz-ic { width:24px; height:24px; min-width:24px; flex:0 0 auto; stroke-width:1.6; display:block; }   /* enlarge the notification bell; flex:0 0 auto stops the flex item from shrinking */
   .frz-beta .frz-bell-badge { position:absolute; top:1px; right:1px; min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:#e8394a; color:#fff; font-size:10px; font-weight:800; line-height:16px; text-align:center; }
-  .frz-beta .frz-notif { position:absolute; top:calc(100% + 8px); right:0; width:340px; max-height:70vh; overflow:auto; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:12px; box-shadow:0 12px 30px rgba(20,40,63,.18); z-index:50; }
+  .frz-beta .frz-notif { position:absolute; top:calc(100% + 8px); right:0; width:340px; max-height:70vh; overflow:auto; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:12px; box-shadow:0 12px 30px rgba(20,40,63,.18); z-index:90; }
   .frz-beta .frz-notif-hd { display:flex; align-items:center; justify-content:space-between; padding:11px 14px; border-bottom:1px solid var(--frz-border); font-weight:800; font-size:13px; color:var(--frz-text); position:sticky; top:0; background:var(--frz-bg-surface); }
   .frz-beta .frz-notif-all { border:0; background:none; color:var(--frz-accent); font-weight:700; font-size:11px; cursor:pointer; }
   .frz-beta .frz-notif-list { display:flex; flex-direction:column; }
@@ -15213,6 +15213,28 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rte.frz-rte-comment { flex:1; min-width:0; border:1px solid var(--frz-border); border-radius:6px; background:var(--frz-bg-surface); }
   .frz-beta .frz-rte.frz-rte-comment .ProseMirror { min-height:20px; max-height:220px; overflow-y:auto; padding:6px 10px; }
   .frz-beta .frz-rte.frz-rte-comment .ProseMirror > p { margin:0; }   /* tight single line when empty (no editor paragraph margins) */
+  /* Item modal Notes (#frzModalNotes) — the modal is OUTSIDE .frz-beta, so scope under
+     body.frz-beta-active and use PRODUCTION vars (matches the item-page #ipNotes box). Fill
+     the form-row vertically; style the toolbar (the .frz-beta-scoped .frz-rte-tb/-btn don't reach here). */
+  body.frz-beta-active #frzModalNotes { flex:1; min-height:0; display:flex; flex-direction:column; border:1px solid var(--border); border-radius:6px; background:var(--surface); overflow:hidden; }
+  body.frz-beta-active #frzModalNotes .ProseMirror { flex:1; min-height:90px; overflow-y:auto; padding:10px 12px; outline:none; color:var(--text); font-size:13px; line-height:1.6; font-family:'Lato',sans-serif; }
+  body.frz-beta-active #frzModalNotes .ProseMirror:focus { outline:none; }
+  body.frz-beta-active #frzModalNotes p { margin:.3em 0; }
+  body.frz-beta-active #frzModalNotes ul, body.frz-beta-active #frzModalNotes ol { padding-left:20px; margin:.3em 0; }
+  body.frz-beta-active #frzModalNotes a { color:var(--accent); text-decoration:underline; }
+  body.frz-beta-active #frzModalNotes img { max-width:100%; height:auto; border-radius:6px; display:block; margin:6px 0; }
+  body.frz-beta-active #frzModalNotes mark, body.frz-beta-active #frzModalNotes .frz-hl { background:#fff3bf; padding:0 2px; border-radius:2px; }
+  body.frz-beta-active #frzModalNotes .frz-mention { background:#e7f1fa; color:#0059a9; border-radius:4px; padding:0 4px; font-weight:600; }
+  body.frz-beta-active #frzModalNotes table { border-collapse:collapse; width:auto; max-width:100%; margin:6px 0; }
+  body.frz-beta-active #frzModalNotes th, body.frz-beta-active #frzModalNotes td { border:1px solid var(--border); padding:5px 8px; }
+  body.frz-beta-active #frzModalNotes .frz-panel { border:1px solid var(--border); border-radius:6px; padding:8px 10px; margin:6px 0; }
+  body.frz-beta-active .frz-rte-tb-modal { display:flex; flex-wrap:wrap; align-items:center; gap:3px; margin:0 0 6px; }
+  body.frz-beta-active .frz-rte-tb-modal .frz-rte-btn { background:var(--surface); border:1px solid var(--border); border-radius:5px; padding:3px 8px; font-size:12px; line-height:1.4; cursor:pointer; color:var(--text); font-family:'Lato',sans-serif; font-weight:600; }
+  body.frz-beta-active .frz-rte-tb-modal .frz-rte-btn:hover { border-color:var(--accent); color:var(--accent); }
+  body.frz-beta-active .frz-rte-tb-modal .frz-rte-sep { width:1px; align-self:stretch; background:var(--border); margin:2px 4px; }
+  /* Description relocated full-width to the bottom of the modal (/beta) */
+  body.frz-beta-active .frz-desc-full { margin-top:14px; }
+  body.frz-beta-active .frz-desc-full #frzModalNotes .ProseMirror { min-height:180px; }
   /* Stage 4 — comment threads */
   .frz-beta .frz-comment-thread { display:flex; flex-direction:column; gap:6px; }
   .frz-beta .frz-cmt { background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:8px; padding:10px 12px; }
@@ -15234,6 +15256,34 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-reply-post { background:var(--frz-accent); color:#fff; border:0; padding:5px 14px; border-radius:6px; font-family:'Lato',sans-serif; font-weight:700; font-size:12px; cursor:pointer; }
   .frz-beta .frz-reply-post:hover { background:var(--frz-accent-hover); }
   .frz-beta .frz-reply-cancel { background:none; border:1px solid var(--frz-border); color:var(--frz-text-secondary); padding:5px 12px; border-radius:6px; font-family:'Lato',sans-serif; font-size:12px; cursor:pointer; }
+
+  /* List detail panel — docked right (split). top is set in JS to align below the bar. */
+  .frz-list-panel { position:fixed; right:0; bottom:0; width:420px; background:var(--frz-bg-surface); border-left:1px solid var(--frz-border-strong);
+                    box-shadow:-8px 0 24px rgba(20,40,63,.10); overflow-y:auto; z-index:80; padding:16px 18px 28px; outline:none; }
+  body.frz-panel-open #frzContent { padding-right:420px; }   /* keep the list clear of the panel in split mode */
+  .frz-list-panel .frz-lp-hd-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .frz-list-panel .frz-lp-actions { display:flex; align-items:center; gap:4px; }
+  .frz-list-panel .frz-lp-close, .frz-list-panel .frz-lp-full { background:none; border:0; cursor:pointer; color:var(--frz-text-secondary); font-size:16px; line-height:1; padding:4px 6px; border-radius:6px; }
+  .frz-list-panel .frz-lp-close:hover, .frz-list-panel .frz-lp-full:hover { background:var(--frz-bg-app); color:var(--frz-accent); }
+  .frz-list-panel .frz-lp-name { font-size:17px; font-weight:800; color:var(--frz-text); margin:8px 0 8px; line-height:1.3; }
+  .frz-list-panel .frz-lp-badges { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .frz-list-panel .frz-lp-prio { font-size:11px; font-weight:700; }
+  .frz-list-panel .frz-lp-details { margin:16px 0; border:1px solid var(--frz-border); border-radius:8px; overflow:hidden; }
+  .frz-list-panel .frz-lp-row { display:flex; gap:10px; padding:6px 12px; font-size:12px; border-top:1px solid var(--frz-border); }
+  .frz-list-panel .frz-lp-row:first-child { border-top:0; }
+  .frz-list-panel .frz-lp-k { width:84px; flex-shrink:0; color:var(--frz-text-muted); font-weight:700; text-transform:uppercase; letter-spacing:.4px; font-size:10px; padding-top:1px; }
+  .frz-list-panel .frz-lp-v { color:var(--frz-text); }
+  .frz-list-panel .frz-lp-sec-hd { font-size:10px; font-weight:900; text-transform:uppercase; letter-spacing:.5px; color:var(--frz-text-muted); margin:0 0 8px; }
+  .frz-list-panel .frz-lp-empty { font-size:12px; color:var(--frz-text-muted); }
+  /* active row in the list while its panel is open (survives re-render via the observer) */
+  .frz-beta tr.list-row.frz-row-active > td { background:var(--frz-accent-soft); }
+  .frz-beta tr.list-row.frz-row-active > td:first-child { box-shadow:inset 3px 0 0 var(--frz-accent); }
+  /* ≤980px: panel becomes a full-width overlay (Jira-style), list not pushed */
+  @media (max-width:980px){
+    .frz-list-panel { width:100%; left:0; }
+    body.frz-panel-open #frzContent { padding-right:0; }
+  }
+  body.dark-mode .frz-list-panel { box-shadow:-8px 0 24px rgba(0,0,0,.4); }
   .frz-beta .frz-rte .ProseMirror { min-height:120px; padding:10px 12px; outline:none; }
   .frz-beta .frz-rte .ProseMirror:focus { outline:none; }
   .frz-beta .frz-rte p { margin:.4em 0; }
@@ -15415,7 +15465,8 @@ if ('serviceWorker' in navigator) {
   var _boards = [], _betaHideEmpty = false, _sprints = [], _releases = [], _origRenderPlanning = null;
   var state = {
     view:'gantt', collapsed:false, project:'__all__', board:'__all__', planTab:'plan',
-    saved:[], onItem:false, itemId:null, pop:null, itemFromApp:false
+    saved:[], onItem:false, itemId:null, pop:null, itemFromApp:false,
+    panelId:null   // List detail panel: open item id (URL ?panel=), List view only
   };
 
   // ── persistence ──
@@ -15576,6 +15627,14 @@ if ('serviceWorker' in navigator) {
       if (!root) return _origOpenItemPage.apply(this, arguments);   // pre-build (boot deep link) → original
       openItem(id, { push: !(opts && opts.push===false) });
     };
+    _frzWireListPanel();   // List detail panel: create the panel el + the #listBody capture interceptor (before any click)
+    // Wrap openProjectModal so the modal's Notes (#fDesc) becomes the rich editor on /beta
+    // (additive; original runs first and sets #fDesc, then we mount). Classic / (no root) → original only.
+    if(window.openProjectModal && !window.openProjectModal._frzWrapped){
+      var _origOPM = window.openProjectModal;
+      window.openProjectModal = function(id){ var r=_origOPM.apply(this, arguments); try{ _frzInitModalNotes(id); }catch(e){} return r; };
+      window.openProjectModal._frzWrapped = true;
+    }
     // Wrap renderKanban: in beta, EVERY board (incl. "All statuses") renders through
     // renderBetaKanban so all boards share one canonical card. The production
     // renderKanban is no longer called in beta — and is left untouched for classic.
@@ -15866,6 +15925,7 @@ if ('serviceWorker' in navigator) {
       if (sel && sel.length) params.set(CHIPS[k].param, sel.join(','));
     });
     if (view==='kanban' && state.board && state.board!=='__all__') params.set('board', state.board);  // board is URL state
+    if (view==='list' && state.panelId!=null) params.set('panel', state.panelId);   // List detail panel is URL state
     var qs = params.toString();
     var base = '/beta/'+view;
     if (view==='planning' && state.planTab && state.planTab!=='plan') base = '/beta/planning/'+state.planTab;  // planning sub-tab is URL state
@@ -15982,6 +16042,7 @@ if ('serviceWorker' in navigator) {
   }
   function setView(view, opts){
     opts = opts||{};
+    if(view!=='list' && state.panelId!=null) frzClosePanel({fromURL:true});   // leaving List closes the detail panel (URL handled by the navigation)
     if(view==='my-home'){ return setHome(state.homeTab); }
     if(view==='kanban' && _val('isViewer', false)) view='gantt';   // viewers never see Kanban (safety net; callers also redirect)
     state.onItem=false; state.itemId=null;
@@ -16364,6 +16425,7 @@ if ('serviceWorker' in navigator) {
     lset('frazil_beta_lastview_'+uname(), vm[1]);
     if (vm[1]!=='my-home') rerender();   // My Home renders itself
     history.replaceState({frzView:vm[1]},'',location.pathname+location.search);
+    _frzSyncPanelFromURL();   // List detail panel: open/close to match ?panel (load + deep link)
   }
   window.addEventListener('popstate', function(e){
     if (!root) return;
@@ -16378,6 +16440,7 @@ if ('serviceWorker' in navigator) {
       applyURLToFilters(view, new URLSearchParams(location.search));
       setView(view);
       if (view!=='my-home') rerender();   // My Home renders itself
+      _frzSyncPanelFromURL();   // List detail panel: open/close to match ?panel on back/forward (no new listener)
     }
   });
 
@@ -16786,7 +16849,7 @@ if ('serviceWorker' in navigator) {
     var badge = multi ? '<span class="'+(_call('statusCls',p.status)||'')+'" style="padding:0 7px;border-radius:9px;font-size:10px;font-weight:700">'+esc(p.status)+'</span>' : '';
     var pts=(p.storyPoints!=null&&p.storyPoints!=='')?'<span class="frz-bchip frz-bchip-pts">'+esc(p.storyPoints)+' pts</span>':'';
     var wk=_fmtWeeks(p); var wkChip = wk ? '<span class="frz-bchip frz-bchip-wk">'+wk+'</span>' : '';
-    return '<div class="frz-bcard" draggable="true" data-id="'+p.id+'" onclick="openItemPage('+p.id+')">'
+    return '<div class="frz-bcard" draggable="true" data-id="'+p.id+'" onclick="openProjectModal('+p.id+')">'
       + (p.itemKey?'<div class="frz-bcard-key">'+_projDot(p.product)+esc(p.itemKey)+'</div>':'')
       + '<div class="frz-bcard-name">'+esc(p.name||'')+' '+(_call('getItemActivityIndicator', p.id)||'')+'</div>'
       + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+'</div>'
@@ -17986,12 +18049,75 @@ if ('serviceWorker' in navigator) {
   // optional post-insert callback (the description passes frzSaveDescription so the
   // data-att-key persists immediately; the comment composer passes nothing — the image
   // stays in the composer until the comment is posted).
-  function _frzInsertImage(file, ed, afterInsert){
-    var p=_frzCurItem(); ed=ed||_curEd; if(!p || !ed) return;
+  function _frzInsertImage(file, ed, afterInsert, item){
+    var p=item||_frzCurItem(); ed=ed||_curEd; if(!p || !ed) return;   // item: explicit target (e.g. the modal's project, not the open item page)
     uploadAttachment(p, file).then(function(rec){
       if(!rec) return;
       ed.chain().focus().insertContent([{ type:'image', attrs:{ 'data-att-key':rec.key, alt:(file.name||'image') } }]).run();
       setTimeout(function(){ _frzRehydrateEditorImages(ed, p.id); if(typeof afterInsert==='function') afterInsert(); }, 0);
+    }).catch(function(){});
+  }
+
+  // ════════ Item MODAL — rich Notes (#fDesc), /beta + flag, EDIT only ═══════════
+  // openProjectModal is classic/shared; the beta build wraps it (see build()). After the
+  // original runs (it sets #fDesc.innerHTML = p.description), mount the shared editor with
+  // the TRIMMED comment toolbar for an EXISTING item. The editor lives in a host beside a
+  // HIDDEN #fDesc; on each update/blur the sanitized getHTML() is written back into
+  // #fDesc.innerHTML, so the classic modal save (which reads #fDesc.innerHTML) persists the
+  // rich content with NO classic change. New item (id null) / classic / flag-off / viewer →
+  // teardown to the plain #fDesc box.
+  // Move the Description form-row out of the right column to the bottom of the modal body
+  // (just above the action buttons), spanning the full width. Idempotent; /beta only.
+  function _frzRelocateDescription(fd){
+    var row=fd.closest && fd.closest('.form-row'); if(!row) return;
+    var cols=document.querySelector('.proj-modal-cols'); if(!cols || !cols.parentNode) return;
+    var body=cols.parentNode, actions=body.querySelector('.modal-actions');
+    if(actions && actions.parentNode===body && row!==actions.previousElementSibling){ body.insertBefore(row, actions); }
+    else if(!actions && row.parentNode!==body){ body.appendChild(row); }
+    row.classList.add('frz-desc-full'); row.style.flex='none';
+    fd.style.maxHeight='none'; fd.style.minHeight='180px';   // plain create box fills the full-width area
+  }
+  function _frzInitModalNotes(id){
+    var fd=document.getElementById('fDesc'); if(!fd) return;
+    // On /beta (create + edit): relabel "Description" and relocate the field to the bottom
+    // of the modal, full-width. Beta-scoped (root) → classic / keeps its layout + "Notes".
+    if(root){
+      var _row=fd.closest('.form-row');
+      var _lbl=_row && _row.querySelector('label'); if(_lbl) _lbl.textContent='Description';
+      _frzRelocateDescription(fd);
+    }
+    var host=document.getElementById('frzModalNotes');
+    if(host){ if(host._frzEd){ try{ host._frzEd.destroy(); }catch(e){} } host.remove(); }   // tear down any prior instance
+    var oldTb=fd.parentNode && fd.parentNode.querySelector('.frz-rte-tb-modal'); if(oldTb&&oldTb.parentNode) oldTb.parentNode.removeChild(oldTb);
+    fd.style.display='';                                   // default: the plain box
+    var canEdit=(_val('isAdmin',false)||_val('isEditor',false));
+    if(!root || !frzRteEnabled() || !canEdit || id==null) return;   // rich only for EXISTING items on /beta
+    frzMountModalNotes(id, fd);
+  }
+  function frzMountModalNotes(id, fd){
+    var p=(_val('projects',[])||[]).filter(function(x){ return x.id===id; })[0]; if(!p) return;
+    Promise.all([_frzLoadTiptap(), _frzLoadDOMPurify()]).then(function(r){
+      if(document.getElementById('fDesc')!==fd || !fd.isConnected) return;   // modal changed/closed during load
+      var T=r[0], Editor=T.core.Editor;
+      var initial=fd.innerHTML;                            // = p.description (set by the original openProjectModal)
+      var host=document.createElement('div'); host.id='frzModalNotes'; host.className='frz-rte-modal';
+      fd.parentNode.insertBefore(host, fd); fd.style.display='none'; host.style.padding='0';
+      var ed=new Editor({
+        element:host, extensions:_frzMakeExtensions(T), content:initial||'',
+        editorProps:{
+          handlePaste:function(view, e){ var it=(e.clipboardData&&e.clipboardData.items)||[]; for(var i=0;i<it.length;i++){ if(it[i].kind==='file'&&/^image\//.test(it[i].type||'')){ var f=it[i].getAsFile(); if(f){ _frzInsertImage(f, ed, null, p); return true; } } } return false; },
+          handleDrop:function(view, e){ var fs=(e.dataTransfer&&e.dataTransfer.files)||[]; var ig=[].slice.call(fs).filter(function(f){ return /^image\//.test(f.type||''); }); if(ig.length){ e.preventDefault(); ig.forEach(function(f){ _frzInsertImage(f, ed, null, p); }); return true; } return false; }
+        }
+      });
+      host._frzEd=ed;
+      _frzBuildToolbar(ed, { buttons:_FRZ_TB_COMMENT, cls:'frz-rte-tb-modal', place:function(tb){ fd.parentNode.insertBefore(tb, host); } });
+      _frzWireMentions(ed);
+      // Mirror sanitized rich HTML back into the hidden #fDesc so the classic modal save reads it.
+      function _sync(){ var d=document.createElement('div'); d.innerHTML=ed.getHTML();
+        [].slice.call(d.querySelectorAll('img[data-att-key]')).forEach(function(im){ im.removeAttribute('src'); });
+        fd.innerHTML=frzSanitize(d.innerHTML); }
+      ed.on('update', _sync); ed.on('blur', _sync);       // blur fires when the Save button is pressed (before its click reads #fDesc)
+      _frzRehydrateEditorImages(ed, id);
     }).catch(function(){});
   }
 
@@ -18193,15 +18319,141 @@ if ('serviceWorker' in navigator) {
   }
   // Resolve presigned src for inline images inside RENDERED comment bodies (the render
   // path stores src-less <img data-att-key>; same resolver idea as the description).
-  function _frzRehydrateCommentImages(pid){
-    var list=document.getElementById('ipCommentsList'); if(!list) return;
-    var imgs=list.querySelectorAll('img[data-att-key]'); if(!imgs.length) return;
+  // Element-scoped inline-image rehydrator: resolve <img data-att-key> inside `el` to
+  // fresh presigned URLs (keys → /api/items/{id}/attachments). ONE shared path used by
+  // comments AND the List detail panel (and any future rich-render surface) — distinct
+  // from the classic rehydrateInlineImages(#ipNotes), which is left untouched.
+  function _frzRehydrateImagesIn(el, pid){
+    if(!el || pid==null) return;
+    var imgs=el.querySelectorAll('img[data-att-key]'); if(!imgs.length) return;
     API.get('/api/items/'+pid+'/attachments').then(function(res){
       var map={}; ((res&&res.attachments)||[]).forEach(function(a){ if(a.key) map[a.key]=a.url; });
       [].slice.call(imgs).forEach(function(im){ var k=im.getAttribute('data-att-key'); if(map[k]) im.src=map[k]; });
     }).catch(function(){});
   }
+  function _frzRehydrateCommentImages(pid){ _frzRehydrateImagesIn(document.getElementById('ipCommentsList'), pid); }
   window._frzRehydrateCommentImages=_frzRehydrateCommentImages;
+  // Render stored rich HTML into ANY element: sanitize (defense-in-depth — bodies are
+  // sanitized on save, but a panel renders trusted-but-possibly-API-sourced content) into
+  // a .frz-rte wrapper so the block render CSS applies, then element-scoped image rehydrate.
+  // Reused by the List detail panel; has no classic caller.
+  // Async: ENSURES the sanitizer is loaded first (the read-only List/panel never mounts
+  // an editor, so DOMPurify isn't loaded yet — without this, frzSanitize falls back to
+  // escaping and the description shows raw tags). Reuses the editor's exact lazy loader
+  // (_frzLoadDOMPurify — the shared ensure-sanitizer promise; no second loader, no eager
+  // global load). `guard` (optional) is re-checked AFTER the await so a late render can't
+  // overwrite a newer selection (rapid row swap A→B ends on B).
+  function renderRichInto(el, html, itemId, guard){
+    if(!el) return Promise.resolve();
+    return _frzLoadDOMPurify().catch(function(){}).then(function(){
+      if(guard && guard()===false) return;   // superseded by a newer render — bail
+      el.innerHTML='<div class="frz-rte">'+frzSanitize(html||'')+'</div>';
+      if(itemId!=null) _frzRehydrateImagesIn(el, itemId);
+    });
+  }
+  window.renderRichInto=renderRichInto;
+
+  // ════════ List detail panel (docked right; /beta List only; read-only v1) ═══════
+  var _frzPanelEl=null, _frzPanelLastFocus=null, _frzPanelWired=false;
+  // One-time: create the panel element + a CAPTURE click interceptor on the production
+  // #listBody so a List row-open opens the panel instead of the full page (stopPropagation
+  // pre-empts the classic bubble handler → openItemPage never fires). Classic handler is
+  // left byte-unchanged; chevron/checkbox clicks pass through to it.
+  function _frzWireListPanel(){
+    if(_frzPanelWired) return; _frzPanelWired=true;
+    _frzPanelEl=document.createElement('aside');
+    _frzPanelEl.id='frzListPanel'; _frzPanelEl.className='frz-list-panel'; _frzPanelEl.tabIndex=-1;
+    _frzPanelEl.setAttribute('role','region'); _frzPanelEl.setAttribute('aria-label','Item detail');
+    _frzPanelEl.style.display='none';
+    (root||document.body).appendChild(_frzPanelEl);
+    var lb=document.getElementById('listBody');
+    if(lb){
+      lb.addEventListener('click', function(e){
+        if(!root || state.view!=='list') return;                       // beta List view only
+        if(e.target.closest('.list-chevron') || e.target.closest('.list-cb-cell')) return;  // expand/select → classic
+        var row=e.target.closest('tr.list-row'); if(!row || !row.dataset.id) return;
+        e.stopPropagation();                                            // pre-empt classic openItemPage
+        frzOpenPanel(parseInt(row.dataset.id,10));
+      }, true);   // CAPTURE — runs before the classic bubble handler
+      // keep the active-row highlight across list re-renders (filter / page / tree toggle)
+      try { new MutationObserver(function(){ _frzApplyPanelHighlight(); }).observe(lb, {childList:true, subtree:true}); } catch(e){}
+    }
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && state.panelId!=null){ e.stopPropagation(); frzClosePanel(); } });
+  }
+  function _frzApplyPanelHighlight(){
+    var lb=document.getElementById('listBody'); if(!lb) return;
+    [].slice.call(lb.querySelectorAll('tr.list-row.frz-row-active')).forEach(function(tr){ tr.classList.remove('frz-row-active'); });
+    if(state.panelId!=null){ var row=lb.querySelector('tr.list-row[data-id="'+state.panelId+'"]'); if(row) row.classList.add('frz-row-active'); }
+  }
+  function _frzPanelRow(k, v){ return (v==null||v==='') ? '' : '<div class="frz-lp-row"><span class="frz-lp-k">'+esc(k)+'</span><span class="frz-lp-v">'+esc(String(v))+'</span></div>'; }
+  function _frzPanelChrome(p){
+    var sCls=_call('statusCls', p.status)||'';
+    var statusBadge='<span class="'+sCls+'" style="padding:1px 9px;border-radius:9px;font-size:11px;font-weight:700">'+esc(p.status||'—')+'</span>';
+    var prio=(p.priority&&PRIO_LBL[p.priority]) ? '<span class="frz-lp-prio" style="color:'+PRIO_CLR[p.priority]+'">'+esc(PRIO_LBL[p.priority])+'</span>' : '';
+    var sprint=p.sprintId ? ((sprintById(p.sprintId)||{}).name || p.sprintId) : '';
+    var rel=p.releaseId ? ((releaseById(p.releaseId)||{}).name || '') : '';
+    var details=[ _frzPanelRow('Type',p.type), _frzPanelRow('Owner',p.dev), _frzPanelRow('Assignee',p.assignee),
+      _frzPanelRow('Points',(p.storyPoints!=null&&p.storyPoints!=='')?p.storyPoints:null), _frzPanelRow('Sprint',sprint),
+      _frzPanelRow('Release',rel), _frzPanelRow('Start',p.start), _frzPanelRow('Due',p.due),
+      _frzPanelRow('Expected',p.revised) ].join('');
+    return '<div class="frz-lp-hd">'
+      + '<div class="frz-lp-hd-top">'+(p.itemKey?'<span class="frz-bcard-key">'+_projDot(p.product)+esc(p.itemKey)+'</span>':'<span></span>')
+      + '<div class="frz-lp-actions"><button type="button" class="frz-lp-full" title="Open full page" aria-label="Open full page">⤢</button>'
+      + '<button type="button" class="frz-lp-close" title="Close" aria-label="Close">✕</button></div></div>'
+      + '<div class="frz-lp-name">'+esc(p.name||'')+'</div>'
+      + '<div class="frz-lp-badges">'+statusBadge+prio+'</div></div>'
+      + (details?'<div class="frz-lp-details">'+details+'</div>':'')
+      + '<div class="frz-lp-sec"><div class="frz-lp-sec-hd">Description</div><div id="frzLpDesc"></div></div>';
+  }
+  // Open/refresh the panel for an item (from in-memory projects[] — no fetch). fromURL:
+  // restore from the URL (don't re-write history). First open pushes a history entry so
+  // Back closes the panel; a swap replaces it (Back still → plain list).
+  function frzOpenPanel(id, opts){
+    opts=opts||{};
+    if(!_frzPanelEl) _frzWireListPanel();
+    var p=(_val('projects',[])||[]).filter(function(x){ return x.id===id; })[0];
+    if(!p){ frzClosePanel(); return; }                 // id doesn't exist at all → no-op
+    var first=(state.panelId==null);
+    if(first) _frzPanelLastFocus=document.activeElement;
+    state.panelId=id;
+    document.body.classList.add('frz-panel-open');
+    _frzPanelEl.style.display=''; _frzPanelEl.scrollTop=0;
+    var _c=document.getElementById('frzContent');                 // align the fixed panel below the top bar
+    _frzPanelEl.style.top=(_c?Math.max(0,_c.getBoundingClientRect().top):56)+'px';
+    _frzPanelEl.innerHTML=_frzPanelChrome(p);
+    _frzPanelEl.querySelector('.frz-lp-close').addEventListener('click', function(){ frzClosePanel(); });
+    _frzPanelEl.querySelector('.frz-lp-full').addEventListener('click', function(){ _frzPanelOpenFull(id); });
+    var desc=_frzPanelEl.querySelector('#frzLpDesc');
+    if(desc){
+      if(p.description){ var _openedFor=id; renderRichInto(desc, p.description, id, function(){ return state.panelId===_openedFor; }); }   // async-race guard: bail if a newer row opened
+      else { desc.innerHTML='<div class="frz-lp-empty">No description</div>'; }
+    }
+    _frzApplyPanelHighlight();
+    if(!opts.fromURL) syncURL(!first);                 // push on first open, replace on swap (panel param via syncURL)
+    if(!opts.fromURL) try{ _frzPanelEl.focus(); }catch(e){}
+  }
+  function frzClosePanel(opts){
+    opts=opts||{};
+    if(state.panelId==null){ if(_frzPanelEl) _frzPanelEl.style.display='none'; return; }
+    state.panelId=null;
+    if(_frzPanelEl) _frzPanelEl.style.display='none';
+    document.body.classList.remove('frz-panel-open');
+    _frzApplyPanelHighlight();
+    if(!opts.fromURL) syncURL(true);                   // replace → URL without ?panel
+    if(!opts.noFocus && _frzPanelLastFocus && _frzPanelLastFocus.focus){ try{ _frzPanelLastFocus.focus(); }catch(e){} }
+    _frzPanelLastFocus=null;
+  }
+  // "Open full page": clear ?panel from the current entry, then the full page (beta
+  // openItem pushes the item entry) → Back from the full page lands on the plain list.
+  function _frzPanelOpenFull(id){ frzClosePanel({noFocus:true}); openItemPage(id); }
+  // URL ↔ panel: open/close to MATCH ?panel (no history write). Called by routeFromLocation
+  // (load) + the existing popstate handler (back/forward) — the single router, no new listener.
+  function _frzSyncPanelFromURL(){
+    if(state.view!=='list'){ if(state.panelId!=null) frzClosePanel({fromURL:true}); return; }
+    var pid=new URLSearchParams(location.search).get('panel');
+    if(pid){ var id=parseInt(pid,10); if(id && id!==state.panelId) frzOpenPanel(id, {fromURL:true}); }
+    else if(state.panelId!=null){ frzClosePanel({fromURL:true}); }
+  }
   // Rich comment render: sanitize the stored body + wrap in .frz-rte so the Stage-1/2
   // block render CSS applies (white-space:normal overrides the row's pre-wrap).
   // RACE FIX: comments can render (on item open) BEFORE DOMPurify has lazy-loaded — in
