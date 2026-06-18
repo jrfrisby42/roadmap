@@ -2019,7 +2019,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.3.0';
+const APP_VERSION = '4.3.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -13420,6 +13420,12 @@ async function renderItemPageComments(itemId){
   if(inputWrap) inputWrap.style.display = isViewer ? 'none' : 'flex';
   try {
     const data = await API.get('/api/comments/'+itemId);
+    // /beta (Stage 4): threaded render — top-level newest-first, replies nested +
+    // chronological, with reply composer + collapse. Classic root stays flat below.
+    if(document.body.classList.contains('frz-beta-active') && window._frzRenderThreads){
+      window._frzRenderThreads(itemId, data, el);
+      return;
+    }
     if(!data.length){
       el.innerHTML = `<div style="font-size:12px;color:var(--muted)">No comments yet</div>`;
       return;
@@ -15207,6 +15213,27 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rte.frz-rte-comment { flex:1; min-width:0; border:1px solid var(--frz-border); border-radius:6px; background:var(--frz-bg-surface); }
   .frz-beta .frz-rte.frz-rte-comment .ProseMirror { min-height:20px; max-height:220px; overflow-y:auto; padding:6px 10px; }
   .frz-beta .frz-rte.frz-rte-comment .ProseMirror > p { margin:0; }   /* tight single line when empty (no editor paragraph margins) */
+  /* Stage 4 — comment threads */
+  .frz-beta .frz-comment-thread { display:flex; flex-direction:column; gap:6px; }
+  .frz-beta .frz-cmt { background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:8px; padding:10px 12px; }
+  .frz-beta .frz-cmt-reply { margin-left:22px; border-left:2px solid var(--frz-accent-soft); background:var(--frz-bg-app); }
+  .frz-beta .frz-cmt-hd { display:flex; align-items:center; justify-content:space-between; margin-bottom:5px; }
+  .frz-beta .frz-cmt-author { font-size:12px; font-weight:700; color:var(--frz-accent); }
+  .frz-beta .frz-cmt-meta { display:flex; align-items:center; gap:8px; }
+  .frz-beta .frz-cmt-ts { font-size:10px; color:var(--frz-text-muted); }
+  .frz-beta .frz-cmt-del { background:none; border:0; cursor:pointer; color:var(--frz-text-muted); opacity:.6; padding:0 2px; font-size:12px; line-height:1; }
+  .frz-beta .frz-cmt-del:hover { opacity:1; color:#e8394a; }
+  .frz-beta .frz-cmt-body { font-size:13px; color:var(--frz-text); line-height:1.5; white-space:pre-wrap; }
+  .frz-beta .frz-thread { display:flex; flex-direction:column; gap:6px; }
+  .frz-beta .frz-thread-ctl { display:flex; align-items:center; gap:14px; padding:1px 2px; }
+  .frz-beta .frz-thread-toggle, .frz-beta .frz-reply-btn { background:none; border:0; cursor:pointer; font-family:'Lato',sans-serif; font-size:11px; font-weight:700; color:var(--frz-text-secondary); padding:0; }
+  .frz-beta .frz-thread-toggle:hover, .frz-beta .frz-reply-btn:hover { color:var(--frz-accent); }
+  .frz-beta .frz-reply-slot:empty { display:none; }
+  .frz-beta .frz-reply-slot { margin-left:22px; }
+  .frz-beta .frz-reply-actions { display:flex; gap:8px; margin-top:6px; }
+  .frz-beta .frz-reply-post { background:var(--frz-accent); color:#fff; border:0; padding:5px 14px; border-radius:6px; font-family:'Lato',sans-serif; font-weight:700; font-size:12px; cursor:pointer; }
+  .frz-beta .frz-reply-post:hover { background:var(--frz-accent-hover); }
+  .frz-beta .frz-reply-cancel { background:none; border:1px solid var(--frz-border); color:var(--frz-text-secondary); padding:5px 12px; border-radius:6px; font-family:'Lato',sans-serif; font-size:12px; cursor:pointer; }
   .frz-beta .frz-rte .ProseMirror { min-height:120px; padding:10px 12px; outline:none; }
   .frz-beta .frz-rte .ProseMirror:focus { outline:none; }
   .frz-beta .frz-rte p { margin:.4em 0; }
@@ -18201,6 +18228,103 @@ if ('serviceWorker' in navigator) {
       window._frzPostComment=null;
       var h=document.getElementById('frzCommentRte'); if(h) h.style.display='none';
       inp.style.display=''; attachMentionInput(inp);
+    });
+  }
+
+  // ════════ Stage 4 — comment threads (single-level replies) ════════════════════
+  var _frzCollapsed={};      // { topId: true } — collapsed threads (default expanded)
+  var _frzReplyOpenFor=null; // topId whose reply composer is currently open (one at a time)
+  // One comment card (top-level or reply). Body via the shared _renderCommentBody (rich/plain).
+  function _frzCommentCard(c, isReply){
+    var me=_call('getUsername'), isAdmin=_val('isAdmin',false);
+    var del=(c.author===me||isAdmin)
+      ? '<button class="frz-cmt-del" title="Delete" onclick="deleteItemPageComment('+c.id+')">✕</button>' : '';
+    return '<div class="frz-cmt'+(isReply?' frz-cmt-reply':'')+'">'
+      + '<div class="frz-cmt-hd"><span class="frz-cmt-author">'+esc(c.author)+'</span>'
+      + '<span class="frz-cmt-meta"><span class="frz-cmt-ts">'+esc((c.created_ts||'').slice(0,16))+'</span>'+del+'</span></div>'
+      + '<div class="frz-cmt-body">'+_call('_renderCommentBody', c.body)+'</div></div>';
+  }
+  // Threaded render: tops newest-first; replies (by root parent) chronological + nested.
+  window._frzRenderThreads=function(itemId, data, el){
+    el=el||document.getElementById('ipCommentsList'); if(!el) return;
+    data=data||[];
+    if(!data.length){ el.innerHTML='<div style="font-size:12px;color:var(--muted)">No comments yet</div>'; _frzPlaceComposerTop(); return; }
+    var byParent={};
+    data.forEach(function(c){ if(c.parent_id!=null){ (byParent[c.parent_id]=byParent[c.parent_id]||[]).push(c); } });
+    Object.keys(byParent).forEach(function(k){ byParent[k].sort(function(a,b){ return (a.id||0)-(b.id||0); }); });   // replies chronological
+    var tops=data.filter(function(c){ return c.parent_id==null; }).sort(function(a,b){ return (b.id||0)-(a.id||0); }); // newest-first
+    var canEdit=(_val('isAdmin',false)||_val('isEditor',false));
+    el.innerHTML=tops.map(function(c){
+      var reps=byParent[c.id]||[], collapsed=!!_frzCollapsed[c.id], n=reps.length;
+      var rlabel=n+' '+(n===1?'reply':'replies');
+      var toggle=n ? '<button class="frz-thread-toggle" data-thread="'+c.id+'" onclick="window._frzToggleThread('+c.id+')">'+(collapsed?'▸ ':'▾ ')+rlabel+'</button>' : '';
+      var replyBtn=canEdit ? '<button class="frz-reply-btn" onclick="window._frzToggleReply('+c.id+')">Reply</button>' : '';
+      var thread = n ? '<div class="frz-thread" id="frzThread-'+c.id+'"'+(collapsed?' style="display:none"':'')+'>'+reps.map(function(rc){ return _frzCommentCard(rc, true); }).join('')+'</div>' : '';
+      return '<div class="frz-comment-thread">'+_frzCommentCard(c, false)
+        + '<div class="frz-thread-ctl">'+toggle+replyBtn+'</div>'
+        + '<div class="frz-reply-slot" id="frzReplySlot-'+c.id+'"></div>'
+        + thread + '</div>';
+    }).join('');
+    _frzRehydrateCommentImages(itemId);
+    _frzPlaceComposerTop();
+    if(_frzReplyOpenFor!=null){ var s=document.getElementById('frzReplySlot-'+_frzReplyOpenFor); if(s){ _frzMountReplyEditor(s, _frzReplyOpenFor); } else { _frzReplyOpenFor=null; } }
+  };
+  // Collapse/expand a thread in place (no re-render → keeps any open reply composer).
+  window._frzToggleThread=function(id){
+    var collapsed=!_frzCollapsed[id]; if(collapsed) _frzCollapsed[id]=true; else delete _frzCollapsed[id];
+    var t=document.getElementById('frzThread-'+id); if(t) t.style.display=collapsed?'none':'';
+    var b=document.querySelector('.frz-thread-toggle[data-thread="'+id+'"]');
+    if(b && t){ var n=t.children.length; b.textContent=(collapsed?'▸ ':'▾ ')+n+' '+(n===1?'reply':'replies'); }
+  };
+  // Open/close the reply composer for a thread (one open at a time).
+  window._frzToggleReply=function(id){
+    if(_frzReplyOpenFor!=null && _frzReplyOpenFor!==id) _frzCloseReply(_frzReplyOpenFor);
+    if(_frzReplyOpenFor===id){ _frzCloseReply(id); return; }
+    _frzReplyOpenFor=id;
+    var slot=document.getElementById('frzReplySlot-'+id); if(slot) _frzMountReplyEditor(slot, id);
+  };
+  function _frzCloseReply(id){
+    var slot=document.getElementById('frzReplySlot-'+id);
+    if(slot){ if(slot._frzEd){ try{ slot._frzEd.destroy(); }catch(e){} slot._frzEd=null; } slot.innerHTML=''; }
+    if(_frzReplyOpenFor===id) _frzReplyOpenFor=null;
+  }
+  // Mount the shared rich editor as a reply composer (parent_id = thread root id).
+  function _frzMountReplyEditor(slot, parentId){
+    return Promise.all([_frzLoadTiptap(), _frzLoadDOMPurify()]).then(function(r){
+      var T=r[0], Editor=T.core.Editor;
+      if(slot._frzEd){ try{ slot._frzEd.destroy(); }catch(e){} slot._frzEd=null; }
+      slot.innerHTML='';
+      var host=document.createElement('div'); host.className='frz-rte frz-rte-comment';
+      var actions=document.createElement('div'); actions.className='frz-reply-actions';
+      actions.innerHTML='<button type="button" class="frz-reply-post">Reply</button><button type="button" class="frz-reply-cancel">Cancel</button>';
+      slot.appendChild(host); slot.appendChild(actions);
+      function post(){
+        var ed=slot._frzEd, p=_frzCurItem(); if(!ed || !p) return;
+        var tmp=document.createElement('div'); tmp.innerHTML=ed.getHTML();
+        [].slice.call(tmp.querySelectorAll('img[data-att-key]')).forEach(function(im){ im.removeAttribute('src'); });
+        var clean=frzSanitize(tmp.innerHTML);
+        var textOnly=clean.replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').trim();
+        if(!textOnly && !/<img\b/i.test(clean)) return;
+        API.post('/api/comments', { item_id:p.id, author:_call('getUsername'), body:clean, parent_id:parentId }).then(function(){
+          _frzReplyOpenFor=null;
+          _call('renderItemPageComments', p.id);
+        }).catch(function(){ _call('showToast','Failed to post reply'); });
+      }
+      var ed=new Editor({
+        element:host, extensions:_frzMakeExtensions(T), content:'',
+        editorProps:{
+          handlePaste:function(view, event){ var items=(event.clipboardData&&event.clipboardData.items)||[]; for(var i=0;i<items.length;i++){ if(items[i].kind==='file' && /^image\//.test(items[i].type||'')){ var f=items[i].getAsFile(); if(f){ _frzInsertImage(f, ed); return true; } } } return false; },
+          handleDrop:function(view, event){ var files=(event.dataTransfer&&event.dataTransfer.files)||[]; var imgs=[].slice.call(files).filter(function(f){ return /^image\//.test(f.type||''); }); if(imgs.length){ event.preventDefault(); imgs.forEach(function(f){ _frzInsertImage(f, ed); }); return true; } return false; },
+          handleKeyDown:function(view, event){ if((event.metaKey||event.ctrlKey) && event.key==='Enter'){ event.preventDefault(); post(); return true; } return false; }
+        }
+      });
+      slot._frzEd=ed;
+      _frzBuildToolbar(ed, { buttons:_FRZ_TB_COMMENT, cls:'frz-rte-tb-comment', place:function(tb){ slot.insertBefore(tb, host); } });
+      _frzWireMentions(ed);
+      actions.querySelector('.frz-reply-post').addEventListener('click', post);
+      actions.querySelector('.frz-reply-cancel').addEventListener('click', function(){ _frzCloseReply(parentId); });
+      try{ ed.commands.focus(); }catch(e){}
+      return ed;
     });
   }
 

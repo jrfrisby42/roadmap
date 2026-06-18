@@ -608,6 +608,12 @@ def init_team_db(team: str):
             c.execute("ALTER TABLE capacity_overrides ADD COLUMN note TEXT NOT NULL DEFAULT ''")
         except Exception:
             pass  # column already exists
+        # Stage 4: single-level comment threads. parent_id NULL = top-level; a reply
+        # carries its (root) parent's id. Existing comments stay top-level.
+        try:
+            c.execute("ALTER TABLE comments ADD COLUMN parent_id INTEGER")
+        except Exception:
+            pass  # column already exists
         # ── Phase 1 (JIRA-REPLACEMENT.md): indexed columns mirrored from item JSON ──
         for _col, _defn in [
             ("item_key", "TEXT"), ("type", "TEXT"), ("status", "TEXT"),
@@ -867,7 +873,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.3.0"
+APP_VERSION = "4.3.1"
 
 app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
 
@@ -1866,6 +1872,17 @@ def list_items(
         # One priority order everywhere: Urgent(1) → High(2) → Medium(3) → Low(4),
         # with blank/none (NULL or <1) ALWAYS last regardless of direction.
         order = f"(projects.priority IS NULL OR projects.priority < 1) ASC, projects.priority {sort_dir}, projects.id DESC"
+    elif sort_col == "item_key":
+        # Natural "{PREFIX}-{N}" order, computed over the FULL set (before LIMIT/OFFSET so
+        # it's correct across pagination): blanks (NULL/'') ALWAYS last in both directions;
+        # then the text prefix case-insensitively; then the trailing integer NUMERICALLY.
+        # rtrim(key,'0..9') strips trailing digits to isolate the prefix; CAST of the
+        # remaining digits → 0 for keys that don't end in digits (graceful fallback, never
+        # crashes). All literal SQL — sort_col is whitelisted, sort_dir is ASC/DESC.
+        _blank  = "(projects.item_key IS NULL OR projects.item_key = '')"
+        _prefix = "rtrim(projects.item_key, '0123456789')"
+        _num    = f"CAST(substr(projects.item_key, length({_prefix}) + 1) AS INTEGER)"
+        order = f"{_blank} ASC, {_prefix} COLLATE NOCASE {sort_dir}, {_num} {sort_dir}, projects.id DESC"
     else:
         order = f"{sort_expr} {sort_dir}, projects.id DESC"
     if use_fts:
@@ -2348,7 +2365,7 @@ def _notify_item_update(team, pid, old, new, actor):
             _add_watchers(team, pid, list(new_m))
             _notify(team, list(new_m), "mention", pid, name, f"{actor} mentioned you in {name or 'an item'}", actor)
 
-def _notify_on_comment(team, item_id, author, text):
+def _notify_on_comment(team, item_id, author, text, parent_id=None):
     if not item_id:
         return
     valid = _team_usernames(team)
@@ -2357,7 +2374,16 @@ def _notify_on_comment(team, item_id, author, text):
     _add_watchers(team, item_id, [author] + list(mentioned))   # commenter + mentioned auto-watch
     if mentioned:
         _notify(team, list(mentioned), "mention", item_id, name, f"{author} mentioned you in a comment", author)
-    watchers = _get_watchers(team, item_id) - mentioned         # avoid double-notifying the mentioned
+    # Stage 4: a reply notifies the parent comment's author (unless self / already mentioned).
+    notified = set(mentioned)
+    if parent_id is not None:
+        with db(team) as c:
+            prow = c.execute("SELECT author FROM comments WHERE id=?", (parent_id,)).fetchone()
+        pa = prow["author"] if prow else None
+        if pa and pa != author and pa not in notified:
+            _notify(team, [pa], "reply", item_id, name, f"{author} replied to your comment on {name or 'an item'}", author)
+            notified.add(pa)
+    watchers = _get_watchers(team, item_id) - notified          # avoid double-notifying the mentioned / replied-to
     _notify(team, watchers, "watch_comment", item_id, name, f"{author} commented on {name or 'an item'}", author)
 
 @app.get("/api/notifications")
@@ -3489,15 +3515,27 @@ def get_comments(item_id: int, auth: dict = Depends(require_auth)):
 def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin", "editor"))):
     team = auth["team"]
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    item_id = body.get("item_id")
+    author  = body.get("author", auth["username"])
+    # Stage 4: single-level threads. Normalize parent_id to the thread ROOT — if the
+    # target is itself a reply, attach to its parent; ignore a parent on another item or
+    # a missing one (→ top-level). Guarantees at most one level regardless of client.
+    parent_id = body.get("parent_id")
     with db(team) as c:
+        if parent_id is not None:
+            prow = c.execute("SELECT id,item_id,parent_id FROM comments WHERE id=?", (parent_id,)).fetchone()
+            if not prow or prow["item_id"] != item_id:
+                parent_id = None                      # missing / cross-item → top-level
+            elif prow["parent_id"] is not None:
+                parent_id = prow["parent_id"]         # reply-to-reply → root
         cur = c.execute(
-            "INSERT INTO comments(item_id,author,body,created_ts) VALUES(?,?,?,?)",
-            (body.get("item_id"), body.get("author", auth["username"]), body.get("body",""), ts)
+            "INSERT INTO comments(item_id,author,body,created_ts,parent_id) VALUES(?,?,?,?,?)",
+            (item_id, author, body.get("body",""), ts, parent_id)
         )
         row = c.execute("SELECT * FROM comments WHERE id=?", (cur.lastrowid,)).fetchone()
-    # Stage 3b: mention + watcher notifications (post-commit, best-effort)
+    # Stage 3b/4: mention + watcher (+ reply-to parent author) notifications (post-commit, best-effort)
     try:
-        _notify_on_comment(team, body.get("item_id"), body.get("author", auth["username"]), body.get("body", ""))
+        _notify_on_comment(team, item_id, author, body.get("body", ""), parent_id)
     except Exception as e:
         log.warning(f"[Notify] comment hook failed: {e}")
     return dict(row)
@@ -3506,7 +3544,8 @@ def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin
 def delete_comment(cid: int, auth: dict = Depends(require_role("admin", "editor"))):
     team = auth["team"]
     with db(team) as c:
-        c.execute("DELETE FROM comments WHERE id=?", (cid,))
+        # Stage 4: cascade — deleting a top-level comment removes its replies too (no orphans).
+        c.execute("DELETE FROM comments WHERE id=? OR parent_id=?", (cid, cid))
     return {"deleted": cid}
 
 # ── Recurrence: spawn next occurrence ─────────────────────────────────────────
