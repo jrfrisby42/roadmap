@@ -2019,7 +2019,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.5.1';
+const APP_VERSION = '4.6.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -15946,6 +15946,18 @@ if ('serviceWorker' in navigator) {
     });
     if (view==='kanban' && state.board && state.board!=='__all__') params.set('board', state.board);  // board is URL state
     if (view==='list' && state.panelId!=null) params.set('panel', state.panelId);   // List detail panel is URL state
+    // Stage 1 (+ all-projects fix): project is global URL state, emitted ALWAYS incl
+    // '__all__'. Encoding "all" as the ABSENCE of a param was ambiguous with a plain nav
+    // (use the ls default), so a saved "All projects" filter couldn't override a specific
+    // ls on apply. Explicit __all__ makes saved filters self-describing + the scope durable.
+    params.set('project', state.project || '__all__');
+    // Stage 1: on the shared views, carry forward any shared filter param present in the
+    // current URL that this view's chips didn't emit (ride-along — survives a round-trip
+    // to a view that does expose it). Not applied/shown here; Stage 2 wires the chip.
+    if (_FRZ_SHARED_VIEWS[view]){
+      var _cur=new URLSearchParams(location.search);
+      ['owner','type','status','assignee'].forEach(function(pk){ if(!params.has(pk)){ var cv=_cur.get(pk); if(cv) params.set(pk, cv); } });
+    }
     var qs = params.toString();
     var base = '/beta/'+view;
     if (view==='planning' && state.planTab && state.planTab!=='plan') base = '/beta/planning/'+state.planTab;  // planning sub-tab is URL state
@@ -15955,17 +15967,20 @@ if ('serviceWorker' in navigator) {
     if (replace) history.replaceState(st,'',url); else history.pushState(st,'',url);
   }
   function applyURLToFilters(view, qp){
+    // Stage 1 (+ all-projects fix): a PRESENT project param is authoritative (incl
+    // '__all__'), so a saved "All projects" filter overrides a specific ls on apply; only
+    // an ABSENT param falls back to the localStorage default (plain nav = cross-session
+    // memory). Routing never overwrites the ls default (only setProject does).
+    state.project = qp.has('project') ? (qp.get('project') || '__all__') : (ls(projKey()) || '__all__');
     // board is URL state for the kanban view (navigation scope, not a chip)
     if (view==='kanban') state.board = qp.get('board') || _defaultBoard();   // Stage 4: fall back to the user's default board
-    // reset filters this view cares about, then apply query params
-    var keys = CFG[view].chips.slice();
-    // ensure any param-bearing extra chips are shown
-    Object.keys(CHIPS).forEach(function(k){
-      if (qp.get(CHIPS[k].param) && keys.indexOf(k)<0){ _added[view]=_added[view]||[]; if(_added[view].indexOf(k)<0)_added[view].push(k); keys.push(k); }
-    });
+    // Stage 1: apply ONLY the shared chips this view EXPOSES; an un-exposed shared param
+    // rides along in the URL (no chip shown, no filter) until Stage 2 adds its chip+renderer.
+    // (The prior auto-add-extra-chip is intentionally gated here for Stage 1.)
     ['owner','type','status','assignee'].forEach(function(k){
-      var v = qp.get(CHIPS[k].param);
-      applyPanel(CHIPS[k].panel, v? v.split(',') : null);
+      var exposed = CFG[view].chips.indexOf(k)>=0;
+      var v = exposed ? qp.get(CHIPS[k].param) : null;
+      applyPanel(CHIPS[k].panel, v ? v.split(',') : null);
     });
     if (view==='dashboard'){
       var ff=document.getElementById('filterFrom'), ft=document.getElementById('filterTo');
@@ -16444,7 +16459,7 @@ if ('serviceWorker' in navigator) {
     setView(vm[1]);
     lset('frazil_beta_lastview_'+uname(), vm[1]);
     if (vm[1]!=='my-home') rerender();   // My Home renders itself
-    history.replaceState({frzView:vm[1]},'',location.pathname+location.search);
+    syncURL(true);   // Stage 1: canonicalize (writes the resolved ?project + carried params); replaces, like the prior replaceState
     _frzSyncPanelFromURL();   // List detail panel: open/close to match ?panel (load + deep link)
   }
   window.addEventListener('popstate', function(e){
@@ -16532,10 +16547,22 @@ if ('serviceWorker' in navigator) {
   // param like ?highlight/?sort) is excluded by construction, not by blacklist; and an
   // absent key (e.g. board on a List filter) simply isn't emitted.
   function _frzFilterQS(){
-    var allow={}; Object.keys(CHIPS).forEach(function(k){ allow[CHIPS[k].param]=1; });
+    var allow={ project:1 };   // Stage 1: a saved filter also captures its project scope
+    Object.keys(CHIPS).forEach(function(k){ allow[CHIPS[k].param]=1; });
     allow.from=1; allow.to=1; allow.board=1;
     var src=new URLSearchParams(location.search), out=new URLSearchParams();
     Object.keys(allow).forEach(function(k){ var v=src.get(k); if(v!=null && v!=='') out.set(k, v); });
+    var s=out.toString(); return s ? ('?'+s) : '';
+  }
+  // Stage 1: cross-VIEW carry = the shared set only (project + owner/type/status/assignee).
+  // Deliberately NOT from/to/board (view-local; Planning/Dashboard are out of the shared
+  // model, and syncURL wouldn't re-emit them on the destination anyway). includeChips=false
+  // → project only (for non-shared targets like Planning/Dashboard, where chips don't travel).
+  var _FRZ_SHARED_VIEWS={ list:1, kanban:1, gantt:1 };
+  function _frzCarryQS(includeChips){
+    var keys = includeChips ? ['project','owner','type','status','assignee'] : ['project'];
+    var src=new URLSearchParams(location.search), out=new URLSearchParams();
+    keys.forEach(function(k){ var v=src.get(k); if(v!=null && v!=='') out.set(k, v); });
     var s=out.toString(); return s ? ('?'+s) : '';
   }
   function saveCurrent(anchor){
@@ -16673,7 +16700,7 @@ if ('serviceWorker' in navigator) {
     // delegated rail nav / projects / saved
     root.addEventListener('click', function(e){
       var navBtn = e.target.closest && e.target.closest('[data-nav]');
-      if (navBtn){ e.preventDefault(); var t=navBtn.getAttribute('data-nav'); if(t.indexOf('view:')===0) navigate('/beta/'+t.slice(5), false); return; }
+      if (navBtn){ e.preventDefault(); var t=navBtn.getAttribute('data-nav'); if(t.indexOf('view:')===0){ var _v=t.slice(5); navigate('/beta/'+_v + _frzCarryQS(!!_FRZ_SHARED_VIEWS[_v]), false); } return; }   // Stage 1: carry filter+project across the switch (chips only to shared views; project always)
       var savedMenu = e.target.closest && e.target.closest('[data-savedmenu]');
       if (savedMenu){ e.stopPropagation(); savedRowMenu(savedMenu); return; }
       var savedBtn = e.target.closest && e.target.closest('[data-saved]');
@@ -16824,7 +16851,8 @@ if ('serviceWorker' in navigator) {
     });
   }
   function setProject(name){
-    state.project = name; lset(projKey(), name);
+    state.project = name; lset(projKey(), name);   // keep the cross-session default (localStorage)
+    syncURL(true);                                  // Stage 1: project rides in the URL (replace; no-op on the item page via syncURL's onItem guard)
     setProjectPanel(); rerender();
     // refresh crumbs + counts
     if (!state.onItem){ var c=document.querySelector('#frzLeft .frz-crumbs'); if(c) c.textContent='· '+(name==='__all__'?'All projects':name); }
