@@ -2019,7 +2019,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.6.0';
+const APP_VERSION = '4.7.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -3065,6 +3065,7 @@ function render(){
   const fSt      = getSelectedStatuses();
   const fProd    = getSelectedProducts();
   const fType    = getSelectedTypes();
+  const fAsg     = getSelectedAssignees();   // Stage 2 (/beta filter parity): sole classic touch. No-op on classic / (no assignee selector → null → !fAsg short-circuits); active only where the /beta Gantt exposes the Assignee chip.
   const ownerScope = getCurrentOwnerFilter(); // non-null for scoped editors
   const searchQ  = getSearchQuery();
   const wkPx     = getWkPx();
@@ -3084,6 +3085,7 @@ function render(){
     (showHidden || !isEffectivelyHidden(p)) &&
     (!fDev  || fDev.includes(p.dev || '')) &&
     (!fSt   || fSt.includes(p.status)) &&
+    (!fAsg  || fAsg.includes(p.assignee || '')) &&   // Stage 2: assignee parity (sole classic touch; no-op when fAsg null)
     (!fProd || fProd.includes(p.product || '')) &&
     (!fType || fType.includes(p.type || '')) &&
     isScheduledType(p.type || '') &&        // Stage 2: non-scheduled types are tracking-only — hidden from the Gantt baseline (composes with the user Type filter; untyped = scheduled, fail-safe)
@@ -14835,6 +14837,15 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-viewopt { border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); font:inherit; font-size:12.5px; font-weight:600; color:var(--frz-text-secondary); display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:var(--frz-radius-control); cursor:pointer; white-space:nowrap; }
   .frz-beta .frz-viewopt:hover { border-color:var(--frz-accent); color:var(--frz-accent); }
   .frz-beta .frz-viewopt svg { width:13px; height:13px; }
+  /* Stage 3: segmented top view control (Gantt·Kanban·List). Sits at the left of the filter
+     bar; reflects the URL's view, reuses data-nav for switching. Subtle active-segment
+     transition, disabled under prefers-reduced-motion. */
+  .frz-beta .frz-topview { display:inline-flex; align-items:center; gap:2px; padding:2px; background:var(--frz-bg-app); border:1px solid var(--frz-border-strong); border-radius:var(--frz-radius-control); flex-shrink:0; margin-right:4px; }
+  .frz-beta .frz-tv-seg { border:0; background:none; font:inherit; font-size:12.5px; font-weight:600; color:var(--frz-text-muted); display:inline-flex; align-items:center; gap:6px; padding:4px 11px; border-radius:calc(var(--frz-radius-control) - 2px); cursor:pointer; white-space:nowrap; transition:background-color .15s ease, color .15s ease; }
+  .frz-beta .frz-tv-seg svg { width:14px; height:14px; }
+  .frz-beta .frz-tv-seg:hover { color:var(--frz-accent); }
+  .frz-beta .frz-tv-seg.is-active { background:var(--frz-bg-surface); color:var(--frz-accent); box-shadow:0 1px 2px rgba(20,40,63,.12); }
+  @media (prefers-reduced-motion: reduce){ .frz-beta .frz-tv-seg { transition:none; } }
 
   /* Content host — the re-parented production views live here */
   .frz-beta .frz-content { flex:1; overflow:auto; min-height:0; position:relative; background:var(--frz-bg-app); }
@@ -15419,8 +15430,8 @@ if ('serviceWorker' in navigator) {
     assignee:{ label:'Assignee', panel:'assigneeDropPanel', get:function(){ return _g('getSelectedAssignees'); }, param:'assignee' }
   };
   var CFG = {
-    gantt:    { chips:['owner','type','status'],            extra:['assignee'], opts:['groupby','legend','capacity'] },
-    kanban:   { chips:['owner','type'],                     extra:['status','assignee'], opts:['hideEmpty'] },
+    gantt:    { chips:['owner','assignee','type','status'], extra:[], opts:['groupby','legend','capacity'] },   // Stage 2: +Assignee (List's chip order)
+    kanban:   { chips:['owner','assignee','type','status'], extra:[], opts:['hideEmpty'] },                    // Stage 2: +Assignee +Status
     list:     { chips:['owner','assignee','type','status'], extra:[], opts:['columns'] },
     planning: { chips:['owner','status'],                   extra:['type','assignee'], opts:[] },
     dashboard:{ chips:['owner','range'],                    extra:[], opts:[] },
@@ -15486,7 +15497,8 @@ if ('serviceWorker' in navigator) {
   var state = {
     view:'gantt', collapsed:false, project:'__all__', board:'__all__', planTab:'plan',
     saved:[], onItem:false, itemId:null, pop:null, itemFromApp:false,
-    panelId:null   // List detail panel: open item id (URL ?panel=), List view only
+    panelId:null,  // List detail panel: open item id (URL ?panel=), List view only
+    activeSavedId:null   // Fix 1: the saved filter the user CLICKED (highlight anchors here, not URL-match)
   };
 
   // ── persistence ──
@@ -15856,9 +15868,11 @@ if ('serviceWorker' in navigator) {
   function renderSavedNav(){
     var sn = document.getElementById('frzSavedNav');
     sn.querySelectorAll('.frz-item').forEach(function(b){ b.remove(); });
+    var active=_frzActiveSaved();   // Fix 1: highlight follows the clicked anchor (single)
     state.saved.forEach(function(s){
       var b = document.createElement('button');
       b.className='frz-item'; b.setAttribute('data-saved', s.id); b.title = s.name;
+      b.setAttribute('aria-current', String(!!(active && active.id===s.id)));   // same weight as view/project
       b.innerHTML = IC.flag + '<span>'+esc(s.name)+'</span><button class="frz-rowmenu" data-savedmenu="'+s.id+'" title="Rename or delete">…</button>';
       sn.appendChild(b);
     });
@@ -15894,17 +15908,45 @@ if ('serviceWorker' in navigator) {
   }
   var _added = {}; // view -> [extra chip keys added via + Filter]
   function _extraActive(view){ return (_added[view]||[]); }
+  // Stage 3: top view control — a segmented Gantt·Kanban·List switcher at the left of the
+  // filter bar (rail order, for visual sync with the rail). Shown only on the shared views;
+  // reflects state.view; each segment carries data-nav="view:X" so the EXISTING delegated
+  // rail handler routes it through navigate(...+_frzCarryQS) — filter+project carried, zero new wiring.
+  var _FRZ_TOPVIEWS = ['gantt','kanban','list'];
+  function _frzTopViewControl(){
+    if (!_FRZ_SHARED_VIEWS[state.view]) return '';
+    var viewer = _val('isViewer', false);
+    var segs = _FRZ_TOPVIEWS.filter(function(v){ return v!=='kanban' || !viewer; }).map(function(v){
+      var on=(state.view===v);
+      return '<button class="frz-tv-seg'+(on?' is-active':'')+'" data-nav="view:'+v+'"'+(on?' aria-current="true"':'')+' title="'+esc(VIEW_LABEL[v])+'">'+IC[v]+'<span>'+esc(VIEW_LABEL[v])+'</span></button>';
+    }).join('');
+    return '<div class="frz-topview" role="tablist" aria-label="Switch view">'+segs+'</div>';
+  }
   function renderBar(){
     var bar = document.getElementById('frzFilterBar');
     if (state.onItem) { bar.innerHTML=''; return; }
     var view = state.view, cfg = CFG[view];
     var keys = cfg.chips.concat(_added[view]||[]);
-    var html = keys.map(chipHTML).join('');
+    var html = _frzTopViewControl() + keys.map(chipHTML).join('');   // Stage 3: segmented view switcher (shared views only)
     html += '<button class="frz-chip frz-chip--ghost" data-addfilter="1"><svg viewBox="0 0 12 12"><path d="M6 2v8M2 6h8"/></svg> Filter</button>';
-    if (anyActive(view)) html += '<button class="frz-chip frz-chip--ghost" data-savefilter="1">Save filter</button>';
+    if (anyActive(view)){
+      html += '<button class="frz-chip frz-chip--ghost" data-savefilter="1">Save filter</button>';
+      html += '<button class="frz-chip frz-chip--ghost" data-clearall="1">Clear</button>';   // Fix 3: chips only — project + view untouched
+    }
     html += '<span class="frz-spacer"></span>';
     html += cfg.opts.map(optHTML).join('');
     bar.innerHTML = html;
+  }
+  // Fix 3: reset every CHIP in the current view to All (owner/type/status/assignee + range if shown),
+  // reusing the per-chip clear path. Does NOT touch project (rail-controlled) or the view. Clearing
+  // diverges the URL → Fix 1 drops any active saved-filter highlight via the syncURL refresh.
+  function _frzClearChips(){
+    var view=state.view;
+    CFG[view].chips.concat(_added[view]||[]).forEach(function(k){
+      if(k==='range'){ var ff=document.getElementById('filterFrom'), ft=document.getElementById('filterTo'); if(ff){ff.value='';} if(ft){ft.value='';} }
+      else if(CHIPS[k]) applyPanel(CHIPS[k].panel, null);
+    });
+    rerender(); renderBar(); renderRail(); syncURL(true);
   }
   function optHTML(o){
     var map = {
@@ -15953,10 +15995,18 @@ if ('serviceWorker' in navigator) {
     params.set('project', state.project || '__all__');
     // Stage 1: on the shared views, carry forward any shared filter param present in the
     // current URL that this view's chips didn't emit (ride-along — survives a round-trip
-    // to a view that does expose it). Not applied/shown here; Stage 2 wires the chip.
+    // to a view that does expose it). BUGFIX: only carry params this view does NOT EXPOSE
+    // as a chip. After Stage-2 chip parity all four are exposed on shared views, so they
+    // serialize themselves when active and stay DROPPED when cleared — without this gate the
+    // ride-along re-read the stale (pre-clear) URL and resurrected a just-cleared chip
+    // (Clear, and single-chip clear, leaving the param in the URL on reload/share).
     if (_FRZ_SHARED_VIEWS[view]){
       var _cur=new URLSearchParams(location.search);
-      ['owner','type','status','assignee'].forEach(function(pk){ if(!params.has(pk)){ var cv=_cur.get(pk); if(cv) params.set(pk, cv); } });
+      var _exposed=CFG[view].chips.concat(_added[view]||[]);
+      ['owner','type','status','assignee'].forEach(function(pk){
+        if(params.has(pk) || _exposed.indexOf(pk)>=0) return;   // exposed chip → self-serializes; cleared stays cleared
+        var cv=_cur.get(pk); if(cv) params.set(pk, cv);
+      });
     }
     var qs = params.toString();
     var base = '/beta/'+view;
@@ -15965,6 +16015,7 @@ if ('serviceWorker' in navigator) {
     var url = base + (qs?('?'+qs):'');
     var st = { frzView:view };
     if (replace) history.replaceState(st,'',url); else history.pushState(st,'',url);
+    _frzRefreshActiveSaved();   // Stage 3: single chokepoint — re-derive saved highlight + crumb + top-control from the just-written URL (match-and-drop)
   }
   function applyURLToFilters(view, qp){
     // Stage 1 (+ all-projects fix): a PRESENT project param is authoritative (incl
@@ -16097,7 +16148,7 @@ if ('serviceWorker' in navigator) {
     if (view==='kanban' && state.board && state.board!=='__all__'){ var _b=activeBoard(); if(_b) titleTxt += ' · '+_b.name; }
     document.getElementById('frzLeft').innerHTML =
       _titleHtml(view, titleTxt)+
-      '<span class="frz-crumbs">· '+esc(state.project==='__all__'?'All projects':state.project)+'</span>';
+      '<span class="frz-crumbs">'+esc(_frzCrumbText())+'</span>';   // Stage 3: project + active saved-filter name
     document.getElementById('frzBadges').innerHTML='';
     renderBar();
     if(view==='list'){ ensureBulkReleaseBtn(); applyListCols(); }   // Stage 4b bulk bar + column show/hide
@@ -16289,11 +16340,22 @@ if ('serviceWorker' in navigator) {
   function _frzMoveDescTools(){
     var save=document.getElementById('ipNotesSaveBtn'), tb=document.getElementById('ipNotesToolbar');
     if(!save || !tb) return;
+    // Already grouped with the toolbar? No-op. (BUGFIX: the old guard read save.parentElement
+    // as the "header" and queried IT for .frz-desc-tools — but after the first move save IS
+    // inside the group, so the query missed and a NEW group was nested every re-render, stacking
+    // the toolbar. closest() finds the group save actually lives in.)
+    var grp=save.closest('.frz-desc-tools');
+    if(grp && tb.parentElement===grp) return;
+    // Not (correctly) grouped: hard-dedupe — unwrap+remove ALL existing groups (so tb/save are
+    // never deleted, only the wrappers), then mount exactly one fresh group in save's real header.
+    [].slice.call(document.querySelectorAll('.frz-desc-tools')).forEach(function(g){
+      while(g.firstChild){ g.parentNode.insertBefore(g.firstChild, g); }
+      if(g.parentNode) g.parentNode.removeChild(g);
+    });
     var header=save.parentElement; if(!header) return;
-    var grp=header.querySelector('.frz-desc-tools');
-    if(!grp){ grp=document.createElement('div'); grp.className='frz-desc-tools'; grp.style.cssText='display:flex;align-items:center;gap:8px'; header.appendChild(grp); }
-    if(tb.parentElement!==grp){ tb.style.marginBottom='0'; grp.appendChild(tb); }
-    if(save.parentElement!==grp){ grp.appendChild(save); }
+    grp=document.createElement('div'); grp.className='frz-desc-tools'; grp.style.cssText='display:flex;align-items:center;gap:8px';
+    header.appendChild(grp);
+    tb.style.marginBottom='0'; grp.appendChild(tb); grp.appendChild(save);
   }
   // MAIN-COLUMN order — idempotent; safe to call after async injects (Attachments,
   // Sprint history) without disturbing the rail.
@@ -16459,6 +16521,7 @@ if ('serviceWorker' in navigator) {
     setView(vm[1]);
     lset('frazil_beta_lastview_'+uname(), vm[1]);
     if (vm[1]!=='my-home') rerender();   // My Home renders itself
+    _frzSeedActiveFromURL();   // Fix 1: cold load — seed the saved-filter anchor from URL-match (single, most-specific)
     syncURL(true);   // Stage 1: canonicalize (writes the resolved ?project + carried params); replaces, like the prior replaceState
     _frzSyncPanelFromURL();   // List detail panel: open/close to match ?panel (load + deep link)
   }
@@ -16475,6 +16538,8 @@ if ('serviceWorker' in navigator) {
       applyURLToFilters(view, new URLSearchParams(location.search));
       setView(view);
       if (view!=='my-home') rerender();   // My Home renders itself
+      _frzSeedActiveFromURL();   // Fix 1: back/forward is a cold landing — reseed the anchor from the URL
+      _frzRefreshActiveSaved();  // apply the reseeded highlight/crumb (popstate doesn't run syncURL)
       _frzSyncPanelFromURL();   // List detail panel: open/close to match ?panel on back/forward (no new listener)
     }
   });
@@ -16576,7 +16641,71 @@ if ('serviceWorker' in navigator) {
   function applySaved(s){
     var qs=s.qs||'';
     if(qs){ var u=new URLSearchParams(qs.replace(/^\?/,'')); u.delete('panel'); var t=u.toString(); qs=t?('?'+t):''; }
+    state.activeSavedId = s.id;   // Fix 1: anchor the highlight to the CLICKED filter (survives URL canonicalization)
     navigate('/beta/'+s.view + qs, false);
+  }
+  // ════════ Stage 3 (+ Fix 1): view-aware UI — saved-filter highlight + crumb + sync ════════
+  // params of a stored/whitelisted qs (project excluded so we can apply project leniently).
+  function _frzQSParamCount(qs){ var u=new URLSearchParams((qs||'').replace(/^\?/,'')), n=0; u.forEach(function(){ n++; }); return n; }
+  // Does saved filter `s` STILL match the live filter state? View must match; every NON-project
+  // whitelisted param must match exactly both ways; project is enforced ONLY if the saved qs pins
+  // one (legacy filters with no project don't falsely drop; a project-pinned filter must match).
+  function _frzSavedStillMatches(s){
+    if(!s || s.view!==state.view) return false;
+    var sp=new URLSearchParams((s.qs||'').replace(/^\?/,''));
+    var live=new URLSearchParams((_frzFilterQS()||'').replace(/^\?/,''));
+    if(sp.has('project') && (sp.get('project')||'') !== (live.get('project')||'')) return false;
+    var keys={}; sp.forEach(function(v,k){ if(k!=='project') keys[k]=1; }); live.forEach(function(v,k){ if(k!=='project') keys[k]=1; });
+    return Object.keys(keys).every(function(k){ return (sp.get(k)||'') === (live.get(k)||''); });
+  }
+  // The ONE active saved filter: the clicked anchor IF it still matches, else null (match-and-drop;
+  // never auto-promotes a different filter). Clears the stale anchor as a side effect.
+  function _frzActiveSaved(){
+    if(state.activeSavedId){
+      var s=(state.saved||[]).filter(function(x){return x.id===state.activeSavedId;})[0];
+      if(s && _frzSavedStillMatches(s)) return s;
+      state.activeSavedId=null;   // diverged → drop
+    }
+    return null;
+  }
+  // COLD LOAD only (deep-link/paste/back — never an applySaved): seed the anchor from URL-match.
+  // At most ONE: the most-specific (most params); a tie at the top → none.
+  function _frzSeedActiveFromURL(){
+    state.activeSavedId=null;
+    var matches=(state.saved||[]).filter(_frzSavedStillMatches);
+    if(!matches.length) return;
+    matches.sort(function(a,b){ return _frzQSParamCount(b.qs)-_frzQSParamCount(a.qs); });
+    if(matches.length===1 || _frzQSParamCount(matches[0].qs) > _frzQSParamCount(matches[1].qs)) state.activeSavedId=matches[0].id;
+  }
+  function _frzActiveSavedName(){ var a=_frzActiveSaved(); return a ? a.name : ''; }
+  // Crumb text: project always, + the active saved-filter name when one is anchored & matching.
+  function _frzCrumbText(){
+    var proj = (!state.project || state.project==='__all__') ? 'All projects' : state.project;
+    var sn = _frzActiveSavedName();
+    return '· '+proj + (sn ? ' · '+sn : '');
+  }
+  // Re-derive the view-aware surfaces from the just-written URL (called at the END of syncURL =
+  // the single chokepoint every view/filter/project/board change funnels through, so match-and-drop
+  // is automatic). Cheap + null-tolerant (syncURL can run pre-render).
+  function _frzRefreshActiveSaved(){
+    var active=_frzActiveSaved();   // computed once (also clears a diverged anchor)
+    var sn=document.getElementById('frzSavedNav');
+    if(sn){ [].slice.call(sn.querySelectorAll('.frz-item[data-saved]')).forEach(function(b){
+      b.setAttribute('aria-current', String(!!(active && active.id===b.getAttribute('data-saved'))));   // reuses .frz-item[aria-current] weight
+    }); }
+    if(!state.onItem){ var c=document.querySelector('#frzLeft .frz-crumbs'); if(c) c.textContent=_frzCrumbText(); }
+    var tv=document.querySelector('#frzFilterBar .frz-topview');
+    if(tv){ [].slice.call(tv.querySelectorAll('.frz-tv-seg')).forEach(function(b){
+      var on=(b.getAttribute('data-nav')==='view:'+state.view);
+      b.classList.toggle('is-active', on); if(on) b.setAttribute('aria-current','true'); else b.removeAttribute('aria-current');
+    }); }
+    // Fix 2: rail BOARDS highlight is part of the view sync — exactly one lit on a Kanban URL
+    // (the active board, or "All statuses" when there's no board param).
+    var bnav=document.getElementById('frzBoardNav');
+    if(bnav){ var onK=(state.view==='kanban' && !state.onItem);
+      [].slice.call(bnav.querySelectorAll('.frz-item[data-board]')).forEach(function(b){
+        b.setAttribute('aria-current', String(onK && state.board===b.getAttribute('data-board')));
+      }); }
   }
 
   // ════════ popovers ════════
@@ -16700,7 +16829,12 @@ if ('serviceWorker' in navigator) {
     // delegated rail nav / projects / saved
     root.addEventListener('click', function(e){
       var navBtn = e.target.closest && e.target.closest('[data-nav]');
-      if (navBtn){ e.preventDefault(); var t=navBtn.getAttribute('data-nav'); if(t.indexOf('view:')===0){ var _v=t.slice(5); navigate('/beta/'+_v + _frzCarryQS(!!_FRZ_SHARED_VIEWS[_v]), false); } return; }   // Stage 1: carry filter+project across the switch (chips only to shared views; project always)
+      if (navBtn){ e.preventDefault(); var t=navBtn.getAttribute('data-nav');
+        if(t.indexOf('view:')===0){ var _v=t.slice(5); var _qs=_frzCarryQS(!!_FRZ_SHARED_VIEWS[_v]);
+          // Fix 2: switching TO Kanban preserves the active/last board (no silent drop); other views drop it (correct).
+          if(_v==='kanban' && state.board && state.board!=='__all__'){ var _bu=new URLSearchParams(_qs.replace(/^\?/,'')); _bu.set('board', state.board); _qs='?'+_bu.toString(); }
+          navigate('/beta/'+_v + _qs, false);   // Stage 1: carry filter+project (chips only to shared views; project always)
+        } return; }
       var savedMenu = e.target.closest && e.target.closest('[data-savedmenu]');
       if (savedMenu){ e.stopPropagation(); savedRowMenu(savedMenu); return; }
       var savedBtn = e.target.closest && e.target.closest('[data-saved]');
@@ -16721,13 +16855,20 @@ if ('serviceWorker' in navigator) {
       var boardMenu = e.target.closest && e.target.closest('[data-boardmenu]');
       if (boardMenu){ e.stopPropagation(); boardRowMenu(boardMenu); return; }
       var boardBtn = e.target.closest && e.target.closest('[data-board]');
-      if (boardBtn){ navigate('/beta/kanban' + (boardBtn.getAttribute('data-board')==='__all__'?'':('?board='+encodeURIComponent(boardBtn.getAttribute('data-board')))), false); return; }
+      if (boardBtn){
+        // Issue-3: a board click CARRIES the active chips (consistent with view switches; they
+        // then filter within the board's columns), instead of dropping them.
+        var _bid=boardBtn.getAttribute('data-board'); var _bcu=new URLSearchParams(_frzCarryQS(true).replace(/^\?/,''));
+        if(_bid!=='__all__') _bcu.set('board', _bid); else _bcu.delete('board');
+        var _bcs=_bcu.toString(); navigate('/beta/kanban'+(_bcs?('?'+_bcs):''), false); return;
+      }
       var clr = e.target.closest && e.target.closest('[data-clear]');
       if (clr){ e.stopPropagation(); var k=clr.getAttribute('data-clear'); if(k==='range'){ var ff=document.getElementById('filterFrom'),ft=document.getElementById('filterTo'); if(ff){ff.value='';ff.dispatchEvent(new Event('change'));} if(ft){ft.value='';ft.dispatchEvent(new Event('change'));} } else applyPanel(CHIPS[k].panel,null); rerender(); renderBar(); renderRail(); syncURL(true); return; }
       var chip = e.target.closest && e.target.closest('[data-chip]');
       if (chip){ chipMenu(chip.getAttribute('data-chip'), chip); return; }
       if (e.target.closest && e.target.closest('[data-addfilter]')){ addFilterMenu(e.target.closest('[data-addfilter]')); return; }
       if (e.target.closest && e.target.closest('[data-savefilter]')){ saveCurrent(e.target.closest('[data-savefilter]')); return; }
+      if (e.target.closest && e.target.closest('[data-clearall]')){ _frzClearChips(); return; }   // Fix 3
       var opt = e.target.closest && e.target.closest('[data-opt]');
       if (opt){ handleOpt(opt.getAttribute('data-opt'), opt); return; }
     });
@@ -16854,8 +16995,8 @@ if ('serviceWorker' in navigator) {
     state.project = name; lset(projKey(), name);   // keep the cross-session default (localStorage)
     syncURL(true);                                  // Stage 1: project rides in the URL (replace; no-op on the item page via syncURL's onItem guard)
     setProjectPanel(); rerender();
-    // refresh crumbs + counts
-    if (!state.onItem){ var c=document.querySelector('#frzLeft .frz-crumbs'); if(c) c.textContent='· '+(name==='__all__'?'All projects':name); }
+    // refresh crumbs + counts (Stage 3: _frzCrumbText = project + active saved-filter name)
+    if (!state.onItem){ var c=document.querySelector('#frzLeft .frz-crumbs'); if(c) c.textContent=_frzCrumbText(); }
     renderRail();
     reflow();
   }
@@ -16873,7 +17014,7 @@ if ('serviceWorker' in navigator) {
 
   // ════════ board kanban rendering + drag/drop (Feature A) ════════
   function _kanbanFilteredItems(){
-    var fDev=getSelectedDevs(), fProd=getSelectedProducts(), fType=getSelectedTypes(), fSt=getSelectedStatuses();
+    var fDev=getSelectedDevs(), fProd=getSelectedProducts(), fType=getSelectedTypes(), fSt=getSelectedStatuses(), fAsg=getSelectedAssignees();
     var ownerScope=_call('getCurrentOwnerFilter');
     var searchQ=((document.getElementById('itemSearch')||{}).value||'').trim().toLowerCase();
     return (_val('projects',[])||[]).filter(function(p){
@@ -16881,7 +17022,8 @@ if ('serviceWorker' in navigator) {
       if(fDev && fDev.indexOf(p.dev||'')<0) return false;
       if(fProd && fProd.indexOf(p.product||'')<0) return false;
       if(fType && fType.indexOf(p.type||'')<0) return false;
-      if(fSt && fSt.indexOf(p.status)<0) return false;
+      if(fSt && fSt.indexOf(p.status)<0) return false;          // Stage 2: Status chip now exposed (filter pre-existed)
+      if(fAsg && fAsg.indexOf(p.assignee||'')<0) return false;  // Stage 2: Assignee chip — narrows cards (status×columns: items filtered, columns unchanged)
       if(ownerScope && p.dev!==ownerScope) return false;
       if(searchQ && !_call('itemMatchesSearch',p,searchQ)) return false;
       return true;
