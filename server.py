@@ -873,9 +873,9 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.7.6"
+APP_VERSION = "4.7.7"
 
-app = FastAPI(title="Frazil Roadmap", version=APP_VERSION)
+app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
 # ── Uncaught-exception handler ───────────────────────────────────────────────
 import traceback as _traceback
@@ -897,7 +897,7 @@ async def _unhandled_exception_handler(request: _Request, exc: Exception):
 
 @app.get("/api/version")
 def get_version():
-    return {"server": APP_VERSION, "name": "Frazil Roadmap"}
+    return {"server": APP_VERSION, "name": "Frazil Flow"}
 def _configure_cors(app, allowed_origins):
     """Enable CORS only when an explicit allowlist is configured.
 
@@ -953,9 +953,9 @@ _PWA_ICON_512_B64   = "iVBORw0KGgoAAAANSUhEUgAAAgAAAAIACAYAAAD0eNT6AABHaElEQVR42
 _PWA_ICON_APPLE_B64 = "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"  # GENERATED by tools/gen_pwa_icons.py — do not hand-edit
 
 _PWA_MANIFEST = {
-    "name": "Frazil Roadmap",
-    "short_name": "Roadmap",
-    "description": "Team roadmap, Gantt, Kanban & planning",
+    "name": "Frazil Flow",
+    "short_name": "Flow",
+    "description": "Team planning — Gantt, Kanban, list & sprints",
     "id": "/",
     "start_url": "/",
     "scope": "/",
@@ -1228,11 +1228,11 @@ def forgot_password(body: dict = Body(...), request: FRequest = None):
             link  = f"{APP_BASE_URL}/?pwtoken={token}"
             send_email(
                 user["email"],
-                "Reset your Frazil Roadmap password",
-                f"Hi {user['username']},\n\nReset your Frazil Roadmap password using the link below "
+                "Reset your Frazil Flow password",
+                f"Hi {user['username']},\n\nReset your Frazil Flow password using the link below "
                 f"(valid for 1 hour):\n\n{link}\n\nIf you didn't request this, you can ignore this email.",
                 f"<p>Hi {html.escape(user['username'])},</p>"
-                f"<p><a href=\"{link}\">Reset your Frazil Roadmap password</a> (valid for 1 hour).</p>"
+                f"<p><a href=\"{link}\">Reset your Frazil Flow password</a> (valid for 1 hour).</p>"
                 f"<p>If you didn't request this, you can ignore this email.</p>",
             )
             write_audit(team, "password:forgot", user["username"])
@@ -1291,11 +1291,11 @@ def send_user_invite(target_username: str, auth: dict = Depends(require_role("ad
     try:
         send_email(
             email,
-            "Set up your Frazil Roadmap account",
-            f"Hi {target_username},\n\nAn account has been created for you on Frazil Roadmap (team: {team}). "
+            "Set up your Frazil Flow account",
+            f"Hi {target_username},\n\nAn account has been created for you on Frazil Flow (team: {team}). "
             f"Set your password using the link below (valid for 7 days):\n\n{link}",
             f"<p>Hi {html.escape(target_username)},</p>"
-            f"<p>An account has been created for you on Frazil Roadmap (team: <b>{html.escape(team)}</b>). "
+            f"<p>An account has been created for you on Frazil Flow (team: <b>{html.escape(team)}</b>). "
             f"<a href=\"{link}\">Set your password</a> (valid for 7 days).</p>",
         )
     except Exception as e:
@@ -2517,7 +2517,7 @@ def _audit_forbidden_page(team: str) -> str:
 <div class="card">
   <h1>⛔ Access Denied</h1>
   <p>The audit log requires admin access. Please log in with an admin account for the <strong>{html.escape(team)}</strong> team.</p>
-  <a href="/?team={html.escape(team)}">← Back to Roadmap</a>
+  <a href="/?team={html.escape(team)}">← Back to Flow</a>
 </div>
 </body></html>"""
 
@@ -2613,7 +2613,7 @@ def audit_page(request: FRequest, team: str = "development", search: str = "",  
     action_opts = "".join(f'<option value="{html.escape(a)}"{" selected" if a==action_type else ""}>{html.escape(a)}</option>' for a in all_actions)
 
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<title>Frazil Roadmap — Audit Log ({team})</title>
+<title>Frazil Flow — Audit Log ({team})</title>
 <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
@@ -3015,7 +3015,7 @@ def create_jira_issue(body: dict = Body(...),
         roadmap_url = f"{body.get('roadmap_base_url','')}/index.html?item={item_id}"
         try:
             _jira_req("POST", f"/rest/api/3/issue/{new_key}/remotelink", {
-                "object": {"url": roadmap_url, "title": f"Roadmap: {item_name}",
+                "object": {"url": roadmap_url, "title": f"Flow: {item_name}",
                            "icon": {"url16x16": "https://img.icons8.com/color/16/000000/road.png"}}
             })
         except Exception as e:
@@ -3054,7 +3054,7 @@ def link_jira_issue(body: dict = Body(...),
         roadmap_url = f"{body.get('roadmap_base_url','')}/index.html?item={item_id}"
         try:
             _jira_req("POST", f"/rest/api/3/issue/{ticket}/remotelink", {
-                "object": {"url": roadmap_url, "title": f"Roadmap: {item_name}",
+                "object": {"url": roadmap_url, "title": f"Flow: {item_name}",
                            "icon": {"url16x16": "https://img.icons8.com/color/16/000000/road.png"}}
             })
         except Exception as e:

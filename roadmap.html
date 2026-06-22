@@ -2024,7 +2024,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.7.6';
+const APP_VERSION = '4.7.7';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -4691,7 +4691,7 @@ async function addJiraTicket(){
       });
       // Log link event
       API.post('/api/activities', {
-        activity_type:'Jira Linked', source:'Roadmap',
+        activity_type:'Jira Linked', source:'Flow',
         item_id: editingId, item_name: p?.name||'',
         owner: p?.dev||'', project: p?.product||'',
         created_by: getUsername(),
@@ -4746,7 +4746,7 @@ async function createJiraIssueFromModalForItem(p){
   }
   const issueType = jiraTypeMapping[p.type||'']||'Task';
   const desc = [
-    `Roadmap Item: ${p.name}`,
+    `Flow Item: ${p.name}`,
     p.dev     ? `Owner: ${p.dev}` : '',
     p.product ? `Project: ${p.product}` : '',
     p.type    ? `Type: ${p.type}` : '',
@@ -4767,7 +4767,7 @@ async function createJiraIssueFromModalForItem(p){
     const idx = projects.findIndex(x=>x.id===p.id);
     if(idx>-1) projects[idx] = p;
     API.post('/api/activities', {
-      activity_type:'Jira Created', source:'Roadmap',
+      activity_type:'Jira Created', source:'Flow',
       item_id:p.id, item_name:p.name, owner:p.dev||'', project:p.product||'',
       created_by:getUsername(), message:`Created Jira issue ${result.key}`,
       new_value:result.key, status:'Auto-Cleared'
@@ -6221,7 +6221,7 @@ document.getElementById('exportDataBtn')?.addEventListener('click', ()=>{
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href     = url;
-  a.download = `frazil-roadmap-${new Date().toISOString().slice(0,10)}.json`;
+  a.download = `frazil-flow-${new Date().toISOString().slice(0,10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
 });
@@ -12681,7 +12681,7 @@ async function _doExportPNG(){
     if(!target){ showToast('Nothing to export'); return; }
     const canvas = await html2canvas(target, { scale:2, useCORS:true, backgroundColor:'#ffffff', logging:false });
     const link = document.createElement('a');
-    link.download = `frazil-roadmap-${viewMode}-${new Date().toISOString().slice(0,10)}.png`;
+    link.download = `frazil-flow-${viewMode}-${new Date().toISOString().slice(0,10)}.png`;
     link.href = canvas.toDataURL('image/png');
     link.click();
     showToast('PNG downloaded!');
@@ -13590,7 +13590,7 @@ async function saveItemPageNotes(){
         })();
       }
       API.post('/api/activities', {
-        activity_type:'Jira Sync', source:'Roadmap',
+        activity_type:'Jira Sync', source:'Flow',
         item_id:p.id, item_name:p.name,
         owner:p.dev||'', project:p.product||'',
         created_by:getUsername(),
@@ -13985,7 +13985,7 @@ async function syncRoadmapToJira(saved, originalValues){
   // Send one comment to Jira summarising roadmap changes (roadmap-originated only)
   const commentChanges = changes.filter(c => !c.startsWith('Notes/Description'));
   if(commentChanges.length){
-    const msg = `[Roadmap Update by ${getUsername()}]\n${commentChanges.join('\n')}\nRoadmap item: ${location.origin}/?item=${saved.id}`;
+    const msg = `[Flow Update by ${getUsername()}]\n${commentChanges.join('\n')}\nFlow item: ${location.origin}/?item=${saved.id}`;
     for(const t of tickets){
       API.post('/api/jira/comment/'+t, { text: msg }).catch(()=>{});
     }
@@ -14236,7 +14236,7 @@ async function unlinkJiraFromItemPage(ticket){
     await API.put('/api/projects/'+p.id, {...p, _username:getUsername()});
     // Log unlink
     API.post('/api/activities', {
-      activity_type:'Jira Unlinked', source:'Roadmap',
+      activity_type:'Jira Unlinked', source:'Flow',
       item_id:p.id, item_name:p.name,
       owner:p.dev||'', project:p.product||'',
       created_by:getUsername(),
@@ -18192,7 +18192,7 @@ if ('serviceWorker' in navigator) {
             }catch(e){ console.warn('Jira description update failed:', e&&e.message); }
           })();
         });
-        API.post('/api/activities', { activity_type:'Jira Sync', source:'Roadmap',
+        API.post('/api/activities', { activity_type:'Jira Sync', source:'Flow',
           item_id:p.id, item_name:p.name, owner:p.dev||'', project:p.product||'',
           created_by:_call('getUsername'), message:'Notes appended to Jira description', status:'Auto-Cleared' }).catch(function(){});
       }
