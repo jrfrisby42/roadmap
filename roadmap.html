@@ -2024,7 +2024,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.7.4';
+const APP_VERSION = '4.7.5';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -14898,7 +14898,14 @@ if ('serviceWorker' in navigator) {
   /* Stage 3: segmented top view control (Gantt·Kanban·List). Sits at the left of the filter
      bar; reflects the URL's view, reuses data-nav for switching. Subtle active-segment
      transition, disabled under prefers-reduced-motion. */
-  .frz-beta .frz-topview { display:inline-flex; align-items:center; gap:2px; padding:2px; background:var(--frz-bg-app); border:1px solid var(--frz-border-strong); border-radius:var(--frz-radius-control); flex-shrink:0; margin-right:4px; }
+  /* Shown ONLY when the rail presents icon-only (is-collapsed-ui — the same flag that hides
+     the rail labels): redundant with the rail's view nav when expanded, useful when collapsed.
+     Keyed on is-collapsed-ui (not is-collapsed/frz-narrow) so it tracks every collapse path —
+     toggle, <900px auto-collapse, and narrow overlay-expand (which removes is-collapsed-ui, so
+     the control hides while the overlay rail shows full labels). It still RENDERS on shared
+     views (JS guard unchanged); only its CSS visibility changes. */
+  .frz-beta .frz-topview { display:none; align-items:center; gap:2px; padding:2px; background:var(--frz-bg-app); border:1px solid var(--frz-border-strong); border-radius:var(--frz-radius-control); flex-shrink:0; margin-right:4px; }
+  .frz-beta.is-collapsed-ui .frz-topview { display:inline-flex; }
   .frz-beta .frz-tv-seg { border:0; background:none; font:inherit; font-size:12.5px; font-weight:600; color:var(--frz-text-muted); display:inline-flex; align-items:center; gap:6px; padding:4px 11px; border-radius:calc(var(--frz-radius-control) - 2px); cursor:pointer; white-space:nowrap; transition:background-color .15s ease, color .15s ease; }
   .frz-beta .frz-tv-seg svg { width:14px; height:14px; }
   .frz-beta .frz-tv-seg:hover { color:var(--frz-accent); }
