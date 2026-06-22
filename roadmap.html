@@ -611,6 +611,11 @@
   .rte-box ul { padding-left: 18px; margin: 4px 0; }
   .rte-box li { margin: 2px 0; }
   .rte-box p { margin: 2px 0; }
+  /* Render-then-edit: read-mode affordance for editors (both shells). cursor + a subtle hover
+     ring (box-shadow isn't set inline on #ipNotes, so this wins; the inline border/bg are not
+     touched). Class is removed on edit-entry so it never shows in edit mode. */
+  #ipNotes.ip-desc-editable { cursor: text; }
+  #ipNotes.ip-desc-editable:hover { box-shadow: 0 0 0 1px var(--accent) inset; }
   /* Description tooltip on left panel rows */
   .desc-tooltip { position: fixed; background: #1a1a2e; color: #fff; border-radius: 8px; padding: 10px 14px; font-size: 8pt; font-family: 'Lato', sans-serif; line-height: 1.5; max-width: 320px; z-index: 500; pointer-events: none; box-shadow: 0 4px 16px rgba(0,0,0,0.25); }
   .desc-tooltip * { font-family: 'Lato', sans-serif !important; font-size: 8pt !important; }
@@ -2019,7 +2024,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.7.0';
+const APP_VERSION = '4.7.4';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -13230,29 +13235,16 @@ function renderItemPage(p){
 
   // Notes
   const notesEl   = document.getElementById('ipNotes');
-  const notesToolbar = document.getElementById('ipNotesToolbar');
-  const notesSaveBtn = document.getElementById('ipNotesSaveBtn');
-  notesEl.innerHTML = p.description || '';
-  if(canEdit){
-    notesEl.contentEditable = 'true';
-    if(notesToolbar) notesToolbar.style.display = '';
-    if(notesSaveBtn) notesSaveBtn.style.display  = '';
-    if(!notesEl._wired){   // wire once — element persists across renders
-      notesEl._wired = true;
-      notesEl.addEventListener('input', ()=>{ if(notesSaveBtn) notesSaveBtn.style.background='var(--accent)'; });
-      // Autosave on blur (no need to hit Save), only when actually changed.
-      notesEl.addEventListener('blur', ()=>{
-        const cur = projects.find(x=>x.id===_itemPageId);
-        if(cur && (cur.description||'') !== notesEl.innerHTML) saveItemPageNotes();
-      });
-    }
-  } else {
-    notesEl.contentEditable = 'false';
-    if(notesToolbar) notesToolbar.style.display = 'none';
-    if(notesSaveBtn) notesSaveBtn.style.display  = 'none';
-    if(!p.description) notesEl.innerHTML = '<span style="color:var(--muted);font-size:12px">No description</span>';
+  // Render-then-edit (both shells): the description renders as a READ view for ALL roles by
+  // default — no contentEditable, no toolbar, no Save/Cancel chrome on first paint. Editors
+  // click to edit in place (Tiptap on /beta via the window bridge; classic contentEditable
+  // otherwise). Nothing mounts on load; _ipDescShowRead also re-resolves inline-image presigns.
+  _ipDescShowRead(p, canEdit);
+  if(canEdit && !notesEl._ipClickWired){   // wire once — #ipNotes persists across renders
+    notesEl._ipClickWired = true;
+    notesEl.addEventListener('click', _ipDescOnClick);
+    notesEl.addEventListener('keydown', (e)=>{ if(_ipDescEditing && e.key==='Escape'){ e.preventDefault(); cancelItemPageNotes(); } });
   }
-  rehydrateInlineImages(p.id);   // resolve any inline <img data-att-key> to fresh presigned URLs (classic + beta)
 
   // Feature Flags — unified card (manual + Jira-sourced)
   renderItemPageFeatureFlags(p);
@@ -13504,10 +13496,76 @@ function rehydrateInlineImages(pid){
   }).catch(()=>{});
 }
 
+// ── Item-page Description: render-then-edit controller (both shells) ──────────
+// READ by default; click → edit in place (Tiptap on /beta via window._frzDescEnterEdit,
+// classic contentEditable otherwise); Save/Cancel/Esc replace autosave-on-blur. The cross-
+// script bridge hooks (_frzDescEnterEdit/_frzDescTeardown) are set by the beta module per
+// item (reading the LIVE item) and absent on the classic shell — the handlers null-check
+// and degrade to the classic editor (or no-op for viewers), never throw.
+let _ipDescEditing = false;
+let _ipDescOriginal = null;   // description snapshot taken at edit-ENTRY (Cancel restore)
+function _ipDescShowRead(p, canEdit){
+  const notesEl = document.getElementById('ipNotes'); if(!notesEl) return;
+  // Teardown-before-build: an EXTERNAL re-render (e.g. a notification click) can rebuild the
+  // Description while an edit session is LIVE. Tear it down FIRST so no zombie Tiptap instance
+  // (#ipNotes._frzEd) and no orphaned edit toolbar (.frz-rte-tb relocated into .frz-desc-tools)
+  // survive. The beta teardown is idempotent + scoped to the Description header (never the
+  // comment composer); on classic it's absent and the read resets below cover the classic editor.
+  if(typeof window._frzDescTeardown === 'function') window._frzDescTeardown();
+  _ipDescEditing = false;
+  notesEl.contentEditable = 'false';
+  // chrome is gated PURELY on edit-state → read header shows nothing
+  const tb=document.getElementById('ipNotesToolbar'); if(tb) tb.style.display='none';
+  const sv=document.getElementById('ipNotesSaveBtn'); if(sv) sv.style.display='none';
+  const cn=document.getElementById('ipNotesCancelBtn'); if(cn) cn.style.display='none';
+  const hasDesc = !!(p && (p.description||'').trim());
+  if(hasDesc) notesEl.innerHTML = p.description;
+  else if(canEdit) notesEl.innerHTML = '<span style="color:var(--muted);font-size:13px">Add a description</span>';
+  else notesEl.innerHTML = '<span style="color:var(--muted);font-size:12px">No description</span>';
+  notesEl.classList.toggle('ip-desc-editable', !!canEdit);   // hover/cursor affordance (read only)
+  rehydrateInlineImages((p&&p.id) || _itemPageId);   // re-resolve inline <img data-att-key> presigns (classic + beta)
+}
+function _ipDescOnClick(e){
+  if(_ipDescEditing) return;
+  if(!(isAdmin||isEditor)) return;                                   // viewers: no-op
+  if(e.target.closest && e.target.closest('a, .frz-mention, summary')) return;   // guard a: links / mentions / expand toggles follow, don't edit
+  const notesEl=document.getElementById('ipNotes');
+  const sel=window.getSelection();                                   // guard b: a real selection = copy intent, not an edit trigger
+  if(sel && !sel.isCollapsed && notesEl && notesEl.contains(sel.anchorNode)) return;
+  _ipDescEnterEdit();
+}
+function _ipDescEnterEdit(){
+  const notesEl=document.getElementById('ipNotes'); if(!notesEl) return;
+  if(_ipDescEditing || !(isAdmin||isEditor)) return;
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  _ipDescEditing = true;
+  _ipDescOriginal = p.description||'';            // edit-entry snapshot (Cancel)
+  notesEl.classList.remove('ip-desc-editable');
+  const sv=document.getElementById('ipNotesSaveBtn'), cn=document.getElementById('ipNotesCancelBtn');
+  if(sv) sv.style.display='';
+  if(cn){ cn.style.display=''; if(sv && sv.parentNode) sv.insertAdjacentElement('beforebegin', cn); }   // Cancel just left of Save, wherever Save lives
+  if(typeof window._frzDescEnterEdit === 'function'){
+    window._frzDescEnterEdit();                   // /beta: mount Tiptap now (lazy esm.sh import), wires its own toolbar/mentions/save hook
+  } else {
+    if(!(p.description||'').trim()) notesEl.innerHTML='';   // clear the read placeholder → blank editable
+    const tb=document.getElementById('ipNotesToolbar'); if(tb) tb.style.display='';
+    notesEl.contentEditable='true';
+    notesEl.focus();
+  }
+}
+function _ipDescExitEdit(){
+  const notesEl=document.getElementById('ipNotes');
+  if(typeof window._frzDescTeardown === 'function') window._frzDescTeardown();   // /beta: destroy the Tiptap instance + remove its toolbar
+  else if(notesEl) notesEl.contentEditable='false';                             // classic
+  const p = projects.find(x=>x.id===_itemPageId);
+  _ipDescShowRead(p, (isAdmin||isEditor));        // re-render READ (saved → p.description; cancel → p.description, never mutated)
+}
+function cancelItemPageNotes(){ if(_ipDescEditing) _ipDescExitEdit(); }
+
 async function saveItemPageNotes(){
   // /beta rich-text editor (Tiptap) owns save when mounted: getHTML→sanitize→PUT→Jira
   // basic-subset. Null in classic / flag-off / fallback, so this path is then unchanged.
-  if(window._frzRichSave) return window._frzRichSave();
+  if(window._frzRichSave){ try{ await window._frzRichSave(); }catch(e){} _ipDescExitEdit(); return; }
   if(!_itemPageId) return;
   const p = projects.find(x=>x.id===_itemPageId);
   if(!p) return;
@@ -13541,9 +13599,8 @@ async function saveItemPageNotes(){
       }).catch(()=>{});
     }
     showToast('Description saved');
-    const btn = document.getElementById('ipNotesSaveBtn');
-    if(btn){ btn.textContent='Saved'; btn.style.background='#22b96e'; setTimeout(()=>{ btn.textContent='Save'; btn.style.background='var(--accent)'; },2000); }
-  } catch(e){ showToast('Failed to save description'); }
+    _ipDescExitEdit();   // success → tear down the classic editor + re-render the READ view
+  } catch(e){ showToast('Failed to save description'); }   // failure → stay in edit so the user can retry
 }
 
 // Check for ?item= on boot
@@ -14585,6 +14642,7 @@ if ('serviceWorker' in navigator) {
         <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
           <div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;justify-content:space-between">
             Description
+            <button id="ipNotesCancelBtn" onclick="cancelItemPageNotes()" style="display:none;background:var(--surface);color:var(--text);border:1px solid var(--border);padding:4px 12px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">Cancel</button>
             <button id="ipNotesSaveBtn" onclick="saveItemPageNotes()" style="display:none;background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">Save</button>
           </div>
           <div style="padding:14px 16px">
@@ -16448,8 +16506,10 @@ if ('serviceWorker' in navigator) {
     injectSprintHistory(p); injectAttachments(p); injectFlag(p);
     _frzOrderMain();   // rail is consolidated by the renderItemPage wrapper; here we only (re)order the main column for the just-injected cards
     setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); injectFlag(p); _frzOrderMain(); }, 500);
-    // Stage 3b: wire @mention typeahead on the comment box + description (idempotent)
-    setTimeout(function(){ frzInitCommentEditor(p); frzInitDescription(p); }, 300);
+    // Render-then-edit: set the description's beta read-styling + edit bridge NOW (no mount on
+    // load → no flash); the comment composer still mounts its editor deferred (out of scope here).
+    frzInitDescription(p);
+    setTimeout(function(){ frzInitCommentEditor(p); }, 300);
     renderBar();
     document.getElementById('frzContent').scrollTop = 0;
     // Drop focus to a neutral place so the shell shortcuts ([ and /) work immediately
@@ -18205,8 +18265,10 @@ if ('serviceWorker' in navigator) {
     ];
   }
 
-  // ── Mount the Tiptap editor into #ipNotes ────────────────────────────────────
+  // ── Mount the Tiptap editor into #ipNotes (on first edit-click) ──────────────
   function frzMountRichEditor(p, notesEl){
+    // Render-then-edit: called on the user's first edit-click (not on load), so the read content
+    // stays visible until Tiptap swaps in — no skeleton needed, no blank intermediate state.
     return Promise.all([_frzLoadTiptap(), _frzLoadDOMPurify()]).then(function(r){
       var T=r[0], Editor=T.core.Editor;
 
@@ -18215,7 +18277,11 @@ if ('serviceWorker' in navigator) {
       notesEl.classList.remove('rte-box'); notesEl.classList.add('frz-rte');
       notesEl.removeAttribute('contenteditable');
       notesEl.innerHTML=''; notesEl.style.padding='0';   // .ProseMirror provides the padding (avoid double inset)
-      var oldTb=document.getElementById('ipNotesToolbar'); if(oldTb) oldTb.style.display='none';
+      // Flag ON: the classic toolbar is dead weight on the Tiptap path — REMOVE it from the DOM
+      // (was merely hidden), so the description header holds only the Tiptap toolbar + Save, with no
+      // orphaned #ipNotesToolbar. Only runs on a successful mount (this .then): flag-OFF and the
+      // CDN-failure .catch fallback never reach here, so the classic editor keeps its toolbar.
+      var oldTb=document.getElementById('ipNotesToolbar'); if(oldTb && oldTb.parentNode) oldTb.parentNode.removeChild(oldTb);
 
       var ed=new Editor({
         element:notesEl,
@@ -18238,18 +18304,24 @@ if ('serviceWorker' in navigator) {
       notesEl._frzEd=ed; notesEl._frzRich=true; _curEd=ed; _curNotesEl=notesEl;
       window._frzRichSave=frzSaveDescription;   // shared-path hook: saveItemPageNotes delegates here
 
-      // Description toolbar — full button set, placed in the card header (unchanged).
+      // Description toolbar — full button set, prepended in the card header so the trailing
+      // Cancel + Save (shown by the shared enter-edit) sit to its right → [toolbar, Cancel, Save].
       _frzBuildToolbar(ed, { place:function(tb){
         var save0=document.getElementById('ipNotesSaveBtn'); var header=save0&&save0.parentNode;
         var old=header&&header.querySelector('.frz-rte-tb'); if(old&&old.parentNode) old.parentNode.removeChild(old);
-        if(header && save0){ header.style.flexWrap='wrap'; header.style.gap='8px'; header.insertBefore(tb, save0); }
+        if(header){ header.style.flexWrap='wrap'; header.style.gap='8px'; header.insertBefore(tb, header.firstChild); }
         else { notesEl.parentNode.insertBefore(tb, notesEl); }
       } });
       _frzWireMentions(ed);
-      ed.on('blur', function(){ frzSaveDescription(); });
+      // No autosave-on-blur — Save/Cancel own persistence (blur must not lose or commit edits).
       ed.on('update', function(){ var b=document.getElementById('ipNotesSaveBtn'); if(b) b.style.background='var(--accent)'; });
       _frzRehydrateEditorImages(ed, p.id);
       return ed;
+    }).catch(function(err){
+      // Import/mount failed (e.g. esm.sh blocked): restore the content and rethrow so the
+      // enter-edit bridge's .catch finishes the classic-editable fallback (rte-box + toolbar).
+      notesEl.innerHTML = p.description||'';
+      throw err;
     });
   }
 
@@ -18437,26 +18509,43 @@ if ('serviceWorker' in navigator) {
   }
 
   // Entry from openItem: decide editor vs classic fallback.
+  // Render-then-edit: NOTHING mounts on load. This runs per item open and only sets up the
+  // beta READ styling + registers the cross-script bridge the shared (first-script) click
+  // handler uses to enter Tiptap edit. The hooks read the LIVE item at call time (no stale
+  // capture); they are nulled for viewers/flag-off so the click handler falls back to the
+  // classic contentEditable editor (or no-ops for viewers). On the classic shell this function
+  // never runs, so the hooks stay absent → classic path.
   function frzInitDescription(p){
     var notesEl=document.getElementById('ipNotes'); if(!notesEl) return;
     var canEdit=(_val('isAdmin',false)||_val('isEditor',false));
-    if(!frzRteEnabled()){            // flag OFF → classic editor, exactly as before
-      window._frzRichSave=null; notesEl._frzRich=false;
-      attachMentionRich(notesEl);
+    window._frzRichSave=null; notesEl._frzRich=false;
+    if(!frzRteEnabled() || !canEdit){
+      window._frzDescEnterEdit=null; window._frzDescTeardown=null;   // classic-editable / viewer: no bridge
       return;
     }
-    // flag ON: render description under .frz-rte so block CSS applies cleanly (edit + read-only).
+    // flag ON + editor: read under .frz-rte (block CSS for tables/panels), bridge mounts on click.
     notesEl.classList.remove('rte-box'); notesEl.classList.add('frz-rte');
-    if(!canEdit){ window._frzRichSave=null; notesEl._frzRich=false; return; }   // viewer: read-only display
-    frzMountRichEditor(p, notesEl).catch(function(err){
-      // graceful fallback — CDN/import failure: revert to the classic editor, no errors.
-      console.warn('Rich editor load failed — falling back to classic:', err&&err.message);
-      window._frzRichSave=null; notesEl._frzRich=false;
-      notesEl.classList.remove('frz-rte'); notesEl.classList.add('rte-box');
-      notesEl.setAttribute('contenteditable','true');
-      if(!(p.description||'')) notesEl.innerHTML=p.description||'';   // content already set by classic render
-      attachMentionRich(notesEl);
-    });
+    window._frzDescEnterEdit=function(){
+      var el=document.getElementById('ipNotes'); var cur=_frzCurItem(); if(!el || !cur) return;
+      frzMountRichEditor(cur, el).catch(function(err){
+        // CDN/import failure → classic contentEditable fallback in place, no errors.
+        console.warn('Rich editor load failed — falling back to classic:', err&&err.message);
+        window._frzRichSave=null; el._frzRich=false;
+        el.classList.remove('frz-rte'); el.classList.add('rte-box');
+        el.setAttribute('contenteditable','true');
+        var tb=document.getElementById('ipNotesToolbar'); if(tb) tb.style.display='';
+        attachMentionRich(el); el.focus();
+      });
+    };
+    window._frzDescTeardown=function(){
+      var el=document.getElementById('ipNotes'); if(!el) return;
+      if(el._frzEd){ try{ el._frzEd.destroy(); }catch(e){} el._frzEd=null; }
+      _curEd=null; _curNotesEl=null; window._frzRichSave=null; el._frzRich=false;
+      var save0=document.getElementById('ipNotesSaveBtn'); var header=save0&&save0.parentNode;
+      var tbEl=header&&header.querySelector('.frz-rte-tb'); if(tbEl&&tbEl.parentNode) tbEl.parentNode.removeChild(tbEl);
+      el.style.padding='10px 12px';            // undo the mount's padding:0 (back to the read/template inset)
+      el.removeAttribute('contenteditable');   // read content re-rendered by the shared _ipDescExitEdit
+    };
   }
 
   // ════════ Stage 3 — comment composer (shares the editor factory) ══════════════
