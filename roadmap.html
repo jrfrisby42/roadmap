@@ -2028,7 +2028,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.8.0';
+const APP_VERSION = '4.8.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -12743,7 +12743,7 @@ function _ipBeginEdit(cell){
   const ctrl = cell.firstElementChild; ctrl.focus(); try { ctrl.select && ctrl.select(); } catch(e){}
   // Open the native dropdown on the first click (/beta only — classic unchanged).
   // We're inside the originating click handler, so showPicker() is user-activated.
-  if(kind==='select' && location.pathname.startsWith('/beta')){ try { ctrl.showPicker && ctrl.showPicker(); } catch(e){} }
+  if(kind==='select' && document.body.classList.contains('frz-beta-active')){ try { ctrl.showPicker && ctrl.showPicker(); } catch(e){} }
   let done = false;
   const fresh = ()=> projects.find(x=>x.id===_itemPageId);
   const cancel = ()=>{ if(done) return; done=true; const fr=fresh(); if(fr) renderItemPage(fr); };
@@ -14255,30 +14255,25 @@ async function unlinkJiraFromItemPage(ticket){
 
 // ── INIT ──
 async function boot(){
-  // ── B1 entry-flip: Flow is the default UI at "/". Normalize any non-/beta,
-  // non-?classic=1 entry into the /beta router space (client-only, NO reload) BEFORE
-  // any /beta path-gate reads location.pathname — the shell IIFE gate (runs during this
-  // function's first await), boot's own /beta branch below, and routeFromLocation all
-  // key off the path. After this, those gates see a consistent /beta path.
-  //   • ?classic=1  → escape hatch: leave the path alone (all /beta gates stay false →
-  //                   classic renders). Shareable, no stuck state.
-  //   • /beta/*     → untouched (existing bookmarks/flow).
-  //   • ?pwtoken=   → untouched (set-password flow stays classic, handled just below).
-  //   • else (root) → replaceState into /beta, PRESERVING the query string. A bare
-  //                   ?item=ID becomes /beta/item/ID (the shell's canonical item route)
-  //                   with ?item dropped so checkItemPageParam can't also fire.
+  // ── Phase 3: Flow lives at root ("/"). Classic is opt-in via ?classic=1.
+  //   • ?classic=1 or ?pwtoken= → leave the path alone.
+  //   • legacy /beta/*          → normalize to root (server also 302s; defensive here).
+  //   • bare ?item=ID           → canonicalize to /item/ID (drop ?item) so the item route
+  //                               opens cleanly and classic's checkItemPageParam can't double-fire.
   try {
     var _qs = new URLSearchParams(location.search);
-    if (_qs.get('classic') !== '1' && !location.pathname.startsWith('/beta') && !_qs.get('pwtoken')) {
-      var _item = _qs.get('item'), _target;
+    if (_qs.get('classic') === '1' || _qs.get('pwtoken')) {
+      /* leave path alone */
+    } else if (location.pathname.startsWith('/beta')) {
+      var _root = location.pathname.replace(/^\/beta/, '') || '/';
+      history.replaceState(history.state, '', _root + location.search);
+    } else {
+      var _item = _qs.get('item');
       if (_item && /^\d+$/.test(_item)) {
         _qs.delete('item');
         var _rest = _qs.toString();
-        _target = '/beta/item/' + _item + (_rest ? '?' + _rest : '');
-      } else {
-        _target = '/beta' + location.search;   // bare /beta → shell resolves to lastView()||'gantt'
+        history.replaceState(history.state, '', '/item/' + _item + (_rest ? '?' + _rest : ''));
       }
-      history.replaceState(history.state, '', _target);
     }
   } catch(e){}
   // Emailed set-password / reset link — handle before anything else (user is not logged in).
@@ -14395,7 +14390,7 @@ async function boot(){
   populateProductSelect();
   populateTypeSelect();
   populateAssigneeDrop();
-  if (location.pathname.startsWith('/beta')) {
+  if (new URLSearchParams(location.search).get('classic') !== '1') {
     // The /beta Flow shell drives ALL rendering + routing. Skip classic's initial
     // view render (and default-view / ?item= handling) so it can't flash a classic
     // view before the shell mounts over it. Keep viewMode + the select coherent
@@ -15494,8 +15489,12 @@ if ('serviceWorker' in navigator) {
 <script>
 (function(){
   "use strict";
-  // ── CONSTRAINT 1: hard no-op off /beta (no DOM reads, no style application) ──
-  if (!location.pathname.startsWith('/beta')) return;
+  // ── CONSTRAINT 1: hard no-op for classic (?classic=1) and the set-password flow
+  // (?pwtoken=). The IIFE runs during boot's first await even when checkPasswordTokenParam()
+  // early-returned boot, so the pwtoken carve-out is REQUIRED or the shell mounts over the
+  // set-password screen. Everything else is Flow (default at root). ──
+  var _qs = new URLSearchParams(location.search);
+  if (_qs.get('classic') === '1' || _qs.get('pwtoken')) return;
 
   var IC = {
     gantt:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2" y="3" width="6.5" height="2.6" rx="1.3"/><circle cx="10.4" cy="4.3" r="1" fill="currentColor" stroke="none"/><rect x="4" y="7" width="6.5" height="2.6" rx="1.3"/><circle cx="12.4" cy="8.3" r="1" fill="currentColor" stroke="none"/><rect x="2" y="11" width="4.5" height="2.6" rx="1.3"/><circle cx="8.4" cy="12.3" r="1" fill="currentColor" stroke="none"/></svg>',
@@ -15633,7 +15632,7 @@ if ('serviceWorker' in navigator) {
     root.innerHTML =
       '<aside class="frz-rail">'+
         '<div class="frz-brand">'+
-          '<a class="frz-brandlink" href="/beta" data-nav="view:gantt" aria-label="Flow home">'+
+          '<a class="frz-brandlink" href="/" data-nav="view:gantt" aria-label="Flow home">'+
             '<img class="frz-logo frz-logo-full" src="'+FLOW_LOGO_FULL+'" alt="Flow">'+
             '<img class="frz-logo frz-logo-mark" src="'+FLOW_LOGO_MARK+'" alt="Flow">'+
           '</a>'+
@@ -15720,7 +15719,7 @@ if ('serviceWorker' in navigator) {
     document.getElementById('frzHomeTabs').addEventListener('click', function(e){
       var b = e.target.closest('[data-hometab]'); if(!b) return;
       var t = b.getAttribute('data-hometab');
-      navigate('/beta/my-home'+(t==='assigned'?'':'/'+t), false);
+      navigate('/my-home'+(t==='assigned'?'':'/'+t), false);
     });
     // The item overlay carries inline position:fixed/inset/z-index:900 that scoped
     // CSS can't beat without !important — neutralize via JS so it flows INSIDE the
@@ -16102,9 +16101,9 @@ if ('serviceWorker' in navigator) {
       });
     }
     var qs = params.toString();
-    var base = '/beta/'+view;
-    if (view==='planning' && state.planTab && state.planTab!=='plan') base = '/beta/planning/'+state.planTab;  // planning sub-tab is URL state
-    if (view==='my-home' && state.homeTab && state.homeTab!=='assigned') base = '/beta/my-home/'+state.homeTab;  // home sub-tab is URL state
+    var base = '/'+view;
+    if (view==='planning' && state.planTab && state.planTab!=='plan') base = '/planning/'+state.planTab;  // planning sub-tab is URL state
+    if (view==='my-home' && state.homeTab && state.homeTab!=='assigned') base = '/my-home/'+state.homeTab;  // home sub-tab is URL state
     var url = base + (qs?('?'+qs):'');
     var st = { frzView:view };
     if (replace) history.replaceState(st,'',url); else history.pushState(st,'',url);
@@ -16552,7 +16551,7 @@ if ('serviceWorker' in navigator) {
     try { if(document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch(_){}
     if (opts.push!==false){
       // include itemPage:id so the production popstate handler re-opens (not closes)
-      history.pushState({ frzItem:id, itemPage:id, frzView:state.view }, '', '/beta/item/'+id);
+      history.pushState({ frzItem:id, itemPage:id, frzView:state.view }, '', '/item/'+id);
     }
     renderRail();
     _frzSyncSearchMode();   // top bar = global search on the item page
@@ -16560,21 +16559,21 @@ if ('serviceWorker' in navigator) {
   }
   function goBack(){
     if (state.itemFromApp){ state.itemFromApp=false; history.back(); }   // -> popstate -> prior view, filters intact
-    else { navigate('/beta/'+(state.view||'gantt'), true); }
+    else { navigate('/'+(state.view||'gantt'), true); }
   }
 
   // ════════ routing ════════
   function navigate(url, replace){
     var u = new URL(url, location.origin);
     var path = u.pathname.replace(/\/+$/,'');
-    var m = path.match(/^\/beta\/item\/(\d+)/);
+    var m = path.match(/^\/item\/(\d+)/);
     if (m){ state.itemFromApp = !replace; openItem(parseInt(m[1],10), {push:!replace}); return; }
-    if (/^\/beta\/my-work(\/|$)/.test(path)){ navigate('/beta/my-home', replace); return; }   // Stage 5: My Work absorbed into My Home
-    var vm = path.match(/^\/beta\/(gantt|kanban|list|planning|dashboard|my-home)/);
+    if (/^\/my-work(\/|$)/.test(path)){ navigate('/my-home', replace); return; }   // Stage 5: My Work absorbed into My Home
+    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home)/);
     var view = vm ? vm[1] : (lastView()||'gantt');
-    if (view==='kanban' && _val('isViewer', false)){ navigate('/beta/gantt', replace); return; }   // viewers can't see Kanban
-    if (view==='planning'){ var pm=path.match(/^\/beta\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
-    if (view==='my-home'){ var hm=path.match(/^\/beta\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
+    if (view==='kanban' && _val('isViewer', false)){ navigate('/gantt', replace); return; }   // viewers can't see Kanban
+    if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
+    if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
     applyURLToFilters(view, u.searchParams);
     setView(view);
     if (replace) history.replaceState({frzView:view},'',url); else history.pushState({frzView:view},'',url);
@@ -16585,7 +16584,7 @@ if ('serviceWorker' in navigator) {
   function lastView(){ return ls('frazil_beta_lastview_'+uname()); }
   function routeFromLocation(initial){
     var path = location.pathname.replace(/\/+$/,'');
-    var m = path.match(/^\/beta\/item\/(\d+)/);
+    var m = path.match(/^\/item\/(\d+)/);
     var qItem = new URLSearchParams(location.search).get('item');
     // Deep link straight to an item: open it directly and leave a /beta/{view}
     // entry beneath in history so Back returns to a view. We do NOT render that
@@ -16594,23 +16593,23 @@ if ('serviceWorker' in navigator) {
     // containers + renders the rail/bar itself, so no eager setView is needed.
     if (m){
       var v = lastView()||'gantt'; state.view=v; applyChromeHiding();
-      history.replaceState({frzView:v},'','/beta/'+v); state.itemFromApp=true; openItem(parseInt(m[1],10), {push:true}); return;
+      history.replaceState({frzView:v},'','/'+v); state.itemFromApp=true; openItem(parseInt(m[1],10), {push:true}); return;
     }
     if (qItem){
       var v2 = lastView()||'gantt'; state.view=v2; applyChromeHiding();
-      history.replaceState({frzView:v2},'','/beta/'+v2); state.itemFromApp=true; openItem(parseInt(qItem,10), {push:true}); return;
+      history.replaceState({frzView:v2},'','/'+v2); state.itemFromApp=true; openItem(parseInt(qItem,10), {push:true}); return;
     }
-    if (/^\/beta\/my-work(\/|$)/.test(path)){ navigate('/beta/my-home', true); return; }   // Stage 5: absorbed into My Home
-    var vm = path.match(/^\/beta\/(gantt|kanban|list|planning|dashboard|my-home)/);
+    if (/^\/my-work(\/|$)/.test(path)){ navigate('/my-home', true); return; }   // Stage 5: absorbed into My Home
+    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home)/);
     if (!vm){ // /beta -> last used (default gantt)
       var lv = lastView()||'gantt';
       applyDefaultCollapse(lv);
-      navigate('/beta/'+lv + location.search, true);
+      navigate('/'+lv + location.search, true);
       return;
     }
-    if (vm[1]==='kanban' && _val('isViewer', false)){ navigate('/beta/gantt', true); return; }   // viewers can't see Kanban
-    if (vm[1]==='planning'){ var pm=path.match(/^\/beta\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
-    if (vm[1]==='my-home'){ var hm=path.match(/^\/beta\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
+    if (vm[1]==='kanban' && _val('isViewer', false)){ navigate('/gantt', true); return; }   // viewers can't see Kanban
+    if (vm[1]==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
+    if (vm[1]==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
     applyDefaultCollapse(vm[1]);
     applyURLToFilters(vm[1], new URLSearchParams(location.search));
     setView(vm[1]);
@@ -16626,10 +16625,10 @@ if ('serviceWorker' in navigator) {
     if (st.frzItem){ state.itemFromApp=true; openItem(st.frzItem, {push:false}); }
     else {
       var path = location.pathname.replace(/\/+$/,'');
-      var vm = path.match(/^\/beta\/(gantt|kanban|list|planning|dashboard|my-home)/);
+      var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home)/);
       var view = vm? vm[1] : (st.frzView || state.view);
-      if (view==='planning'){ var pm=path.match(/^\/beta\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
-      if (view==='my-home'){ var hm=path.match(/^\/beta\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
+      if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
+      if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
       applyURLToFilters(view, new URLSearchParams(location.search));
       setView(view);
       if (view!=='my-home') rerender();   // My Home renders itself
@@ -16737,7 +16736,7 @@ if ('serviceWorker' in navigator) {
     var qs=s.qs||'';
     if(qs){ var u=new URLSearchParams(qs.replace(/^\?/,'')); u.delete('panel'); var t=u.toString(); qs=t?('?'+t):''; }
     state.activeSavedId = s.id;   // Fix 1: anchor the highlight to the CLICKED filter (survives URL canonicalization)
-    navigate('/beta/'+s.view + qs, false);
+    navigate('/'+s.view + qs, false);
   }
   // ════════ Stage 3 (+ Fix 1): view-aware UI — saved-filter highlight + crumb + sync ════════
   // params of a stored/whitelisted qs (project excluded so we can apply project leniently).
@@ -16928,7 +16927,7 @@ if ('serviceWorker' in navigator) {
         if(t.indexOf('view:')===0){ var _v=t.slice(5); var _qs=_frzCarryQS(!!_FRZ_SHARED_VIEWS[_v]);
           // Fix 2: switching TO Kanban preserves the active/last board (no silent drop); other views drop it (correct).
           if(_v==='kanban' && state.board && state.board!=='__all__'){ var _bu=new URLSearchParams(_qs.replace(/^\?/,'')); _bu.set('board', state.board); _qs='?'+_bu.toString(); }
-          navigate('/beta/'+_v + _qs, false);   // Stage 1: carry filter+project (chips only to shared views; project always)
+          navigate('/'+_v + _qs, false);   // Stage 1: carry filter+project (chips only to shared views; project always)
         } return; }
       var savedMenu = e.target.closest && e.target.closest('[data-savedmenu]');
       if (savedMenu){ e.stopPropagation(); savedRowMenu(savedMenu); return; }
@@ -16940,7 +16939,7 @@ if ('serviceWorker' in navigator) {
         if (state.onItem){
           // From an item: jump to that project's List, scoped.
           state.project = pn; lset(projKey(), pn);   // setView→setProjectPanel applies this to the product filter
-          navigate('/beta/list');
+          navigate('/list');
         } else {
           // On any view: just scope the current view to the project (stay put).
           setProject(pn);
@@ -16955,7 +16954,7 @@ if ('serviceWorker' in navigator) {
         // then filter within the board's columns), instead of dropping them.
         var _bid=boardBtn.getAttribute('data-board'); var _bcu=new URLSearchParams(_frzCarryQS(true).replace(/^\?/,''));
         if(_bid!=='__all__') _bcu.set('board', _bid); else _bcu.delete('board');
-        var _bcs=_bcu.toString(); navigate('/beta/kanban'+(_bcs?('?'+_bcs):''), false); return;
+        var _bcs=_bcu.toString(); navigate('/kanban'+(_bcs?('?'+_bcs):''), false); return;
       }
       var clr = e.target.closest && e.target.closest('[data-clear]');
       if (clr){ e.stopPropagation(); var k=clr.getAttribute('data-clear'); if(k==='range'){ var ff=document.getElementById('filterFrom'),ft=document.getElementById('filterTo'); if(ff){ff.value='';ff.dispatchEvent(new Event('change'));} if(ft){ft.value='';ft.dispatchEvent(new Event('change'));} } else applyPanel(CHIPS[k].panel,null); rerender(); renderBar(); renderRail(); syncURL(true); return; }
@@ -17036,7 +17035,7 @@ if ('serviceWorker' in navigator) {
       if (!mm) return;
       e.preventDefault(); e.stopPropagation();
       document.querySelectorAll('.modal-bg.open').forEach(function(m){ m.classList.remove('open'); }); // close edit modal etc.
-      navigate('/beta/item/'+mm[1], false);
+      navigate('/item/'+mm[1], false);
     }, true);
   }
   function handleOpt(o, anchor){
@@ -17237,7 +17236,7 @@ if ('serviceWorker' in navigator) {
   }
   function deleteBoard(id){
     _boards=_boards.filter(function(x){return x.id!==id;});
-    saveBoards(function(){ if(state.board===id) navigate('/beta/kanban', false); });
+    saveBoards(function(){ if(state.board===id) navigate('/kanban', false); });
   }
   function openBoardEditor(board){
     closePop();
@@ -17332,7 +17331,7 @@ if ('serviceWorker' in navigator) {
       if(editing){ var idx=_boards.findIndex(function(x){return x.id===draft.id;}); if(idx>-1) _boards[idx]=draft; else _boards.push(draft); }
       else { draft.position=_boards.length; _boards.push(draft); }
       var saveBtn=bg.querySelector('#frzBeSave'); saveBtn.disabled=true;
-      saveBoards(function(){ close(); navigate('/beta/kanban?board='+encodeURIComponent(draft.id), false); }).catch(function(){ saveBtn.disabled=false; err.textContent='Save failed.'; });
+      saveBoards(function(){ close(); navigate('/kanban?board='+encodeURIComponent(draft.id), false); }).catch(function(){ saveBtn.disabled=false; err.textContent='Save failed.'; });
     });
     renderCols(); updateUnassigned();
     setTimeout(function(){ nameEl.focus(); }, 0);
@@ -17357,7 +17356,7 @@ if ('serviceWorker' in navigator) {
       '</div>'+
       '<div class="frz-plan-body" id="frzPlanBody"></div>';
     host.querySelectorAll('[data-plantab]').forEach(function(b){
-      b.addEventListener('click', function(){ var t=b.getAttribute('data-plantab'); navigate('/beta/planning'+(t==='plan'?'':'/'+t), false); });
+      b.addEventListener('click', function(){ var t=b.getAttribute('data-plantab'); navigate('/planning'+(t==='plan'?'':'/'+t), false); });
     });
     var body = document.getElementById('frzPlanBody');
     if(tab!=='plan') body.classList.add('frz-plan-body--single');   // single scrollable column for Sprints/Releases
@@ -17446,7 +17445,7 @@ if ('serviceWorker' in navigator) {
   }
   function wirePlanTab(sprint){
     var host = document.getElementById('frzPlanBody'); if(!host) return;
-    host.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(e){ if(e.target.closest('[data-add],[data-remove]')) return; navigate('/beta/item/'+el.getAttribute('data-open'), false); }); });
+    host.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(e){ if(e.target.closest('[data-add],[data-remove]')) return; navigate('/item/'+el.getAttribute('data-open'), false); }); });
     host.querySelectorAll('[data-add]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); addToSprint(+b.getAttribute('data-add')); }); });
     host.querySelectorAll('[data-remove]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); removeFromSprint(+b.getAttribute('data-remove')); }); });
     var ps=document.getElementById('frzPlanSprint'); if(ps) ps.addEventListener('click', openCreateSprint);
@@ -17675,7 +17674,7 @@ if ('serviceWorker' in navigator) {
         var sp=sprintById(id); var st=sprintStats(sp);
         det.innerHTML = st.items.length ? st.items.map(function(p){ return miniItemRow(p,true); }).join('') : '<div class="frz-plan-empty">No items.</div>';
         det.hidden=false;
-        det.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(){ navigate('/beta/item/'+el.getAttribute('data-open'), false); }); });
+        det.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(){ navigate('/item/'+el.getAttribute('data-open'), false); }); });
       });
     });
   }
@@ -17713,7 +17712,7 @@ if ('serviceWorker' in navigator) {
         var items=releaseItems(id);
         det.innerHTML = items.length ? items.map(function(p){ return miniItemRow(p,true); }).join('') : '<div class="frz-plan-empty">No items linked. Link items from their item page.</div>';
         det.hidden=false;
-        det.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(){ navigate('/beta/item/'+el.getAttribute('data-open'), false); }); });
+        det.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(){ navigate('/item/'+el.getAttribute('data-open'), false); }); });
       });
     });
   }
@@ -19142,7 +19141,7 @@ if ('serviceWorker' in navigator) {
     p.querySelectorAll('[data-nid]').forEach(function(b){
       b.addEventListener('click', function(){
         var nid=+b.getAttribute('data-nid'), it=+b.getAttribute('data-nitem');
-        markRead(nid); p.hidden=true; if(it) navigate('/beta/item/'+it, false);
+        markRead(nid); p.hidden=true; if(it) navigate('/item/'+it, false);
       });
     });
   }

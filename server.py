@@ -873,7 +873,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.8.0"
+APP_VERSION = "4.8.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -933,13 +933,17 @@ def root():
 # alongside production. The shell is a route-gated module inside roadmap.html that
 # is a no-op unless location.pathname starts with "/beta". Production "/" above is
 # untouched. The catch-all carries /beta/gantt, /beta/list, /beta/item/123, etc.
-@app.get("/beta", response_class=HTMLResponse)
-@app.get("/beta/{subpath:path}", response_class=HTMLResponse)
-def beta_shell(subpath: str = ""):
-    if not os.path.exists(HTML):
-        raise HTTPException(404, "roadmap.html not found next to server.py")
-    with open(HTML, encoding="utf-8") as f:
-        return f.read()
+@app.get("/beta")
+@app.get("/beta/{subpath:path}")
+def beta_redirect(request: FRequest, subpath: str = ""):
+    # Phase 3: Flow lives at root now. Legacy /beta/* → 302 to the same path at root,
+    # query preserved. 302 (not 301) during rollout to avoid hard-caching the redirect;
+    # flip to 301 once Phase 3 is proven.
+    target = "/" + subpath
+    q = request.url.query
+    if q:
+        target += "?" + q
+    return RedirectResponse(url=target, status_code=302)
 
 # ── PWA: manifest, service worker, icons ──────────────────────────────────────
 # Served as routes (not static files) so the deploy stays a two-file scp. Icon
@@ -4565,6 +4569,22 @@ def sync_children_status_endpoint(pid: int, body: dict = Body({}),
     if not row: raise HTTPException(404, "Item not found")
     result = _sync_recurrence_child_statuses(pid, team, auth["username"])
     return result
+
+
+# ── SPA catch-all (Phase 3: Flow lives at root) ───────────────────────────────
+# MUST be the LAST route. FastAPI matches in declaration order, so every route
+# defined above wins first; only genuine root SPA paths (/list, /item/5,
+# /planning/sprints, …) fall through to here and get roadmap.html (like root()).
+# API/audit are guarded so a stray GET to an undefined /api/* or /audit path still
+# 404s instead of returning HTML.
+@app.get("/{full_path:path}", response_class=HTMLResponse)
+def spa_catch_all(full_path: str):
+    if full_path.startswith("api/") or full_path.startswith("audit"):
+        raise HTTPException(404)
+    if not os.path.exists(HTML):
+        raise HTTPException(404, "roadmap.html not found next to server.py")
+    with open(HTML, encoding="utf-8") as f:
+        return f.read()
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
