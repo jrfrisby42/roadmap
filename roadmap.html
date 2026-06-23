@@ -879,6 +879,10 @@
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M2 12h2m16 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
         Admin
       </button>
+      <button onclick="location.href='/'" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:11px 16px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text);border-bottom:1px solid var(--border)" title="Switch to the Flow UI">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>
+        Switch to Flow
+      </button>
       <button onclick="doLogout()" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:11px 16px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--accent2)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         Log Out
@@ -2024,7 +2028,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.7.7';
+const APP_VERSION = '4.8.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -14251,6 +14255,32 @@ async function unlinkJiraFromItemPage(ticket){
 
 // ── INIT ──
 async function boot(){
+  // ── B1 entry-flip: Flow is the default UI at "/". Normalize any non-/beta,
+  // non-?classic=1 entry into the /beta router space (client-only, NO reload) BEFORE
+  // any /beta path-gate reads location.pathname — the shell IIFE gate (runs during this
+  // function's first await), boot's own /beta branch below, and routeFromLocation all
+  // key off the path. After this, those gates see a consistent /beta path.
+  //   • ?classic=1  → escape hatch: leave the path alone (all /beta gates stay false →
+  //                   classic renders). Shareable, no stuck state.
+  //   • /beta/*     → untouched (existing bookmarks/flow).
+  //   • ?pwtoken=   → untouched (set-password flow stays classic, handled just below).
+  //   • else (root) → replaceState into /beta, PRESERVING the query string. A bare
+  //                   ?item=ID becomes /beta/item/ID (the shell's canonical item route)
+  //                   with ?item dropped so checkItemPageParam can't also fire.
+  try {
+    var _qs = new URLSearchParams(location.search);
+    if (_qs.get('classic') !== '1' && !location.pathname.startsWith('/beta') && !_qs.get('pwtoken')) {
+      var _item = _qs.get('item'), _target;
+      if (_item && /^\d+$/.test(_item)) {
+        _qs.delete('item');
+        var _rest = _qs.toString();
+        _target = '/beta/item/' + _item + (_rest ? '?' + _rest : '');
+      } else {
+        _target = '/beta' + location.search;   // bare /beta → shell resolves to lastView()||'gantt'
+      }
+      history.replaceState(history.state, '', _target);
+    }
+  } catch(e){}
   // Emailed set-password / reset link — handle before anything else (user is not logged in).
   if(checkPasswordTokenParam()) return;
   // If no team stored yet, skip API call and go straight to login wall
@@ -14810,7 +14840,6 @@ if ('serviceWorker' in navigator) {
   .frz-beta.is-collapsed-ui .frz-logo-full { display:none; }            /* wordmark hidden when collapsed */
   .frz-beta.is-collapsed-ui .frz-logo-mark { display:block; height:auto; max-width:40px; margin:0 auto; }
   .frz-beta .frz-brand-name { font-weight:700; font-size:15px; white-space:nowrap; color:var(--frz-text); }
-  .frz-beta .frz-beta-pill { font-size:11px; font-weight:700; color:var(--frz-accent); background:var(--frz-accent-soft); border-radius:999px; padding:2px 8px; white-space:nowrap; }
   .frz-beta .frz-scroll { flex:1; overflow-y:auto; padding:10px 8px; }
   .frz-beta .frz-section { margin-bottom:18px; }
   .frz-beta .frz-heading { font-size:11px; font-weight:700; letter-spacing:.07em; color:var(--frz-text-muted); padding:0 10px 6px; white-space:nowrap; display:flex; align-items:center; justify-content:space-between; }
@@ -14831,7 +14860,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta.is-collapsed-ui .frz-item { justify-content:center; padding:9px 0; }
   .frz-beta.is-collapsed-ui .frz-item span, .frz-beta.is-collapsed-ui .frz-item .frz-count,
   .frz-beta.is-collapsed-ui .frz-heading, .frz-beta.is-collapsed-ui .frz-brand-name,
-  .frz-beta.is-collapsed-ui .frz-beta-pill, .frz-beta.is-collapsed-ui .frz-dot,
+  .frz-beta.is-collapsed-ui .frz-dot,
   .frz-beta.is-collapsed-ui .frz-rowmenu { display:none; }
   .frz-beta.is-collapsed-ui .frz-brand { justify-content:center; padding:0; }
   .frz-beta.is-collapsed-ui .frz-logo { height:auto; max-width:40px; }
@@ -15608,7 +15637,6 @@ if ('serviceWorker' in navigator) {
             '<img class="frz-logo frz-logo-full" src="'+FLOW_LOGO_FULL+'" alt="Flow">'+
             '<img class="frz-logo frz-logo-mark" src="'+FLOW_LOGO_MARK+'" alt="Flow">'+
           '</a>'+
-          '<span class="frz-beta-pill">Beta</span>'+
           '<button class="frz-collapse" id="frzCollapse" aria-label="Toggle navigation" title="Toggle navigation [">'+IC.collapse+'</button>'+
         '</div>'+
         '<div class="frz-scroll">'+
@@ -16968,7 +16996,7 @@ if ('serviceWorker' in navigator) {
       if(p && !p.hidden && !(e.target.closest && e.target.closest('.frz-bell-wrap'))) p.hidden=true;
     });
     document.getElementById('frzActivity').addEventListener('click', function(){ _call('openActivityCenter'); });
-    document.getElementById('frzClassic').addEventListener('click', function(){ location.href='/'; });
+    document.getElementById('frzClassic').addEventListener('click', function(){ location.href='/?classic=1'; });   // B1: classic is now opt-in via ?classic=1
     document.getElementById('frzLogout').addEventListener('click', function(){ _call('doLogout'); });
     // Stage 1: top-bar GLOBAL search — find any item from any view and jump to it.
     var si=document.getElementById('frzSearch'), sb=document.getElementById('frzSearchResults');
