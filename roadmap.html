@@ -2028,7 +2028,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.7';
+const APP_VERSION = '4.9.8';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2368,6 +2368,11 @@ function closeAllDropdowns(){
   // Also close the planning view status filter panel
   const planningPanel = document.getElementById('planningStatusPanel');
   if(planningPanel) planningPanel.style.display = 'none';
+  // DO NOT dismiss the Flow RTE toolbar popovers (#frzRtePop / #frzEmojiPop) from here.
+  // The L7764 global "click outside .ms-wrap → closeAllDropdowns()" handler fires on the SAME
+  // click that opens an RTE menu, so removing the pop here tears it down before it shows
+  // (the "dropdowns won't open" bug, added 4.9.4 / reverted 4.9.5). The RTE menus already
+  // self-close on outside-click via _frzMenuPop's own handler — leave them to it.
 }
 
 function wireProductDropdown(){
