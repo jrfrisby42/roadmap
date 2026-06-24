@@ -2028,7 +2028,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.3';
+const APP_VERSION = '4.9.4';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2368,6 +2368,10 @@ function closeAllDropdowns(){
   // Also close the planning view status filter panel
   const planningPanel = document.getElementById('planningStatusPanel');
   if(planningPanel) planningPanel.style.display = 'none';
+  // Additive (Flow RTE toolbar bridge): also dismiss the rich-text dropdown + emoji popovers,
+  // so opening a filter dropdown closes an open description-toolbar menu (and vice-versa, via
+  // _frzMenuPop). Pure addition — does NOT change the five-filter-dropdown behavior above.
+  ['frzRtePop','frzEmojiPop'].forEach(id => { const p = document.getElementById(id); if(p && p.parentNode) p.parentNode.removeChild(p); });
 }
 
 function wireProductDropdown(){
@@ -15312,6 +15316,12 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rte-tb { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:3px; flex:0 1 auto; min-width:0; margin-left:auto; }
   .frz-beta .frz-rte-btn { background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:5px; padding:3px 8px; font-size:12px; line-height:1.4; cursor:pointer; color:var(--frz-text); font-family:'Lato',sans-serif; font-weight:600; text-transform:none; letter-spacing:normal; }
   .frz-beta .frz-rte-btn:hover { background:var(--frz-accent-soft); border-color:var(--frz-accent); }
+  /* Active-state sync (description toolbar only): visible mark buttons + the Heading-level */
+  /* trigger light up; ⋯ More shows a dot when a hidden action (Highlight/Quote) is active. */
+  .frz-beta .frz-rte-btn.active { background:var(--frz-accent); border-color:var(--frz-accent); color:#fff; }
+  .frz-beta .frz-rte-btn.active:hover { background:var(--frz-accent); color:#fff; }
+  .frz-beta .frz-rte-btn.has-active { position:relative; }
+  .frz-beta .frz-rte-btn.has-active::after { content:''; position:absolute; top:1px; right:1px; width:6px; height:6px; border-radius:50%; background:var(--frz-accent); }
   .frz-beta .frz-rte-sep { width:1px; align-self:stretch; background:var(--frz-border); margin:2px 4px; }
   /* Stage 3 — comment composer: left-aligned trimmed toolbar + a compact bordered box.
      Combined-class selectors (.frz-rte.frz-rte-comment) outrank the general
@@ -15454,11 +15464,13 @@ if ('serviceWorker' in navigator) {
      emoji + mention menus (intentionally unscoped, above the shell). */
   .frz-rte-pop { position:fixed; z-index:100001; background:#fff; border:1px solid #C9D6E3; border-radius:8px; box-shadow:0 10px 28px rgba(20,40,63,.22); padding:4px; min-width:160px; }
   .frz-rte-pop-opt { display:block; width:100%; text-align:left; border:0; background:none; cursor:pointer; padding:6px 10px; border-radius:6px; font:13px 'Lato',sans-serif; color:#14283F; }
-  .frz-rte-pop-opt:hover { background:#E7F1FA; color:#0059A9; }
+  .frz-rte-pop-opt:hover, .frz-rte-pop-opt:focus { background:#E7F1FA; color:#0059A9; outline:none; }
+  .frz-rte-pop-opt.active { background:#E7F1FA; color:#0059A9; font-weight:700; }
   .frz-rte-pop-sep { height:1px; background:#E1E8F0; margin:4px 2px; }
   body.dark-mode .frz-rte-pop { background:#181b26; border-color:#3d4358; }
   body.dark-mode .frz-rte-pop-opt { color:#eef0fa; }
-  body.dark-mode .frz-rte-pop-opt:hover { background:#15314a; color:#4da3e8; }
+  body.dark-mode .frz-rte-pop-opt:hover, body.dark-mode .frz-rte-pop-opt:focus { background:#15314a; color:#4da3e8; }
+  body.dark-mode .frz-rte-pop-opt.active { background:#15314a; color:#4da3e8; font-weight:700; }
 
   /* Stage 2 — ROLLBACK FIDELITY (condition B): mirror the block render CSS to the
      classic .rte-box path so flag-OFF /beta shows tables/panels/expand cleanly, not
@@ -18340,7 +18352,9 @@ if ('serviceWorker' in navigator) {
 
       // Description toolbar — full button set, prepended in the card header so the trailing
       // Cancel + Save (shown by the shared enter-edit) sit to its right → [toolbar, Cancel, Save].
-      _frzBuildToolbar(ed, { place:function(tb){
+      // activeSync:true → description-only active-state reflection (visible buttons, Heading
+      // level on the trigger, ⋯ More active dot). Comment composers omit it (unchanged).
+      _frzBuildToolbar(ed, { activeSync:true, place:function(tb){
         var save0=document.getElementById('ipNotesSaveBtn'); var header=save0&&save0.parentNode;
         var old=header&&header.querySelector('.frz-rte-tb'); if(old&&old.parentNode) old.parentNode.removeChild(old);
         if(header){ header.style.flexWrap='wrap'; header.style.gap='8px'; header.insertBefore(tb, header.firstChild); }
@@ -18460,39 +18474,41 @@ if ('serviceWorker' in navigator) {
   // Toolbar builder — ONE code path; the button set is config (opts.buttons; default =
   // the full description set). opts.place(tb) positions it; opts.cls adds a marker class.
   // The description set + header placement reproduce the prior output byte-for-byte.
-  var _FRZ_TB_FULL=['bold','italic','strike','highlight','sep','h1','h2','h3','sep','bullet','ordered','quote','code','divider','sep','link','emoji','sep','table','panel','expand'];
+  // DEFAULT split (Flow item-page Description): core actions stay visible; the three heading
+  // levels collapse into a [Heading ▾] menu (trigger reflects current level); the lowest-
+  // frequency flat actions move into a [⋯ More] menu. Nothing removed — every action is a
+  // visible button OR a menu item, all from the same _FRZ_TB_DEFS. Comment set unchanged.
+  var _FRZ_TB_FULL=['bold','italic','strike','sep',{menu:'heading'},'sep','bullet','ordered','code','sep','link','sep','table','panel','expand','sep',{menu:'more'}];
   var _FRZ_TB_COMMENT=['bold','italic','strike','sep','bullet','ordered','sep','link','image'];   // trimmed: discussion, not documents (no blocks)
-  function _frzBuildToolbar(ed, opts){
-    opts=opts||{};
-    var names=opts.buttons||_FRZ_TB_FULL;
-    var tb=document.createElement('div'); tb.className='frz-rte-tb'+(opts.cls?(' '+opts.cls):'');
-    function mk(label, title, fn){ var b=document.createElement('button'); b.type='button'; b.className='frz-rte-btn'; b.title=title; b.innerHTML=label; b.addEventListener('mousedown', function(e){ e.preventDefault(); }); b.addEventListener('click', function(){ fn(); }); tb.appendChild(b); return b; }
-    function sep(){ var s=document.createElement('span'); s.className='frz-rte-sep'; tb.appendChild(s); }
-    var C=function(){ return ed.chain().focus(); };
-    names.forEach(function(n){ _frzTbButton(n, ed, mk, sep, C); });
-    if(opts.place) opts.place(tb);
-    else if(ed.view && ed.view.dom && ed.view.dom.parentNode) ed.view.dom.parentNode.insertBefore(tb, ed.view.dom);
-    return tb;
-  }
-  function _frzTbButton(n, ed, mk, sep, C){
-    switch(n){
-      case 'sep': sep(); return;
-      case 'bold': mk('<b>B</b>','Bold', function(){ C().toggleBold().run(); }); return;
-      case 'italic': mk('<i>I</i>','Italic', function(){ C().toggleItalic().run(); }); return;
-      case 'strike': mk('<s>S</s>','Strikethrough', function(){ C().toggleStrike().run(); }); return;
-      case 'highlight': mk('<span style="background:#fff3bf;padding:0 2px">H</span>','Highlight', function(){ C().toggleHighlight().run(); }); return;
-      case 'h1': mk('H1','Heading 1', function(){ C().toggleHeading({level:1}).run(); }); return;
-      case 'h2': mk('H2','Heading 2', function(){ C().toggleHeading({level:2}).run(); }); return;
-      case 'h3': mk('H3','Heading 3', function(){ C().toggleHeading({level:3}).run(); }); return;
-      case 'bullet': mk('&bull; List','Bullet list', function(){ C().toggleBulletList().run(); }); return;
-      case 'ordered': mk('1. List','Numbered list', function(){ C().toggleOrderedList().run(); }); return;
-      case 'quote': mk('&#10078; Quote','Quote', function(){ C().toggleBlockquote().run(); }); return;
-      case 'code': mk('&lt;/&gt;','Code block', function(){ C().toggleCodeBlock().run(); }); return;
-      case 'divider': mk('&mdash;','Divider', function(){ C().setHorizontalRule().run(); }); return;
-      case 'link': mk('Link','Add / edit link', function(){ var prev=ed.getAttributes('link').href||''; var h=prompt('Link URL', prev); if(h===null) return; if(h==='') { C().unsetLink().run(); return; } C().extendMarkRange('link').setLink({ href:h }).run(); }); return;
-      case 'emoji': { var emo=mk('\u{1F642}','Emoji', function(){ _frzToggleEmoji(emo, ed); }); return; }
-      case 'image': mk('\u{1F5BC}','Insert image', function(){ var inp=document.createElement('input'); inp.type='file'; inp.accept='image/*'; inp.onchange=function(){ var f=this.files&&this.files[0]; if(f) _frzInsertImage(f, ed); }; inp.click(); }); return;
-      case 'table': { var tableBtn=mk('▦ Table ▾','Table', function(){ _frzMenuPop(tableBtn, [
+  // Menu groups: key → trigger label/title + the def keys it contains (resolved at open time).
+  var _FRZ_TB_MENUS={
+    heading:{ key:'heading', title:'Heading', label:'Heading ▾', items:['paragraph','h1','h2','h3'] },
+    more:   { key:'more',    title:'More',    label:'⋯',         items:['highlight','quote','divider','emoji'] }
+  };
+  // ── Toolbar button registry — single source of truth for BOTH toolbars ──
+  // key → { label, title, run(C, ed, btn), isActive?(ed) }. run() performs the action
+  // (C = function returning ed.chain().focus()); isActive() (optional) drives the active-
+  // state sync. Extracted verbatim from the prior inline switch so an action is defined
+  // ONCE and is identical whether rendered as a visible button or inside a menu group
+  // (see _FRZ_TB_FULL). Behaviour-neutral vs. the old switch.
+  var _FRZ_TB_DEFS={
+    bold:     { label:'<b>B</b>', title:'Bold', run:function(C){ C().toggleBold().run(); }, isActive:function(ed){ return ed.isActive('bold'); } },
+    italic:   { label:'<i>I</i>', title:'Italic', run:function(C){ C().toggleItalic().run(); }, isActive:function(ed){ return ed.isActive('italic'); } },
+    strike:   { label:'<s>S</s>', title:'Strikethrough', run:function(C){ C().toggleStrike().run(); }, isActive:function(ed){ return ed.isActive('strike'); } },
+    highlight:{ label:'<span style="background:#fff3bf;padding:0 2px">H</span>', title:'Highlight', run:function(C){ C().toggleHighlight().run(); }, isActive:function(ed){ return ed.isActive('highlight'); } },
+    h1:       { label:'H1', title:'Heading 1', run:function(C){ C().toggleHeading({level:1}).run(); }, isActive:function(ed){ return ed.isActive('heading',{level:1}); } },
+    h2:       { label:'H2', title:'Heading 2', run:function(C){ C().toggleHeading({level:2}).run(); }, isActive:function(ed){ return ed.isActive('heading',{level:2}); } },
+    h3:       { label:'H3', title:'Heading 3', run:function(C){ C().toggleHeading({level:3}).run(); }, isActive:function(ed){ return ed.isActive('heading',{level:3}); } },
+    paragraph:{ label:'Normal', title:'Normal', run:function(C){ C().setParagraph().run(); }, isActive:function(ed){ return ed.isActive('paragraph'); } },
+    bullet:   { label:'&bull; List', title:'Bullet list', run:function(C){ C().toggleBulletList().run(); }, isActive:function(ed){ return ed.isActive('bulletList'); } },
+    ordered:  { label:'1. List', title:'Numbered list', run:function(C){ C().toggleOrderedList().run(); }, isActive:function(ed){ return ed.isActive('orderedList'); } },
+    quote:    { label:'&#10078; Quote', title:'Quote', run:function(C){ C().toggleBlockquote().run(); }, isActive:function(ed){ return ed.isActive('blockquote'); } },
+    code:     { label:'&lt;/&gt;', title:'Code block', run:function(C){ C().toggleCodeBlock().run(); }, isActive:function(ed){ return ed.isActive('codeBlock'); } },
+    divider:  { label:'&mdash;', title:'Divider', run:function(C){ C().setHorizontalRule().run(); } },
+    link:     { label:'Link', title:'Add / edit link', run:function(C, ed){ var prev=ed.getAttributes('link').href||''; var h=prompt('Link URL', prev); if(h===null) return; if(h==='') { C().unsetLink().run(); return; } C().extendMarkRange('link').setLink({ href:h }).run(); }, isActive:function(ed){ return ed.isActive('link'); } },
+    emoji:    { label:'\u{1F642}', title:'Emoji', run:function(C, ed, btn){ _frzToggleEmoji(btn, ed); } },
+    image:    { label:'\u{1F5BC}', title:'Insert image', run:function(C, ed){ var inp=document.createElement('input'); inp.type='file'; inp.accept='image/*'; inp.onchange=function(){ var f=this.files&&this.files[0]; if(f) _frzInsertImage(f, ed); }; inp.click(); } },
+    table:    { label:'▦ Table ▾', title:'Table', run:function(C, ed, btn){ _frzMenuPop(btn, [
         { label:'Insert table', fn:function(){ C().insertTable({ rows:3, cols:3, withHeaderRow:true }).run(); } },
         { sep:true },
         { label:'Add row', fn:function(){ C().addRowAfter().run(); } },
@@ -18501,17 +18517,74 @@ if ('serviceWorker' in navigator) {
         { label:'Delete column', fn:function(){ C().deleteColumn().run(); } },
         { sep:true },
         { label:'Delete table', fn:function(){ C().deleteTable().run(); } }
-      ]); }); return; }
-      case 'panel': { var panelBtn=mk('▤ Panel ▾','Info / callout panel', function(){ _frzMenuPop(panelBtn, [
+      ]); } },
+    panel:    { label:'▤ Panel ▾', title:'Info / callout panel', run:function(C, ed, btn){ _frzMenuPop(btn, [
         { label:'Info (blue)',     fn:function(){ _frzInsertPanel(ed,'info'); } },
         { label:'Success (green)', fn:function(){ _frzInsertPanel(ed,'success'); } },
         { label:'Warning (amber)', fn:function(){ _frzInsertPanel(ed,'warning'); } },
         { label:'Danger (red)',    fn:function(){ _frzInsertPanel(ed,'danger'); } },
         { label:'Purple',          fn:function(){ _frzInsertPanel(ed,'purple'); } }
-      ]); }); return; }
-      case 'expand': mk('▸ Expand','Expand / collapse block', function(){ var t=prompt('Expand title','Details'); if(t===null) return;
-        C().insertContent({ type:'expand', attrs:{ title:(t||'Details') }, content:[{ type:'paragraph' }] }).run(); }); return;
+      ]); } },
+    expand:   { label:'▸ Expand', title:'Expand / collapse block', run:function(C){ var t=prompt('Expand title','Details'); if(t===null) return;
+        C().insertContent({ type:'expand', attrs:{ title:(t||'Details') }, content:[{ type:'paragraph' }] }).run(); } }
+  };
+  function _frzBuildToolbar(ed, opts){
+    opts=opts||{};
+    var names=opts.buttons||_FRZ_TB_FULL;
+    var tb=document.createElement('div'); tb.className='frz-rte-tb'+(opts.cls?(' '+opts.cls):'');
+    function mk(label, title, fn){ var b=document.createElement('button'); b.type='button'; b.className='frz-rte-btn'; b.title=title; b.innerHTML=label; b.addEventListener('mousedown', function(e){ e.preventDefault(); }); b.addEventListener('click', function(){ fn(b); }); tb.appendChild(b); return b; }
+    function sep(){ var s=document.createElement('span'); s.className='frz-rte-sep'; tb.appendChild(s); }
+    var C=function(){ return ed.chain().focus(); };
+    names.forEach(function(n){ _frzTbButton(n, ed, mk, sep, C); });
+    if(opts.activeSync) _frzTbActiveSync(tb, ed);   // description toolbar only — reflect mark/level state
+    if(opts.place) opts.place(tb);
+    else if(ed.view && ed.view.dom && ed.view.dom.parentNode) ed.view.dom.parentNode.insertBefore(tb, ed.view.dom);
+    return tb;
+  }
+  function _frzTbButton(n, ed, mk, sep, C){
+    if(n==='sep'){ sep(); return; }
+    if(n && n.menu){ _frzTbMenu(n.menu, ed, mk, C); return; }
+    var d=_FRZ_TB_DEFS[n]; if(!d) return;
+    var b=mk(d.label, d.title, function(btn){ d.run(C, ed, btn); });
+    if(d.isActive) b._frzActive=d.isActive;   // tag for the active-state sync
+  }
+  // Dropdown trigger for a menu group. Items resolve from _FRZ_TB_DEFS at OPEN time so each
+  // option's active flag reflects the current selection. Reuses _frzMenuPop (the Table/Panel
+  // pattern) anchored to the trigger button.
+  function _frzTbMenu(key, ed, mk, C){
+    var m=_FRZ_TB_MENUS[key]; if(!m) return;
+    var trig=mk(m.label, m.title, function(btn){
+      var items=m.items.map(function(ik){
+        var dd=_FRZ_TB_DEFS[ik];
+        return { label:dd.title, fn:function(){ dd.run(C, ed, btn); }, active: dd.isActive?dd.isActive(ed):false };
+      });
+      _frzMenuPop(btn, items);
+    });
+    trig._frzMenu=m;   // tag for the active-state sync (heading level label / more active dot)
+  }
+  // Active-state sync — DESCRIPTION toolbar only (opts.activeSync). Cheap by design: fires on
+  // every transaction but only does isActive() reads + class/label toggles (no layout work, no
+  // rebuild). Bound to this editor instance, so it's gone when the editor is destroyed.
+  function _frzTbActiveSync(tb, ed){
+    function sync(){
+      var btns=tb.querySelectorAll('.frz-rte-btn');
+      for(var i=0;i<btns.length;i++){
+        var b=btns[i];
+        if(b._frzActive){ b.classList.toggle('active', !!b._frzActive(ed)); }
+        if(b._frzMenu){
+          if(b._frzMenu.key==='heading'){
+            var lvl = ed.isActive('heading',{level:1})?'H1' : ed.isActive('heading',{level:2})?'H2' : ed.isActive('heading',{level:3})?'H3' : null;
+            b.innerHTML = (lvl||'Heading')+' ▾';
+            b.classList.toggle('active', !!lvl);
+          } else if(b._frzMenu.key==='more'){
+            var on=false, items=b._frzMenu.items;
+            for(var j=0;j<items.length;j++){ var dd=_FRZ_TB_DEFS[items[j]]; if(dd && dd.isActive && dd.isActive(ed)){ on=true; break; } }
+            b.classList.toggle('has-active', on);
+          }
+        }
+      }
     }
+    ed.on('transaction', sync); sync();
   }
   function _frzToggleEmoji(anchor, ed){
     var ex=document.getElementById('frzEmojiPop'); if(ex){ ex.parentNode.removeChild(ex); return; }
@@ -18528,18 +18601,43 @@ if ('serviceWorker' in navigator) {
   }
   // Generic dropdown menu popover (Table / Panel) — same body-level pattern as the
   // emoji popover. items: [{label,fn} | {sep:true}]. Toggles on repeat click.
+  // Generic toolbar dropdown popover (Table / Panel / Heading / More). items:
+  // [{label,fn,active?} | {sep:true}]. Body-level, single instance (#frzRtePop). Same-anchor
+  // re-click toggles closed; a DIFFERENT anchor closes the old and opens the new. Closes on
+  // outside-click, Escape, and via closeAllDropdowns (the filter-dropdown bridge). Options are
+  // keyboard-navigable (↑/↓, Enter/Space) and the active option (e.g. current heading) is focused.
+  var _frzRtePopH=null;   // { out, key } document handlers for the open pop
+  function _frzCloseRtePop(){
+    var p=document.getElementById('frzRtePop'); if(p&&p.parentNode) p.parentNode.removeChild(p);
+    if(_frzRtePopH){ document.removeEventListener('mousedown', _frzRtePopH.out); document.removeEventListener('keydown', _frzRtePopH.key); _frzRtePopH=null; }
+  }
   function _frzMenuPop(anchor, items){
-    var ex=document.getElementById('frzRtePop'); if(ex){ ex.parentNode.removeChild(ex); return; }
-    var pop=document.createElement('div'); pop.id='frzRtePop'; pop.className='frz-rte-pop';
+    var ex=document.getElementById('frzRtePop');
+    if(ex){ var same=(ex._frzAnchor===anchor); _frzCloseRtePop(); if(same) return; }   // toggle off on same trigger
+    try{ _call('closeAllDropdowns'); }catch(e){}   // bridge: opening a toolbar menu closes the filter dropdowns + emoji pop
+    var pop=document.createElement('div'); pop.id='frzRtePop'; pop.className='frz-rte-pop'; pop._frzAnchor=anchor;
+    var opts=[];
     items.forEach(function(it){
       if(it.sep){ var s=document.createElement('div'); s.className='frz-rte-pop-sep'; pop.appendChild(s); return; }
-      var b=document.createElement('button'); b.type='button'; b.className='frz-rte-pop-opt'; b.textContent=it.label;
-      b.addEventListener('mousedown', function(e){ e.preventDefault(); it.fn(); if(pop.parentNode) pop.parentNode.removeChild(pop); });
-      pop.appendChild(b);
+      var b=document.createElement('button'); b.type='button'; b.className='frz-rte-pop-opt'+(it.active?' active':''); b.textContent=it.label; b._fn=it.fn;
+      b.addEventListener('mousedown', function(e){ e.preventDefault(); it.fn(); _frzCloseRtePop(); });
+      pop.appendChild(b); opts.push(b);
     });
     var r=anchor.getBoundingClientRect(); pop.style.left=Math.round(r.left)+'px'; pop.style.top=Math.round(r.bottom+4)+'px';
     document.body.appendChild(pop);
-    setTimeout(function(){ document.addEventListener('mousedown', function h(ev){ if(pop && !pop.contains(ev.target) && ev.target!==anchor){ if(pop.parentNode) pop.parentNode.removeChild(pop); document.removeEventListener('mousedown', h); } }); }, 0);
+    function out(ev){ if(!pop.contains(ev.target) && ev.target!==anchor) _frzCloseRtePop(); }
+    function key(ev){
+      if(ev.key==='Escape'){ ev.preventDefault(); _frzCloseRtePop(); if(anchor&&anchor.focus) anchor.focus(); return; }
+      var i=opts.indexOf(document.activeElement);
+      if(ev.key==='ArrowDown'){ ev.preventDefault(); opts[(i+1)>=opts.length?0:(i+1)].focus(); }
+      else if(ev.key==='ArrowUp'){ ev.preventDefault(); opts[i<=0?(opts.length-1):(i-1)].focus(); }
+      else if(ev.key==='Enter'||ev.key===' '){ if(i>=0){ ev.preventDefault(); opts[i]._fn(); _frzCloseRtePop(); } }
+    }
+    _frzRtePopH={ out:out, key:key };
+    setTimeout(function(){
+      var act=pop.querySelector('.frz-rte-pop-opt.active')||opts[0]; if(act) act.focus();
+      document.addEventListener('mousedown', out); document.addEventListener('keydown', key);
+    }, 0);
   }
 
   // Entry from openItem: decide editor vs classic fallback.
