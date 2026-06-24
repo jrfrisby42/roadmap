@@ -2028,7 +2028,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.5';
+const APP_VERSION = '4.9.6';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -15318,6 +15318,10 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rte-btn.active:hover { background:var(--frz-accent); color:#fff; }
   .frz-beta .frz-rte-btn.has-active { position:relative; }
   .frz-beta .frz-rte-btn.has-active::after { content:''; position:absolute; top:1px; right:1px; width:6px; height:6px; border-radius:50%; background:var(--frz-accent); }
+  /* Split button (e.g. List): primary + ▾ caret rendered flush as one control. */
+  .frz-beta .frz-rte-split { display:inline-flex; align-items:center; }
+  .frz-beta .frz-rte-split-main { border-top-right-radius:0; border-bottom-right-radius:0; }
+  .frz-beta .frz-rte-split-caret { border-top-left-radius:0; border-bottom-left-radius:0; border-left:none; padding-left:5px; padding-right:5px; font-size:9px; }
   .frz-beta .frz-rte-sep { width:1px; align-self:stretch; background:var(--frz-border); margin:2px 4px; }
   /* Stage 3 — comment composer: left-aligned trimmed toolbar + a compact bordered box.
      Combined-class selectors (.frz-rte.frz-rte-comment) outrank the general
@@ -18474,12 +18478,17 @@ if ('serviceWorker' in navigator) {
   // levels collapse into a [Heading ▾] menu (trigger reflects current level); the lowest-
   // frequency flat actions move into a [⋯ More] menu. Nothing removed — every action is a
   // visible button OR a menu item, all from the same _FRZ_TB_DEFS. Comment set unchanged.
-  var _FRZ_TB_FULL=['bold','italic','strike','sep',{menu:'heading'},'sep','bullet','ordered','code','sep','link','sep','table','panel','expand','sep',{menu:'more'}];
+  var _FRZ_TB_FULL=['bold','italic','strike','sep',{menu:'heading'},'sep',{split:'list'},'code','sep','table','panel','expand','sep',{menu:'more'}];
   var _FRZ_TB_COMMENT=['bold','italic','strike','sep','bullet','ordered','sep','link','image'];   // trimmed: discussion, not documents (no blocks)
   // Menu groups: key → trigger label/title + the def keys it contains (resolved at open time).
   var _FRZ_TB_MENUS={
     heading:{ key:'heading', title:'Heading', label:'Heading ▾', items:['paragraph','h1','h2','h3'] },
-    more:   { key:'more',    title:'More',    label:'⋯',         items:['highlight','quote','divider','emoji'] }
+    more:   { key:'more',    title:'More',    label:'⋯',         items:['link','highlight','quote','divider','emoji'] }
+  };
+  // Split button: a primary action (visible, directly clickable) + a ▾ caret that opens a chooser.
+  // List defaults to Numbered (one click); the caret switches between Numbered / Bulleted in place.
+  var _FRZ_TB_SPLITS={
+    list:{ primary:'ordered', title:'List type', items:['ordered','bullet'] }
   };
   // ── Toolbar button registry — single source of truth for BOTH toolbars ──
   // key → { label, title, run(C, ed, btn), isActive?(ed) }. run() performs the action
@@ -18539,10 +18548,31 @@ if ('serviceWorker' in navigator) {
   }
   function _frzTbButton(n, ed, mk, sep, C){
     if(n==='sep'){ sep(); return; }
-    if(n && n.menu){ _frzTbMenu(n.menu, ed, mk, C); return; }
+    if(n && typeof n==='object'){   // config object — NOT a string (note: 'str'.split is a native method, so test object-ness, not n.split)
+      if(n.menu){ _frzTbMenu(n.menu, ed, mk, C); return; }
+      if(n.split){ _frzTbSplit(n.split, ed, mk, C); return; }
+      return;
+    }
     var d=_FRZ_TB_DEFS[n]; if(!d) return;
     var b=mk(d.label, d.title, function(btn){ d.run(C, ed, btn); });
     if(d.isActive) b._frzActive=d.isActive;   // tag for the active-state sync
+  }
+  // Split button — primary action (directly clickable default) + a ▾ caret chooser. Both are real
+  // .frz-rte-btn (so the active-sync finds them); a wrapper renders them flush. Primary lights when
+  // its mark is active; the caret lights when the ALT choice (e.g. bulleted) is active.
+  function _frzTbSplit(key, ed, mk, C){
+    var sp=_FRZ_TB_SPLITS[key]; if(!sp) return;
+    var pd=_FRZ_TB_DEFS[sp.primary];
+    var main=mk(pd.label, pd.title, function(btn){ pd.run(C, ed, btn); });
+    main.classList.add('frz-rte-split-main'); if(pd.isActive) main._frzActive=pd.isActive;
+    var caret=mk('▾', sp.title, function(btn){
+      var items=sp.items.map(function(ik){ var dd=_FRZ_TB_DEFS[ik]; return { label:dd.title, fn:function(){ dd.run(C, ed, btn); }, active: dd.isActive?dd.isActive(ed):false }; });
+      _frzMenuPop(btn, items);
+    });
+    caret.classList.add('frz-rte-split-caret');
+    var alt=_FRZ_TB_DEFS[sp.items[1]]; if(alt && alt.isActive) caret._frzActive=alt.isActive;
+    var w=document.createElement('span'); w.className='frz-rte-split';
+    main.parentNode.insertBefore(w, main); w.appendChild(main); w.appendChild(caret);
   }
   // Dropdown trigger for a menu group. Items resolve from _FRZ_TB_DEFS at OPEN time so each
   // option's active flag reflects the current selection. Reuses _frzMenuPop (the Table/Panel
