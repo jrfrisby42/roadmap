@@ -17,51 +17,44 @@ import io
 import os
 import re
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
-BRAND = (91, 79, 255, 255)   # #5b4fff
 WHITE = (255, 255, 255, 255)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVER_PY = os.path.join(ROOT, "server.py")
 PREVIEW_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "preview")
 
+# Source artwork for the app icon: the Frazil "f" mark (same image as the favicon).
+SRC_LOGO = os.path.join(ROOT, "f-logo.png")
+# Background tile colour. Opaque is REQUIRED — the 512 icon doubles as the manifest
+# `maskable` icon, which must be full-bleed with no transparent corners or the OS
+# mask shows gaps. White matches how the "f" reads on a browser tab.
+BG = (255, 255, 255, 255)
+# Fraction of the canvas the logo's longest side occupies. Kept modest so a circular/
+# squircle maskable mask doesn't clip the mark (the safe zone is the central ~80%).
+LOGO_SCALE = 0.72
+
 
 def make_icon(size: int) -> bytes:
-    """Draw a rounded-square brand-purple tile with a centered white map-pin.
+    """Composite the f-logo, centered, onto an opaque white square tile.
 
-    Supersampled 4x then downscaled for clean antialiased edges. The pin sits
-    well within the central 80% so the same art works as a maskable icon too.
+    Single LANCZOS downscale of the source for a crisp, un-softened mark. Works for
+    `any` (square tile) and `maskable` (OS applies its own rounding) purposes.
     """
-    ss = 4
-    s = size * ss
-    img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
+    img = Image.new("RGBA", (size, size), BG)
 
-    # Rounded-square background.
-    radius = int(s * 0.22)
-    d.rounded_rectangle([0, 0, s - 1, s - 1], radius=radius, fill=BRAND)
+    logo = Image.open(SRC_LOGO).convert("RGBA")
+    lw, lh = logo.size
+    target = int(size * LOGO_SCALE)
+    if lw >= lh:
+        nw, nh = target, max(1, round(lh * target / lw))
+    else:
+        nw, nh = max(1, round(lw * target / lh)), target
+    logo = logo.resize((nw, nh), Image.LANCZOS)
 
-    # Map-pin (white) — teardrop head + tail, with a punched-out center.
-    pin_h = s * 0.52
-    top = (s - pin_h) / 2.0
-    cx = s / 2.0
-    R = pin_h * 0.34          # head radius
-    head_cy = top + R
-    tip_y = top + pin_h
+    img.alpha_composite(logo, ((size - nw) // 2, (size - nh) // 2))
 
-    # Head (circle).
-    d.ellipse([cx - R, head_cy - R, cx + R, head_cy + R], fill=WHITE)
-    # Tail (triangle from head shoulders down to the tip).
-    shoulder = head_cy + R * 0.35
-    d.polygon([(cx - R * 0.82, shoulder), (cx + R * 0.82, shoulder), (cx, tip_y)],
-              fill=WHITE)
-    # Punched-out inner circle (shows the purple background through the head).
-    r_hole = R * 0.42
-    d.ellipse([cx - r_hole, head_cy - r_hole, cx + r_hole, head_cy + r_hole],
-              fill=BRAND)
-
-    img = img.resize((size, size), Image.LANCZOS)
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
