@@ -873,7 +873,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.9.2"
+APP_VERSION = "4.9.3"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -966,7 +966,7 @@ _PWA_MANIFEST = {
     "display": "standalone",
     "orientation": "any",
     "background_color": "#ffffff",
-    "theme_color": "#5b4fff",
+    "theme_color": "#0059A9",
     "icons": [
         {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
         {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
