@@ -2028,7 +2028,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.6';
+const APP_VERSION = '4.9.7';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -15319,9 +15319,11 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rte-btn.has-active { position:relative; }
   .frz-beta .frz-rte-btn.has-active::after { content:''; position:absolute; top:1px; right:1px; width:6px; height:6px; border-radius:50%; background:var(--frz-accent); }
   /* Split button (e.g. List): primary + ▾ caret rendered flush as one control. */
-  .frz-beta .frz-rte-split { display:inline-flex; align-items:center; }
+  .frz-beta .frz-rte-split { display:inline-flex; align-items:stretch; }
   .frz-beta .frz-rte-split-main { border-top-right-radius:0; border-bottom-right-radius:0; }
-  .frz-beta .frz-rte-split-caret { border-top-left-radius:0; border-bottom-left-radius:0; border-left:none; padding-left:5px; padding-right:5px; font-size:9px; }
+  /* Caret stretches to the main button's height (align-items:stretch on the wrapper) and centers
+     the glyph, so both halves share the same top/bottom boundary. */
+  .frz-beta .frz-rte-split-caret { border-top-left-radius:0; border-bottom-left-radius:0; border-left:none; padding:0 6px; font-size:9px; display:flex; align-items:center; }
   .frz-beta .frz-rte-sep { width:1px; align-self:stretch; background:var(--frz-border); margin:2px 4px; }
   /* Stage 3 — comment composer: left-aligned trimmed toolbar + a compact bordered box.
      Combined-class selectors (.frz-rte.frz-rte-comment) outrank the general
