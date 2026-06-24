@@ -2028,7 +2028,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.4';
+const APP_VERSION = '4.9.5';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2368,10 +2368,6 @@ function closeAllDropdowns(){
   // Also close the planning view status filter panel
   const planningPanel = document.getElementById('planningStatusPanel');
   if(planningPanel) planningPanel.style.display = 'none';
-  // Additive (Flow RTE toolbar bridge): also dismiss the rich-text dropdown + emoji popovers,
-  // so opening a filter dropdown closes an open description-toolbar menu (and vice-versa, via
-  // _frzMenuPop). Pure addition — does NOT change the five-filter-dropdown behavior above.
-  ['frzRtePop','frzEmojiPop'].forEach(id => { const p = document.getElementById(id); if(p && p.parentNode) p.parentNode.removeChild(p); });
 }
 
 function wireProductDropdown(){
