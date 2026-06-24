@@ -873,7 +873,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.8.1"
+APP_VERSION = "4.8.2"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -936,14 +936,14 @@ def root():
 @app.get("/beta")
 @app.get("/beta/{subpath:path}")
 def beta_redirect(request: FRequest, subpath: str = ""):
-    # Phase 3: Flow lives at root now. Legacy /beta/* → 302 to the same path at root,
-    # query preserved. 302 (not 301) during rollout to avoid hard-caching the redirect;
-    # flip to 301 once Phase 3 is proven.
+    # Phase 3: Flow lives at root now. Legacy /beta/* → 301 (permanent) to the same path
+    # at root, query preserved. Was 302 during rollout; flipped to 301 once proven (root
+    # is the permanent home) so clients/crawlers cache the redirect and canonicalize to root.
     target = "/" + subpath
     q = request.url.query
     if q:
         target += "?" + q
-    return RedirectResponse(url=target, status_code=302)
+    return RedirectResponse(url=target, status_code=301)
 
 # ── PWA: manifest, service worker, icons ──────────────────────────────────────
 # Served as routes (not static files) so the deploy stays a two-file scp. Icon
