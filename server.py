@@ -873,7 +873,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.9.8"
+APP_VERSION = "4.9.9"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2578,7 +2578,8 @@ def audit_page(request: FRequest, team: str = "development", search: str = "",  
         all_actions = sorted(set(r[0].split(":")[0] for r in c.execute("SELECT DISTINCT action FROM audit_log").fetchall()))
 
     ACTION_COLOR = {"create":"#22b96e","update":"#5b4fff","delete":"#e8394a",
-                    "import":"#f0a500","login":"#0090d4","config":"#e8a000"}
+                    "import":"#f0a500","login":"#0090d4","config":"#e8a000",
+                    "jira_desc_overwrite":"#c0392b"}   # pre-replace description capture (recovery surface)
 
     def row_html(r):
         action = html.escape(r["action"])
@@ -3088,6 +3089,39 @@ def add_jira_comment(key: str, body: dict = Body(...),
     _jira_req("POST", f"/rest/api/3/issue/{key}/comment", payload)
     return {"ok": True}
 
+# ── Stage 1: pre-replace Jira description capture (recover the append→replace cutover) ──
+# Before Flow ever REPLACES a Jira ticket's description (Stage 2), snapshot that ticket's
+# CURRENT Jira description into audit_log exactly once, ever — so the one-time cutover from
+# append-mode to replace-mode is recoverable. After the first capture per ticket, later
+# replaces overwrite only Flow-authored content Flow already holds, so we don't recapture.
+def _capture_jira_desc_once(team, ticket_key, username, project_id=None, project_name=None):
+    """Capture a ticket's current Jira description into audit_log exactly once.
+    Returns True if the original is now safely captured (just-captured OR a prior capture
+    exists). Raises HTTPException on a Jira-GET failure when a capture is needed (fail-closed)."""
+    # Sentinel — already captured for this ticket (this team's DB)? Then the irreplaceable
+    # original is already safe: no Jira GET, no second write.
+    with db(team) as c:
+        row = c.execute(
+            "SELECT 1 FROM audit_log WHERE action='jira_desc_overwrite'"
+            " AND json_extract(changes,'$.ticket')=? LIMIT 1", (ticket_key,)
+        ).fetchone()
+    if row:
+        return True
+    # First time — GET the ticket's current description ADF. Fail-closed: on ANY GET failure
+    # raise, so the handler refuses the overwrite rather than clobbering an uncaptured original.
+    # (Do NOT write a partial/empty capture on error — an error is not "Jira had no description".)
+    try:
+        data = _jira_req("GET", f"/rest/api/3/issue/{ticket_key}?fields=description")
+    except Exception:
+        raise HTTPException(502, "Could not capture the existing Jira description before "
+                                 "overwrite; not overwriting. Retry when Jira is reachable.")
+    original_adf = (data.get("fields") or {}).get("description")   # may be None — valid (Jira had no description)
+    # original_adf is a full ADF blob (larger than a typical audit diff) — deliberate at this scale.
+    write_audit(team, "jira_desc_overwrite", username, project_id=project_id,
+                project_name=project_name,
+                changes={"ticket": ticket_key, "original_adf": original_adf})
+    return True
+
 @app.put("/api/jira/issue/{key}")
 def update_jira_issue(key: str, body: dict = Body(...),
                       auth: dict = Depends(require_role("admin", "editor"))):
@@ -3095,6 +3129,12 @@ def update_jira_issue(key: str, body: dict = Body(...),
     if not jira_configured(): raise HTTPException(503, "Jira not configured")
     fields = body.get("fields", {})
     if not fields: raise HTTPException(400, "fields required")
+    # Stage 1 (replace-intent capture): flowReplace is a SIBLING of `fields` in the body — it is
+    # never forwarded to Jira (we only forward {"fields": fields}). Absent/false → behavior is
+    # byte-for-byte unchanged. True → snapshot the current Jira description exactly once, fail-
+    # closed, BEFORE overwriting. No client sends flowReplace until Stage 2, so this is inert today.
+    if body.get("flowReplace"):
+        _capture_jira_desc_once(auth["team"], key, auth.get("username", ""))
     _jira_req("PUT", f"/rest/api/3/issue/{key}", {"fields": fields})
     return {"ok": True}
 
