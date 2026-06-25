@@ -873,7 +873,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.9.14"
+APP_VERSION = "4.9.15"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
