@@ -8,12 +8,14 @@ def test_manifest_served(client):
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("application/manifest+json")
     body = r.json()
-    assert body["name"] == "Frazil Roadmap"
+    assert body["name"] == "Frazil Flow"   # renamed from "Frazil Roadmap" in 4.7.7
     assert body["display"] == "standalone"
     assert body["start_url"] == "/"
-    # At least one 512 icon, and a maskable variant for adaptive launchers.
+    # At least one 512 icon. The maskable variant was intentionally dropped in 4.9.2 (transparent
+    # "any" icons; a maskable must be full-bleed opaque, which re-introduced the white tile) — guard
+    # that it stays gone so a future re-add is a deliberate choice.
     assert any(i["sizes"] == "512x512" for i in body["icons"])
-    assert any(i.get("purpose") == "maskable" for i in body["icons"])
+    assert not any(i.get("purpose") == "maskable" for i in body["icons"])
 
 
 def test_service_worker_served(client):
