@@ -2028,7 +2028,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.11';
+const APP_VERSION = '4.9.12';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -4660,6 +4660,15 @@ async function autoSaveJiraTickets(){
     if(i>-1) projects[i] = saved;
     showToast('Jira ticket saved to item');
     window._syncEditorJiraList?.(); // refresh editor panel list if open
+    // Phase C2 backfill (Flow shell only — classic untouched): now that jiraTickets is saved
+    // server-side, push the item's existing attachments to the (now-)primary ticket. Idempotent
+    // server-side; best-effort, non-blocking. Covers attachments uploaded before the link/relink.
+    if(jiraConfigured && (saved.jiraTickets||[]).length && document.body.classList.contains('frz-beta-active')){
+      API.post('/api/jira/sync-attachments/'+editingId, {}).then(res=>{
+        const n=(res&&res.synced||[]).length, f=(res&&res.failed||[]).length;
+        if(n) showToast(n+' attachment'+(n>1?'s':'')+' synced to '+res.ticket+(f?(' — '+f+' failed'):''));
+      }).catch(()=>{});
+    }
   } catch(e){ showToast('Auto-save failed: '+e.message); }
 }
 
@@ -18094,14 +18103,18 @@ if ('serviceWorker' in navigator) {
       var atts=(res&&res.attachments)||[];
       if(!atts.length){ list.innerHTML='<div class="frz-att-empty">No attachments yet.</div>'; return; }
       var canEdit=(_val('isAdmin',false)||_val('isEditor',false));
+      var primary=((p.jiraTickets)||[])[0];   // Phase C2: ↗ Jira indicator when synced to the primary ticket
       list.innerHTML=atts.map(function(a){
         var isImg=/^image\//.test(a.contentType||'');
         var del=canEdit?'<button type="button" class="frz-att-del" data-del="'+escA(a.id)+'" title="Remove">✕</button>':'';
+        var onJira = primary && a.jira && a.jira[primary];
         if(isImg && a.url){
-          return '<div class="frz-att-thumb"><a href="'+escA(a.url)+'" target="_blank" rel="noopener"><img src="'+escA(a.url)+'" alt="'+escA(a.name)+'"></a>'+del+'<div class="frz-att-cap" title="'+escA(a.name)+'">'+esc(a.name)+'</div></div>';
+          var pip = onJira?'<span title="On '+escA(primary)+'" style="position:absolute;top:3px;left:3px;background:var(--frz-accent);color:#fff;font-size:9px;font-weight:800;border-radius:3px;padding:0 3px;line-height:1.5">↗</span>':'';
+          return '<div class="frz-att-thumb"><a href="'+escA(a.url)+'" target="_blank" rel="noopener"><img src="'+escA(a.url)+'" alt="'+escA(a.name)+'"></a>'+pip+del+'<div class="frz-att-cap" title="'+escA(a.name)+'">'+esc(a.name)+'</div></div>';
         }
         var open=a.url?('href="'+escA(a.url)+'" target="_blank" rel="noopener"'):'';
-        return '<a class="frz-att-file" '+open+'><span class="frz-att-ic">'+esc(attExt(a.name))+'</span><span class="frz-att-meta"><span class="frz-att-nm" title="'+escA(a.name)+'">'+esc(a.name)+'</span><span class="frz-att-sz">'+fmtBytes(a.size)+'</span></span>'+del+'</a>';
+        var badge = onJira?'<span title="On '+escA(primary)+'" style="font-size:10px;font-weight:800;color:var(--frz-accent);margin-left:6px;white-space:nowrap">↗ Jira</span>':'';
+        return '<a class="frz-att-file" '+open+'><span class="frz-att-ic">'+esc(attExt(a.name))+'</span><span class="frz-att-meta"><span class="frz-att-nm" title="'+escA(a.name)+'">'+esc(a.name)+'</span><span class="frz-att-sz">'+fmtBytes(a.size)+'</span></span>'+badge+del+'</a>';
       }).join('');
       list.querySelectorAll('[data-del]').forEach(function(b){ b.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); var id=this.getAttribute('data-del'); var a=atts.filter(function(x){return x.id===id;})[0]; deleteAttachment(p, id, a?a.name:''); }); });
     }).catch(function(){ list.innerHTML='<div class="frz-att-empty">Could not load attachments.</div>'; });
@@ -18126,7 +18139,21 @@ if ('serviceWorker' in navigator) {
         return API.post('/api/items/'+p.id+'/attachments', {attId:pre.attId, key:pre.key, name:name, contentType:ct, size:file.size, _username:_call('getUsername')});
       });
     })
-    .then(function(){ _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Attachment added: '+name, null, null); loadAttachments(p); _call('showToast','Attached '+name); return rec; })
+    .then(function(){
+      _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Attachment added: '+name, null, null);
+      loadAttachments(p); _call('showToast','Attached '+name);
+      // Phase C2: auto-push THIS attachment to the primary Jira ticket, targeted by attId (no
+      // multi-drop race). Best-effort, non-blocking — the Flow attachment already persisted; a
+      // failure is "deferred", not a save error. Covers inline-image pastes too (via _frzInsertImage).
+      if(_val('jiraConfigured',false) && p.jiraTickets && p.jiraTickets.length && rec && rec.attId){
+        API.post('/api/jira/sync-attachments/'+p.id, { attId: rec.attId }).then(function(res){
+          var fail=(res&&res.failed||[])[0];
+          if(fail){ _call('showToast','Jira attach deferred — '+fail.reason); }
+          else if((res&&res.synced||[]).length){ _call('showToast','Attached to '+res.ticket); loadAttachments(p); }
+        }).catch(function(){ _call('showToast','Jira attach deferred — Jira not reached'); });
+      }
+      return rec;
+    })
     .catch(function(e){ _call('showToast','Upload failed: '+(e&&e.message||''),'error'); throw e; });
   }
   // Paste-into-description: drop the image inline at the caret (instant local
