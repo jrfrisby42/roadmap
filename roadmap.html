@@ -2028,7 +2028,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.9';
+const APP_VERSION = '4.9.10';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -13927,23 +13927,108 @@ function appendNotesToADF(existingText, newNotesHtml){
   };
 }
 
-// Convert plain text or HTML notes to Atlassian Document Format (replace mode)
-function notesToADF(html){
-  if(!html) return {"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":""}]}]};
-  const plain = html.replace(/<br\s*\/?>/gi,'\n')
-                    .replace(/<\/p>/gi,'\n').replace(/<\/div>/gi,'\n')
-                    .replace(/<li>/gi,'• ').replace(/<\/li>/gi,'\n')
-                    .replace(/<[^>]+>/g,'')
-                    .replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&')
-                    .trim();
-  const lines = plain.split('\n').filter(l => l.trim());
-  return {
-    "type":"doc","version":1,
-    "content": lines.length
-      ? lines.map(line => ({"type":"paragraph","content":[{"type":"text","text":line}]}))
-      : [{"type":"paragraph","content":[{"type":"text","text":""}]}]
-  };
+// notesToADF removed (Stage 2B): it was already dead (no callers). The Flow path now uses
+// htmlToADF (formatting-preserving); the classic shell uses appendNotesToADF.
+
+// ════════ Stage 2A — formatting-preserving HTML→ADF converter + ADF-keyed sync gate ════════
+// Pure, additive, INERT in 2A (nothing calls these yet — wiring is 2B). Input is already
+// frzSanitize'd editor HTML; output is a valid Atlassian Document Format doc. Local-only blocks
+// (tables/panels/expand/images/iframes) are stripped internally — they never reach Jira.
+// Highlight: <mark> is flattened to plain text (Stage 2C). This Jira site's EDITOR schema has
+// no `backgroundColor` mark — emitting it empties the editor on open — so we keep the text and
+// drop the highlight styling (the only cross-site loss, unavoidable on such a schema).
+function htmlToADF(html){
+  var BLOCKERS = { P:1,H1:1,H2:1,H3:1,H4:1,H5:1,H6:1,UL:1,OL:1,BLOCKQUOTE:1,PRE:1,HR:1 };
+  var INLINE_MARK = { STRONG:'strong',B:'strong',EM:'em',I:'em',S:'strike',DEL:'strike',STRIKE:'strike',CODE:'code' };
+  function isInlineEl(t){ return t==='BR'||t==='A'||t==='MARK'||t==='SPAN'||t==='U'||INLINE_MARK[t]; }
+  function clean(s){ return (s||'').replace(/[\u200B-\u200D\uFEFF]/g,''); }   // strip zero-width chars
+  function safeHref(h){ h=(h||'').trim(); return /^(https?:|mailto:)/i.test(h) ? h : null; }  // drop js:/data:/relative/empty
+  function textNode(text, marks){ var n={ type:'text', text:text }; if(marks&&marks.length) n.marks=dedupeMarks(marks); return n; }
+  function dedupeMarks(marks){ var seen={}, out=[]; marks.forEach(function(m){ if(!seen[m.type]){ seen[m.type]=1; out.push(m); } }); return out; }
+  // A paragraph/heading whose inline run is only whitespace/nbsp (no marks, no hardBreak) is "blank".
+  function blankInline(ic){ return !ic.length || ic.every(function(n){
+    return n.type==='text' && !(n.marks&&n.marks.length) && !n.text.replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g,'').length; }); }
+  // Inline: walk a node's children → ADF inline nodes (text + hardBreak), carrying active marks.
+  function inlineChild(c, marks){
+    if(c.nodeType===3){ var t=clean(c.nodeValue); return t?[textNode(t, marks)]:[]; }
+    if(c.nodeType!==1) return [];
+    var tag=c.tagName.toUpperCase();
+    if(tag==='BR') return [{ type:'hardBreak' }];
+    if(tag==='SPAN' && c.classList && c.classList.contains('frz-mention')){   // @mention → flat @user text
+      var mt=clean(c.textContent); return mt?[textNode(mt, marks)]:[]; }
+    var add=null;
+    // <mark> (highlight): transparent wrapper — see-through to inner marks, contributes none
+    // (no backgroundColor; this site's Jira editor schema rejects it). MARK is not in INLINE_MARK,
+    // so it simply recurses with the existing marks below.
+    if(tag==='A'){ var h=safeHref(c.getAttribute('href')); if(h) add={ type:'link', attrs:{ href:h } }; }  // else: drop link, keep text
+    else if(INLINE_MARK[tag]) add={ type:INLINE_MARK[tag] };
+    return collectInline(c, add ? marks.concat([add]) : marks);   // U/unknown spans → no mark, recurse
+  }
+  function collectInline(parent, marks){ var out=[], k=parent.childNodes; for(var i=0;i<k.length;i++) out=out.concat(inlineChild(k[i], marks)); return out; }
+  function listBlock(el, type){
+    var items=[], k=el.childNodes;
+    for(var i=0;i<k.length;i++){ var c=k[i]; if(c.nodeType===1 && c.tagName.toUpperCase()==='LI') items.push(listItem(c)); }
+    if(!items.length) items.push({ type:'listItem', content:[{ type:'paragraph' }] });
+    return { type:type, content:items };
+  }
+  function listItem(li){
+    var content=[], buf=[];
+    function flush(){ if(buf.length){ content.push({ type:'paragraph', content:buf }); buf=[]; } }
+    var k=li.childNodes;
+    for(var i=0;i<k.length;i++){ var c=k[i];
+      if(c.nodeType===3){ var t=clean(c.nodeValue); if(t.trim()) buf.push(textNode(t,[])); continue; }
+      if(c.nodeType!==1) continue;
+      var tag=c.tagName.toUpperCase();
+      if(BLOCKERS[tag]){ flush(); pushBlock(content, c, tag); }      // P/H/UL/OL/blockquote/pre/hr (incl. nested lists)
+      else if(isInlineEl(tag)){ buf=buf.concat(inlineChild(c,[])); }
+      else { flush(); content=content.concat(blocks(c)); }           // unknown block → transparent recurse
+    }
+    flush();
+    if(!content.length) content.push({ type:'paragraph' });          // listItem must hold ≥1 block
+    return { type:'listItem', content:content };
+  }
+  function pushBlock(arr, el, tag){
+    if(tag==='P'){ var ic=collectInline(el,[]); var n={ type:'paragraph' }; if(!blankInline(ic)) n.content=ic; arr.push(n); return; }
+    if(/^H[1-6]$/.test(tag)){ var lvl=Math.min(6,Math.max(1, parseInt(tag.slice(1),10)||1)); var hc=collectInline(el,[]); var hn={ type:'heading', attrs:{ level:lvl } }; if(!blankInline(hc)) hn.content=hc; arr.push(hn); return; }
+    if(tag==='UL'){ arr.push(listBlock(el,'bulletList')); return; }
+    if(tag==='OL'){ arr.push(listBlock(el,'orderedList')); return; }
+    if(tag==='BLOCKQUOTE'){ var bc=blocks(el); if(!bc.length) bc=[{ type:'paragraph' }]; arr.push({ type:'blockquote', content:bc }); return; }
+    if(tag==='PRE'){ var txt=clean(el.textContent||''); var cb={ type:'codeBlock' }; if(txt) cb.content=[{ type:'text', text:txt }]; arr.push(cb); return; }  // plain text, NO marks
+    if(tag==='HR'){ arr.push({ type:'rule' }); return; }
+  }
+  function blocks(container){
+    var out=[], buf=[];
+    function flush(){ if(buf.length){ if(!blankInline(buf)) out.push({ type:'paragraph', content:buf }); buf=[]; } }
+    var k=container.childNodes;
+    for(var i=0;i<k.length;i++){ var c=k[i];
+      if(c.nodeType===3){ var t=clean(c.nodeValue); if(t.trim()) buf.push(textNode(t,[])); continue; }   // skip inter-block whitespace
+      if(c.nodeType!==1) continue;
+      var tag=c.tagName.toUpperCase();
+      if(BLOCKERS[tag]){ flush(); pushBlock(out, c, tag); }
+      else if(isInlineEl(tag)){ buf=buf.concat(inlineChild(c,[])); }   // loose inline at block level → buffer into a paragraph
+      else { flush(); out=out.concat(blocks(c)); }                      // unknown block (e.g. stray div) → transparent recurse
+    }
+    flush();
+    return out;
+  }
+  var root=document.createElement('div'); root.innerHTML=html||'';
+  [].slice.call(root.querySelectorAll('table, details.frz-expand, div.frz-panel, img, iframe'))
+    .forEach(function(n){ n.parentNode && n.parentNode.removeChild(n); });   // strip local-only (keep <mark>/.frz-mention)
+  var content=blocks(root);
+  if(!content.length) content=[{ type:'paragraph' }];                  // empty/whitespace-only → one empty paragraph
+  return { version:1, type:'doc', content:content };
 }
+// Deterministic, sorted-key serializer → stable string regardless of object-key order.
+function _frzStableStringify(v){
+  if(v===null || typeof v!=='object') return JSON.stringify(v);
+  if(Array.isArray(v)) return '['+v.map(_frzStableStringify).join(',')+']';
+  return '{'+Object.keys(v).sort().map(function(k){ return JSON.stringify(k)+':'+_frzStableStringify(v[k]); }).join(',')+'}';
+}
+// ADF-keyed sync gate: two descriptions that would push IDENTICAL ADF yield the same key
+// (local-only changes don't flip it; any formatting change that reaches Jira does). Old & new
+// run through the identical function → symmetric by construction. Supersedes _frzBasicSubsetText.
+function _frzAdfSyncKey(html){ return _frzStableStringify(htmlToADF(html)); }
+// ════════ end Stage 2A converter ════════
 
 async function syncRoadmapToJira(saved, originalValues){
   if(!saved?.jiraTickets?.length) return;
@@ -18186,15 +18271,9 @@ if ('serviceWorker' in navigator) {
     [].slice.call(d.querySelectorAll('table, details.frz-expand, div.frz-panel, img, iframe')).forEach(function(n){ n.parentNode && n.parentNode.removeChild(n); });
     return d.innerHTML;
   }
-  // Normalized basic-subset text — the change-detection key. If only a local-only block
-  // changed, this string is identical → no Jira push (no phantom diff).
-  function _frzBasicSubsetText(html){
-    return _frzStripLocalOnly(html||'')
-      .replace(/<br\s*\/?>/gi,'\n').replace(/<\/p>/gi,'\n').replace(/<\/div>/gi,'\n')
-      .replace(/<li>/gi,'• ').replace(/<\/li>/gi,'\n').replace(/<[^>]+>/g,'')
-      .replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&')
-      .replace(/\s+/g,' ').trim();
-  }
+  // _frzBasicSubsetText removed (Stage 2B): the Flow gate now uses _frzAdfSyncKey (ADF-keyed).
+  // NOTE: _frzStripLocalOnly above is now unused (its only callers were this fn + the old #3
+  // pre-strip). Retained intentionally — not in this stage's authorized removal list.
 
   var _curEd=null, _curNotesEl=null;
 
@@ -18217,6 +18296,10 @@ if ('serviceWorker' in navigator) {
   }
 
   // ── Save: getHTML → drop transient src → sanitize → PUT → Jira basic-subset push ─
+  // In-session (informational) set of item ids whose Jira description push was deferred
+  // (capture-refusal 502 / Jira unreachable). Drives the "sync deferred" notice only; NOT wired
+  // into the gate or the clean===oldDesc fast path. Dropped on reload (D-502; durable retry later).
+  var _frzSyncPending = new Set();
   function frzSaveDescription(){
     var p=_frzCurItem(), ed=_curEd; if(!p || !ed) return Promise.resolve();
     var tmp=document.createElement('div'); tmp.innerHTML=ed.getHTML();
@@ -18227,20 +18310,30 @@ if ('serviceWorker' in navigator) {
     p.description=clean;
     return API.put('/api/projects/'+p.id, Object.assign({}, p, {_username:_call('getUsername')})).then(function(){
       var jc=_val('jiraConfigured',false);
-      if(jc && p.jiraTickets && p.jiraTickets.length && _frzBasicSubsetText(oldDesc)!==_frzBasicSubsetText(clean)){
-        var basicHtml=_frzStripLocalOnly(clean);
-        p.jiraTickets.forEach(function(t){
+      if(jc && p.jiraTickets && p.jiraTickets.length && _call('_frzAdfSyncKey', oldDesc)!==_call('_frzAdfSyncKey', clean)){
+        // Stage 2B replace-mode: the Flow description IS the Jira description. Convert to ADF
+        // (htmlToADF strips local-only internally — no separate pre-strip) and REPLACE the
+        // PRIMARY ticket only (jiraTickets[0], D-primary). flowReplace:true → the server snapshots
+        // the original once before overwriting (Stage 1 capture). Other linked tickets untouched.
+        var adf=_call('htmlToADF', clean);
+        var primary=p.jiraTickets[0];
+        if(primary){
           (async function(){
             try{
-              var existingText=await _call('fetchJiraDescriptionText', t);
-              var adf=_call('appendNotesToADF', existingText, basicHtml);
-              if(adf) await API.put('/api/jira/issue/'+t, { fields:{ description:adf } });
-            }catch(e){ console.warn('Jira description update failed:', e&&e.message); }
+              await API.put('/api/jira/issue/'+primary, { fields:{ description:adf }, flowReplace:true });
+              _frzSyncPending.delete(p.id);                                  // success → clear in-session pending
+            }catch(e){
+              // Capture-refusal 502 / Jira unreachable. The Flow save (above) already persisted —
+              // this is NOT a save failure. Mark pending (informational) and let the pure old-vs-new
+              // gate re-push on the next edit. No retry queue, no last-synced marker (D-502).
+              _frzSyncPending.add(p.id);
+              _call('showToast', 'Jira sync deferred — your changes are saved in Flow');
+            }
           })();
-        });
+        }
         API.post('/api/activities', { activity_type:'Jira Sync', source:'Flow',
           item_id:p.id, item_name:p.name, owner:p.dev||'', project:p.product||'',
-          created_by:_call('getUsername'), message:'Notes appended to Jira description', status:'Auto-Cleared' }).catch(function(){});
+          created_by:_call('getUsername'), message:'Description synced to Jira (primary ticket)', status:'Auto-Cleared' }).catch(function(){});
       }
       _frzFlashSaved();
     }).catch(function(){ _call('showToast','Failed to save description'); });
