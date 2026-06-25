@@ -873,7 +873,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.9.10"
+APP_VERSION = "4.9.11"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2178,6 +2178,13 @@ def _attachment_key(pid: int, u: str, name: str) -> str:
     """items/{itemId}/{uuid}/{sanitized-filename} — uuid is its own path segment."""
     return f"items/{pid}/{u}/{_sanitize_filename(name)}"
 
+def _s3_download(key: str) -> bytes:
+    """Read an attachment's bytes from S3 server-side (to forward to Jira). Raises on failure.
+    KMS decrypts transparently via the instance role's kms:Decrypt — no SSE headers on GET
+    (those are PUT-only). Server-side S3 access mirrors delete_object's get-the-client pattern."""
+    obj = _s3_client().get_object(Bucket=ATTACH_BUCKET, Key=key)
+    return obj["Body"].read()
+
 def _get_item_blob(c, pid: int) -> dict:
     row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
     if not row:
@@ -2579,7 +2586,8 @@ def audit_page(request: FRequest, team: str = "development", search: str = "",  
 
     ACTION_COLOR = {"create":"#22b96e","update":"#5b4fff","delete":"#e8394a",
                     "import":"#f0a500","login":"#0090d4","config":"#e8a000",
-                    "jira_desc_overwrite":"#c0392b"}   # pre-replace description capture (recovery surface)
+                    "jira_desc_overwrite":"#c0392b",   # pre-replace description capture (recovery surface)
+                    "jira":"#0052cc"}                  # jira:* actions (e.g. jira:attach-sync) — Jira blue
 
     def row_html(r):
         action = html.escape(r["action"])
@@ -2878,6 +2886,40 @@ def _jira_req(method: str, path: str, payload: dict = None, timeout: int = 10):
     except URLError as e:
         raise HTTPException(503, str(e.reason))
 
+def _jira_req_multipart(path: str, filename: str, content_type: str, data: bytes, timeout: int = 60):
+    """POST one file to a Jira multipart/form-data endpoint (issue attachments). _jira_req is
+    JSON-only, so build the body by hand (stdlib). Returns the parsed JSON (a list of created
+    attachment objects). Raises HTTPException(status, body) on HTTPError so the caller can derive
+    a per-file reason; mirrors _jira_req's single-read error handling."""
+    boundary  = "----flow" + secrets.token_hex(16)
+    safe_name = _sanitize_filename(filename)                          # ASCII [A-Za-z0-9._-] → Content-Disposition-safe
+    ct = (content_type or "application/octet-stream").split(";")[0].strip() or "application/octet-stream"
+    body = b"\r\n".join([                                             # multipart REQUIRES CRLF
+        b"--" + boundary.encode(),
+        b'Content-Disposition: form-data; name="file"; filename="' + safe_name.encode() + b'"',
+        b"Content-Type: " + ct.encode(),
+        b"",
+        data,
+        b"--" + boundary.encode() + b"--",
+        b"",
+    ])
+    headers = {
+        "Authorization":     _jira_auth_header(),                     # Basic email:token (reused)
+        "Accept":            "application/json",
+        "X-Atlassian-Token": "no-check",                              # mandatory for attachments (XSRF) or Jira 403s
+        "Content-Type":      "multipart/form-data; boundary=" + boundary,
+    }
+    req = Request(f"{JIRA_BASE}{path}", data=body, headers=headers, method="POST")
+    try:
+        with urlopen(req, timeout=timeout) as r:
+            raw = r.read()
+            return json.loads(raw) if raw else []
+    except HTTPError as e:
+        msg = e.read().decode(errors="replace")[:400]
+        raise HTTPException(e.code, msg)
+    except URLError as e:
+        raise HTTPException(503, str(e.reason))
+
 def _get_all_jira_tickets(team: str) -> dict:
     """Return {ticket_key: item_id} for all items with jiraTickets."""
     with db(team) as c:
@@ -3088,6 +3130,60 @@ def add_jira_comment(key: str, body: dict = Body(...),
     ]}}
     _jira_req("POST", f"/rest/api/3/issue/{key}/comment", payload)
     return {"ok": True}
+
+# ── Phase C: sync an item's attachments → its PRIMARY linked Jira ticket ──────────────────────
+# One-way, add-only, idempotent. Server reads bytes from S3 and forwards via multipart (bytes
+# never re-enter the browser → works for inline-description images and pre-existing files alike).
+# Idempotency map a["jira"][ticket]=jiraAttId on each record (Jira's endpoint does NOT dedupe);
+# the map survives blob PUTs via update_project's server-authoritative attachments handling.
+@app.post("/api/jira/sync-attachments/{pid}")
+def sync_attachments_to_jira(pid: int, body: dict = Body({}),
+                             auth: dict = Depends(require_role("admin", "editor"))):
+    team = auth["team"]; username = auth["username"]                  # audit attribution: auth, NOT body (non-spoofable)
+    if not jira_configured(): raise HTTPException(503, "Jira not configured")
+    with db(team) as c:
+        p = _get_item_blob(c, pid)                                    # 404 if missing
+    tickets = p.get("jiraTickets") or []
+    if not tickets: raise HTTPException(400, "No Jira ticket linked to this item")
+    ticket = tickets[0]                                               # PRIMARY only (matches description sync)
+    atts = p.get("attachments") or []
+    only = body.get("attId")
+    if only: atts = [a for a in atts if a.get("id") == only]          # attId → just that file (auto-on-upload; no multi-drop race)
+    synced, skipped, failed = [], [], []
+    for a in atts:
+        aid, key, name = a.get("id"), a.get("key"), a.get("name")
+        if (a.get("jira") or {}).get(ticket):
+            skipped.append(name); continue                            # already on this ticket — the dedupe guard
+        if int(a.get("size") or 0) > MAX_ATTACH_BYTES:
+            failed.append({"name": name, "reason": "exceeds Flow size cap"}); continue
+        try:
+            data = _s3_download(key)
+        except Exception as e:
+            log.warning("[JiraAttach] S3 read failed for %s: %s", key, e)
+            failed.append({"name": name, "reason": "S3 read failed"}); continue
+        try:
+            created = _jira_req_multipart(f"/rest/api/3/issue/{ticket}/attachments",
+                                          name or "file", a.get("contentType") or "application/octet-stream", data)
+            jira_id = created[0].get("id") if created else None
+        except HTTPException as e:
+            code   = e.status_code
+            reason = ("exceeds Jira's attachment size limit" if code == 413
+                      else "Jira permission denied"          if code == 403
+                      else "Jira not reachable"              if code == 503
+                      else f"Jira error {code}")
+            log.warning("[JiraAttach] Jira upload failed %s -> %s: %s %s", key, ticket, code, getattr(e, "detail", ""))
+            failed.append({"name": name, "reason": reason}); continue
+        with db(team) as c:                                           # re-read + targeted merge under lock (FF-pull race pattern)
+            cur = _get_item_blob(c, pid)
+            for rec in (cur.get("attachments") or []):
+                if rec.get("id") == aid:
+                    rec.setdefault("jira", {})[ticket] = jira_id; break
+            _save_project(c, pid, cur)
+        synced.append({"attId": aid, "name": name, "jiraId": jira_id})
+    if synced:
+        write_audit(team, "jira:attach-sync", username, pid, p.get("name", ""),
+                    changes={"ticket": ticket, "synced": [s["name"] for s in synced]})
+    return {"ticket": ticket, "synced": synced, "skipped": skipped, "failed": failed}
 
 # ── Stage 1: pre-replace Jira description capture (recover the append→replace cutover) ──
 # Before Flow ever REPLACES a Jira ticket's description (Stage 2), snapshot that ticket's
