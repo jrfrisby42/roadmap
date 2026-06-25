@@ -2028,7 +2028,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.12';
+const APP_VERSION = '4.9.13';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -17798,6 +17798,26 @@ if ('serviceWorker' in navigator) {
     var done=items.filter(function(p){ return isTerm(p.status); }).length;
     return { total:items.length, done:done, pct:(items.length?Math.round(done/items.length*100):0), items:items };
   }
+  // Fill an expanded release's inline detail: a "+ Add items" header, then each linked item
+  // (miniItemRow WRAPPED with a ✕ remove — miniItemRow itself is untouched/shared). Add + ✕ both
+  // stopPropagation so they don't collapse the row (which also has the .frz-tbl-detail guard).
+  function fillReleaseDetail(id, det){
+    var items=releaseItems(id);
+    var head='<div style="display:flex;justify-content:flex-end;padding:2px 0 8px"><button class="frz-viewopt" data-reladd="'+escA(id)+'">+ Add items</button></div>';
+    var body = items.length
+      ? items.map(function(p){ return '<div style="display:flex;align-items:center;gap:6px">'+miniItemRow(p,true)+
+          '<button class="frz-iconbtn" data-relremove="'+escA(p.id)+'" title="Remove from release">✕</button></div>'; }).join('')
+      : '<div class="frz-plan-empty">No items linked yet.</div>';
+    det.innerHTML=head+body; det.hidden=false;
+    var add=det.querySelector('[data-reladd]');
+    if(add) add.addEventListener('click', function(e){ e.stopPropagation(); openReleasePicker(id); });
+    det.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(){ navigate('/item/'+el.getAttribute('data-open'), false); }); });
+    det.querySelectorAll('[data-relremove]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); e.preventDefault();
+      var pid=b.getAttribute('data-relremove'); var p=(_val('projects',[])||[]).filter(function(x){ return String(x.id)===String(pid); })[0]; if(!p) return;
+      linkItemToRelease(p,'').then(function(){ var bd=document.getElementById('frzPlanBody'); if(bd) renderReleasesTab(bd); })
+        .catch(function(){ _call('showToast','Remove failed','error'); });
+    }); });
+  }
   function renderReleasesTab(host){
     var rels=_releases.slice().sort(function(a,b){ return (a.targetDate||'').localeCompare(b.targetDate||''); });
     var rows=rels.map(function(r){
@@ -17820,14 +17840,15 @@ if ('serviceWorker' in navigator) {
     host.querySelectorAll('[data-relrow]').forEach(function(row){
       row.addEventListener('click', function(e){
         if(e.target.closest('[data-reledit],[data-relship]')) return;
+        if(e.target.closest('.frz-tbl-detail')) return;   // clicks inside the open detail never collapse the row
         var id=row.getAttribute('data-relrow'); var det=document.getElementById('frzRelDetail_'+id); if(!det) return;
-        if(!det.hidden){ det.hidden=true; det.innerHTML=''; return; }
-        var items=releaseItems(id);
-        det.innerHTML = items.length ? items.map(function(p){ return miniItemRow(p,true); }).join('') : '<div class="frz-plan-empty">No items linked. Link items from their item page.</div>';
-        det.hidden=false;
-        det.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(){ navigate('/item/'+el.getAttribute('data-open'), false); }); });
+        if(!det.hidden){ det.hidden=true; det.innerHTML=''; state.releaseId=null; return; }
+        state.releaseId=id;            // in-memory only (Stage 1b mirrors this into ?release=)
+        fillReleaseDetail(id, det);
       });
     });
+    // Re-open the tracked release after a re-render (add/remove) so the user stays expanded.
+    if(state.releaseId){ var od=document.getElementById('frzRelDetail_'+state.releaseId); if(od) fillReleaseDetail(state.releaseId, od); }
   }
   function openReleaseModal(rel){
     closePop();
@@ -17856,6 +17877,58 @@ if ('serviceWorker' in navigator) {
       saveReleases(function(){ close(); var body=document.getElementById('frzPlanBody'); if(body && state.planTab==='releases') renderReleasesTab(body); }).catch(function(){ btn.disabled=false; err.textContent='Save failed.'; });
     });
     setTimeout(function(){ bg.querySelector('#frzRlName').focus(); },0);
+  }
+  // Stage 1: pick items for ONE release (inverse of the List bulk picker). Candidates = all
+  // non-archived items NOT already in this release (all types; no Plan-tab exclusions). Items in
+  // ANOTHER release are shown with a "· in <name>" tag — selecting reassigns (single release field;
+  // linkItemToRelease logs the prev→next move). Confirm chains linkItemToRelease sequentially.
+  function openReleasePicker(rid){
+    var cands=(_val('projects',[])||[]).filter(function(p){ return !p.archived && (p.release||'')!==rid; });
+    var rn=releaseById(rid)?releaseById(rid).name:rid;
+    var sel={};
+    var bg=document.createElement('div'); bg.className='frz-modal-bg';
+    bg.innerHTML='<div class="frz-modal" style="width:560px">'+
+      '<div class="frz-modal-hd">Add items to '+esc(rn)+'<button class="frz-iconbtn" id="frzRpClose">✕</button></div>'+
+      '<div class="frz-modal-bd">'+
+        '<input class="frz-fld" id="frzRpSearch" placeholder="Search by name or key…" autocomplete="off">'+
+        '<div id="frzRpList" style="margin-top:10px;max-height:48vh;overflow:auto"></div>'+
+      '</div>'+
+      '<div class="frz-modal-ft"><span class="frz-modal-err" id="frzRpErr"></span><button class="frz-viewopt" id="frzRpCancel">Cancel</button><button class="frz-newitem" id="frzRpSave" disabled>Add 0 items</button></div>'+
+    '</div>';
+    root.appendChild(bg);
+    function close(){ bg.remove(); document.removeEventListener('keydown', onKey); }
+    function onKey(e){ if(e.key==='Escape'){ e.preventDefault(); close(); } }
+    document.addEventListener('keydown', onKey);
+    bg.querySelector('#frzRpClose').addEventListener('click', close);
+    bg.querySelector('#frzRpCancel').addEventListener('click', close);
+    bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
+    var listEl=bg.querySelector('#frzRpList'), saveBtn=bg.querySelector('#frzRpSave'), searchEl=bg.querySelector('#frzRpSearch');
+    function nSel(){ return Object.keys(sel).length; }
+    function updateBtn(){ var n=nSel(); saveBtn.textContent='Add '+n+' item'+(n!==1?'s':''); saveBtn.disabled=!n; }
+    function rowHtml(p){
+      var key=p.itemKey?('<span style="font-weight:700;opacity:.7">'+esc(p.itemKey)+'</span> '):'';
+      var inrel=p.release?(' <span style="opacity:.55;font-size:12px">· in '+esc(releaseById(p.release)?releaseById(p.release).name:p.release)+'</span>'):'';
+      return '<label style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--frz-border);cursor:pointer;font-size:13px;color:var(--frz-text)">'+
+        '<input type="checkbox" data-rpid="'+escA(p.id)+'"'+(sel[p.id]?' checked':'')+'> '+key+esc(p.name||('#'+p.id))+inrel+'</label>';
+    }
+    function render(){
+      var q=(searchEl.value||'').trim().toLowerCase();
+      var shown=cands.filter(function(p){ if(!q) return true; return String(p.name||'').toLowerCase().indexOf(q)>=0 || String(p.itemKey||'').toLowerCase().indexOf(q)>=0; });
+      listEl.innerHTML = shown.length ? shown.map(rowHtml).join('') : '<div class="frz-plan-empty">No matching items.</div>';
+      listEl.querySelectorAll('[data-rpid]').forEach(function(cb){ cb.addEventListener('change', function(){ var id=cb.getAttribute('data-rpid'); if(cb.checked) sel[id]=true; else delete sel[id]; updateBtn(); }); });
+    }
+    searchEl.addEventListener('input', render);
+    render(); updateBtn();
+    setTimeout(function(){ searchEl.focus(); },0);
+    saveBtn.addEventListener('click', function(){
+      var ids=Object.keys(sel); if(!ids.length) return;
+      saveBtn.disabled=true; saveBtn.textContent='Adding…';
+      var done=0, chain=Promise.resolve();
+      ids.forEach(function(id){ chain=chain.then(function(){ var p=cands.filter(function(x){ return String(x.id)===String(id); })[0]; if(!p) return;
+        return linkItemToRelease(p, rid).then(function(){ done++; }).catch(function(){ _call('showToast','Failed to add '+(p.name||('#'+p.id)),'error'); }); }); });
+      chain.then(function(){ close(); _call('showToast','Added '+done+' item'+(done!==1?'s':'')+' to '+rn);
+        var bd=document.getElementById('frzPlanBody'); if(bd) renderReleasesTab(bd); });
+    });
   }
   function markReleased(id){
     var r=releaseById(id); if(!r) return;
