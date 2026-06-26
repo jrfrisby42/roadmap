@@ -2033,7 +2033,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.19';
+const APP_VERSION = '4.9.20';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -3380,7 +3380,7 @@ function render(){
         const statusText = statusOverridden ? `<span style="color:var(--accent2)">⚠</span> ${displayStatus} <span style="color:var(--accent2)">⚠</span>` : displayStatus;
 
         lRows += `<div class="left-row${isEffectivelyHidden(p)?' hidden-row':''}${isChild?' child-row':''}" data-id="${p.id}">
-          <span class="proj-name" title="${escA(p.name)}">${esc(p.name)}${conflictIcon}${activityIndicator}</span>
+          <span class="proj-name" title="${escA(p.name)}">${(()=>{ const ic=typeIconHTML(p.type); return ic?ic+' ':''; })()}${esc(p.name)}${conflictIcon}${activityIndicator}</span>
           ${priorityDot(p.priority)}
           <span class="sbadge ${statusOverridden ? '' : statusCls(displayStatus)}" style="${statusStyle}"${statusTitle}>${statusText}</span>
           <span class="${schedClass}">${schedStr}${codeCompleteStr}</span>
@@ -16732,7 +16732,7 @@ if ('serviceWorker' in navigator) {
     var parent = (p.parent!=null) ? _ps.filter(function(x){return x.id===p.parent;})[0] : null;
     var projDot = '<span class="frz-dot" style="background:'+(_call('projectColor', p.product)||'var(--frz-accent)')+';margin-right:2px"></span>';
     var parentCrumb = parent ? '<span class="frz-crumb-key frz-crumb-parent" id="frzParentCrumb" title="Open parent">'+(parent.itemKey?esc(parent.itemKey):esc(parent.name||'parent'))+'</span> › ' : '';
-    var selfCrumb = '<span class="frz-crumb-key" id="frzCrumbKey"'+(p.itemKey?' title="Copy key"':'')+'>'+(p.itemKey?esc(p.itemKey):esc(p.name||''))+'</span>';   // key, or name fallback if keyless
+    var selfCrumb = '<span class="frz-crumb-key" id="frzCrumbKey"'+(p.itemKey?' title="Copy key"':'')+' style="display:inline-flex;align-items:center;gap:4px">'+(_call('typeIconHTML',p.type,{size:14})||'')+'<span>'+(p.itemKey?esc(p.itemKey):esc(p.name||''))+'</span></span>';   // type icon (left) + key, or name fallback if keyless
     document.getElementById('frzLeft').innerHTML =
       '<button class="frz-back" id="frzBack">'+IC.back+' Back</button>'+
       '<span class="frz-crumbs">'+projDot+'<span>'+esc(p.product||'—')+'</span> › '+parentCrumb+selfCrumb+'</span>';
@@ -17366,7 +17366,7 @@ if ('serviceWorker' in navigator) {
     var pts=(p.storyPoints!=null&&p.storyPoints!=='')?'<span class="frz-bchip frz-bchip-pts">'+esc(p.storyPoints)+' pts</span>':'';
     var wk=_fmtWeeks(p); var wkChip = wk ? '<span class="frz-bchip frz-bchip-wk">'+wk+'</span>' : '';
     return '<div class="frz-bcard" draggable="true" data-id="'+p.id+'" onclick="openProjectModal('+p.id+')">'
-      + (p.itemKey?'<div class="frz-bcard-key">'+_projDot(p.product)+esc(p.itemKey)+'</div>':'')
+      + (p.itemKey?'<div class="frz-bcard-key" style="display:flex;align-items:center;gap:4px">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></div>':'')
       + '<div class="frz-bcard-name">'+esc(p.name||'')+' '+(_call('getItemActivityIndicator', p.id)||'')+'</div>'
       + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+'</div>'
       + '</div>';
