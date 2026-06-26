@@ -2028,7 +2028,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.17';
+const APP_VERSION = '4.9.18';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -17802,6 +17802,23 @@ if ('serviceWorker' in navigator) {
   // Fill an expanded release's inline detail: a "+ Add items" header, then each linked item
   // (miniItemRow WRAPPED with a ✕ remove — miniItemRow itself is untouched/shared). Add + ✕ both
   // stopPropagation so they don't collapse the row (which also has the .frz-tbl-detail guard).
+  // Stage 2b dirty-guard: unsaved release-notes drafts, keyed by release id. An entry exists ONLY
+  // while that release's notes textarea differs from its saved baseline (rel.notes). The map survives
+  // re-renders + the collapse DOM-wipe, so fillReleaseDetail re-injects the draft instead of resetting
+  // to the saved value — nothing is lost without the user's knowledge.
+  var _relNotesDrafts = {};
+  function _relNotesNorm(s){ return String(s==null?'':s).replace(/\s+$/,''); }   // ignore trailing ws/newlines
+  function _relNotesPrune(){ Object.keys(_relNotesDrafts).forEach(function(k){ if(!releaseById(k)) delete _relNotesDrafts[k]; }); }
+  function _relNotesBeforeUnload(e){
+    _relNotesPrune();                                   // drop drafts for releases that no longer exist (e.g. deleted)
+    if(!Object.keys(_relNotesDrafts).length) return;    // nothing actually unsaved → don't block
+    e.preventDefault(); e.returnValue=''; return '';
+  }
+  function _relNotesSyncBeforeUnload(){
+    _relNotesPrune();
+    window.removeEventListener('beforeunload', _relNotesBeforeUnload);
+    if(Object.keys(_relNotesDrafts).length) window.addEventListener('beforeunload', _relNotesBeforeUnload);  // added/removed around dirty state only
+  }
   // Stage 2b: draft release notes from the linked items, grouped by item type (config order;
   // untyped / unknown types bucket into "Other" last). Lightweight markdown — headings + bullets,
   // each line "KEY — Name" — readable as plain text and paste-able into Teams/email.
@@ -17855,10 +17872,12 @@ if ('serviceWorker' in navigator) {
     }
     // ── Release notes (Stage 2b) — generate/edit/store/copy. Always editable (membership locks,
     //    notes don't). Stored as rel.notes via saveReleases (server preserves arbitrary fields). ──
-    var notesVal=(rel && typeof rel.notes==='string') ? rel.notes : '';
+    var notesSaved=(rel && typeof rel.notes==='string') ? rel.notes : '';
+    var notesDraft=_relNotesDrafts[id];                                   // preserved unsaved draft (if any)
+    var notesVal=(typeof notesDraft==='string') ? notesDraft : notesSaved;
     var notesSec='<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--frz-border)">'+
       '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">'+
-        '<span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--frz-text-muted)">Release notes</span>'+
+        '<span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--frz-text-muted)">Release notes<span data-relnotesdirty hidden style="margin-left:8px;color:var(--frz-accent);font-weight:700;letter-spacing:0">• unsaved</span></span>'+
         '<span style="display:flex;gap:6px">'+
           '<button class="frz-viewopt" data-relnotesgen>'+(notesVal.trim()?'Regenerate from items':'Generate from items')+'</button>'+
           '<button class="frz-viewopt" data-relnotescopy>Copy</button>'+
@@ -17878,11 +17897,24 @@ if ('serviceWorker' in navigator) {
     }); });
     // notes controls — scoped to this detail (det.querySelector), so multiple rows never collide
     var ta=det.querySelector('[data-relnotes]');
-    if(ta) ta.addEventListener('click', function(e){ e.stopPropagation(); });   // belt-and-suspenders over the .frz-tbl-detail guard
+    var dirtyEl=det.querySelector('[data-relnotesdirty]');
+    // dirty = textarea differs from the SAVED baseline (rel.notes), trailing-ws-normalized. Stash the
+    // unsaved value in the module map while dirty (so a re-render/collapse re-injects it), drop it when
+    // clean, toggle the "• unsaved" cue, and add/remove the beforeunload guard around dirty state.
+    function refreshNotesDirty(){
+      if(!ta) return;
+      var r=releaseById(id); var saved=(r && typeof r.notes==='string') ? r.notes : '';
+      var dirty=_relNotesNorm(ta.value)!==_relNotesNorm(saved);
+      if(dirty) _relNotesDrafts[id]=ta.value; else delete _relNotesDrafts[id];
+      if(dirtyEl) dirtyEl.hidden=!dirty;
+      _relNotesSyncBeforeUnload();
+    }
+    if(ta){ ta.addEventListener('click', function(e){ e.stopPropagation(); });   // belt-and-suspenders over the .frz-tbl-detail guard
+            ta.addEventListener('input', refreshNotesDirty); }
     var genB=det.querySelector('[data-relnotesgen]');
     if(genB) genB.addEventListener('click', function(e){ e.stopPropagation();
       if(ta.value.trim() && !confirm('Regenerate notes from the current items?\n\nThis replaces the notes below — your manual edits will be lost. (You can still edit before saving.)')) return;
-      ta.value=_frzGenReleaseNotes(id); ta.focus();
+      ta.value=_frzGenReleaseNotes(id); ta.focus(); refreshNotesDirty();   // generated text becomes the working draft (dirty vs saved)
     });
     var copyB=det.querySelector('[data-relnotescopy]');
     if(copyB) copyB.addEventListener('click', function(e){ e.stopPropagation();
@@ -17894,8 +17926,9 @@ if ('serviceWorker' in navigator) {
     if(saveB) saveB.addEventListener('click', function(e){ e.stopPropagation();
       var r=releaseById(id); if(!r || !ta) return;
       r.notes=ta.value; saveB.disabled=true;
-      saveReleases(function(){ saveB.disabled=false; _call('showToast','Notes saved'); }).catch(function(){ saveB.disabled=false; });
+      saveReleases(function(){ saveB.disabled=false; refreshNotesDirty(); _call('showToast','Notes saved'); }).catch(function(){ saveB.disabled=false; });
     });
+    refreshNotesDirty();   // initial pass: surfaces the "• unsaved" cue + beforeunload when a preserved draft was re-injected
   }
   function renderReleasesTab(host){
     var admin=_val('isAdmin', false);
