@@ -2028,7 +2028,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.16';
+const APP_VERSION = '4.9.17';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -17802,6 +17802,26 @@ if ('serviceWorker' in navigator) {
   // Fill an expanded release's inline detail: a "+ Add items" header, then each linked item
   // (miniItemRow WRAPPED with a ✕ remove — miniItemRow itself is untouched/shared). Add + ✕ both
   // stopPropagation so they don't collapse the row (which also has the .frz-tbl-detail guard).
+  // Stage 2b: draft release notes from the linked items, grouped by item type (config order;
+  // untyped / unknown types bucket into "Other" last). Lightweight markdown — headings + bullets,
+  // each line "KEY — Name" — readable as plain text and paste-able into Teams/email.
+  function _frzGenReleaseNotes(id){
+    var rel=releaseById(id); var items=releaseItems(id);
+    var typeOrder=(_val('types',[])||[]).map(function(t){ return t && t.name; }).filter(Boolean);
+    var groups={};
+    items.forEach(function(p){ var t=(p.type||'').trim()||'Other'; (groups[t]=groups[t]||[]).push(p); });
+    var order=typeOrder.filter(function(t){ return groups[t]; });               // configured types present, in config order
+    Object.keys(groups).sort().forEach(function(t){ if(t!=='Other' && order.indexOf(t)<0) order.push(t); });  // any stragglers, alpha
+    if(groups['Other']) order.push('Other');                                    // untyped always last
+    var lines=['# '+((rel&&rel.name)||'Release')+((rel&&rel.targetDate)?(' — '+fmtD(rel.targetDate)):''), ''];
+    if(!items.length){ lines.push('_No items linked._'); return lines.join('\n'); }
+    order.forEach(function(t){
+      lines.push('## '+t);
+      groups[t].forEach(function(p){ var key=p.itemKey?(p.itemKey+' — '):''; lines.push('- '+key+(p.name||('#'+p.id))); });
+      lines.push('');
+    });
+    return lines.join('\n').trim();
+  }
   function fillReleaseDetail(id, det){
     var rel=releaseById(id);
     var locked=!!(rel && rel.state==='Released');   // post-release: membership frozen
@@ -17833,7 +17853,21 @@ if ('serviceWorker' in navigator) {
         '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--frz-text-muted);margin-bottom:4px">Feature flags ('+allFlags.length+')</div>'+
         rowsHtml+'</div>';
     }
-    det.innerHTML=head+body+flagSec; det.hidden=false;
+    // ── Release notes (Stage 2b) — generate/edit/store/copy. Always editable (membership locks,
+    //    notes don't). Stored as rel.notes via saveReleases (server preserves arbitrary fields). ──
+    var notesVal=(rel && typeof rel.notes==='string') ? rel.notes : '';
+    var notesSec='<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--frz-border)">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">'+
+        '<span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--frz-text-muted)">Release notes</span>'+
+        '<span style="display:flex;gap:6px">'+
+          '<button class="frz-viewopt" data-relnotesgen>'+(notesVal.trim()?'Regenerate from items':'Generate from items')+'</button>'+
+          '<button class="frz-viewopt" data-relnotescopy>Copy</button>'+
+          '<button class="frz-newitem" data-relnotessave>Save</button>'+
+        '</span>'+
+      '</div>'+
+      '<textarea class="frz-fld" data-relnotes rows="6" style="width:100%;resize:vertical;font-family:inherit;font-size:13px;line-height:1.5" placeholder="No release notes yet. “Generate from items” drafts from the linked items, or type your own.">'+esc(notesVal)+'</textarea>'+
+    '</div>';
+    det.innerHTML=head+body+flagSec+notesSec; det.hidden=false;
     var add=det.querySelector('[data-reladd]');
     if(add) add.addEventListener('click', function(e){ e.stopPropagation(); openReleasePicker(id); });
     det.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(){ navigate('/item/'+el.getAttribute('data-open'), false); }); });
@@ -17842,6 +17876,26 @@ if ('serviceWorker' in navigator) {
       linkItemToRelease(p,'').then(function(){ var bd=document.getElementById('frzPlanBody'); if(bd) renderReleasesTab(bd); })
         .catch(function(){ _call('showToast','Remove failed','error'); });
     }); });
+    // notes controls — scoped to this detail (det.querySelector), so multiple rows never collide
+    var ta=det.querySelector('[data-relnotes]');
+    if(ta) ta.addEventListener('click', function(e){ e.stopPropagation(); });   // belt-and-suspenders over the .frz-tbl-detail guard
+    var genB=det.querySelector('[data-relnotesgen]');
+    if(genB) genB.addEventListener('click', function(e){ e.stopPropagation();
+      if(ta.value.trim() && !confirm('Regenerate notes from the current items?\n\nThis replaces the notes below — your manual edits will be lost. (You can still edit before saving.)')) return;
+      ta.value=_frzGenReleaseNotes(id); ta.focus();
+    });
+    var copyB=det.querySelector('[data-relnotescopy]');
+    if(copyB) copyB.addEventListener('click', function(e){ e.stopPropagation();
+      var txt=ta?ta.value:'';
+      if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(txt).then(function(){ _call('showToast','Notes copied'); }, function(){ _call('showToast','Copy failed','error'); }); }
+      else { try{ ta.select(); document.execCommand('copy'); _call('showToast','Notes copied'); }catch(_e){ _call('showToast','Copy failed','error'); } }
+    });
+    var saveB=det.querySelector('[data-relnotessave]');
+    if(saveB) saveB.addEventListener('click', function(e){ e.stopPropagation();
+      var r=releaseById(id); if(!r || !ta) return;
+      r.notes=ta.value; saveB.disabled=true;
+      saveReleases(function(){ saveB.disabled=false; _call('showToast','Notes saved'); }).catch(function(){ saveB.disabled=false; });
+    });
   }
   function renderReleasesTab(host){
     var admin=_val('isAdmin', false);
