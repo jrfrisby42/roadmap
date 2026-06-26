@@ -1099,12 +1099,14 @@
           <th class="list-sort" data-sort="item_key" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Key<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="type" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Type<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="name" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Name<span class="sort-arrow"></span></th>
+          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap">Description</th>
           <th class="list-sort" data-sort="status" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Status<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="priority" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Priority<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="owner" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Owner<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="assignee" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Assignee<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="story_points" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap;text-align:center">Points<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="sprint_id" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Sprint<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="product" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Project<span class="sort-arrow"></span></th>
         </tr>
       </thead>
       <tbody id="listBody"></tbody>
@@ -2033,7 +2035,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.20';
+const APP_VERSION = '4.9.21';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -8758,6 +8760,28 @@ function _listQuery(){
   return params.toString();
 }
 
+// HTML → plain text: strip ALL tags, DROP inline images entirely (no alt/placeholder),
+// decode entities, collapse whitespace to single spaces, trim. NO truncation (callers
+// truncate). Safe on null/empty/long multi-paragraph rich text. Reused by the List
+// Description column and (later) the export stage — keep it general.
+function descToPlainText(html){
+  if(html==null) return '';
+  const s = String(html);
+  if(!s) return '';
+  // DOM extraction: textContent decodes ALL entities natively (&nbsp; → U+00A0, &amp; → &, …).
+  // A detached element never fetches/executes, so this only parses. Remove script/style/img
+  // nodes so their content/markup never leaks into the text.
+  const d = document.createElement('div');
+  d.innerHTML = s;
+  d.querySelectorAll('script, style, img').forEach(function(n){ n.remove(); });
+  // Preserve word boundaries across blocks — textContent alone fuses "para1.para2."
+  // (the regex version inserted spaces at block ends; keep that). Still DOM-based.
+  d.querySelectorAll('br').forEach(function(n){ n.replaceWith(' '); });
+  d.querySelectorAll('p, div, li, tr, h1, h2, h3, h4, h5, h6, blockquote, ul, ol, table, section')
+    .forEach(function(n){ n.appendChild(document.createTextNode(' ')); });
+  // \s also matches U+00A0 (decoded &nbsp;) in JS, so this collapses those to normal spaces.
+  return (d.textContent || '').replace(/\s+/g, ' ').trim();
+}
 function _listCell(v){ return esc(v==null||v===''?'—':String(v)); }
 
 function _listRowHtml(it, depth){
@@ -8774,12 +8798,14 @@ function _listRowHtml(it, depth){
     <td style="${firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${chevron}${_listCell(it.itemKey)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${(()=>{ const ic=typeIconHTML(it.type); return ic ? `<span style="display:inline-flex;align-items:center;gap:5px">${ic}${_listCell(it.type)}</span>` : _listCell(it.type); })()}</td>
     <td style="padding:7px 10px">${_listCell(it.name)} ${getItemActivityIndicator(it.id)}</td>
+    <td style="padding:7px 10px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"${(()=>{ const t=descToPlainText(it.description); return t?` title="${escA(t)}">${esc(t)}`:`>—`; })()}</td>
     <td style="padding:7px 10px;white-space:nowrap">${it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(it.status)}</span>` : '—'}</td>
     <td style="padding:7px 10px;white-space:nowrap">${(it.priority && PRIO_LABELS[it.priority]) ? `<span style="background:${PRIO_COLORS[it.priority]}22;color:${PRIO_COLORS[it.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[it.priority])}</span>` : '—'}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.dev)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.assignee)}</td>
     <td style="padding:7px 10px;text-align:center">${_listCell(it.storyPoints)}</td>
     <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.sprintId)}</td>
+    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.product)}</td>
   </tr>`;
 }
 
@@ -15739,7 +15765,7 @@ if ('serviceWorker' in navigator) {
   var CFG = {
     gantt:    { chips:['owner','assignee','type','status'], extra:[], opts:['groupby','legend','capacity'] },   // Stage 2: +Assignee (List's chip order)
     kanban:   { chips:['owner','assignee','type','status'], extra:[], opts:['hideEmpty'] },                    // Stage 2: +Assignee +Status
-    list:     { chips:['owner','assignee','type','status'], extra:[], opts:['columns'] },
+    list:     { chips:['owner','assignee','type','status'], extra:[], opts:['columns','export'] },
     planning: { chips:['owner','status'],                   extra:['type','assignee'], opts:[] },
     dashboard:{ chips:['owner','range'],                    extra:[], opts:[] },
     'my-home':{ chips:[],                                   extra:[], opts:[] }   // Stage 5: personal landing, no chips
@@ -16257,7 +16283,7 @@ if ('serviceWorker' in navigator) {
   function optHTML(o){
     var map = {
       groupby:'Group by', legend:'Legend', capacity:'Capacity',
-      hideEmpty:'Hide empty columns', columns:'Columns', newSession:'New session', history:'History'
+      hideEmpty:'Hide empty columns', columns:'Columns', export:'Export', newSession:'New session', history:'History'
     };
     var label = map[o]||o;
     if (o==='groupby'){ var gb=document.getElementById('groupBy'); var cur=gb?(gb.options[gb.selectedIndex]||{}).text:'Owner'; label='Group by: '+(cur||'Owner'); }
@@ -17122,7 +17148,7 @@ if ('serviceWorker' in navigator) {
       var items=(data&&data.items)||[];
       box.innerHTML = items.length ? items.map(function(it){
         return '<div class="frz-search-res" data-id="'+it.id+'">'+
-          _projDot(it.product)+
+          (_call('typeIconHTML',it.type,{size:15})||'')+
           (it.itemKey?'<span style="font-family:monospace;font-size:11px;color:var(--frz-text-muted);flex-shrink:0">'+esc(it.itemKey)+'</span>':'')+
           '<span style="font-size:13px;color:var(--frz-text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.name||'Untitled')+'</span>'+
           '<span style="font-size:11px;color:var(--frz-text-muted);flex-shrink:0">'+esc(it.status||'')+'</span>'+
@@ -17264,18 +17290,33 @@ if ('serviceWorker' in navigator) {
       return;
     }
     if (o==='columns'){ openListColsPop(anchor); return; }
+    if (o==='export'){ openExportMenu(anchor); return; }
   }
   // List column show/hide — toggled via a generated <style> using positional
   // nth-child, so it needs NO edits to the production table markup. Per-user persisted.
   var LIST_COLS = [
-    {key:'type', idx:3, label:'Type'}, {key:'status', idx:5, label:'Status'},
-    {key:'priority', idx:6, label:'Priority'}, {key:'owner', idx:7, label:'Owner'},
-    {key:'assignee', idx:8, label:'Assignee'}, {key:'points', idx:9, label:'Points'},
-    {key:'sprint', idx:10, label:'Sprint'}
+    {key:'type', idx:3, label:'Type'}, {key:'description', idx:5, label:'Description'},
+    {key:'status', idx:6, label:'Status'}, {key:'priority', idx:7, label:'Priority'},
+    {key:'owner', idx:8, label:'Owner'}, {key:'assignee', idx:9, label:'Assignee'},
+    {key:'points', idx:10, label:'Points'}, {key:'sprint', idx:11, label:'Sprint'},
+    {key:'project', idx:12, label:'Project'}
   ];
   function _listColsKey(){ return 'frazil_beta_listcols_'+uname(); }
   function hiddenListCols(){ try { return new Set(JSON.parse(ls(_listColsKey())||'[]')); } catch(e){ return new Set(); } }
+  // Opt-in columns (Project, Description) default HIDDEN. The stored set lists HIDDEN keys,
+  // so default-empty would show them — seed them into the hidden set ONCE (new + existing
+  // users), guarded by a per-user marker so a later un-hide isn't re-hidden.
+  function _migrateListColsDefaults(){
+    try {
+      var key=_listColsKey(), seenKey=key+'_optin1';
+      if(ls(seenKey)) return;
+      var set; try { set=new Set(JSON.parse(ls(key)||'[]')); } catch(e){ set=new Set(); }
+      set.add('project'); set.add('description');
+      lset(key, JSON.stringify(Array.from(set))); lset(seenKey, '1');
+    } catch(e){}
+  }
   function applyListCols(){
+    _migrateListColsDefaults();
     var hidden=hiddenListCols();
     var css=LIST_COLS.filter(function(c){ return hidden.has(c.key); }).map(function(c){
       return '#listView th:nth-child('+c.idx+'),#listView td:nth-child('+c.idx+'){display:none}';
@@ -17298,6 +17339,77 @@ if ('serviceWorker' in navigator) {
         pop.appendChild(lab);
       });
     });
+  }
+  // ── List CSV export ───────────────────────────────────────────────────────
+  // Column definitions (label + per-item value getter). Field mapping matches the List
+  // display: Priority→label, Owner→dev, Sprint→name, Description→full plain text.
+  function _exportColDefs(){
+    return {
+      key:        {label:'Key',         get:function(it){ return it.itemKey||''; }},
+      name:       {label:'Name',        get:function(it){ return it.name||''; }},
+      type:       {label:'Type',        get:function(it){ return it.type||''; }},
+      status:     {label:'Status',      get:function(it){ return it.status||''; }},
+      priority:   {label:'Priority',    get:function(it){ return PRIO_LBL[it.priority]||''; }},
+      owner:      {label:'Owner',       get:function(it){ return it.dev||''; }},
+      assignee:   {label:'Assignee',    get:function(it){ return it.assignee||''; }},
+      points:     {label:'Points',      get:function(it){ return (it.storyPoints!=null&&it.storyPoints!=='')?String(it.storyPoints):''; }},
+      sprint:     {label:'Sprint',      get:function(it){ var s=sprintById(it.sprintId); return s?(s.name||''):(it.sprintId||''); }},
+      project:    {label:'Project',     get:function(it){ return it.product||''; }},
+      description:{label:'Description', get:function(it){ return _call('descToPlainText', it.description)||''; }}
+    };
+  }
+  // mode 'all' → full set in the prompt's order; 'visible' → only shown cols, in table display order.
+  function _exportCols(mode){
+    var D=_exportColDefs();
+    if(mode==='all'){
+      return ['key','name','type','status','priority','owner','assignee','points','sprint','project','description'].map(function(k){ return D[k]; });
+    }
+    var hidden=hiddenListCols();
+    // table display order by nth-child: Key,Type,Name,Description,Status,Priority,Owner,Assignee,Points,Sprint,Project
+    var order=['key','type','name','description','status','priority','owner','assignee','points','sprint','project'];
+    return order.filter(function(k){ return (k==='key'||k==='name') ? true : !hidden.has(k); }).map(function(k){ return D[k]; });
+  }
+  function _csvCell(v){ var s=(v==null)?'':String(v); return /[",\r\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; }
+  function _buildCSV(cols, rows){
+    var lines=[ cols.map(function(c){ return _csvCell(c.label); }).join(',') ];   // header
+    rows.forEach(function(it){ lines.push(cols.map(function(c){ return _csvCell(c.get(it)); }).join(',')); });
+    return '﻿'+lines.join('\r\n');   // UTF-8 BOM (Excel) + CRLF
+  }
+  function _exportStamp(){ var d=new Date(), p=function(n){ return (n<10?'0':'')+n; }; return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+  function _downloadCSV(text, filename){
+    var blob=new Blob([text], {type:'text/csv;charset=utf-8;'}), url=URL.createObjectURL(blob);
+    var a=document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click();
+    setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+  }
+  function openExportMenu(anchor){
+    openPop(anchor, function(pop){
+      pop.style.minWidth='160px';
+      [['all','All columns'],['visible','Visible columns']].forEach(function(o){
+        var b=document.createElement('button'); b.className='frz-pop-opt'; b.style.cursor='pointer'; b.textContent=o[1];
+        b.addEventListener('click', function(){ closePop(); exportListCSV(o[0]); });
+        pop.appendChild(b);
+      });
+    });
+  }
+  // Gather the CURRENT filtered set across ALL pages (same params the List uses via _listQuery),
+  // then build + download the CSV. Safety cap guards a runaway page loop.
+  function exportListCSV(mode){
+    var cols=_exportCols(mode);
+    var base=new URLSearchParams(_call('_listQuery')||'');   // live List filters (owner/assignee/type/status/q/product)
+    base.delete('page'); base.delete('page_size'); base.delete('sort');
+    var rows=[], page=1, pages=1, CAP=50;   // ~5000 rows guard
+    _call('showToast','Preparing export…');
+    (function next(){
+      var qs=new URLSearchParams(base.toString()); qs.set('page',page); qs.set('page_size',100);
+      API.get('/api/items?'+qs.toString()).then(function(data){
+        (data&&data.items||[]).forEach(function(it){ rows.push(it); });
+        pages=(data&&data.pages)||1;
+        if(page<pages && page<CAP){ page++; next(); return; }
+        var csv=_buildCSV(cols, rows);
+        _downloadCSV(csv, 'flow-items-'+_exportStamp()+'.csv');
+        _call('showToast','Exported '+rows.length+' item'+(rows.length!==1?'s':'')+(pages>CAP?' (capped)':''));
+      }).catch(function(){ _call('showToast','Export failed','error'); });
+    })();
   }
   function setProject(name){
     state.project = name; lset(projKey(), name);   // keep the cross-session default (localStorage)
@@ -17624,7 +17736,7 @@ if ('serviceWorker' in navigator) {
     var legacy = (p.sprintId && !sprintById(p.sprintId)) ? ' <span class="frz-legacy-tag" title="Legacy sprint label (preserved)">'+esc(p.sprintId)+'</span>' : '';
     return '<div class="frz-bl-row" draggable="true" data-id="'+p.id+'">'+
       '<div class="frz-bl-main" data-open="'+p.id+'">'+
-        '<div class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key">'+_projDot(p.product)+esc(p.itemKey)+'</span> ':'')+esc(p.name||'')+legacy+'</div>'+
+        '<div class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></span> ':'')+esc(p.name||'')+legacy+'</div>'+
         '<div class="frz-bl-meta">'+prio+((prio&&meta)?' · ':'')+esc(meta)+'</div>'+
       '</div>'+
       '<button class="frz-bl-add" data-add="'+p.id+'" title="Add to sprint">Add →</button>'+
@@ -17652,7 +17764,7 @@ if ('serviceWorker' in navigator) {
     var st = p.status ? '<span class="'+(_call('statusCls',p.status)||'')+'" style="padding:0 7px;border-radius:9px;font-size:10px;font-weight:700">'+esc(p.status)+'</span>' : '';
     var meta = [(p.storyPoints!=null&&p.storyPoints!==''?p.storyPoints+'pt':''),(+p.dueWeeks>0?p.dueWeeks+'w':''),p.dev||'Unassigned'].filter(Boolean).join(' · ');
     return '<div class="frz-sp-card">'+
-      '<div class="frz-bl-main" data-open="'+p.id+'"><div class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key">'+_projDot(p.product)+esc(p.itemKey)+'</span> ':'')+esc(p.name||'')+'</div>'+
+      '<div class="frz-bl-main" data-open="'+p.id+'"><div class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></span> ':'')+esc(p.name||'')+'</div>'+
       '<div class="frz-bl-meta">'+esc(meta)+' '+st+'</div></div>'+
       '<button class="frz-sp-remove" data-remove="'+p.id+'" title="Remove from sprint">✕</button>'+
     '</div>';
@@ -17861,7 +17973,7 @@ if ('serviceWorker' in navigator) {
   function miniItemRow(p, withStatus){
     var st = withStatus && p.status ? '<span class="'+(_call('statusCls',p.status)||'')+'" style="padding:0 7px;border-radius:9px;font-size:10px;font-weight:700">'+esc(p.status)+'</span>' : '';
     var meta=[(p.storyPoints!=null&&p.storyPoints!==''?p.storyPoints+'pt':''),(+p.dueWeeks>0?p.dueWeeks+'w':''),p.dev||''].filter(Boolean).join(' · ');
-    return '<div class="frz-mini-row" data-open="'+p.id+'"><span class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key">'+_projDot(p.product)+esc(p.itemKey)+'</span> ':'')+esc(p.name||'')+'</span> <span class="frz-bl-meta">'+esc(meta)+' '+st+'</span></div>';
+    return '<div class="frz-mini-row" data-open="'+p.id+'"><span class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></span> ':'')+esc(p.name||'')+'</span> <span class="frz-bl-meta">'+esc(meta)+' '+st+'</span></div>';
   }
   function renderSprintsTab(host){
     var sprints=_sprints.slice().sort(function(a,b){ return (b.startDate||'').localeCompare(a.startDate||'') || (b.id||'').localeCompare(a.id||''); });
@@ -18128,7 +18240,7 @@ if ('serviceWorker' in navigator) {
       var key=p.itemKey?('<span style="font-weight:700;opacity:.7">'+esc(p.itemKey)+'</span> '):'';
       var inrel=p.release?(' <span style="opacity:.55;font-size:12px">· in '+esc(releaseById(p.release)?releaseById(p.release).name:p.release)+'</span>'):'';
       return '<label style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--frz-border);cursor:pointer;font-size:13px;color:var(--frz-text)">'+
-        '<input type="checkbox" data-rpid="'+escA(p.id)+'"'+(sel[p.id]?' checked':'')+'> '+key+esc(p.name||('#'+p.id))+inrel+'</label>';
+        '<input type="checkbox" data-rpid="'+escA(p.id)+'"'+(sel[p.id]?' checked':'')+'> '+(_call('typeIconHTML',p.type,{size:14})||'')+key+esc(p.name||('#'+p.id))+inrel+'</label>';
     }
     function render(){
       var q=(searchEl.value||'').trim().toLowerCase();
@@ -19327,7 +19439,7 @@ if ('serviceWorker' in navigator) {
       _frzPanelRow('Points',(p.storyPoints!=null&&p.storyPoints!=='')?p.storyPoints:null), _frzPanelRow('Sprint',sprint),
       _frzPanelRow('Release',rel), _frzPanelRow('Start',p.start), _frzPanelRow('Due',p.due), _frzPanelRow('Expected',p.revised) ].join('');
     return '<div class="frz-lp-hd">'
-      + '<div class="frz-lp-hd-top">'+(p.itemKey?'<span class="frz-bcard-key">'+_projDot(p.product)+esc(p.itemKey)+'</span>':'<span></span>')
+      + '<div class="frz-lp-hd-top">'+(p.itemKey?'<span class="frz-bcard-key" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></span>':'<span></span>')
       + '<div class="frz-lp-actions"><button type="button" class="frz-lp-full" title="Open full page" aria-label="Open full page">⤢</button>'
       + '<button type="button" class="frz-lp-close" title="Close" aria-label="Close">✕</button></div></div>'
       + '<div class="frz-lp-name">'+esc(p.name||'')+'</div>'
