@@ -2028,7 +2028,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.15';
+const APP_VERSION = '4.9.16';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -17803,13 +17803,37 @@ if ('serviceWorker' in navigator) {
   // (miniItemRow WRAPPED with a ✕ remove — miniItemRow itself is untouched/shared). Add + ✕ both
   // stopPropagation so they don't collapse the row (which also has the .frz-tbl-detail guard).
   function fillReleaseDetail(id, det){
+    var rel=releaseById(id);
+    var locked=!!(rel && rel.state==='Released');   // post-release: membership frozen
     var items=releaseItems(id);
-    var head='<div style="display:flex;justify-content:flex-end;padding:2px 0 8px"><button class="frz-viewopt" data-reladd="'+escA(id)+'">+ Add items</button></div>';
+    var head = locked
+      ? '<div style="padding:2px 0 8px;color:var(--frz-text-muted);font-size:12px;font-style:italic">Released — membership locked</div>'
+      : '<div style="display:flex;justify-content:flex-end;padding:2px 0 8px"><button class="frz-viewopt" data-reladd="'+escA(id)+'">+ Add items</button></div>';
     var body = items.length
-      ? items.map(function(p){ return '<div style="display:flex;align-items:center;gap:6px">'+miniItemRow(p,true)+
-          '<button class="frz-iconbtn" data-relremove="'+escA(p.id)+'" title="Remove from release"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg></button></div>'; }).join('')
+      ? items.map(function(p){
+          var rm = locked ? '' : '<button class="frz-iconbtn" data-relremove="'+escA(p.id)+'" title="Remove from release"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg></button>';
+          return '<div style="display:flex;align-items:center;gap:6px">'+miniItemRow(p,true)+rm+'</div>';
+        }).join('')
       : '<div class="frz-plan-empty">No items linked yet.</div>';
-    det.innerHTML=head+body; det.hidden=false;
+    // ── Feature flags (read-only) — aggregate manual featureFlags across linked items;
+    //    render only when at least one item carries a flag (invisible for the ~97% that don't).
+    //    Mirrors the classic release-prep aggregation (allFlags = unique featureFlags; jiraFeatureFlags is link-only).
+    var allFlags=[].concat.apply([], items.map(function(p){ return Array.isArray(p.featureFlags)?p.featureFlags:[]; }))
+      .filter(Boolean);
+    allFlags=Object.keys(allFlags.reduce(function(m,f){ m[f]=1; return m; },{})).sort();
+    var flagSec='';
+    if(allFlags.length){
+      var rowsHtml=allFlags.map(function(f){
+        var src=items.filter(function(p){ return (p.featureFlags||[]).indexOf(f)>=0; });
+        var attr=src.map(function(p){ var k=p.itemKey||('#'+p.id);
+          return '<span title="'+escA(p.name||'')+'" style="background:var(--frz-accent-soft);color:var(--frz-text-secondary);border-radius:4px;padding:1px 6px;margin-left:5px;font-size:11px;font-weight:600">'+esc(k)+'</span>'; }).join('');
+        return '<div style="display:flex;align-items:center;flex-wrap:wrap;padding:3px 0;font-size:13px"><span style="font-weight:700;color:var(--frz-accent)">'+esc(f)+'</span>'+attr+'</div>';
+      }).join('');
+      flagSec='<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--frz-border)">'+
+        '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--frz-text-muted);margin-bottom:4px">Feature flags ('+allFlags.length+')</div>'+
+        rowsHtml+'</div>';
+    }
+    det.innerHTML=head+body+flagSec; det.hidden=false;
     var add=det.querySelector('[data-reladd]');
     if(add) add.addEventListener('click', function(e){ e.stopPropagation(); openReleasePicker(id); });
     det.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(){ navigate('/item/'+el.getAttribute('data-open'), false); }); });
@@ -17820,6 +17844,7 @@ if ('serviceWorker' in navigator) {
     }); });
   }
   function renderReleasesTab(host){
+    var admin=_val('isAdmin', false);
     var rels=_releases.slice().sort(function(a,b){ return (a.targetDate||'').localeCompare(b.targetDate||''); });
     var rows=rels.map(function(r){
       var pr=releaseProgress(r);
@@ -17829,7 +17854,11 @@ if ('serviceWorker' in navigator) {
         '<div class="frz-rel-main"><div class="frz-tbl-title">'+esc(r.name)+'</div><div class="frz-tbl-sub">Target '+(r.targetDate?fmtD(r.targetDate):'—')+((r.state==='Released'&&r.releasedDate)?(' · released '+fmtD(r.releasedDate)):'')+'</div></div>'+
         '<div class="frz-rel-state">'+badge+'</div>'+
         '<div class="frz-rel-prog">'+bar+'</div>'+
-        '<div class="frz-rel-actions"><button class="frz-iconbtn" data-reledit="'+escA(r.id)+'" title="Edit"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'+(r.state!=='Released'?'<button class="frz-viewopt" data-relship="'+escA(r.id)+'">Mark released</button>':'')+'</div>'+
+        '<div class="frz-rel-actions"><button class="frz-iconbtn" data-reledit="'+escA(r.id)+'" title="Edit"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'+
+          (r.state!=='Released' ? '<button class="frz-viewopt" data-relship="'+escA(r.id)+'">Mark released</button>'
+                                : (admin ? '<button class="frz-viewopt" data-relreopen="'+escA(r.id)+'">Reopen</button>' : ''))+
+          (admin ? '<button class="frz-iconbtn" data-reldelete="'+escA(r.id)+'" title="Delete release"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>' : '')+
+        '</div>'+
         '<div class="frz-tbl-detail" id="frzRelDetail_'+escA(r.id)+'" hidden></div>'+
       '</div>';
     }).join('');
@@ -17838,9 +17867,11 @@ if ('serviceWorker' in navigator) {
     document.getElementById('frzNewRelease').addEventListener('click', function(){ openReleaseModal(null); });
     host.querySelectorAll('[data-reledit]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); openReleaseModal(releaseById(b.getAttribute('data-reledit'))); }); });
     host.querySelectorAll('[data-relship]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); markReleased(b.getAttribute('data-relship')); }); });
+    host.querySelectorAll('[data-relreopen]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); reopenRelease(b.getAttribute('data-relreopen')); }); });
+    host.querySelectorAll('[data-reldelete]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); deleteRelease(b.getAttribute('data-reldelete')); }); });
     host.querySelectorAll('[data-relrow]').forEach(function(row){
       row.addEventListener('click', function(e){
-        if(e.target.closest('[data-reledit],[data-relship]')) return;
+        if(e.target.closest('[data-reledit],[data-relship],[data-relreopen],[data-reldelete]')) return;
         if(e.target.closest('.frz-tbl-detail')) return;   // clicks inside the open detail never collapse the row
         var id=row.getAttribute('data-relrow'); var det=document.getElementById('frzRelDetail_'+id); if(!det) return;
         if(!det.hidden){ det.hidden=true; det.innerHTML=''; state.releaseId=null; return; }
@@ -17954,6 +17985,32 @@ if ('serviceWorker' in navigator) {
     bg.querySelector('#frzMrCancel').addEventListener('click', close);
     bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
     bg.querySelector('#frzMrSave').addEventListener('click', function(){ close(); doShip(); });
+  }
+  // Reopen a Released release → Unreleased (the escape hatch for a one-way "Mark released").
+  // Admin-only; lifts the 2a.1 membership lock on re-render. Goes through saveReleases (no new write path).
+  function reopenRelease(id){
+    if(!_val('isAdmin', false)) return;
+    var r=releaseById(id); if(!r || r.state!=='Released') return;
+    if(!confirm('Reopen "'+(r.name||'this release')+'"?\n\nThis unlocks membership and clears the released date.')) return;
+    r.state='Unreleased'; delete r.releasedDate;
+    saveReleases(function(){ var body=document.getElementById('frzPlanBody'); if(body && state.planTab==='releases') renderReleasesTab(body); _call('showToast','Release reopened'); });
+  }
+  // Delete a release (any state). Admin-only. Unlinks any linked items first (each unlink logs to
+  // item history via linkItemToRelease), so no orphan p.release refs remain. Confirm-gated.
+  function deleteRelease(id){
+    if(!_val('isAdmin', false)) return;
+    var r=releaseById(id); if(!r) return;
+    var linked=releaseItems(id);
+    var msg='Delete "'+(r.name||'this release')+'"?';
+    if(linked.length) msg+='\n\n'+linked.length+' item'+(linked.length!==1?'s are':' is')+' linked; '+(linked.length!==1?'they':'it')+' will be unlinked.';
+    if(!confirm(msg)) return;
+    var chain=Promise.resolve();
+    linked.forEach(function(p){ chain=chain.then(function(){ return linkItemToRelease(p,'').catch(function(){}); }); });
+    chain.then(function(){
+      _releases=_releases.filter(function(x){ return x.id!==id; });
+      if(state.releaseId===id) state.releaseId=null;
+      return saveReleases(function(){ var body=document.getElementById('frzPlanBody'); if(body && state.planTab==='releases') renderReleasesTab(body); _call('showToast','Release deleted'); });
+    });
   }
   // Inject a Release selector into the item page Details (beta-only; production
   // renderItemPage is not edited). Idempotent — safe to call after re-renders.
