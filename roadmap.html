@@ -2035,7 +2035,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.22';
+const APP_VERSION = '4.9.23';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -8784,6 +8784,84 @@ function descToPlainText(html){
 }
 function _listCell(v){ return esc(v==null||v===''?'—':String(v)); }
 
+// ── List columns: model + per-user ORDER (user-driven reordering) ─────────────
+// Single source of truth for the main #listView table. Each column is a self-contained
+// unit (label + sort key + cell renderer) so its behavior travels when reordered. The
+// multi-select checkbox column is pinned at position 0 and is NOT part of this model.
+const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','priority','owner','assignee','points','sprint','project'];
+const _LIST_COL_DEF = {
+  key:        { label:'Key',         sort:'item_key',
+                td:(it,ctx)=>`<td style="${ctx.firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${ctx.chevron}${_listCell(it.itemKey)}</td>` },
+  type:       { label:'Type',        sort:'type',
+                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${(()=>{ const ic=typeIconHTML(it.type); return ic ? `<span style="display:inline-flex;align-items:center;gap:5px">${ic}${_listCell(it.type)}</span>` : _listCell(it.type); })()}</td>` },
+  name:       { label:'Name',        sort:'name',
+                td:(it)=>`<td style="padding:7px 10px">${_listCell(it.name)} ${getItemActivityIndicator(it.id)}</td>` },
+  description:{ label:'Description',  sort:null,
+                td:(it)=>`<td style="padding:7px 10px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"${(()=>{ const t=descToPlainText(it.description); return t?` title="${escA(t)}">${esc(t)}`:`>—`; })()}</td>` },
+  status:     { label:'Status',      sort:'status',
+                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(it.status)}</span>` : '—'}</td>` },
+  priority:   { label:'Priority',    sort:'priority',
+                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${(it.priority && PRIO_LABELS[it.priority]) ? `<span style="background:${PRIO_COLORS[it.priority]}22;color:${PRIO_COLORS[it.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[it.priority])}</span>` : '—'}</td>` },
+  owner:      { label:'Owner',       sort:'owner',
+                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.dev)}</td>` },
+  assignee:   { label:'Assignee',    sort:'assignee',
+                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.assignee)}</td>` },
+  points:     { label:'Points',      sort:'story_points', center:true,
+                td:(it)=>`<td style="padding:7px 10px;text-align:center">${_listCell(it.storyPoints)}</td>` },
+  sprint:     { label:'Sprint',      sort:'sprint_id',
+                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.sprintId)}</td>` },
+  project:    { label:'Project',     sort:'product',
+                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.product)}</td>` },
+};
+function _listColUser(){ try { return (typeof uname==='function'?uname():'') || localStorage.getItem('frazil_rm_user') || ''; } catch(e){ return ''; } }
+function _listOrderKey(){ return 'frazil_beta_listorder_' + _listColUser(); }   // NEW key, separate from the visibility key
+// Visibility reuses the EXISTING beta set (frazil_beta_listcols_<user>) + its migration, untouched.
+function _listColHiddenSet(){
+  try { if(typeof _migrateListColsDefaults==='function') _migrateListColsDefaults(); } catch(e){}
+  try { return (typeof hiddenListCols==='function') ? hiddenListCols() : new Set(); } catch(e){ return new Set(); }
+}
+function _listColEnabled(id){ return (id==='key'||id==='name') ? true : !_listColHiddenSet().has(id); }
+// Reconciled FULL order (all columns regardless of visibility): saved ∩ existing, with any
+// code-only id (e.g. a future column) inserted at its default index — never dropped.
+function _listColOrderAll(){
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(_listOrderKey())||'null'); } catch(e){ saved=null; }
+  if(!Array.isArray(saved)) saved = _LIST_DEFAULT_ORDER.slice();
+  saved = saved.filter(id => _LIST_COL_DEF[id]);                       // drop ids no longer in code
+  _LIST_DEFAULT_ORDER.forEach((id,i)=>{
+    if(saved.indexOf(id)>=0) return;
+    let pos=0; for(let j=i-1;j>=0;j--){ const p=saved.indexOf(_LIST_DEFAULT_ORDER[j]); if(p>=0){ pos=p+1; break; } }
+    saved.splice(pos,0,id);                                            // insert at default index
+  });
+  return saved;
+}
+let _listColsRenderCache = null;
+function _listEffectiveCols(){ return _listColOrderAll().filter(_listColEnabled); }
+function _listTh(id){
+  const c=_LIST_COL_DEF[id]; if(!c) return '';
+  const base='padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap'+(c.center?';text-align:center':'');
+  return c.sort
+    ? `<th class="list-sort" data-sort="${c.sort}" style="${base};cursor:pointer;user-select:none">${esc(c.label)}<span class="sort-arrow"></span></th>`
+    : `<th style="${base}">${esc(c.label)}</th>`;
+}
+function _renderListHeader(){
+  const hr=document.getElementById('listHeadRow'); if(!hr) return;
+  _listColsRenderCache = _listEffectiveCols();   // snapshot used by the row renderer this pass
+  hr.innerHTML = '<th style="padding:8px 10px;width:32px"><input type="checkbox" id="listSelectAll" title="Select all on this page"></th>'
+    + _listColsRenderCache.map(_listTh).join('');
+}
+function _listColCount(){ return (_listColsRenderCache||_listEffectiveCols()).length + 1; }   // +checkbox col, for colspan
+function _listColMoveBy(id, dir){
+  const order=_listColOrderAll(); const i=order.indexOf(id); if(i<0) return;
+  const j=i+dir; if(j<0||j>=order.length) return;
+  order.splice(j,0,order.splice(i,1)[0]);
+  try { localStorage.setItem(_listOrderKey(), JSON.stringify(order)); } catch(e){}
+  if(typeof renderList==='function') renderList();
+}
+function _listResetColOrder(){
+  try { localStorage.removeItem(_listOrderKey()); } catch(e){}   // ORDER only — visibility key untouched
+  if(typeof renderList==='function') renderList();
+}
 function _listRowHtml(it, depth){
   const tree = _listState.tree;
   const hasKids = tree && (it._childCount||0) > 0;
@@ -8793,20 +8871,12 @@ function _listRowHtml(it, depth){
   const firstPad = `padding:7px 10px;padding-left:${10 + (tree ? depth*18 : 0)}px`;
   const cb = (isAdmin||isEditor)
     ? `<input type="checkbox" class="list-cb" data-id="${it.id}" ${_listSelected.has(it.id)?'checked':''}>` : '';
-  return `<tr class="list-row" data-id="${it.id}" data-depth="${depth}" data-expanded="0" style="cursor:pointer;border-top:1px solid var(--row-sep)">
-    <td class="list-cb-cell" style="padding:7px 10px;width:32px">${cb}</td>
-    <td style="${firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${chevron}${_listCell(it.itemKey)}</td>
-    <td style="padding:7px 10px;white-space:nowrap">${(()=>{ const ic=typeIconHTML(it.type); return ic ? `<span style="display:inline-flex;align-items:center;gap:5px">${ic}${_listCell(it.type)}</span>` : _listCell(it.type); })()}</td>
-    <td style="padding:7px 10px">${_listCell(it.name)} ${getItemActivityIndicator(it.id)}</td>
-    <td style="padding:7px 10px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"${(()=>{ const t=descToPlainText(it.description); return t?` title="${escA(t)}">${esc(t)}`:`>—`; })()}</td>
-    <td style="padding:7px 10px;white-space:nowrap">${it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(it.status)}</span>` : '—'}</td>
-    <td style="padding:7px 10px;white-space:nowrap">${(it.priority && PRIO_LABELS[it.priority]) ? `<span style="background:${PRIO_COLORS[it.priority]}22;color:${PRIO_COLORS[it.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[it.priority])}</span>` : '—'}</td>
-    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.dev)}</td>
-    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.assignee)}</td>
-    <td style="padding:7px 10px;text-align:center">${_listCell(it.storyPoints)}</td>
-    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.sprintId)}</td>
-    <td style="padding:7px 10px;white-space:nowrap">${_listCell(it.product)}</td>
-  </tr>`;
+  const ctx = { chevron, firstPad, depth, tree };
+  const cols = _listColsRenderCache || _listEffectiveCols();
+  return `<tr class="list-row" data-id="${it.id}" data-depth="${depth}" data-expanded="0" style="cursor:pointer;border-top:1px solid var(--row-sep)">`
+    + `<td class="list-cb-cell" style="padding:7px 10px;width:32px">${cb}</td>`
+    + cols.map(id => _LIST_COL_DEF[id].td(it, ctx)).join('')
+    + `</tr>`;
 }
 
 async function renderList(){
@@ -8814,20 +8884,22 @@ async function renderList(){
   const body = document.getElementById('listBody');
   const countEl = document.getElementById('listCount');
   if(!body) return;
+  _renderListHeader();   // model-driven header (saved order ∩ enabled); snapshots cols for the rows
+  const colspan = _listColCount();
   _listSelected.clear();
-  body.innerHTML = `<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>`;
+  body.innerHTML = `<tr><td colspan="${colspan}" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>`;
   let data;
   const url = '/api/items?' + _listQuery() + (tree ? '&parent_id=none&counts=1' : '');
   try { data = await API.get(url); }
   catch(e){
-    body.innerHTML = `<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--accent2)">${esc(e.message||'Failed to load')}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="${colspan}" style="padding:24px;text-align:center;color:var(--accent2)">${esc(e.message||'Failed to load')}</td></tr>`;
     return;
   }
   const items = data.items || [];
   if(countEl) countEl.textContent = `${data.total} ${tree?'top-level ':''}item${data.total!==1?'s':''}`;
   body.innerHTML = items.length
     ? items.map(it => _listRowHtml(it, 0)).join('')
-    : `<tr><td colspan="10" style="padding:24px;text-align:center;color:var(--muted)">No matching items.</td></tr>`;
+    : `<tr><td colspan="${colspan}" style="padding:24px;text-align:center;color:var(--muted)">No matching items.</td></tr>`;
   const sa = document.getElementById('listSelectAll'); if(sa) sa.checked = false;
   _updateSortIndicators();
   updateBulkBar();
@@ -8946,7 +9018,10 @@ document.getElementById('listBody')?.addEventListener('change', e=>{
   if(cb.checked) _listSelected.add(id); else _listSelected.delete(id);
   updateBulkBar();
 });
-document.getElementById('listSelectAll')?.addEventListener('change', e=>{
+// Delegated on the stable #listHeadRow so it survives header regeneration (the #listSelectAll
+// input is recreated on every _renderListHeader()).
+document.getElementById('listHeadRow')?.addEventListener('change', e=>{
+  if(!e.target || e.target.id !== 'listSelectAll') return;
   const on = e.target.checked;
   document.querySelectorAll('#listBody .list-cb').forEach(cb=>{
     cb.checked = on; const id = parseInt(cb.dataset.id);
@@ -17366,28 +17441,48 @@ if ('serviceWorker' in navigator) {
     } catch(e){}
   }
   function applyListCols(){
+    // Visibility + ORDER are now applied by render-omission in the model-driven header/rows
+    // (_renderListHeader + _listRowHtml). Keep the visibility migration; retire the old
+    // nth-child hiding (it can't express reordering and would mis-target omitted columns).
     _migrateListColsDefaults();
-    var hidden=hiddenListCols();
-    var css=LIST_COLS.filter(function(c){ return hidden.has(c.key); }).map(function(c){
-      return '#listView th:nth-child('+c.idx+'),#listView td:nth-child('+c.idx+'){display:none}';
-    }).join('');
-    var st=document.getElementById('frzListColStyle');
-    if(!st){ st=document.createElement('style'); st.id='frzListColStyle'; document.head.appendChild(st); }
-    st.textContent=css;
+    var st=document.getElementById('frzListColStyle'); if(st) st.textContent='';
+    if(typeof _renderListHeader==='function') _renderListHeader();
   }
   function openListColsPop(anchor){
-    var hidden=hiddenListCols();
     openPop(anchor, function(pop){
-      pop.style.minWidth='168px';
-      LIST_COLS.forEach(function(c){
-        var lab=document.createElement('label'); lab.className='frz-pop-opt'; lab.style.cursor='pointer';
-        lab.innerHTML='<input type="checkbox" '+(hidden.has(c.key)?'':'checked')+' style="margin-right:8px;accent-color:var(--frz-accent)"> '+esc(c.label);
-        lab.querySelector('input').addEventListener('change', function(){
-          var h=hiddenListCols(); if(this.checked) h.delete(c.key); else h.add(c.key);
-          lset(_listColsKey(), JSON.stringify(Array.from(h))); applyListCols();
+      pop.style.minWidth='234px';
+      function draw(){
+        pop.innerHTML='';
+        var order=_listColOrderAll();         // full order incl. Key/Name + hidden optionals (they hold their slot)
+        var hidden=hiddenListCols();
+        order.forEach(function(id, idx){
+          var def=_LIST_COL_DEF[id]; if(!def) return;
+          var always=(id==='key'||id==='name');
+          var enabled=always || !hidden.has(id);
+          var row=document.createElement('div'); row.className='frz-pop-opt';
+          row.style.cssText='display:flex;align-items:center;gap:6px;cursor:default';
+          var up=document.createElement('button'); up.className='frz-iconbtn'; up.type='button'; up.textContent='↑'; up.title='Move up'; up.disabled=(idx===0);
+          var dn=document.createElement('button'); dn.className='frz-iconbtn'; dn.type='button'; dn.textContent='↓'; dn.title='Move down'; dn.disabled=(idx===order.length-1);
+          up.addEventListener('click', function(e){ e.stopPropagation(); _listColMoveBy(id,-1); draw(); });
+          dn.addEventListener('click', function(e){ e.stopPropagation(); _listColMoveBy(id, 1); draw(); });
+          var cb=document.createElement('input'); cb.type='checkbox'; cb.checked=enabled; cb.style.accentColor='var(--frz-accent)';
+          if(always){ cb.disabled=true; cb.title='Always shown'; }
+          else cb.addEventListener('change', function(){
+            var h=hiddenListCols(); if(cb.checked) h.delete(id); else h.add(id);
+            lset(_listColsKey(), JSON.stringify(Array.from(h)));   // visibility key (unchanged behavior)
+            if(typeof renderList==='function') renderList(); draw();
+          });
+          var lab=document.createElement('span'); lab.textContent=def.label; lab.style.flex='1'; lab.style.fontSize='12.5px';
+          row.appendChild(up); row.appendChild(dn); row.appendChild(cb); row.appendChild(lab);
+          pop.appendChild(row);
         });
-        pop.appendChild(lab);
-      });
+        var reset=document.createElement('button'); reset.type='button'; reset.className='frz-pop-opt';
+        reset.textContent='Reset order';
+        reset.style.cssText='display:block;width:100%;text-align:left;cursor:pointer;color:var(--frz-text-muted);font-size:11.5px;border-top:1px solid var(--frz-border);margin-top:4px;padding-top:6px';
+        reset.addEventListener('click', function(e){ e.stopPropagation(); _listResetColOrder(); draw(); });   // ORDER only
+        pop.appendChild(reset);
+      }
+      draw();
     });
   }
   // ── List CSV export ───────────────────────────────────────────────────────
@@ -17415,9 +17510,10 @@ if ('serviceWorker' in navigator) {
       return ['key','name','type','status','priority','owner','assignee','points','sprint','project','description'].map(function(k){ return D[k]; });
     }
     var hidden=hiddenListCols();
-    // table display order by nth-child: Key,Type,Name,Description,Status,Priority,Owner,Assignee,Points,Sprint,Project
-    var order=['key','type','name','description','status','priority','owner','assignee','points','sprint','project'];
-    return order.filter(function(k){ return (k==='key'||k==='name') ? true : !hidden.has(k); }).map(function(k){ return D[k]; });
+    // Follow the user's live display order (same source as the table). Fallback to default order.
+    var order=(typeof _listColOrderAll==='function') ? _listColOrderAll()
+            : ['key','type','name','description','status','priority','owner','assignee','points','sprint','project'];
+    return order.filter(function(k){ return (k==='key'||k==='name') ? true : !hidden.has(k); }).map(function(k){ return D[k]; }).filter(Boolean);
   }
   function _csvCell(v){ var s=(v==null)?'':String(v); return /[",\r\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; }
   function _buildCSV(cols, rows){
