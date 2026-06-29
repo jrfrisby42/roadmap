@@ -2035,7 +2035,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.21';
+const APP_VERSION = '4.9.22';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -15144,6 +15144,9 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-viewopt { border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); font:inherit; font-size:12.5px; font-weight:600; color:var(--frz-text-secondary); display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:var(--frz-radius-control); cursor:pointer; white-space:nowrap; }
   .frz-beta .frz-viewopt:hover { border-color:var(--frz-accent); color:var(--frz-accent); }
   .frz-beta .frz-viewopt svg { width:13px; height:13px; }
+  /* Gantt inline legend (shown only when measured to fit; else the Legend popover button) */
+  .frz-beta .frz-gantt-legend { display:inline-flex; align-items:center; gap:14px; flex:0 0 auto; margin:0 6px 0 10px; white-space:nowrap; overflow:hidden; }
+  .frz-beta .frz-gleg-item { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; color:var(--frz-text-secondary); white-space:nowrap; }
   /* Stage 3: segmented top view control (Gantt·Kanban·List). Sits at the left of the filter
      bar; reflects the URL's view, reuses data-nav for switching. Subtle active-segment
      transition, disabled under prefers-reduced-motion. */
@@ -16268,6 +16271,7 @@ if ('serviceWorker' in navigator) {
     html += '<span class="frz-spacer"></span>';
     html += cfg.opts.map(optHTML).join('');
     bar.innerHTML = html;
+    _frzSyncGanttLegend();   // Gantt: show inline legend if it fits, else keep the Legend button
   }
   // Fix 3: reset every CHIP in the current view to All (owner/type/status/assignee + range if shown),
   // reusing the per-chip clear path. Does NOT touch project (rail-controlled) or the view. Clearing
@@ -16289,6 +16293,52 @@ if ('serviceWorker' in navigator) {
     if (o==='groupby'){ var gb=document.getElementById('groupBy'); var cur=gb?(gb.options[gb.selectedIndex]||{}).text:'Owner'; label='Group by: '+(cur||'Owner'); }
     var activeStyle = (o==='hideEmpty' && _betaHideEmpty) ? ' style="border-color:var(--frz-accent);color:var(--frz-accent)"' : '';
     return '<button class="frz-viewopt" data-opt="'+o+'"'+activeStyle+'>'+esc(label)+'</button>';
+  }
+  // ── Gantt inline legend (space-permitting; popover button fallback) ──────────
+  // Reuses the SAME swatch/glyph elements as the popover (cloned from #ganttLegend .leg-item),
+  // with condensed labels. Shown only when MEASURED free space in the filter row fits it;
+  // otherwise the Legend button stays. Mutually exclusive, never wraps/overflows.
+  var _ganttLegendOn=false, _ganttLegRO=null;
+  function _frzInlineLegendEl(){
+    var src=document.getElementById('ganttLegend');
+    var wrap=document.createElement('div'); wrap.id='frzGanttLegend'; wrap.className='frz-gantt-legend';
+    if(!src) return wrap;
+    var LABELS=['Plan','Test','Delay','Expected','Release','Today'];
+    var items=[].slice.call(src.querySelectorAll('.leg-item')).filter(function(el){ return el.tagName!=='BUTTON'; }).slice(0,6);
+    items.forEach(function(item,i){
+      var cell=document.createElement('span'); cell.className='frz-gleg-item';
+      var sw=item.firstElementChild; if(sw) cell.appendChild(sw.cloneNode(true));   // reuse the exact swatch/glyph
+      cell.appendChild(document.createTextNode(LABELS[i]||''));
+      if(i===5) cell.style.color='var(--today-line)';   // Today keeps its accent, like the popover
+      wrap.appendChild(cell);
+    });
+    return wrap;
+  }
+  function _frzSyncGanttLegend(){
+    var bar=document.getElementById('frzFilterBar'); if(!bar) return;
+    if(!_ganttLegRO && typeof ResizeObserver!=='undefined'){   // re-evaluate on width changes (viewport, rail collapse)
+      _ganttLegRO=new ResizeObserver(function(){ _frzSyncGanttLegend(); }); _ganttLegRO.observe(bar);
+    }
+    var legendBtn=bar.querySelector('[data-opt="legend"]');
+    var existing=bar.querySelector('#frzGanttLegend');
+    if(state.view!=='gantt' || state.onItem || !legendBtn){ if(existing) existing.remove(); _ganttLegendOn=false; return; }
+    var spacer=bar.querySelector('.frz-spacer'); if(!spacer) return;
+    // Reset to the canonical baseline (Legend button visible, NO inline legend) so the measured
+    // gap is independent of the legend's own presence — otherwise "available" would include the
+    // legend's width (circular) and it could never retreat when the row shrinks.
+    if(existing) existing.remove();
+    legendBtn.style.display='';
+    var avail = spacer.offsetWidth + legendBtn.offsetWidth;   // free gap if the button were removed
+    var m=_frzInlineLegendEl(); m.style.position='absolute'; m.style.visibility='hidden'; m.style.left='-9999px';
+    bar.appendChild(m); var FOOT=m.offsetWidth+16; bar.removeChild(m);   // footprint incl. ~16px margins
+    var threshold = _ganttLegendOn ? FOOT : (FOOT + 24);       // hysteresis: +24 to switch ON, exact footprint to fall OFF
+    if(avail >= threshold){
+      legendBtn.style.display='none';
+      bar.insertBefore(_frzInlineLegendEl(), spacer);
+      _ganttLegendOn=true;
+    } else {
+      _ganttLegendOn=false;   // baseline already restored (button shown, no inline)
+    }
   }
 
   // ════════ apply filters to the production panels + URL ════════
