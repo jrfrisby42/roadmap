@@ -2035,7 +2035,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.23';
+const APP_VERSION = '4.9.24';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -8795,7 +8795,12 @@ const _LIST_COL_DEF = {
   type:       { label:'Type',        sort:'type',
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${(()=>{ const ic=typeIconHTML(it.type); return ic ? `<span style="display:inline-flex;align-items:center;gap:5px">${ic}${_listCell(it.type)}</span>` : _listCell(it.type); })()}</td>` },
   name:       { label:'Name',        sort:'name',
-                td:(it)=>`<td style="padding:7px 10px">${_listCell(it.name)} ${getItemActivityIndicator(it.id)}</td>` },
+                // inline-flex + align-items:center centers the trailing AC dot on the name's line-box;
+                // the text's OPTICAL (cap-height) center is ~1.2px higher, so the dot read +1.23px low.
+                // Nudge it up 1.2px (consistent across rows) — wrapped only when a dot exists so names
+                // without one get no stray gap. List-scoped; the shared AC helper is untouched.
+                td:(it)=>{ const ac=getItemActivityIndicator(it.id);
+                  return `<td style="padding:7px 10px"><span style="display:inline-flex;align-items:center;gap:5px">${_listCell(it.name)}${ac?`<span style="display:inline-flex;transform:translateY(-1.2px)">${ac}</span>`:''}</span></td>`; } },
   description:{ label:'Description',  sort:null,
                 td:(it)=>`<td style="padding:7px 10px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"${(()=>{ const t=descToPlainText(it.description); return t?` title="${escA(t)}">${esc(t)}`:`>—`; })()}</td>` },
   status:     { label:'Status',      sort:'status',
@@ -8816,9 +8821,11 @@ const _LIST_COL_DEF = {
 function _listColUser(){ try { return (typeof uname==='function'?uname():'') || localStorage.getItem('frazil_rm_user') || ''; } catch(e){ return ''; } }
 function _listOrderKey(){ return 'frazil_beta_listorder_' + _listColUser(); }   // NEW key, separate from the visibility key
 // Visibility reuses the EXISTING beta set (frazil_beta_listcols_<user>) + its migration, untouched.
+// The beta module is an IIFE, so those functions are NOT global — the shell exposes them on
+// window (_frzHiddenListCols / _frzMigrateListCols). Reading them here makes render match the picker.
 function _listColHiddenSet(){
-  try { if(typeof _migrateListColsDefaults==='function') _migrateListColsDefaults(); } catch(e){}
-  try { return (typeof hiddenListCols==='function') ? hiddenListCols() : new Set(); } catch(e){ return new Set(); }
+  try { if(typeof window._frzMigrateListCols === 'function') window._frzMigrateListCols(); } catch(e){}
+  try { return (typeof window._frzHiddenListCols === 'function') ? window._frzHiddenListCols() : new Set(); } catch(e){ return new Set(); }
 }
 function _listColEnabled(id){ return (id==='key'||id==='name') ? true : !_listColHiddenSet().has(id); }
 // Reconciled FULL order (all columns regardless of visibility): saved ∩ existing, with any
@@ -17440,6 +17447,9 @@ if ('serviceWorker' in navigator) {
       lset(key, JSON.stringify(Array.from(set))); lset(seenKey, '1');
     } catch(e){}
   }
+  // Expose to the first script (this module is an IIFE, so its functions aren't global).
+  // The model-driven List render (_listColEnabled) reads visibility through these.
+  try { window._frzHiddenListCols = hiddenListCols; window._frzMigrateListCols = _migrateListColsDefaults; } catch(e){}
   function applyListCols(){
     // Visibility + ORDER are now applied by render-omission in the model-driven header/rows
     // (_renderListHeader + _listRowHtml). Keep the visibility migration; retire the old
