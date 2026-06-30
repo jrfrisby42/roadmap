@@ -15834,6 +15834,7 @@ if ('serviceWorker' in navigator) {
   /* ════════ Mobile companion — Phase 1: app shell (chrome). Phone ≤640px, scoped .frz-beta, no !important. ════════ */
   .frz-beta .frz-botnav { display:none; }
   .frz-beta .frz-fab { display:none; }
+  .frz-beta .frz-gantt-nudge { display:none; }
   @media (max-width:640px){
     /* Top bar: shed the wide right cluster so the row fits a phone. Search → bottom-nav
        overlay; New item → FAB; secondary badges off. */
@@ -15889,6 +15890,15 @@ if ('serviceWorker' in navigator) {
     .frz-beta .lc-name { font-size:14px; font-weight:700; color:var(--frz-text); line-height:1.3; }
     .frz-beta .lc-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; color:var(--frz-text-muted); }
     .frz-beta .lc-meta-left { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+    /* Gantt (Phase 5): the timeline is desk work (classic even hides it on mobile). Keep it
+       scrollable but show a nudge to the List, which carries the same items as cards. */
+    .frz-beta[data-view="gantt"]:not(.on-item) .frz-gantt-nudge {
+      display:flex; align-items:center; gap:10px; justify-content:space-between;
+      margin:10px 12px 0; padding:9px 13px; background:var(--frz-accent-soft);
+      border:1px solid var(--frz-accent-soft-border); border-radius:10px; font-size:12.5px; color:var(--frz-text);
+    }
+    .frz-beta .frz-gn-btn { border:0; background:var(--frz-accent); color:#fff; font:inherit; font-size:12px; font-weight:700; padding:6px 12px; border-radius:7px; white-space:nowrap; cursor:pointer; }
 
     /* Kanban (Phase 4): columns are already ~85vw on mobile; add scroll-snap so swiping
        lands one column at a time, and clear the bottom nav. */
@@ -16112,6 +16122,8 @@ if ('serviceWorker' in navigator) {
           '</div>'+
         '</header>'+
         '<div class="frz-filterbar" id="frzFilterBar"></div>'+
+        // Mobile companion (Phase 5): phone-only nudge shown on Gantt (timeline is desk work).
+        '<div class="frz-gantt-nudge" id="frzGanttNudge"><span>Timeline view is best on a larger screen.</span><button class="frz-gn-btn" id="frzGanttList" type="button">Open as List</button></div>'+
         '<div class="frz-content" id="frzContent"><div class="frz-scrim" id="frzScrim"></div></div>'+
       '</div>'+
       // Mobile companion (Phase 1): bottom tab bar + FAB. Hidden >640px via CSS.
@@ -17301,6 +17313,9 @@ if ('serviceWorker' in navigator) {
     if(bn){ [].slice.call(bn.querySelectorAll('.frz-botnav-item[data-nav]')).forEach(function(b){
       b.classList.toggle('is-active', !state.onItem && b.getAttribute('data-nav')==='view:'+state.view);
     }); }
+    // Mobile companion (Phase 5): mark the current view on root so phone CSS can show the
+    // Gantt "open as List" nudge only on Gantt.
+    if(root) root.setAttribute('data-view', state.onItem ? 'item' : (state.view||''));
     // Fix 2: rail BOARDS highlight is part of the view sync — exactly one lit on a Kanban URL
     // (the active board, or "All statuses" when there's no board param).
     var bnav=document.getElementById('frzBoardNav');
@@ -17500,6 +17515,8 @@ if ('serviceWorker' in navigator) {
     }); }
     // Bottom-nav More → open the rail drawer (overlays at narrow widths).
     var bmore=document.getElementById('frzBotMore'); if(bmore){ bmore.addEventListener('click', function(){ setCollapsed(false,false); }); }
+    // Phase 5: Gantt nudge → open the same scope as a List.
+    var gl=document.getElementById('frzGanttList'); if(gl){ gl.addEventListener('click', function(){ navigate('/list'+_frzCarryQS(true), false); }); }
     // On phone, tapping any rail destination closes the drawer (the collapse toggle is excluded).
     var railEl=root.querySelector('.frz-rail');
     if(railEl){ railEl.addEventListener('click', function(e){
