@@ -9323,7 +9323,7 @@ function renderDashboard(){
   }).join('');
 
   const row3 = dashSection('Pipeline Snapshot', `${nonTerminal.length} in pipeline · ${terminalItems.length} completed`) +
-    `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    `<div class="dash-2col" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px">
         <div style="font-size:11px;font-weight:900;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px">By Status</div>
         ${statusBars||'<div style="color:var(--muted)">No data</div>'}
@@ -15889,6 +15889,16 @@ if ('serviceWorker' in navigator) {
     .frz-beta .lc-name { font-size:14px; font-weight:700; color:var(--frz-text); line-height:1.3; }
     .frz-beta .lc-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; color:var(--frz-text-muted); }
     .frz-beta .lc-meta-left { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+    /* Kanban (Phase 4): columns are already ~85vw on mobile; add scroll-snap so swiping
+       lands one column at a time, and clear the bottom nav. */
+    .frz-beta #kanbanBoard { scroll-snap-type:x mandatory; padding-bottom:72px; }
+    .frz-beta .kanban-col { scroll-snap-align:start; }
+
+    /* Dashboard (Phase 4): stack the two-up Pipeline Snapshot; let wide tables scroll. */
+    .frz-beta #dashboardView .dash-2col { grid-template-columns:1fr !important; }
+    .frz-beta #dashboardView table { display:block; overflow-x:auto; white-space:nowrap; }
+    .frz-beta #dashboardView { padding-bottom:72px; }
 
     /* Bottom tab bar — primary mobile navigation. */
     .frz-beta .frz-botnav {
