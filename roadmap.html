@@ -2035,7 +2035,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.25';
+const APP_VERSION = '4.9.26';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16993,9 +16993,10 @@ if ('serviceWorker' in navigator) {
     lset('frazil_beta_lastview_'+uname(), vm[1]);
     if (vm[1]!=='my-home') rerender();   // My Home renders itself
     _frzSeedActiveFromURL();   // Fix 1: cold load — seed the saved-filter anchor from URL-match (single, most-specific)
+    _frzSyncPanelFromURL();   // List detail panel: restore BEFORE syncURL so the emit preserves ?panel= on cold load
+                              // (frzOpenPanel({fromURL}) sets state.panelId without writing the URL). Was after syncURL → stripped.
     syncURL(true);   // Stage 1: canonicalize (writes the resolved ?project + carried params); replaces, like the prior replaceState
-    _frzSyncPanelFromURL();   // List detail panel: open/close to match ?panel (load + deep link)
-    _frzSyncReleaseFromURL();   // Stage 1b: expand/collapse the release to match ?release (load + deep link)
+    _frzSyncReleaseFromURL();   // Stage 1b: expand/collapse the release to match ?release (release is seeded earlier in the planning branch)
   }
   window.addEventListener('popstate', function(e){
     if (!root) return;
