@@ -15821,6 +15821,9 @@ if ('serviceWorker' in navigator) {
     .frz-beta .frz-topbar .frz-search { display:none; }
     .frz-beta .frz-newitem { display:none; }
     .frz-beta .frz-badges { display:none; }
+    .frz-beta.on-item .frz-badges { display:flex; }   /* keep Watch/Flag reachable on the item page */
+    .frz-beta.on-item .frz-crumbs { display:none; }   /* redundant on phone (Back + title + Details cover it); frees room for Watch/Flag */
+    .frz-beta #ipNotes { min-height:200px !important; }   /* desktop forces 440px (focal point); too tall on a phone. !important matches the base rule it overrides. */
     .frz-beta .frz-title { font-size:14px; }
     .frz-beta .frz-crumbs .frz-crumb-name { max-width:42vw; }
 
