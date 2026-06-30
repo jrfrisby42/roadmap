@@ -2035,7 +2035,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.9.24';
+const APP_VERSION = '4.9.25';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16452,6 +16452,7 @@ if ('serviceWorker' in navigator) {
     });
     if (view==='kanban' && state.board && state.board!=='__all__') params.set('board', state.board);  // board is URL state
     if (view==='list' && state.panelId!=null) params.set('panel', state.panelId);   // List detail panel is URL state
+    if (view==='planning' && state.planTab==='releases' && state.releaseId) params.set('release', state.releaseId);  // Stage 1b: expanded release is URL state (ids are strings)
     // Stage 1 (+ all-projects fix): project is global URL state, emitted ALWAYS incl
     // '__all__'. Encoding "all" as the ABSENCE of a param was ambiguous with a plain nav
     // (use the ls default), so a saved "All projects" filter couldn't override a specific
@@ -16980,7 +16981,11 @@ if ('serviceWorker' in navigator) {
       return;
     }
     if (vm[1]==='kanban' && _val('isViewer', false)){ navigate('/gantt', true); return; }   // viewers can't see Kanban
-    if (vm[1]==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
+    if (vm[1]==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
+      // Stage 1b fix: seed state.releaseId from ?release= HERE, before rerender + the first syncURL
+      // emit — otherwise syncURL writes a release-less URL (stripping the param) before the restore
+      // reads it. With it set, syncURL preserves ?release= and renderReleasesTab auto-expands the row.
+      state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }
     if (vm[1]==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
     applyDefaultCollapse(vm[1]);
     applyURLToFilters(vm[1], new URLSearchParams(location.search));
@@ -16990,6 +16995,7 @@ if ('serviceWorker' in navigator) {
     _frzSeedActiveFromURL();   // Fix 1: cold load — seed the saved-filter anchor from URL-match (single, most-specific)
     syncURL(true);   // Stage 1: canonicalize (writes the resolved ?project + carried params); replaces, like the prior replaceState
     _frzSyncPanelFromURL();   // List detail panel: open/close to match ?panel (load + deep link)
+    _frzSyncReleaseFromURL();   // Stage 1b: expand/collapse the release to match ?release (load + deep link)
   }
   window.addEventListener('popstate', function(e){
     if (!root) return;
@@ -16999,7 +17005,8 @@ if ('serviceWorker' in navigator) {
       var path = location.pathname.replace(/\/+$/,'');
       var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home)/);
       var view = vm? vm[1] : (st.frzView || state.view);
-      if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
+      if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
+        state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }   // Stage 1b: seed before rerender (popstate doesn't syncURL, but keep symmetric + avoids a stale-expand flash)
       if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
       applyURLToFilters(view, new URLSearchParams(location.search));
       setView(view);
@@ -17007,6 +17014,7 @@ if ('serviceWorker' in navigator) {
       _frzSeedActiveFromURL();   // Fix 1: back/forward is a cold landing — reseed the anchor from the URL
       _frzRefreshActiveSaved();  // apply the reseeded highlight/crumb (popstate doesn't run syncURL)
       _frzSyncPanelFromURL();   // List detail panel: open/close to match ?panel on back/forward (no new listener)
+      _frzSyncReleaseFromURL();   // Stage 1b: expand/collapse the release to match ?release on back/forward
     }
   });
 
@@ -18228,11 +18236,18 @@ if ('serviceWorker' in navigator) {
     allFlags=Object.keys(allFlags.reduce(function(m,f){ m[f]=1; return m; },{})).sort();
     var flagSec='';
     if(allFlags.length){
+      // E2: link EVERY flag to the feature-flag console (FF_BASE_URL + flag). The link target is
+      // the console, not Jira — so source (manual vs jiraFeatureFlags) is irrelevant, and links keep
+      // working after the Jira sync goes away. A mistyped flag just lands on a console "not found".
+      var FF_BASE=_val('FF_BASE_URL','');
       var rowsHtml=allFlags.map(function(f){
         var src=items.filter(function(p){ return (p.featureFlags||[]).indexOf(f)>=0; });
         var attr=src.map(function(p){ var k=p.itemKey||('#'+p.id);
           return '<span title="'+escA(p.name||'')+'" style="background:var(--frz-accent-soft);color:var(--frz-text-secondary);border-radius:4px;padding:1px 6px;margin-left:5px;font-size:11px;font-weight:600">'+esc(k)+'</span>'; }).join('');
-        return '<div style="display:flex;align-items:center;flex-wrap:wrap;padding:3px 0;font-size:13px"><span style="font-weight:700;color:var(--frz-accent)">'+esc(f)+'</span>'+attr+'</div>';
+        var flagLabel = FF_BASE
+          ? '<a href="'+escA(FF_BASE+encodeURIComponent(f))+'" target="_blank" rel="noopener" style="font-weight:700;color:var(--frz-accent);text-decoration:none">'+esc(f)+'</a>'
+          : '<span style="font-weight:700;color:var(--frz-accent)">'+esc(f)+'</span>';
+        return '<div style="display:flex;align-items:center;flex-wrap:wrap;padding:3px 0;font-size:13px">'+flagLabel+attr+'</div>';
       }).join('');
       flagSec='<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--frz-border)">'+
         '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--frz-text-muted);margin-bottom:4px">Feature flags ('+allFlags.length+')</div>'+
@@ -18329,13 +18344,29 @@ if ('serviceWorker' in navigator) {
         if(e.target.closest('[data-reledit],[data-relship],[data-relreopen],[data-reldelete]')) return;
         if(e.target.closest('.frz-tbl-detail')) return;   // clicks inside the open detail never collapse the row
         var id=row.getAttribute('data-relrow'); var det=document.getElementById('frzRelDetail_'+id); if(!det) return;
-        if(!det.hidden){ det.hidden=true; det.innerHTML=''; state.releaseId=null; return; }
-        state.releaseId=id;            // in-memory only (Stage 1b mirrors this into ?release=)
-        fillReleaseDetail(id, det);
+        if(!det.hidden){ det.hidden=true; det.innerHTML=''; state.releaseId=null; syncURL(true); return; }   // Stage 1b: drop ?release=
+        state.releaseId=id;            // Stage 1b: mirrored into ?release= via syncURL (replace, like ?panel=)
+        fillReleaseDetail(id, det); syncURL(true);
       });
     });
     // Re-open the tracked release after a re-render (add/remove) so the user stays expanded.
     if(state.releaseId){ var od=document.getElementById('frzRelDetail_'+state.releaseId); if(od) fillReleaseDetail(state.releaseId, od); }
+  }
+  // Stage 1b — URL ↔ expanded release: expand/collapse to MATCH ?release= (no history write).
+  // Mirrors _frzSyncPanelFromURL; called by routeFromLocation (load/deep-link) + popstate
+  // (back/forward). Release ids are STRINGS; an invalid/old id no-ops gracefully.
+  function _frzReleaseCollapseOpen(){
+    if(state.releaseId){ var od=document.getElementById('frzRelDetail_'+state.releaseId); if(od){ od.hidden=true; od.innerHTML=''; } state.releaseId=null; }
+  }
+  function _frzSyncReleaseFromURL(){
+    if(state.view!=='planning' || state.planTab!=='releases'){ _frzReleaseCollapseOpen(); return; }
+    var rid=new URLSearchParams(location.search).get('release');
+    if(rid && releaseById(rid)){
+      if(rid!==state.releaseId){ _frzReleaseCollapseOpen(); state.releaseId=rid; }
+      var d=document.getElementById('frzRelDetail_'+rid); if(d && d.hidden) fillReleaseDetail(rid, d);
+    } else {
+      _frzReleaseCollapseOpen();   // no/invalid ?release= → ensure nothing stale stays expanded
+    }
   }
   function openReleaseModal(rel){
     closePop();
