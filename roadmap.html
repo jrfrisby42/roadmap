@@ -15810,6 +15810,70 @@ if ('serviceWorker' in navigator) {
   body.dark-mode .frz-beta .rte-box .frz-panel[data-variant=warning] { background:#3d3115 !important; border-color:#6b5a2c; }
   body.dark-mode .frz-beta .rte-box .frz-panel[data-variant=danger]  { background:#3d1a1c !important; border-color:#6b2f33; }
   body.dark-mode .frz-beta .rte-box .frz-panel[data-variant=purple]  { background:#2a2042 !important; border-color:#4d3d7a; }
+
+  /* ════════ Mobile companion — Phase 1: app shell (chrome). Phone ≤640px, scoped .frz-beta, no !important. ════════ */
+  .frz-beta .frz-botnav { display:none; }
+  .frz-beta .frz-fab { display:none; }
+  @media (max-width:640px){
+    /* Top bar: shed the wide right cluster so the row fits a phone. Search → bottom-nav
+       overlay; New item → FAB; secondary badges off. */
+    .frz-beta .frz-topbar { padding:0 8px; gap:6px; }
+    .frz-beta .frz-topbar .frz-search { display:none; }
+    .frz-beta .frz-newitem { display:none; }
+    .frz-beta .frz-badges { display:none; }
+    .frz-beta .frz-title { font-size:14px; }
+    .frz-beta .frz-crumbs .frz-crumb-name { max-width:42vw; }
+
+    /* The bottom nav replaces the rail on phone: hide the rail, give content the full
+       width, and let "More" (setCollapsed(false)) open the rail as an overlay drawer. */
+    .frz-beta, .frz-beta.frz-narrow, .frz-beta.is-collapsed { grid-template-columns:1fr; }
+    .frz-beta .frz-rail { display:none; }
+    .frz-beta:not(.is-collapsed) .frz-rail {
+      display:flex; position:fixed; top:0; bottom:0; left:0; width:var(--frz-rail-w); max-width:84vw; z-index:90;
+      box-shadow:8px 0 28px rgba(20,40,63,.28);
+    }
+    .frz-beta .frz-scrim { inset:0; z-index:85; }
+
+    /* Search opened from the bottom nav: full-width overlay pinned to the top bar. */
+    .frz-beta.frz-search-open .frz-topbar .frz-search {
+      display:inline-flex; position:fixed; top:0; left:0; right:0; width:auto; height:var(--frz-topbar-h);
+      border:0; border-bottom:1px solid var(--frz-border); border-radius:0; z-index:120;
+      padding:0 12px; background:var(--frz-bg-surface); box-shadow:0 6px 18px rgba(20,40,63,.14);
+    }
+    .frz-beta.frz-search-open .frz-search-results { left:8px; right:8px; width:auto; max-width:none; }
+
+    /* Notification inbox → full-width sheet under the top bar. */
+    .frz-beta .frz-notif { position:fixed; top:calc(var(--frz-topbar-h) + 6px); left:8px; right:8px; width:auto; max-height:75vh; }
+
+    /* Beta modals → bottom sheet. */
+    .frz-beta .frz-modal-bg { padding:0; align-items:flex-end; }
+    .frz-beta .frz-modal { width:100%; max-width:100%; max-height:92vh; border-radius:16px 16px 0 0; }
+
+    /* Reserve room for the bottom nav so content isn't covered. */
+    .frz-beta .frz-content { padding-bottom:60px; }
+
+    /* Bottom tab bar — primary mobile navigation. */
+    .frz-beta .frz-botnav {
+      display:flex; position:fixed; left:0; right:0; bottom:0; z-index:50; height:56px;
+      background:var(--frz-bg-surface); border-top:1px solid var(--frz-border);
+      padding-bottom:env(safe-area-inset-bottom,0);
+    }
+    .frz-beta .frz-botnav-item {
+      flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+      border:0; background:none; cursor:pointer; color:var(--frz-text-muted); font:inherit; font-size:10.5px; font-weight:600; min-height:44px;
+    }
+    .frz-beta .frz-botnav-item svg { width:21px; height:21px; }
+    .frz-beta .frz-botnav-item.is-active { color:var(--frz-accent); }
+
+    /* Floating action button — quick capture (New item). Hidden while reading an item. */
+    .frz-beta .frz-fab {
+      display:flex; position:fixed; right:16px; bottom:calc(60px + env(safe-area-inset-bottom,0)); z-index:55;
+      width:52px; height:52px; border-radius:50%; border:0; background:var(--frz-accent); color:#fff;
+      align-items:center; justify-content:center; box-shadow:0 6px 18px rgba(0,89,169,.4); cursor:pointer;
+    }
+    .frz-beta .frz-fab svg { width:24px; height:24px; }
+    .frz-beta.on-item .frz-fab { display:none; }
+  }
 </style>
 <script>
 (function(){
@@ -16001,7 +16065,17 @@ if ('serviceWorker' in navigator) {
         '</header>'+
         '<div class="frz-filterbar" id="frzFilterBar"></div>'+
         '<div class="frz-content" id="frzContent"><div class="frz-scrim" id="frzScrim"></div></div>'+
-      '</div>';
+      '</div>'+
+      // Mobile companion (Phase 1): bottom tab bar + FAB. Hidden >640px via CSS.
+      // Home/List/Board reuse the existing [data-nav] delegation; Search/More are wired in wire().
+      '<nav class="frz-botnav" aria-label="Primary">'+
+        '<button class="frz-botnav-item" data-nav="view:my-home" aria-label="Home">'+IC.home+'<span>Home</span></button>'+
+        '<button class="frz-botnav-item" data-nav="view:list" aria-label="List">'+IC.list+'<span>List</span></button>'+
+        '<button class="frz-botnav-item" data-nav="view:kanban" aria-label="Board">'+IC.kanban+'<span>Board</span></button>'+
+        '<button class="frz-botnav-item" id="frzBotSearch" aria-label="Search"><svg class="frz-ic" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg><span>Search</span></button>'+
+        '<button class="frz-botnav-item" id="frzBotMore" aria-label="More"><svg class="frz-ic" viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="1.2" fill="currentColor" stroke="none"/><circle cx="12.5" cy="8" r="1.2" fill="currentColor" stroke="none"/></svg><span>More</span></button>'+
+      '</nav>'+
+      '<button class="frz-fab" id="frzFab" aria-label="New item" title="New item">'+IC.plus+'</button>';
     document.body.appendChild(root);
     document.body.classList.add('frz-beta-active');   // recolor body-level production modals to the Flow palette (scoped; classic never sets this)
 
@@ -17174,6 +17248,11 @@ if ('serviceWorker' in navigator) {
       var on=(b.getAttribute('data-nav')==='view:'+state.view);
       b.classList.toggle('is-active', on); if(on) b.setAttribute('aria-current','true'); else b.removeAttribute('aria-current');
     }); }
+    // Mobile companion (Phase 1): keep the bottom tab bar's active item in sync with the view.
+    var bn=document.querySelector('.frz-botnav');
+    if(bn){ [].slice.call(bn.querySelectorAll('.frz-botnav-item[data-nav]')).forEach(function(b){
+      b.classList.toggle('is-active', !state.onItem && b.getAttribute('data-nav')==='view:'+state.view);
+    }); }
     // Fix 2: rail BOARDS highlight is part of the view sync — exactly one lit on a Kanban URL
     // (the active board, or "All statuses" when there's no board param).
     var bnav=document.getElementById('frzBoardNav');
@@ -17363,6 +17442,26 @@ if ('serviceWorker' in navigator) {
     document.getElementById('frzAddProj').addEventListener('click', function(e){ e.stopPropagation(); _call('showToast','Add project — coming soon'); });
     document.getElementById('frzAddBoard').addEventListener('click', function(e){ e.stopPropagation(); openBoardEditor(null); });
     document.getElementById('frzNewItem').addEventListener('click', function(){ _call('openProjectModal', null); });
+    // Mobile companion (Phase 1): FAB → same capture flow as New item.
+    var fab=document.getElementById('frzFab'); if(fab){ fab.addEventListener('click', function(){ _call('openProjectModal', null); }); }
+    // Bottom-nav Search → toggle the full-width search overlay (CSS .frz-search-open) and focus.
+    var bsearch=document.getElementById('frzBotSearch');
+    if(bsearch){ bsearch.addEventListener('click', function(){
+      var open=root.classList.toggle('frz-search-open');
+      var inp=document.getElementById('frzSearch'); if(inp){ if(open){ inp.focus(); } else { inp.blur(); } }
+    }); }
+    // Bottom-nav More → open the rail drawer (overlays at narrow widths).
+    var bmore=document.getElementById('frzBotMore'); if(bmore){ bmore.addEventListener('click', function(){ setCollapsed(false,false); }); }
+    // On phone, tapping any rail destination closes the drawer (the collapse toggle is excluded).
+    var railEl=root.querySelector('.frz-rail');
+    if(railEl){ railEl.addEventListener('click', function(e){
+      if(window.innerWidth>640) return;
+      if(e.target.closest && e.target.closest('[data-nav],[data-proj],[data-saved],[data-board],#frzSettings,#frzAdmin')){
+        setTimeout(function(){ setCollapsed(true,true); }, 0);
+      }
+    }); }
+    // Escape closes the phone search overlay.
+    document.addEventListener('keydown', function(e){ if(e.key==='Escape' && root.classList.contains('frz-search-open')) root.classList.remove('frz-search-open'); });
     document.getElementById('frzSettings').addEventListener('click', openSettings);   // Stage 4a: tabbed Settings
     document.getElementById('frzAdmin').addEventListener('click', function(){ _call('openAdminPanel','devTab'); });
     var av=document.getElementById('frzAvatar'), am=document.getElementById('frzAcctMenu');
