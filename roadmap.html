@@ -9302,7 +9302,7 @@ function renderDashboard(){
     </div>`;
   }).join('');
 
-  const row3 = dashSection('Pipeline Snapshot', `${nonTerminal.length} active · ${terminalItems.length} completed`) +
+  const row3 = dashSection('Pipeline Snapshot', `${nonTerminal.length} in pipeline · ${terminalItems.length} completed`) +
     `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px 20px">
         <div style="font-size:11px;font-weight:900;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px">By Status</div>
