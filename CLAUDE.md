@@ -6,22 +6,24 @@ This file gives Claude Code the context it needs to be useful immediately. Read 
 
 ## What this project is
 
-**Frazil Roadmap** is an internal, multi-tenant team roadmap / Gantt / Kanban / planning tool. It is live in production at `https://roadmap.frazil.app` (running on EC2). Current version is **4.3.1** (set in both `server.py` `APP_VERSION` and `roadmap.html` `const APP_VERSION`).
+**Frazil Roadmap** (now branded **Frazil Flow**) is an internal, multi-tenant team roadmap / Gantt / Kanban / planning tool. It is live in production at `https://flow.frazil.app` (running on EC2; the legacy `https://roadmap.frazil.app` 301-redirects to it via Caddy). Current version is **4.9.26** (set in both `server.py` `APP_VERSION` and `roadmap.html` `const APP_VERSION`).
 
 The whole app is **two files**:
 
-- `server.py` — FastAPI + SQLite backend (~4,600 lines)
-- `roadmap.html` — entire frontend: HTML, CSS, and JS in one file (~18,700 lines)
+- `server.py` — FastAPI + SQLite backend (~4,700 lines)
+- `roadmap.html` — entire frontend: HTML, CSS, and JS in one file (~20,200 lines)
 
 No build step. No bundler. No npm. The HTML file is served directly by FastAPI at `/`. This is intentional — it keeps deploy to a single `scp` of two files.
 
-**4.0.0 added the `/beta` "Flow" shell** — a second, opt-in UI surface served at `/beta/*` that reuses the production data layer and view components. The classic UI at `/` is unchanged. See **"The `/beta` Flow shell"** section below before touching anything under `/beta`.
+**The "Flow" shell is now the primary UI, served at root (`/`).** It began in 4.0.0 as an opt-in `/beta/*` left-rail surface alongside the classic top-bar UI, then was **promoted to the default at root in 4.8.0** (URL cleanup in 4.8.1; legacy `/beta/*` now **301-redirects** to the equivalent root path). The classic top-bar UI still exists but is now **opt-in via `?classic=1`**. See **"The Flow shell"** section below before touching it.
 
 ---
 
-## The `/beta` Flow shell (read before editing anything under /beta)
+## The Flow shell (read before editing it)
 
-The `/beta` shell ("Flow") is a **route-gated, additive** left-rail UI built on top of the existing app. It is **one** appended `<script>` + `<style id="frzBetaStyle">` block at the end of `roadmap.html`, plus a handful of additive routes/endpoints in `server.py`. **It is a no-op unless `location.pathname` starts with `/beta`.** The classic UI at `/` is never modified by it.
+The Flow shell is an **additive** left-rail UI built on top of the original app. It is **one** appended `<script>` + `<style id="frzBetaStyle">` block at the end of `roadmap.html`, plus a handful of additive routes/endpoints in `server.py`. (Historical naming: the code, CSS class `.frz-beta`, and `frzBeta*` identifiers all date from when it lived at `/beta` — they were kept on the root promotion to avoid a churny rename.)
+
+**Activation (current, post-4.8.0):** Flow is the **default** UI. `boot()` (roadmap.html ~`async function boot()`) activates the shell at root and normalizes URLs — legacy `/beta/*` → root (the server also 301s), bare `?item=ID` → `/item/ID`. The classic top-bar UI is **opt-in via `?classic=1`** (also left alone for `?pwtoken=` set-password links). When the shell mounts it tags `<body>` with **`.frz-beta-active`**; the classic root (no `?classic=1`, so no `.frz-beta-active`) is left untouched. Many runtime branches still key off `document.body.classList.contains('frz-beta-active')` to decide Flow-vs-classic behavior.
 
 **Hard rules (these were agreed and enforced across the whole build):**
 - Additive only — do **not** change production routes, components, styles, or behavior. The shell reuses the five production views by **re-parenting their DOM containers** into `#frzContent` and **wrapping** global render functions (`window.openItemPage`, `window.renderKanban`, `window.renderPlanningBoard`), never by editing the views' own code.
@@ -29,24 +31,35 @@ The `/beta` shell ("Flow") is a **route-gated, additive** left-rail UI built on 
 - Accent is **`#0059A9`** (`--frz-accent`). **Zero indigo** — the production `--accent` is indigo; reused item-page markup is de-indigo'd at runtime by `_debrandItem()`. Item **status & priority badge colors are the production colors, untouched.**
 - The shell reaches production globals from its own (second) classic script via helpers near the top of the beta module: **`_call(name, ...args)`** (invoke a global fn), **`_val(name, dflt)`** (read a top-level `let`/`const` via `eval`), **`_g(name)`**. Top-level `let`/`const` from the first script ARE visible to the second script's `eval` (shared global lexical scope) — this is how `_val('projects')`, `_val('_listSelected')`, etc. work.
 
-**Routing** (`navigate`/`routeFromLocation`/`syncURL` in the beta module): `/beta/{gantt|kanban|list|planning|dashboard|my-work}`, `/beta/item/:id` (deep-linkable item page), `/beta/planning/{sprints|releases}` (planning sub-tabs), `?board=` (kanban board scope). URLs are the state.
+**Routing** (`navigate`/`routeFromLocation`/`syncURL` in the beta module), all at **root**: `/{gantt|kanban|list|planning|dashboard|my-home}`, `/item/:id` (deep-linkable item page), `/my-home/{assigned|recent|watching}` (My Home sub-tabs), `/planning/{sprints|releases}` (planning sub-tabs), `?board=` (kanban board scope), `?project=` (project scope). URLs are the state. Legacy redirects: `/beta/*` → root (server-side 301 + client-side normalize); `/my-work` → `/my-home` (client-side, Stage 5 absorbed My Work into My Home).
 
-**Features shipped in the shell (4.0.0 → 4.3.1):**
+**Features shipped in the shell (4.0.0 → 4.3.1) — the foundational set:**
 - **Custom Kanban boards** — config key `boards`; per-board columns→statuses mapping with a drop-status; column ↑/↓ reorder.
 - **Planning rework** — tabbed Plan / Sprints / Releases. Sprints (config key `sprints`) with a readiness modal; Releases (config key `releases`) with progress bars.
 - **Ranked statuses + readiness floor** — `STATUS_META` in `roadmap.html` is the **single source of truth** for status rank + terminal-ness (Released is the only terminal status; Inactive is a non-terminal parking lot with no main-flow rank). Helpers `statusRank`/`isTermStatus`/`needsFloorPromotion`. Release progress + sprint completion read terminal-ness from here. (This is the beta-side ranking; the production status-flag config maps from rule 3 still apply.)
 - **Multi-sprint history** — `p.sprintHistory = [{sprintId, addedAt, outcome}]`; reconstructed from the activity log for legacy items (`_parseSprintActivities`).
-- **My Work** — rail entry / `/beta/my-work`; assignee == current user, non-terminal, sorted priority → due → name; client-side render reusing `_listRowHtml`.
+- **My Work** (4.0.0; superseded — see **My Home** below) — was a rail entry at `/beta/my-work` showing the current user's non-terminal items. Stage 5 (see post-4.3.1 list) absorbed it into **My Home** (`/my-home`); the old route now redirects.
 - **Notifications + @mentions + watchers** — bell/inbox in the top bar; `@` typeahead in comments + the description (works in both the classic input and the Tiptap editor — see Rich-text editor); Watch/Unwatch on the item page. **Server-generated** (see below).
 - **Rich-text editor (Tiptap) — Description + Comments + threads (4.2.0–4.3.1).** Description and the comment composer are a Tiptap/ProseMirror editor; comments support single-level reply threads. See the dedicated **"Rich-text editor"** section below before touching it.
 - **Tabbed Settings** — rail Settings opens a tabbed panel; tab 1 is the **relocated** My Account content; Notifications + Admin tabs are stubs (Admin opens the existing Admin panel).
 - **List multi-select → release linking** — "Add to release" in the list bulk bar; links each selected row via the shared `linkItemToRelease(p, rid)` (the same one the item-page Release field uses).
-- **Attachments (S3) — PAUSED.** The presign/confirm/list/delete endpoints + item-page Attachments UI exist but require an S3 bucket (`frazil-flow-attachments`, us-west-2, SigV4) + instance-role perms that are **not yet provisioned (pending KMS)**. The UI degrades gracefully (presign → toast) until then. Don't build on it until KMS is set up.
+- **Attachments (S3) — DONE (KMS unblocked mid-June 2026; Jira sync 4.9.11–4.9.12).** Presign/upload/list/delete endpoints + item-page Attachments UI + inline images are live. Direct presigned PUT to S3 (`frazil-flow-attachments`, us-west-2, SigV4, **SSE-KMS** via a dedicated key, 50 MB max, private + Block Public Access). Inline editor images reuse the same pipeline (stored as `<img data-att-key>`, src resolved at render). Phase C (4.9.11–4.9.12) added **auto-sync of item attachments to the primary Jira ticket** (`POST /api/items/{pid}/attachments/sync-jira` → `sync_attachments_to_jira`).
+
+**Shipped post-4.3.1 (4.4.0 → 4.9.26) — what the foundational list above predates:**
+- **List detail panel (4.4.0–4.5.1)** — clicking a List row opens a side detail panel (interactive: comments + status), `?panel=` deep-link/cold-load restore, responsive overlay; Kanban card → modal; rich Notes in the item modal (`#frzModalNotes`).
+- **Filter-travels + URL scoping (4.6.0–4.7.0)** — filters persist across views (chip parity), project carried in the URL (`?project=`), view-aware UI.
+- **Rebrand + root promotion (4.7.x–4.8.2)** — "Roadmap" → **"Frazil Flow"**; **Flow promoted to default UI at `/`** (4.8.0), `/beta` → root URL cleanup (4.8.1), legacy `/beta/*` redirect flipped 302 → **301** (4.8.2).
+- **Domain cutover (4.9.0)** — production moved `roadmap.frazil.app` → **`flow.frazil.app`** (Caddy 301s the old domain; `APP_BASE_URL`/`CORS_ORIGINS` updated).
+- **PWA rebrand (4.9.1–4.9.3)** — new f-mark icons + `theme_color` → Flow accent.
+- **Rich-text Jira sync, Phase C (4.9.4–4.9.12)** — Description toolbar polish; Jira description capture → formatting-preserving push (basic subset; rich blocks local-only); **auto-sync attachments to Jira**.
+- **Release planning (4.9.13–4.9.26)** — add/remove items on the Releases tab, post-release lock, **release notes** (generate/edit/store/copy + dirty-guard), per-type icons, release deep-link (`?release=`), Jira-independent feature-flag links.
+- **My Home (Stage 5)** — personal landing at `/my-home` that **absorbed My Work**; three tabs: **Assigned to me** (assignee == current user, non-terminal, sorted priority → due → name, reusing `_listRowHtml`), **Recent** (backed by `GET /api/my/recent`), **Watching** (backed by `GET /api/my/watching`). Rail entry navigates here; `/my-work` redirects in.
+- **List columns (4.9.22–4.9.26)** — model-driven List render; user-reorderable columns (↑/↓ in the Columns picker, persisted per-user via `frazil_beta_listorder_<user>`); added Project/Description columns; Gantt inline legend; CSV export follows display order.
 
 **New `server.py` surface (all additive):**
 - Shared config-backed endpoints (any authed user): `GET/PUT /api/boards`, `/api/sprints`, `/api/releases` (config keys, NOT `VALID_KEYS`).
 - Notifications/watchers: `GET /api/notifications`, `POST /api/notifications/read`, `GET /api/items/{id}/watchers`, `POST /api/items/{id}/watch` / `/unwatch`. Two new per-team tables: **`notifications`** (private per-user inbox) and **`watchers`** (kept OUT of the item blob, which `update_project` replaces wholesale). Both `CREATE TABLE IF NOT EXISTS` in `init_team_db`.
-- Attachments (paused): `POST /api/items/{id}/attachments/presign`, `POST /api/items/{id}/attachments`, `GET …/attachments`, `DELETE …/attachments/{attId}`.
+- Attachments (live): `POST /api/items/{id}/attachments/presign`, `POST /api/items/{id}/attachments`, `GET …/attachments`, `DELETE …/attachments/{attId}`, plus `POST /api/items/{id}/attachments/sync-jira` (`sync_attachments_to_jira`).
 - **Notification generation is server-side**, hooked into `add_comment`, `update_project`, `create_project`, `commit_planning_session`, and `jira_pull_sync`. Every hook runs **after** the primary write commits and is wrapped best-effort (a notification failure can never fail/roll back the mutation). Self-notifications are suppressed; bulk Jira sync (`jira_pull_all`) sets `_suppressNotify` to avoid a backfill burst.
 - **Rich-text editor + comment threads (server side):** config flag **`richTextEditor`** (bool, default ON, in `VALID_KEYS` + `init_team_db` defaults + `_migrate_config_keys` presence-only seed + `get_all` returns the bool) — the master switch for the Tiptap editor. **`comments.parent_id`** (idempotent `ALTER TABLE` in `init_team_db`; NULL = top-level): `add_comment` accepts `parent_id` and **normalizes reply-to-reply to the thread root** (single level guaranteed); `_notify_on_comment` notifies the parent comment's author on a reply (new `"reply"` notification type, self-suppressed); `delete_comment` **cascade-deletes replies**. Comment bodies store sanitized rich HTML (`add_comment` stores verbatim — sanitization is client-side on save; mention notifications still resolve because the mention chip carries the literal `@name`).
 - **Natural `item_key` List sort:** `list_items` (`GET /api/items`) sorts the `item_key` column **numerically** — text prefix (case-insensitive) then the trailing integer as a number, computed before `LIMIT/OFFSET` so it's correct across pagination (FRAZ-1, FRAZ-2, … FRAZ-10, not FRAZ-1, FRAZ-10, FRAZ-2). Blanks last in both directions. Only the `item_key` sort branch; literal SQL, whitelisted column + sanitized direction. Shared endpoint → also fixes the classic `/` List.
@@ -55,7 +68,7 @@ The `/beta` shell ("Flow") is a **route-gated, additive** left-rail UI built on 
 
 ---
 
-## Rich-text editor (Tiptap) — read before editing Description/Comments under /beta
+## Rich-text editor (Tiptap) — read before editing Description/Comments in the Flow shell
 
 The item-page **Description** and **comment composer** (incl. reply threads) use a **Tiptap/ProseMirror** editor, beta-only, behind the **`richTextEditor`** config flag (default ON). It lives entirely in the beta module of `roadmap.html`. Flag OFF / viewer / CDN-load failure → the classic lightweight `.rte-box` editor + `#ipCommentText` input, unchanged.
 
@@ -93,7 +106,7 @@ JIRA_API_TOKEN=...
 TOKEN_SECRET=<long random hex>     # signs auth tokens. If absent, a secret is persisted
                                    # to .token_secret next to server.py (shared across
                                    # workers, survives restart). Set explicitly in prod.
-CORS_ORIGINS=https://roadmap.frazil.app
+CORS_ORIGINS=https://flow.frazil.app   # prod leads with flow; roadmap + localhost also kept
 DEBUG_TRACEBACKS=0                 # 1/true to echo Python tracebacks in 500 responses
                                    # (default off — tracebacks are always logged server-side)
 
@@ -102,7 +115,7 @@ DEBUG_TRACEBACKS=0                 # 1/true to echo Python tracebacks in 500 res
 # dashboard & sharebox apps). The instance role needs ses:SendEmail/SendRawEmail.
 MAIL_FROM=notifications@frazil.app
 AWS_REGION=us-west-2
-APP_BASE_URL=https://roadmap.frazil.app   # base for emailed reset/invite links
+APP_BASE_URL=https://flow.frazil.app   # base for emailed reset/invite links (canonical domain)
 ```
 
 Add a team: `python server.py --new-team acme` (prints an initial admin password and forces a change on first login).
@@ -123,11 +136,11 @@ How isolation works (see `tests/conftest.py`):
 - `TOKEN_SECRET` is pinned and Jira creds are blanked in `conftest.py` before import.
 - Each test gets a fresh uniquely-named team. Role-gating/business-logic tests mint tokens directly via `server.create_token(...)` to skip the login rate limiter; the login flow itself is covered in `test_auth.py`.
 
-Current coverage (`tests/`, ~228 tests): liveness; auth + role gating + login rate limit; the `testWeeks >= dueWeeks` 422; `parallelResources` rounding (create *and* update) + active-status lock; config `VALID_KEYS` allowlist + `/api/all` shape; capacity overrides (upsert/validation/ceiling/batch/delete/effective resolution); planning sessions (lifecycle, payload validation, and atomic commit applying Review/Sprint/Release/deferral status changes through the config-driven status-flag maps); and the `/beta` server surface — boards/sprints/releases endpoints + validation, attachments (size guard, filename/key shaping, auth, record/list/delete), notifications (mention/assign/status/comment generation, self-suppression, mark-read, watch/unwatch, per-user privacy, and the watchers-survive-a-full-blob-PUT regression guard), the **`richTextEditor`** flag (default-on, admin-gate, presence-only migration), **comment threads** (`parent_id` + root normalization, reply-notifies-parent self-suppressed, mention-in-reply, cascade delete), and the **natural `item_key` List sort** (asc/desc order + correctness across pagination). Extend it when you touch those areas. Run `pytest` before any deploy.
+Current coverage (`tests/`, ~242 tests, all green): liveness; auth + role gating + login rate limit; the `testWeeks >= dueWeeks` 422; `parallelResources` rounding (create *and* update) + active-status lock; config `VALID_KEYS` allowlist + `/api/all` shape; capacity overrides (upsert/validation/ceiling/batch/delete/effective resolution); planning sessions (lifecycle, payload validation, and atomic commit applying Review/Sprint/Release/deferral status changes through the config-driven status-flag maps); and the `/beta` server surface — boards/sprints/releases endpoints + validation, attachments (size guard, filename/key shaping, auth, record/list/delete), notifications (mention/assign/status/comment generation, self-suppression, mark-read, watch/unwatch, per-user privacy, and the watchers-survive-a-full-blob-PUT regression guard), the **`richTextEditor`** flag (default-on, admin-gate, presence-only migration), **comment threads** (`parent_id` + root normalization, reply-notifies-parent self-suppressed, mention-in-reply, cascade delete), and the **natural `item_key` List sort** (asc/desc order + correctness across pagination). Extend it when you touch those areas. Run `pytest` before any deploy.
 
 Frontend-only behavior (the Tiptap editor, sanitizer allowlist, node round-trips) has no pytest coverage — it was verified headlessly during the build via jsdom + the pinned packages (a throwaway harness, not committed). Re-verify node round-trips that way when changing the editor.
 
-Not yet covered: Jira sync (would need HTTP mocking of `urllib`), recurrence spawning, plain comments/activities, and the S3 attachment happy-path (needs live creds/mock — paused on KMS). Good next targets.
+Not yet covered: Jira sync (would need HTTP mocking of `urllib`), recurrence spawning, plain comments/activities, and the S3 attachment happy-path (needs live creds/mock — the feature is live now, but the upload round-trip still isn't exercised in tests). Good next targets.
 
 ---
 
@@ -387,6 +400,16 @@ Pushing notes to Jira goes through `PUT /api/jira/issue/{key}` with `{ fields: {
 3. Also add the key in `_migrate_config_keys()` so existing team DBs get backfilled on next boot.
 4. Frontend: declare the variable at module top (near `let ownerCapacity = {}`), load it in `boot()` from `data.config`, and persist with `API.putConfig(key, value)`.
 
+**Current `VALID_KEYS`** (the `PUT /api/config/{key}` allowlist, `server.py` ~line 1961):
+- **Shared lists:** `developers`, `statuses`, `delayReasons`, `products`, `users`, `types`, `departments`, `changeReasons`, `deferReasons`
+- **Capacity & scheduling:** `ownerCapacity`, `typeScheduled`
+- **Status flags** (config-driven, see rule 3): `statusIsActive`, `statusIsTerminal`, `statusIsDefault`, `statusIsDeferred`, `statusIsReleased`, `statusIsApproved`, `statusIsTesting`, `statusIsBlocked`
+- **Conflict ignores:** `statusIgnoreConflicts`, `typeIgnoreConflicts`, `productIgnoreConflicts`
+- **Jira:** `jiraEnabled`, `jiraSyncConfig`, `jiraProjectMapping`, `jiraStatusMapping`, `jiraTypeMapping`
+- **Editor:** `richTextEditor`
+
+> `boards`, `sprints`, and `releases` are config-table-backed too but are **NOT** in `VALID_KEYS` — they have dedicated endpoints (`GET/PUT /api/boards|sprints|releases`), not the generic config route.
+
 ### Add a new status flag (e.g. `statusIsX`)
 
 1. Add to `VALID_KEYS` and `init_team_db` defaults `{}` and `_migrate_config_keys`.
@@ -445,6 +468,7 @@ These are real choices we've made, not oversights. If something looks like it wo
 
 Full details in `DEPLOYMENT.md`. The fast version:
 
+- Canonical domain: `https://flow.frazil.app` (Caddy 301-redirects legacy `roadmap.frazil.app` → flow, path+query preserved)
 - Production host: `ubuntu@52.35.224.183` (Elastic IP), EC2 `t4g.small`, Ubuntu 24.04 ARM64
 - App path: `/opt/roadmap/`
 - DB path: `/data/tenants/{team}/roadmap.db` (separate EBS volume at `/data`)
