@@ -34,13 +34,16 @@ def test_no_auth_is_rejected(client):
     assert r.status_code == 401
 
 
-def test_xteam_fallback_is_viewer(client, team):
-    """X-Team without a token grants read-only viewer access (documented back-compat)."""
+def test_xteam_without_token_is_rejected(client, team):
+    """SECURITY (4.10.3): the old X-Team-only viewer fallback was removed — it
+    allowed unauthenticated cross-tenant reads (enumerate slugs via /api/teams,
+    then dump /api/all with just an X-Team header). A verified token is now
+    required; X-Team alone must be 401, not a viewer session."""
     r = client.get("/api/all", headers={"X-Team": team})
-    assert r.status_code == 200  # viewers can read
-    # ...but cannot perform an admin-only action.
+    assert r.status_code == 401
+    # And a mutation with only X-Team is likewise rejected (401 at auth, not 403 at role).
     r2 = client.delete("/api/projects/1", headers={"X-Team": team})
-    assert r2.status_code == 403
+    assert r2.status_code == 401
 
 
 def test_token_team_must_match_xteam(client, team):

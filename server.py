@@ -389,13 +389,12 @@ def require_auth(authorization: Optional[str] = Header(None),
             log.warning(f"[Auth] Token decode failed: {e}")
             # Fall through to X-Team fallback
 
-    # Fallback: if no valid token but X-Team is present, allow with viewer role
-    # This maintains backwards compatibility during migration
-    if x_team:
-        team = re.sub(r"[^a-z0-9]", "", (x_team or "").strip().lower())
-        if team and valid_team(team):
-            log.info(f"[Auth] Fallback auth for team '{team}' — no token provided")
-            return {"team": team, "username": "_legacy", "role": "viewer"}
+    # No valid token → reject. A prior X-Team-only "viewer" fallback (for the
+    # pre-4.8 migration) was REMOVED in 4.10.3: it allowed UNAUTHENTICATED
+    # cross-tenant reads — GET /api/teams enumerates team slugs, then GET /api/all
+    # with only an X-Team header dumped that team's items, config, and user
+    # roster (emails/roles). Migration is long done (root promotion 4.8.0), so a
+    # verified token is now always required.
     raise HTTPException(401, "Authorization required. Please log in again.")
 
 def require_role(*allowed_roles):
@@ -873,7 +872,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.10.2"
+APP_VERSION = "4.10.3"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -4640,6 +4639,16 @@ def spawn_recurrence(pid: int, body: dict = Body({}), auth: dict = Depends(requi
     with db(team) as c:
         row = c.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
         if not row: raise HTTPException(404, "Item not found")
+        # Idempotency guard (4.10.3): a recurring item spawns EXACTLY ONE successor.
+        # If one already exists (re-save of the now-terminal item, a double-click, or
+        # two gunicorn workers racing), return it instead of creating a duplicate.
+        dup = c.execute("SELECT id, data FROM projects "
+                        "WHERE json_extract(data,'$.recurrence_parent')=? LIMIT 1",
+                        (pid,)).fetchone()
+    if dup:
+        existing = json.loads(dup["data"]); existing["id"] = dup["id"]
+        existing["_childIds"] = []; existing["_childSynced"] = 0
+        return existing
     p = json.loads(row["data"])
     recurrence = p.get("recurrence", "none")
     if recurrence == "none": raise HTTPException(400, "Item is not recurring")
@@ -4663,10 +4672,18 @@ def spawn_recurrence(pid: int, body: dict = Body({}), auth: dict = Depends(requi
     dueWeeks = p.get("dueWeeks", 2)
     new_due = (new_start + timedelta(weeks=dueWeeks)).isoformat()
 
-    # Build new item — strip per-cycle fields, carry forward config fields
-    skip_keys = {"id","status","delay","revised","expected","releaseDate",
+    # Build new item — strip per-cycle fields, carry forward config fields.
+    # CRITICAL (4.10.3): itemKey MUST be stripped — inheriting the parent's key
+    # trips the unique item_key index in _reindex_project → IntegrityError → 500
+    # (recurrence spawn was failing for every keyed item). We assign a FRESH key
+    # below. Also strip instance-specific / hazardous fields: attachments (their S3
+    # keys embed the OLD pid — a shared object would break both items on delete),
+    # sprint + release membership, and planning-session outcomes.
+    skip_keys = {"id","itemKey","status","delay","revised","expected","releaseDate",
                  "jiraTickets","jiraCache","jiraLastSync","jiraLastKnownStatus",
-                 "jiraSyncSkipped","revokedAt"}
+                 "jiraSyncSkipped","jiraFeatureFlags","revokedAt","attachments",
+                 "sprintId","sprintHistory","release","releaseNumber","releaseNotes",
+                 "deferred","deferReason","deferNote","deferRevisit","preBlockStatus"}
     new_item = {k: v for k, v in p.items() if k not in skip_keys}
     new_item["start"]              = new_start_str
     new_item["due"]                = new_due
@@ -4681,6 +4698,7 @@ def spawn_recurrence(pid: int, body: dict = Body({}), auth: dict = Depends(requi
     new_item["recurrence_parent"]  = pid
 
     with db(team) as c:
+        _assign_item_key(c, new_item)   # fresh per-product key — never inherit the parent's (unique index)
         new_id = _insert_project(c, new_item)
         _save_project(c, new_id, {**new_item, "id": new_id})
         new_row = c.execute("SELECT * FROM projects WHERE id=?", (new_id,)).fetchone()

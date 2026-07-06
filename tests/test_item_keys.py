@@ -107,6 +107,34 @@ def test_key_not_wiped_by_blank_itemkey_in_put(client, team, admin_headers):
     assert r.json()["itemKey"] == "FRAZ-1"
 
 
+def test_recur_assigns_fresh_key_no_collision(client, team, admin_headers):
+    # Regression (4.10.3): spawn_recurrence used to inherit the parent's itemKey,
+    # which tripped the unique item_key index in _reindex_project → 500 on EVERY
+    # spawn. The successor must get a FRESH per-product key, not the parent's.
+    _set_products(client, admin_headers, [{"name": "Fraznet", "keyPrefix": "FRAZ"}])
+    item = _mk(client, admin_headers, product="Fraznet",
+               recurrence="weekly", start="2026-01-01", dueWeeks=2)
+    assert item["itemKey"] == "FRAZ-1"
+    r = client.post(f"/api/projects/{item['id']}/recur", json={}, headers=admin_headers)
+    assert r.status_code == 200, r.text          # no more IntegrityError 500
+    succ = r.json()
+    assert succ["itemKey"] == "FRAZ-2"           # fresh key, NOT the parent's
+    assert succ["id"] != item["id"]
+    assert succ["recurrence_parent"] == item["id"]
+
+
+def test_recur_is_idempotent(client, team, admin_headers):
+    # A recurring item spawns exactly one successor; a repeat call (re-save / double
+    # click / worker race) must return the same successor, not create a duplicate.
+    _set_products(client, admin_headers, [{"name": "Fraznet", "keyPrefix": "FRAZ"}])
+    item = _mk(client, admin_headers, product="Fraznet",
+               recurrence="weekly", start="2026-01-01", dueWeeks=2)
+    r1 = client.post(f"/api/projects/{item['id']}/recur", json={}, headers=admin_headers)
+    r2 = client.post(f"/api/projects/{item['id']}/recur", json={}, headers=admin_headers)
+    assert r1.status_code == 200 and r2.status_code == 200
+    assert r1.json()["id"] == r2.json()["id"]    # same successor, no duplicate
+
+
 def test_keys_unique_after_backfill_and_create_mix(client, team, admin_headers):
     _set_products(client, admin_headers, [{"name": "Fraznet", "keyPrefix": "FRAZ"}])
     created = [_mk(client, admin_headers, product="Fraznet")["itemKey"] for _ in range(3)]
