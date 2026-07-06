@@ -2035,7 +2035,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.10.0';
+const APP_VERSION = '4.10.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -8799,10 +8799,21 @@ const _LIST_COL_DEF = {
                 // the text's OPTICAL (cap-height) center is ~1.2px higher, so the dot read +1.23px low.
                 // Nudge it up 1.2px (consistent across rows) — wrapped only when a dot exists so names
                 // without one get no stray gap. List-scoped; the shared AC helper is untouched.
-                td:(it)=>{ const ac=getItemActivityIndicator(it.id);
-                  return `<td style="padding:7px 10px"><span style="display:inline-flex;align-items:center;gap:5px">${_listCell(it.name)}${ac?`<span style="display:inline-flex;transform:translateY(-1.2px)">${ac}</span>`:''}</span></td>`; } },
+                // Width-resizable: flex row so the NAME TEXT truncates with an ellipsis while the
+                // trailing AC dot stays visible (flex-shrink:0). Text is shrink-only (no grow) so
+                // when NOT width-constrained it renders identically to before (text natural width,
+                // dot right after it, left-aligned). The -1.2px dot nudge (AC alignment) is kept.
+                td:(it)=>{ const ac=getItemActivityIndicator(it.id); const w=_listColWidth('name');
+                  const wcss=w?`width:${w}px;max-width:${w}px;overflow:hidden;`:'';
+                  const ttl=it.name?` title="${escA(it.name)}"`:'';   // full name on hover (reveals it when the column is narrow enough to ellipsis-truncate) — mirrors Description
+                  return `<td data-col="name" style="padding:7px 10px;${wcss}"${ttl}><span style="display:flex;align-items:center;gap:5px">`
+                    + `<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_listCell(it.name)}</span>`
+                    + (ac?`<span style="display:inline-flex;flex-shrink:0;transform:translateY(-1.2px)">${ac}</span>`:'')
+                    + `</span></td>`; } },
   description:{ label:'Description',  sort:null,
-                td:(it)=>`<td style="padding:7px 10px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"${(()=>{ const t=descToPlainText(it.description); return t?` title="${escA(t)}">${esc(t)}`:`>—`; })()}</td>` },
+                // Width-resizable: stored width overrides the default max-width:320px truncation.
+                td:(it)=>{ const w=_listColWidth('description'); const wcss=w?`width:${w}px;max-width:${w}px`:`max-width:320px`;
+                  return `<td data-col="description" style="padding:7px 10px;${wcss};overflow:hidden;text-overflow:ellipsis;white-space:nowrap"${(()=>{ const t=descToPlainText(it.description); return t?` title="${escA(t)}">${esc(t)}`:`>—`; })()}</td>`; } },
   status:     { label:'Status',      sort:'status',
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(it.status)}</span>` : '—'}</td>` },
   priority:   { label:'Priority',    sort:'priority',
@@ -8820,6 +8831,18 @@ const _LIST_COL_DEF = {
 };
 function _listColUser(){ try { return (typeof uname==='function'?uname():'') || localStorage.getItem('frazil_rm_user') || ''; } catch(e){ return ''; } }
 function _listOrderKey(){ return 'frazil_beta_listorder_' + _listColUser(); }   // NEW key, separate from the visibility key
+// ── List column WIDTHS (Name + Description only) ──────────────────────────────
+// THIRD independent per-user key, additive and separate from order/visibility.
+// Maps COLUMN ID → px ({"name":520,"description":300}) so a width follows its
+// column through reorder. Absent id → render at natural width (no width pinned).
+function _listWidthsKey(){ return 'frazil_beta_listwidths_' + _listColUser(); }
+function _listWidths(){ try { const o=JSON.parse(localStorage.getItem(_listWidthsKey())||'{}'); return (o&&typeof o==='object')?o:{}; } catch(e){ return {}; } }
+function _listColWidth(id){ const w=_listWidths()[id]; return (typeof w==='number'&&w>0)?w:null; }   // null = natural
+function _listSetColWidth(id, w){ const o=_listWidths(); o[id]=w; try{ localStorage.setItem(_listWidthsKey(), JSON.stringify(o)); }catch(e){} }
+const _LIST_MIN_COL_PX = 80;   // clamp: a column can't be dragged narrower than this
+// Live-apply during a drag: set width inline on the current header th + every data-col
+// cell (reorder-proof — targets by data-col, not position). Persist happens on mouseup.
+function _applyListColWidthLive(cells, w){ const px=w+'px'; cells.forEach(el=>{ el.style.width=px; el.style.maxWidth=px; el.style.overflow='hidden'; }); }
 // Visibility reuses the EXISTING beta set (frazil_beta_listcols_<user>) + its migration, untouched.
 // The beta module is an IIFE, so those functions are NOT global — the shell exposes them on
 // window (_frzHiddenListCols / _frzMigrateListCols). Reading them here makes render match the picker.
@@ -8846,10 +8869,18 @@ let _listColsRenderCache = null;
 function _listEffectiveCols(){ return _listColOrderAll().filter(_listColEnabled); }
 function _listTh(id){
   const c=_LIST_COL_DEF[id]; if(!c) return '';
-  const base='padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap'+(c.center?';text-align:center':'');
+  const resizable=(id==='name'||id==='description');
+  const w=resizable?_listColWidth(id):null;
+  // Only Name + Description are width-constrained (position:relative anchors the grip;
+  // width/max-width/overflow applied ONLY once a width is stored). Every other column
+  // is untouched → keeps auto-sizing exactly as today.
+  let base='padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap'+(c.center?';text-align:center':'');
+  if(resizable) base+=';position:relative';
+  if(w) base+=`;width:${w}px;max-width:${w}px;overflow:hidden;text-overflow:ellipsis`;
+  const grip=resizable?`<span class="list-resizer" data-col="${id}" title="Drag to resize" style="position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize;user-select:none"></span>`:'';
   return c.sort
-    ? `<th class="list-sort" data-sort="${c.sort}" style="${base};cursor:pointer;user-select:none">${esc(c.label)}<span class="sort-arrow"></span></th>`
-    : `<th style="${base}">${esc(c.label)}</th>`;
+    ? `<th class="list-sort" data-col="${id}" data-sort="${c.sort}" style="${base};cursor:pointer;user-select:none">${esc(c.label)}<span class="sort-arrow"></span>${grip}</th>`
+    : `<th${resizable?` data-col="${id}"`:''} style="${base}">${esc(c.label)}${grip}</th>`;
 }
 function _renderListHeader(){
   const hr=document.getElementById('listHeadRow'); if(!hr) return;
@@ -8867,6 +8898,14 @@ function _listColMoveBy(id, dir){
 }
 function _listResetColOrder(){
   try { localStorage.removeItem(_listOrderKey()); } catch(e){}   // ORDER only — visibility key untouched
+  if(typeof renderList==='function') renderList();
+}
+// "Reset layout": clears column ORDER + WIDTHS in one action, then re-renders so both
+// return to defaults in a single repaint. Visibility (frazil_beta_listcols_<user> /
+// _optin1) is deliberately left ALONE — resetting layout never changes which columns show.
+function _listResetLayout(){
+  try { localStorage.removeItem(_listOrderKey()); } catch(e){}
+  try { localStorage.removeItem(_listWidthsKey()); } catch(e){}
   if(typeof renderList==='function') renderList();
 }
 function _isListPhone(){ try { return window.matchMedia('(max-width:640px)').matches; } catch(e){ return false; } }
@@ -8986,8 +9025,35 @@ function _updateSortIndicators(){
   });
 }
 document.getElementById('listHeadRow')?.addEventListener('click', e=>{
+  if(e.target.closest('.list-resizer')) return;   // resize grip → never a sort click (guards Name's sortable header)
   const th = e.target.closest('.list-sort');
   if(th && th.dataset.sort) _listSetSort(th.dataset.sort);
+});
+// Column resize (Name + Description): drag the grip on the th's right edge. Delegated on the
+// stable #listHeadRow so it survives header regeneration. mousedown stops propagation so the
+// drag never starts a sort; document-level move/up track the cursor even if it leaves the th.
+document.getElementById('listHeadRow')?.addEventListener('mousedown', e=>{
+  const grip = e.target.closest('.list-resizer'); if(!grip) return;
+  e.preventDefault(); e.stopPropagation();
+  const id = grip.dataset.col;
+  const th = grip.closest('th'); if(!th) return;
+  const startX = e.clientX;
+  const startW = th.getBoundingClientRect().width;
+  // Cache the affected cells once (this column's header + every data-col cell) — reorder-proof
+  // and avoids re-querying on each mousemove. Rows don't change during a drag.
+  const cells = [th].concat([].slice.call(document.querySelectorAll('#listBody td[data-col="'+id+'"]')));
+  const prevCursor = document.body.style.cursor;
+  document.body.style.cursor = 'col-resize';
+  const calc = ev => Math.max(_LIST_MIN_COL_PX, Math.round(startW + (ev.clientX - startX)));
+  function onMove(ev){ _applyListColWidthLive(cells, calc(ev)); }
+  function onUp(ev){
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.body.style.cursor = prevCursor;
+    _listSetColWidth(id, calc(ev));   // persist per-user; next render re-applies inline
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
 });
 document.getElementById('listPageSize')?.addEventListener('change', e=>{
   _listState.page_size = parseInt(e.target.value)||50; _listState.page=1; renderList();
@@ -16270,6 +16336,28 @@ if ('serviceWorker' in navigator) {
         return r;
       };
     }
+    // Wrap renderList so the rail's List pill + PROJECTS pills reflect the active
+    // filter. Chip handlers repaint the rail synchronously, but the List's server
+    // total lands async (/api/items). After each fetch resolves we cache the exact
+    // total for the current scope+filter (parsed from the rendered "#listCount" so
+    // the pill can NEVER disagree with the list's own "N items", tree mode included)
+    // and repaint. Off-shell/classic (no root) → original behavior only.
+    if (window.renderList && !window.renderList._frzWrapped){
+      var _origRenderList = window.renderList;
+      window.renderList = function(){
+        var r = _origRenderList.apply(this, arguments);
+        Promise.resolve(r).then(function(){
+          if(!root) return;
+          var el=document.getElementById('listCount');
+          var n=el ? parseInt((el.textContent||'').replace(/[^0-9]/g,''),10) : NaN;
+          _frzListTotal = isNaN(n) ? null : n;
+          _frzListSigAt = _frzListSig(_frzActiveFilter());
+          renderRail();
+        }).catch(function(){});
+        return r;
+      };
+      window.renderList._frzWrapped = true;
+    }
     wire();
     renderRail();
     onResize();
@@ -16281,8 +16369,61 @@ if ('serviceWorker' in navigator) {
   }
 
   // ════════ rail ════════
+  // ── Filter-aware count pills ────────────────────────────────────────────────
+  // When a filter is active, the List view pill AND every PROJECTS pill reflect
+  // the FILTERED result instead of the unfiltered total. This INTENTIONALLY
+  // departs from the older "counts respect Project but NOT the filter row" rule.
+  // No matching logic is forked: counting reuses the app's own filter inputs —
+  // the shared selector getters (getSelectedStatuses/Devs/Types/Assignees) and
+  // itemMatchesSearch, the same canonical search matcher the Gantt uses. The
+  // field predicate mirrors the Gantt/List matcher (status/owner/type/assignee/
+  // search) MINUS the Gantt-only exclusions (hidden, scheduled-type, owner-scope)
+  // so filtered counts keep the SAME hidden/visible treatment as the unfiltered
+  // pill totals (which already include Jira-spawned hidden children).
+  // Product/scope is excluded from the predicate: each project pill supplies its
+  // OWN product, so the scope dimension can never filter a project pill out.
+  var _frzListTotal = null;   // last /api/items server total (exact "N items")
+  var _frzListSigAt = null;   // the filter signature _frzListTotal was fetched under
+  function _frzActiveFilter(){
+    var f = { st:_call('getSelectedStatuses'), dev:_call('getSelectedDevs'),
+              type:_call('getSelectedTypes'), asg:_call('getSelectedAssignees'),
+              q:(_call('getSearchQuery')||'') };
+    // "active" ignores product — project scope is navigation, not a filter chip.
+    f.any = !!(f.st || f.dev || f.type || f.asg || f.q);
+    return f;
+  }
+  function _frzPillMatch(p, f){
+    return (!f.st   || f.st.indexOf(p.status)>=0)
+        && (!f.dev  || f.dev.indexOf(p.dev||'')>=0)
+        && (!f.type || f.type.indexOf(p.type||'')>=0)
+        && (!f.asg  || f.asg.indexOf(p.assignee||'')>=0)
+        && _call('itemMatchesSearch', p, f.q);
+  }
+  function _frzCountMatching(f, product){   // product: name | null (= all products)
+    var ps=_val('projects',[])||[];
+    return ps.filter(function(p){
+      return !p.archived && (product==null || p.product===product) && _frzPillMatch(p,f);
+    }).length;
+  }
+  function _frzListSig(f){ return JSON.stringify([state.project, f.st, f.dev, f.type, f.asg, f.q]); }
+  // A project pill's number: unfiltered total when no filter (byte-identical to
+  // today), else filter-matching items in that product (product null = All).
+  function _frzScopeCount(product){
+    var f=_frzActiveFilter();
+    if(!f.any) return product==null ? scopeAllCount() : projItems(product).length;
+    return _frzCountMatching(f, product);
+  }
   function viewCount(v){
-    if (v==='list') return scopeItems().length;
+    if (v==='list'){
+      var f=_frzActiveFilter();
+      if(!f.any) return scopeItems().length;                       // unchanged: unfiltered scoped total
+      // Filter active → prefer the EXACT server total from the last /api/items
+      // fetch so the pill and the list's own "N items" always agree (also correct
+      // for assignee / FTS search, which the client predicate only approximates).
+      if(_frzListTotal!=null && _frzListSigAt===_frzListSig(f)) return _frzListTotal;
+      // Fallback (not on List, so no fresh server total): client predicate, current scope.
+      return _frzCountMatching(f, state.project==='__all__'?null:state.project);
+    }
     if (v==='planning'){ var sp=currentSprint(); return sp ? sprintItems(sp.id).length : null; }   // current sprint size; hidden if none
     return null;
   }
@@ -16319,14 +16460,14 @@ if ('serviceWorker' in navigator) {
     var allBtn = document.createElement('button');
     allBtn.className='frz-item'; allBtn.setAttribute('data-proj','__all__');
     allBtn.setAttribute('aria-current', String(state.project==='__all__'));
-    allBtn.innerHTML = '<span class="frz-dot" style="background:var(--frz-accent)"></span><span>All projects</span><span class="frz-count">'+scopeAllCount()+'</span>';
+    allBtn.innerHTML = '<span class="frz-dot" style="background:var(--frz-accent)"></span><span>All projects</span><span class="frz-count">'+_frzScopeCount(null)+'</span>';
     pn.appendChild(allBtn);
     products.forEach(function(pr, i){
       var name = pr.name || pr;
       var b = document.createElement('button');
       b.className='frz-item'; b.setAttribute('data-proj', name);
       b.setAttribute('aria-current', String(state.project===name));
-      b.innerHTML = '<span class="frz-dot" style="background:'+(_call('projectColor',name)||PROJ_COLORS[(i+1)%PROJ_COLORS.length])+'"></span><span>'+esc(name)+'</span><span class="frz-count">'+projItems(name).length+'</span>';
+      b.innerHTML = '<span class="frz-dot" style="background:'+(_call('projectColor',name)||PROJ_COLORS[(i+1)%PROJ_COLORS.length])+'"></span><span>'+esc(name)+'</span><span class="frz-count">'+_frzScopeCount(name)+'</span>';
       pn.appendChild(b);
     });
     // boards + saved filters
@@ -17667,9 +17808,9 @@ if ('serviceWorker' in navigator) {
           pop.appendChild(row);
         });
         var reset=document.createElement('button'); reset.type='button'; reset.className='frz-pop-opt';
-        reset.textContent='Reset order';
+        reset.textContent='Reset layout';   // now resets ORDER + WIDTHS (not visibility)
         reset.style.cssText='display:block;width:100%;text-align:left;cursor:pointer;color:var(--frz-text-muted);font-size:11.5px;border-top:1px solid var(--frz-border);margin-top:4px;padding-top:6px';
-        reset.addEventListener('click', function(e){ e.stopPropagation(); _listResetColOrder(); draw(); });   // ORDER only
+        reset.addEventListener('click', function(e){ e.stopPropagation(); _listResetLayout(); draw(); });   // ORDER + WIDTHS; visibility untouched
         pop.appendChild(reset);
       }
       draw();
