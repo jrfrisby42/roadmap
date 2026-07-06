@@ -872,7 +872,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.10.3"
+APP_VERSION = "4.10.4"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -4666,10 +4666,20 @@ def spawn_recurrence(pid: int, body: dict = Body({}), auth: dict = Depends(requi
     except ValueError:
         prev_start = date.today()
     new_start = prev_start + timedelta(days=period_days)
+    # Skip fully-elapsed cycles so a long-overdue chain jumps straight to the
+    # CURRENT window instead of back-filling every missed occurrence. Still
+    # grid-aligned (advances by whole periods, never resets to "today"); a no-op
+    # for an on-time item whose next window hasn't elapsed yet.
+    today = date.today()
+    while new_start + timedelta(days=period_days) <= today:
+        new_start += timedelta(days=period_days)
     new_start_str = new_start.isoformat()
 
-    # Compute new due from dueWeeks
-    dueWeeks = p.get("dueWeeks", 2)
+    # Compute new due from dueWeeks (coerce — the blob may hold a string like "2")
+    try:
+        dueWeeks = float(p.get("dueWeeks") or 2)
+    except (TypeError, ValueError):
+        dueWeeks = 2
     new_due = (new_start + timedelta(weeks=dueWeeks)).isoformat()
 
     # Build new item — strip per-cycle fields, carry forward config fields.

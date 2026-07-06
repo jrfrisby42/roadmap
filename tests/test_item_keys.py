@@ -123,6 +123,25 @@ def test_recur_assigns_fresh_key_no_collision(client, team, admin_headers):
     assert succ["recurrence_parent"] == item["id"]
 
 
+def test_recur_skips_elapsed_cycles_to_current(client, team, admin_headers):
+    # 4.10.4: a long-overdue recurring chain must jump straight to the CURRENT
+    # window (skip fully-elapsed cycles), NOT back-fill every missed occurrence.
+    import datetime as _dt
+    _set_products(client, admin_headers, [{"name": "Fraznet", "keyPrefix": "FRAZ"}])
+    old_start = (_dt.date.today() - _dt.timedelta(days=90)).isoformat()   # ~13 weeks behind
+    item = _mk(client, admin_headers, product="Fraznet",
+               recurrence="weekly", start=old_start, dueWeeks=1)
+    r = client.post(f"/api/projects/{item['id']}/recur", json={}, headers=admin_headers)
+    assert r.status_code == 200, r.text
+    s = _dt.date.fromisoformat(r.json()["start"])
+    today = _dt.date.today()
+    # Landed on the current cycle: this window hasn't fully elapsed, and it isn't
+    # a future-only jump — i.e. exactly the occurrence containing "now".
+    assert s <= today < s + _dt.timedelta(days=7)
+    # Still grid-aligned to the original start (advanced by whole 7-day periods).
+    assert (s - _dt.date.fromisoformat(old_start)).days % 7 == 0
+
+
 def test_recur_is_idempotent(client, team, admin_headers):
     # A recurring item spawns exactly one successor; a repeat call (re-save / double
     # click / worker race) must return the same successor, not create a duplicate.

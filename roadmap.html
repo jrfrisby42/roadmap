@@ -2035,7 +2035,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.10.3';
+const APP_VERSION = '4.10.4';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -8458,7 +8458,10 @@ async function runAutoNotifications(){
   const releasedStatus = getReleasedStatus();
   if(releasedStatus){
     for(const p of projects){
-      if(p.hidden) continue;
+      // Hidden recurring items (e.g. background "Maintenance Track" cycles) ARE
+      // auto-released — the recurrence filter below is the only gate, so hidden
+      // Jira-child items (recurrence 'none') are still excluded. Before 4.10.4 a
+      // `if(p.hidden) continue` here silently stalled every hidden recurring chain.
       if(!p.recurrence || p.recurrence === 'none') continue;
       if(isTerminalStatus(p.status)) continue;
       const dueD = nextMonday(parseD(p.due));
