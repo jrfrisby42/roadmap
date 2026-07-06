@@ -75,6 +75,38 @@ def test_key_immutable_across_product_change(client, team, admin_headers):
     assert r.json()["itemKey"] == "FRAZ-1"
 
 
+def test_key_survives_wholesale_put_without_itemkey(client, team, admin_headers):
+    # Regression (item-page edit wiped the key in prod): the item-page/modal edit
+    # sends a WHOLESALE PUT body that does NOT round-trip itemKey. update_project
+    # must preserve the server-assigned key — both the blob and the mirrored
+    # item_key column — rather than let the omission wipe it (which also NULLed the
+    # column via _reindex_project).
+    _set_products(client, admin_headers, [{"name": "Fraznet", "keyPrefix": "FRAZ"}])
+    item = _mk(client, admin_headers, product="Fraznet")
+    pid = item["id"]
+    assert item["itemKey"] == "FRAZ-1"
+    # Edit body with NO itemKey (e.g. a rename from the item page).
+    r = client.put(f"/api/projects/{pid}",
+                   json={"name": "Renamed", "status": "Planned", "product": "Fraznet"},
+                   headers=admin_headers)
+    assert r.status_code == 200
+    assert r.json()["itemKey"] == "FRAZ-1"        # preserved in the response blob
+    with server.db(team) as c:
+        row = c.execute("SELECT item_key, json_extract(data,'$.itemKey') "
+                        "FROM projects WHERE id=?", (pid,)).fetchone()
+    assert row[0] == "FRAZ-1"                      # mirrored column preserved
+    assert row[1] == "FRAZ-1"                      # blob preserved
+
+
+def test_key_not_wiped_by_blank_itemkey_in_put(client, team, admin_headers):
+    # A client that sends itemKey:"" must NOT be able to clear an existing key.
+    _set_products(client, admin_headers, [{"name": "Fraznet", "keyPrefix": "FRAZ"}])
+    item = _mk(client, admin_headers, product="Fraznet")
+    r = client.put(f"/api/projects/{item['id']}",
+                   json={**item, "itemKey": ""}, headers=admin_headers)
+    assert r.json()["itemKey"] == "FRAZ-1"
+
+
 def test_keys_unique_after_backfill_and_create_mix(client, team, admin_headers):
     _set_products(client, admin_headers, [{"name": "Fraznet", "keyPrefix": "FRAZ"}])
     created = [_mk(client, admin_headers, product="Fraznet")["itemKey"] for _ in range(3)]

@@ -873,7 +873,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.10.1"
+APP_VERSION = "4.10.2"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1700,6 +1700,16 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
             body["attachments"] = old_atts
         else:
             body.pop("attachments", None)
+        # item_key is server-assigned and IMMUTABLE. A wholesale item PUT from the
+        # client (item-page / modal edits) does NOT round-trip itemKey, so without
+        # this it gets wiped from the blob — and _reindex_project then NULLs the
+        # mirrored item_key column. Force the server-authoritative value through,
+        # same rationale as attachments/watchers. (Fixed after item-page edits were
+        # observed silently clearing keys; see also _backfill_item_keys on boot.)
+        if old.get("itemKey"):
+            body["itemKey"] = old["itemKey"]
+        else:
+            body.pop("itemKey", None)   # no old key → let backfill assign one; never let a client blank persist
         if "departments" in body:
             body["departments"] = _normalize_departments(body.get("departments"))
         # Blocked binding (additive): leaving the Blocked status clears the stashed
