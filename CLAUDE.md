@@ -55,6 +55,7 @@ The Flow shell is an **additive** left-rail UI built on top of the original app.
 - **Release planning (4.9.13–4.9.26)** — add/remove items on the Releases tab, post-release lock, **release notes** (generate/edit/store/copy + dirty-guard), per-type icons, release deep-link (`?release=`), Jira-independent feature-flag links.
 - **My Home (Stage 5)** — personal landing at `/my-home` that **absorbed My Work**; three tabs: **Assigned to me** (assignee == current user, non-terminal, sorted priority → due → name, reusing `_listRowHtml`), **Recent** (backed by `GET /api/my/recent`), **Watching** (backed by `GET /api/my/watching`). Rail entry navigates here; `/my-work` redirects in.
 - **List columns (4.9.22–4.9.26)** — model-driven List render; user-reorderable columns (↑/↓ in the Columns picker, persisted per-user via `frazil_beta_listorder_<user>`); added Project/Description columns; Gantt inline legend; CSV export follows display order.
+- **List filter-aware pills + resizable columns (4.10.1)** — rail count pills reflect the active filter; Name/Description are drag-resizable (widths per-user in `frazil_beta_listwidths_<user>`). ⚠ **KNOWN DEFERRED BUG:** the PROJECTS count pills only *approximate* assignee/`q` filters (inert until Assignee is used) — full writeup + fix in `design/flow-road-off-jira.md` item #10.
 
 **New `server.py` surface (all additive):**
 - Shared config-backed endpoints (any authed user): `GET/PUT /api/boards`, `/api/sprints`, `/api/releases` (config keys, NOT `VALID_KEYS`).
