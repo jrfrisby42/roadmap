@@ -17,22 +17,31 @@ pending KMS. Everything below is what's left for real adoption.
 These make Flow something an organization can trust and maintain, vs. "a
 branch one person runs in prod."
 
-1. **Reconcile beta-shell → main.** Prod currently runs the branch; main
-   sits at 3.10.0. With the staged build done and verified, this is the
-   moment to merge — a clean, tested milestone. Version it (a real "Flow
-   1.0"). Until this is done, every feature lives on an unmerged branch
-   that can drift from main.
+1. **Reconcile beta-shell → main — DONE.** Merged mid-June 2026. Verified
+   from the running app: beta-born features (Activity Center, Saved/Manage
+   Views, project color dots, notifications) are now live on the PRODUCTION
+   surface (roadmap.frazil.app/), /beta still resolves from the same
+   codebase, and both routes serve identical data — i.e. one reconciled
+   codebase serving both the classic top-bar shell and the Flow left-rail
+   shell. NOTE (verify from repo, not browser-visible): confirm main holds
+   the merge, the version is bumped off 3.10.0 to a real tag (e.g. Flow
+   1.0), and prod is deployed FROM main (not still from the branch).
 2. **Backups + data export.** Full export of items + history (JSON/CSV) and
    a scheduled dump to S3. Partly a feature, mostly insurance: nobody
    migrates ONTO a tool they can't get data OUT of — especially a
    single-file + SQLite app maintained by one person. Also lets you tell
    another team "your data isn't trapped here." Non-negotiable before other
    teams depend on it.
-3. **Finish attachments (2a).** A bug tracker you can't attach a screenshot
-   to isn't a bug tracker. Pending the dedicated KMS key setup (create key,
-   grant Flow backend role kms:GenerateDataKey/Decrypt on both role policy
-   AND key policy, point bucket at it, CLI adds SSE-KMS headers to presign +
-   PUT). Load-bearing, not optional.
+3. **Attachments (2a) — DONE.** Working as of mid-June 2026. Resolved the
+   full chain: us-west-2 endpoint + SigV4 signing, then SSE-KMS via a
+   dedicated KMS key (frazil-flow-attachments) with the Flow backend role
+   granted kms:GenerateDataKey/Decrypt on both role policy and key policy,
+   bucket default encryption pointed at it, and SSE-KMS headers on the
+   presign + PUT. Bucket frazil-flow-attachments, us-west-2, key
+   items/{itemId}/{uuid}/{sanitized-filename}, 50 MB max, presigned PUT
+   direct-to-S3, private + Block Public Access on. (Recommend a final
+   end-to-end verify of upload + clipboard-paste + download if not already
+   done.)
 4. **Admin → its own page, not a modal panel.** Settings stays a modal
    (small fields). Admin needs real estate — user management, permissions,
    status config, export, Jira/data tools are tables and multi-step actions,
@@ -82,6 +91,28 @@ branch one person runs in prod."
     technical: the team tracks pods, not people; Assignee is mostly empty.
     My Work (and personal accountability generally) is useless until
     assignment becomes habit. Worth a deliberate "we assign items now" push.
+    - **DEPENDENCY — fix the count-pill bug as part of this push (shipped
+      4.10.1, latent today).** The filter-aware PROJECTS count pills (All /
+      Fraznet / HubSpot) compute via a client-side predicate
+      (`_frzScopeCount`→`_frzCountMatching` in roadmap.html) that only
+      *approximates* assignee and full-text (`q`) filters — assignee isn't
+      reliably carried on the in-memory item blobs. The List view pill is
+      unaffected (it uses the exact `/api/items` server total). Correct today
+      for status/type/owner (verified live). Inert only because Assignee is
+      empty and the UI rejects a non-matching assignee value — so the moment
+      assignment becomes habit, filtering List by assignee makes the project
+      pills quietly wrong (silently-wrong-number, no error) and disagree with
+      the server-accurate List pill. **Fix:** when the active filter includes
+      an approximate dimension (assignee, `q` — audit for others), have the
+      project pills fall back to per-project server counts via
+      `/api/items?product=<p>&…&page_size=1` reading `total` (one light query
+      per project — the same server-total source the List pill trusts, so
+      they agree by construction); keep the client fast path for
+      status/type/owner. **Verify:** set assignee on one Fraznet + one HubSpot
+      item (use a NON-released item — a released-item PUT can trigger the Jira
+      FF-pull hook), filter List by that assignee, confirm the List pill and
+      all three project pills match `/api/items` totals. Do NOT re-open this
+      pre-emptively — it's correctly deferred until Assignee is in real use.
 
 ## Explicitly NOT blockers (don't let these crowd out the above)
 Cmd+K, keyboard shortcuts, templates, prompt-on-drop boards, watch-breadth
