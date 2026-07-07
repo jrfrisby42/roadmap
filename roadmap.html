@@ -2035,7 +2035,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.11.1';
+const APP_VERSION = '4.12.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2140,6 +2140,12 @@ const API = {
     if(r.status === 403){
       throw new Error('Permission denied. This action requires a higher role.');
     }
+    if(r.status === 409){   // T3: optimistic-concurrency conflict — surface it tagged
+      let d=null; try { d = (await r.json()).detail; } catch(_){}
+      const e = new Error((d && d.message) || 'This item has been updated since it was opened.');
+      e.status = 409; e.conflict = d || {};
+      throw e;
+    }
     if(!r.ok) throw new Error(await r.text());
     return r.json();
   },
@@ -2148,6 +2154,57 @@ const API = {
   async put(path,body)  { return this._check(await fetch(path,{method:'PUT',   headers:this._h(), body:JSON.stringify(body)})); },
   async del(path)       { return this._check(await fetch(path,{method:'DELETE',headers:this._authHeaders()})); },
 };
+
+// ── T3: guarded item save (optimistic concurrency) ───────────────────────────
+// Sends the item's last-known updated_ts as _baseUpdatedTs; on 409 (someone else
+// saved first) prompts Reload vs Override. Returns the saved item, or null when the
+// user chose Reload (caller must stop — the visible surface was refreshed for them).
+// Only the deliberate edit surfaces (edit modal, item-page field edits) route through
+// this; quick/system ops (drag, planning, auto-release) stay on plain API.put.
+async function putItemGuarded(id, body){
+  const proj = (typeof projects !== 'undefined') ? projects.find(x=>x.id===id) : null;
+  const withTs = (proj && proj.updated_ts) ? {...body, _baseUpdatedTs: proj.updated_ts} : body;
+  try {
+    return await API.put('/api/projects/'+id, withTs);
+  } catch(e){
+    if(!e || e.status !== 409) throw e;
+    const choice = await _conflictDialog();
+    if(choice === 'override'){
+      const b = {...withTs}; delete b._baseUpdatedTs;   // force the write
+      return await API.put('/api/projects/'+id, b);
+    }
+    // Reload: pull the latest, refresh whatever's visible, discard the local edit.
+    try { const fresh = await API.get('/api/all'); if(fresh && fresh.projects) projects = fresh.projects; } catch(_){}
+    const np = (typeof projects !== 'undefined') ? projects.find(x=>x.id===id) : null;
+    try {
+      if(typeof _itemPageId !== 'undefined' && _itemPageId === id && np && typeof renderItemPage === 'function') renderItemPage(np);
+      else if(typeof renderCurrentView === 'function') renderCurrentView();
+    } catch(_){}
+    if(typeof showToast === 'function') showToast('Reloaded the latest version — your changes were discarded.','info');
+    return null;
+  }
+}
+function _conflictDialog(){
+  return new Promise(resolve=>{
+    const bg = document.createElement('div');
+    bg.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:100000;display:flex;align-items:center;justify-content:center';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:var(--surface,#fff);color:var(--text,#111);max-width:420px;width:90%;border-radius:12px;padding:20px 22px;box-shadow:0 14px 44px rgba(0,0,0,0.35);font-size:14px';
+    box.innerHTML = '<div style="font-weight:700;font-size:15px;margin-bottom:8px">Update conflict</div>'
+      + '<div style="color:var(--muted,#666);line-height:1.5;margin-bottom:18px">This item has been updated since it was opened.</div>';
+    const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:10px;justify-content:flex-end';
+    const mk = (label, primary) => { const b = document.createElement('button'); b.textContent = label;
+      b.style.cssText = 'padding:7px 15px;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--border,#ccc);'
+        + (primary ? 'background:var(--accent,#0059A9);color:#fff;border-color:transparent' : 'background:var(--surface,#fff);color:var(--text,#111)'); return b; };
+    const reloadBtn = mk('Reload', true), overrideBtn = mk('Override', false);
+    function done(v){ try { document.body.removeChild(bg); } catch(_){} document.removeEventListener('keydown', esc); resolve(v); }
+    function esc(e){ if(e.key === 'Escape') done('reload'); }
+    reloadBtn.addEventListener('click', ()=>done('reload'));
+    overrideBtn.addEventListener('click', ()=>done('override'));
+    row.appendChild(reloadBtn); row.appendChild(overrideBtn); box.appendChild(row); bg.appendChild(box);
+    document.body.appendChild(bg); document.addEventListener('keydown', esc); reloadBtn.focus();
+  });
+}
 
 const DEFAULT_TYPES = [
   { name:'Feature',     color:'' },
@@ -5560,7 +5617,8 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
 
   try {
     if(editingId){
-      const updated = await API.put('/api/projects/' + editingId, {...data, _username: getUsername()});
+      const updated = await putItemGuarded(editingId, {...data, _username: getUsername()});
+      if(!updated) return;   // T3: conflict → user chose Reload; the view was refreshed
       const i = projects.findIndex(x=>x.id===editingId);
       if(i>-1) projects[i] = updated;
       // Refresh item page NOW with fresh server data (after save, not before)
@@ -13120,7 +13178,8 @@ async function _ipPersist(updated, opts={}){
   const refresh = opts.refresh || renderItemPage;   // additive (Stage A): default = item-page render → identical
   const prev = projects.find(x=>x.id===updated.id);
   try {
-    const saved = await API.put('/api/projects/'+updated.id, updated);
+    const saved = await putItemGuarded(updated.id, updated);
+    if(!saved) return;   // T3: conflict → user chose Reload; the item page was refreshed
     const idx = projects.findIndex(x=>x.id===updated.id);
     if(idx>=0) projects[idx] = {...updated, ...(saved&&typeof saved==='object'?saved:{}), id:updated.id};
     if(typeof showToast==='function') showToast(opts.msg||'Saved','success');

@@ -130,3 +130,36 @@ def test_update_can_still_clear_a_field_explicitly(client, team, admin_headers):
                    json={"name": "Item", "status": "Planned", "dev": ""}, headers=admin_headers)
     assert r.status_code == 200
     assert r.json()["dev"] == ""               # explicit empty applied, not reverted to "Everest"
+
+
+# ── T3 (4.12.0): optimistic concurrency on item PUT (updated_ts precondition) ───
+def test_update_optimistic_lock_conflict(client, team, admin_headers):
+    pid = _create(client, admin_headers).json()["id"]
+    item = next(p for p in client.get("/api/all", headers=admin_headers).json()["projects"]
+                if p["id"] == pid)
+    ts = item["updated_ts"]
+    assert ts                                   # /api/all now exposes the token
+    # Correct base token → 200, and the response carries a NEW token.
+    r_ok = client.put(f"/api/projects/{pid}",
+                      json={"name": "E1", "status": "Planned", "_baseUpdatedTs": ts},
+                      headers=admin_headers)
+    assert r_ok.status_code == 200
+    new_ts = r_ok.json()["updated_ts"]
+    assert new_ts and new_ts != ts
+    # Reusing the now-STALE token → 409 with the current token echoed back.
+    r_conf = client.put(f"/api/projects/{pid}",
+                        json={"name": "E2", "status": "Planned", "_baseUpdatedTs": ts},
+                        headers=admin_headers)
+    assert r_conf.status_code == 409
+    assert r_conf.json()["detail"]["currentUpdatedTs"] == new_ts
+
+
+def test_update_without_token_bypasses_lock(client, team, admin_headers):
+    # System / batch ops (and old clients) omit the token → never 409, even across
+    # back-to-back edits. The precondition is strictly opt-in.
+    pid = _create(client, admin_headers).json()["id"]
+    r1 = client.put(f"/api/projects/{pid}", json={"name": "A", "status": "Planned"},
+                    headers=admin_headers)
+    r2 = client.put(f"/api/projects/{pid}", json={"name": "B", "status": "Planned"},
+                    headers=admin_headers)
+    assert r1.status_code == 200 and r2.status_code == 200

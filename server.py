@@ -890,7 +890,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.11.1"
+APP_VERSION = "4.12.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1389,12 +1389,16 @@ def get_all(auth: dict = Depends(require_auth)):
     init_team_db(team)
     _migrate_config_keys(team)  # backfill any new keys added since team was created
     with db(team) as c:
-        rows = c.execute("SELECT id, data FROM projects ORDER BY id").fetchall()
+        rows = c.execute("SELECT id, data, updated_ts FROM projects ORDER BY id").fetchall()
         # Read all config in a single connection
         config_rows = c.execute("SELECT key, value FROM config").fetchall()
     projects = []
     for r in rows:
-        p = json.loads(r["data"]); p["id"] = r["id"]; projects.append(p)
+        p = json.loads(r["data"]); p["id"] = r["id"]
+        # T3: expose the optimistic-concurrency token so the client can send it back
+        # on edit; update_project 409s if the item changed since the client loaded it.
+        p["updated_ts"] = r["updated_ts"]
+        projects.append(p)
     cfg_map = {r["key"]: json.loads(r["value"]) for r in config_rows}
     def cfg(k):
         return cfg_map.get(k, [])
@@ -1673,6 +1677,10 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
     team = auth["team"]
     username = body.pop("_username", auth["username"])
     body.pop("id", None)
+    # T3 optimistic concurrency: the client may send the updated_ts it loaded. If
+    # present and it no longer matches the row's current updated_ts, someone else
+    # edited the item first → 409 (opt-in: callers that omit it are unaffected).
+    base_updated_ts = body.pop("_baseUpdatedTs", None)
     # Server-side rounding of parallelResources before save
     if "parallelResources" in body:
         body["parallelResources"] = round_up_to_quarter(body["parallelResources"])
@@ -1686,9 +1694,18 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
     # One connection: read the item, read the status-flag config we need, validate,
     # then write. (Previously statusIsReleased was read in a second connection.)
     with db(team) as c:
-        row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+        row = c.execute("SELECT data, updated_ts FROM projects WHERE id=?", (pid,)).fetchone()
         if not row: raise HTTPException(404, "Not found")
         old = json.loads(row["data"])
+        # T3: reject the edit if the item changed since the client loaded it.
+        if base_updated_ts is not None and row["updated_ts"] and base_updated_ts != row["updated_ts"]:
+            current = {**old, "id": pid, "updated_ts": row["updated_ts"]}
+            raise HTTPException(status_code=409, detail={
+                "error": "conflict",
+                "message": "This item has been updated since it was opened.",
+                "currentUpdatedTs": row["updated_ts"],
+                "current": current,
+            })
 
         cfg = {r["key"]: json.loads(r["value"]) for r in c.execute(
             "SELECT key, value FROM config WHERE key IN ('statusIsActive','statusIsReleased','statusIsBlocked')"
@@ -1740,7 +1757,11 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
         # status; the open Blocked flag is auto-cleared post-commit below.
         if blocked_status and merged.get("status", "") != blocked_status:
             merged.pop("preBlockStatus", None)
-        _save_project(c, pid, merged)
+        now_ts = datetime.now(timezone.utc).isoformat()
+        _save_project(c, pid, merged, now_ts)
+        # Return the fresh token so the client's cached copy is current for its NEXT
+        # edit (else the next save would 409 with a stale base token).
+        merged["updated_ts"] = now_ts
     write_audit(team, "update", username, pid, merged.get("name",""), changes or None)
     try:
         _union_departments(team, merged.get("departments"))   # persist any new departments (best-effort)
@@ -1788,9 +1809,11 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
                         current["jiraFeatureFlags"] = sorted(all_ff)
                         # Merge into featureFlags (union of existing + Jira, deduped)
                         current["featureFlags"] = sorted(set(current.get("featureFlags") or []) | all_ff)
-                        _save_project(c, pid, current)
+                        _ff_ts = datetime.now(timezone.utc).isoformat()
+                        _save_project(c, pid, current, _ff_ts)
                         merged["jiraFeatureFlags"] = current["jiraFeatureFlags"]
                         merged["featureFlags"]     = current["featureFlags"]
+                        merged["updated_ts"]       = _ff_ts   # keep the returned token fresh
                 log.info(f"[FeatureFlags] Pulled {len(all_ff)} flags for item {pid} on release")
         except Exception as e:
             log.warning(f"[FeatureFlags] Release-trigger FF pull failed for item {pid}: {e}")
@@ -3479,8 +3502,24 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
     p["jiraLastKnownStatus"]  = last_known
     p["jiraSyncSkipped"]      = skipped
 
+    # T3 (Part B): the blob was read BEFORE the multi-second Jira network walk, so
+    # writing the whole `p` back would clobber any user edit that landed meanwhile.
+    # Re-read the current row and merge ONLY the sync-owned fields onto it. The
+    # forward-only status advance is applied only if the current status still equals
+    # the one the decision was based on (else the user changed it — don't override).
     with db(team) as c:
-        _save_project(c, pid, p)
+        cur_row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+        if cur_row:
+            current = json.loads(cur_row["data"])
+            for _k in ("jiraCache", "jiraFeatureFlags", "featureFlags",
+                       "jiraLastSync", "jiraLastKnownStatus", "jiraSyncSkipped"):
+                if _k in p:
+                    current[_k] = p[_k]
+            if any_changed and best_new_status and current.get("status") == old_status:
+                current["status"] = best_new_status
+            _save_project(c, pid, current)
+        else:
+            _save_project(c, pid, p)
 
     # Roadmap status change → item history activity (Auto-Cleared, not visible in AC open tab)
     if status_change_activity:
@@ -4642,8 +4681,16 @@ def _sync_recurrence_child_statuses(parent_id: int, team: str, username: str) ->
                         child_updated["releaseDate"] = res_date[:10] if res_date else today_str
                     row_id = child.get("_row_id") or child.get("id")
                     child_updated.pop("_row_id", None)
+                    # T3 (Part B): re-read and merge only the sync-owned fields so a
+                    # concurrent edit to the child during the Jira walk isn't clobbered.
                     with db(team) as c:
-                        _save_project(c, row_id, child_updated)
+                        cur = c.execute("SELECT data FROM projects WHERE id=?", (row_id,)).fetchone()
+                        base = json.loads(cur["data"]) if cur else child_updated
+                        base["status"] = released_status
+                        if not base.get("releaseDate"):
+                            base["releaseDate"] = child_updated["releaseDate"]
+                        base.pop("_row_id", None)
+                        _save_project(c, row_id, base)
                     write_audit(team, "update", username, row_id,
                                 child.get("name", ""),
                                 changes={"status": {"from": child.get("status"), "to": released_status},
