@@ -872,7 +872,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.10.4"
+APP_VERSION = "4.11.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1689,42 +1689,47 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
         changes = {k: {"from": old.get(k), "to": v}
                    for k, v in body.items()
                    if old.get(k) != v and k not in {"jiraTickets","description"}}
-        # Attachments live in the blob but are managed ONLY by the attachment
-        # endpoints — a wholesale item PUT carries the client's (often stale)
-        # copy, so force the server-authoritative value through (mirror of the
-        # watchers table rationale). Prevents a full PUT from wiping an
-        # attachment that was just added in the same session.
+        # ── T1 (4.11.0): MERGE the client patch onto the existing blob — do NOT
+        # replace it. update_project used to write the request body AS the entire
+        # item blob, so every server-owned field the client OMITTED (sprintId,
+        # assignee, release, archived, reporter, sprintHistory, the jira sync-gate
+        # fields, planning outcomes, …) was silently WIPED. The classic edit modal
+        # builds its body from a fixed field list, so a normal Gantt/Kanban edit hit
+        # exactly this. Overlaying body onto old preserves omitted fields while still
+        # applying everything the client explicitly sends — killing the whole wipe
+        # CLASS. (The itemKey/attachments guards below are now belt-and-suspenders
+        # for the stale-SENT case; stale-sent server fields on a full-blob PUT are
+        # tracked separately under T3 / optimistic concurrency.)
+        merged = {**old, **body}
+        merged.pop("id", None)   # id is the column, never stored in the blob
+        # Attachments are managed ONLY by the attachment endpoints; itemKey is
+        # server-assigned + immutable. Force both from the old blob regardless of
+        # what the client sent (overrides a stale copy in a full-blob PUT).
         old_atts = old.get("attachments")
         if old_atts is not None:
-            body["attachments"] = old_atts
+            merged["attachments"] = old_atts
         else:
-            body.pop("attachments", None)
-        # item_key is server-assigned and IMMUTABLE. A wholesale item PUT from the
-        # client (item-page / modal edits) does NOT round-trip itemKey, so without
-        # this it gets wiped from the blob — and _reindex_project then NULLs the
-        # mirrored item_key column. Force the server-authoritative value through,
-        # same rationale as attachments/watchers. (Fixed after item-page edits were
-        # observed silently clearing keys; see also _backfill_item_keys on boot.)
+            merged.pop("attachments", None)
         if old.get("itemKey"):
-            body["itemKey"] = old["itemKey"]
+            merged["itemKey"] = old["itemKey"]
         else:
-            body.pop("itemKey", None)   # no old key → let backfill assign one; never let a client blank persist
+            merged.pop("itemKey", None)   # no old key → let backfill assign one; never persist a client blank
         if "departments" in body:
-            body["departments"] = _normalize_departments(body.get("departments"))
-        # Blocked binding (additive): leaving the Blocked status clears the stashed
-        # pre-block status here; the open Blocked flag is auto-cleared post-commit below.
-        if blocked_status and body.get("status", "") != blocked_status:
-            body.pop("preBlockStatus", None)
-        _save_project(c, pid, body)
-    write_audit(team, "update", username, pid, body.get("name",""), changes or None)
+            merged["departments"] = _normalize_departments(body.get("departments"))
+        # Blocked binding: leaving the Blocked status clears the stashed pre-block
+        # status; the open Blocked flag is auto-cleared post-commit below.
+        if blocked_status and merged.get("status", "") != blocked_status:
+            merged.pop("preBlockStatus", None)
+        _save_project(c, pid, merged)
+    write_audit(team, "update", username, pid, merged.get("name",""), changes or None)
     try:
-        _union_departments(team, body.get("departments"))   # persist any new departments (best-effort)
+        _union_departments(team, merged.get("departments"))   # persist any new departments (best-effort)
     except Exception as e:
         log.warning(f"[Departments] union after update failed for item {pid}: {e}")
-    body["id"] = pid
+    merged["id"] = pid
     # Stage 3b: notifications (post-commit, best-effort — never fail/roll back the update)
     try:
-        _notify_item_update(team, pid, old, body, username)
+        _notify_item_update(team, pid, old, merged, username)
     except Exception as e:
         log.warning(f"[Notify] update hook failed for item {pid}: {e}")
 
@@ -1733,7 +1738,7 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
     # network call, so it runs OUTSIDE any transaction; the resulting write then
     # re-reads the current row and merges ONLY the feature-flag fields, so a
     # concurrent edit landing during the Jira call isn't clobbered.
-    new_status = body.get("status", "")
+    new_status = merged.get("status", "")
     old_status = old.get("status", "")
     # ── Blocked binding (post-commit, best-effort): when an item moves to ANY
     # non-Blocked status, auto-clear its open Blocked flag so status ⇔ flag stay
@@ -1749,7 +1754,7 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
                 )
         except Exception as e:
             log.warning(f"[Blocked] flag-clear after update failed for item {pid}: {e}")
-    tickets    = body.get("jiraTickets") or []
+    tickets    = merged.get("jiraTickets") or []
     if new_status != old_status and released_map.get(new_status) and tickets and jira_configured():
         try:
             all_ff: set = set()
@@ -1764,13 +1769,13 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
                         # Merge into featureFlags (union of existing + Jira, deduped)
                         current["featureFlags"] = sorted(set(current.get("featureFlags") or []) | all_ff)
                         _save_project(c, pid, current)
-                        body["jiraFeatureFlags"] = current["jiraFeatureFlags"]
-                        body["featureFlags"]     = current["featureFlags"]
+                        merged["jiraFeatureFlags"] = current["jiraFeatureFlags"]
+                        merged["featureFlags"]     = current["featureFlags"]
                 log.info(f"[FeatureFlags] Pulled {len(all_ff)} flags for item {pid} on release")
         except Exception as e:
             log.warning(f"[FeatureFlags] Release-trigger FF pull failed for item {pid}: {e}")
 
-    return body
+    return merged
 
 @app.delete("/api/projects/{pid}")
 def delete_project(pid: int, username: str = "",

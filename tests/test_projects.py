@@ -93,3 +93,40 @@ def test_parallel_resources_locked_when_active(client, admin_headers):
                         json={"name": "Item", "status": "In Progress", "parallelResources": 2.0},
                         headers=admin_headers)
     assert r_same.status_code == 200
+
+
+# ── T1 (4.11.0): update MERGES the patch — omitted fields are NOT wiped ─────────
+def test_update_preserves_omitted_fields(client, team, admin_headers):
+    # The classic edit modal sends a fixed field list; anything it omits used to be
+    # wiped by the wholesale-blob replace. update_project now merges, so server-owned
+    # / other fields the client didn't send survive the edit.
+    created = _create(client, admin_headers,
+                      assignee="Alice", sprintId="SPR-1", storyPoints=5,
+                      reporter="Bob", release="REL-9").json()
+    pid = created["id"]
+    # A partial edit that omits assignee/sprintId/storyPoints/reporter/release.
+    r = client.put(f"/api/projects/{pid}",
+                   json={"name": "Renamed", "status": "Planned"}, headers=admin_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "Renamed"           # the change applied
+    assert body["assignee"] == "Alice"         # omitted fields preserved (was wiped pre-4.11.0)
+    assert body["sprintId"] == "SPR-1"
+    assert body["storyPoints"] == 5
+    assert body["reporter"] == "Bob"
+    assert body["release"] == "REL-9"
+    # And it's durable in the stored blob, not just the response.
+    with server.db(team) as c:
+        import json as _json
+        stored = _json.loads(c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()["data"])
+    assert stored["assignee"] == "Alice" and stored["sprintId"] == "SPR-1"
+
+
+def test_update_can_still_clear_a_field_explicitly(client, team, admin_headers):
+    # Merge preserves OMITTED fields but must still let a client CLEAR a field it
+    # explicitly sends as empty (how the modal clears e.g. owner).
+    pid = _create(client, admin_headers, dev="Everest").json()["id"]
+    r = client.put(f"/api/projects/{pid}",
+                   json={"name": "Item", "status": "Planned", "dev": ""}, headers=admin_headers)
+    assert r.status_code == 200
+    assert r.json()["dev"] == ""               # explicit empty applied, not reverted to "Everest"
