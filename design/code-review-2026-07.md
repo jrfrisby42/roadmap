@@ -62,7 +62,18 @@ into the not-found branch — no enumeration) AND per-request in `require_auth` 
 `_is_user_revoked` (fail-open on DB error), so a revoked user's live token dies
 immediately. Tests: revoked login 401, revoked live-token 401, non-revoked 200.
 
-### T3. Concurrent-edit protection (HIGH, reported)
+### T3. Concurrent-edit protection — ✅ SHIPPED 4.12.0 (commit d64868b)
+Both parts landed. **Part A (user↔user):** `get_all` exposes `updated_ts`;
+`update_project` 409s when the client's `_baseUpdatedTs` != current (opt-in, returns
+a fresh token); client `putItemGuarded` + a Reload/Override dialog wired into the
+edit modal save and `_ipPersist` (all item-page edits) — quick/system ops stay
+unguarded. **Part B (sync↔user):** `jira_pull_sync` + `_sync_recurrence_child_statuses`
+now re-read at write time and merge only sync-owned fields (status advance applied
+only if current status is unchanged). Coarse locking; field-level deferred. Tests:
+409 on stale token / 200 on current / 200 when omitted. **All three code-review HIGHs
+(T1/T2/T3) are now closed.** Original writeup below.
+
+<details><summary>T3 (original)</summary>
 No versioning/ETag anywhere — last-write-wins full-blob replace. Worst window:
 `jira_pull_sync` (server.py ~3295 read → ~3458 write) holds a stale blob across up
 to 10 Jira GETs + the FF hierarchy walk, then writes the whole blob back, silently
@@ -72,6 +83,7 @@ workers). **Fix:** targeted re-read-and-merge of only sync-owned fields in
 correctly in the update_project FF-pull and `sync_attachments_to_jira`); add an
 `updated_ts` precondition → 409 on item PUTs (`updated_ts` is already maintained by
 `_reindex_project`). Composes with T1.
+</details>
 
 ## 4.11.0+ — medium findings (fold in where cheap)
 - Planning commit: no draft-state/lock enforcement → double-commit re-inserts
