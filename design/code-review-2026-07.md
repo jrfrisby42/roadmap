@@ -56,11 +56,11 @@ PUT. Add tests asserting each server-owned field survives a modal-shaped PUT.
 Retire the per-field guards once the merge/whitelist lands.
 </details>
 
-### T2. Enforce user revocation (HIGH, reported) — NEXT
-`revokedAt` is checked in forgot-password but NOT in `login` or `decode_token`
-(server.py ~1099/~316). A revoked user logs in next day and gets a fresh 24h token;
-existing tokens keep working. **Fix:** reject revoked users in `login`; ideally also
-check in `require_auth` so live tokens die on revocation.
+### T2. Enforce user revocation — ✅ SHIPPED 4.11.1 (commit 310cd70)
+`revokedAt` was only honored in forgot-password. Now rejected at `login` (folded
+into the not-found branch — no enumeration) AND per-request in `require_auth` via
+`_is_user_revoked` (fail-open on DB error), so a revoked user's live token dies
+immediately. Tests: revoked login 401, revoked live-token 401, non-revoked 200.
 
 ### T3. Concurrent-edit protection (HIGH, reported)
 No versioning/ETag anywhere — last-write-wins full-blob replace. Worst window:
