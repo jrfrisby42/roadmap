@@ -361,11 +361,26 @@ def decode_password_token(token: str) -> dict:
     except Exception:
         raise HTTPException(400, "This link is invalid or has expired.")
 
+def _is_user_revoked(team: str, username: str) -> bool:
+    """True if `username` exists in the team and carries a revokedAt stamp. Used to
+    enforce revocation on LIVE tokens (T2). Fail-OPEN on any lookup error so a
+    transient DB issue can't lock out every authenticated request — revocation is
+    still guaranteed at token expiry, and login is checked separately."""
+    try:
+        with db(team) as c:
+            row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+        users = json.loads(row["value"]) if row else []
+        u = next((u for u in users if u.get("username") == username), None)
+        return bool(u and u.get("revokedAt"))
+    except Exception as e:
+        log.warning(f"[Auth] revocation lookup failed for '{username}'@'{team}': {e}")
+        return False
+
 def require_auth(authorization: Optional[str] = Header(None),
                  x_team: Optional[str] = Header(None)) -> dict:
-    """FastAPI dependency: extract and verify auth token from Authorization header.
-    Falls back to X-Team header with limited (viewer) access for backwards compatibility.
-    Returns {"team", "username", "role"}."""
+    """FastAPI dependency: extract and verify the bearer auth token. A verified
+    token is required (the old X-Team-only fallback was removed in 4.10.3). Also
+    enforces user revocation on live tokens (T2). Returns {"team","username","role"}."""
     token = None
     if authorization:
         # Strip "Bearer " prefix (case-insensitive) and any whitespace
@@ -382,12 +397,15 @@ def require_auth(authorization: Optional[str] = Header(None),
                 resolved = re.sub(r"[^a-z0-9]", "", (x_team or "").strip().lower())
                 if resolved and resolved != auth["team"]:
                     raise HTTPException(403, "Token team does not match X-Team header")
+            # T2: honor revocation on EXISTING tokens — a revoked user's live token
+            # dies immediately, not just at next login (tokens live 24h otherwise).
+            if _is_user_revoked(auth["team"], auth["username"]):
+                raise HTTPException(401, "Account access has been revoked. Please contact an admin.")
             return auth
         except HTTPException:
             raise
         except Exception as e:
             log.warning(f"[Auth] Token decode failed: {e}")
-            # Fall through to X-Team fallback
 
     # No valid token → reject. A prior X-Team-only "viewer" fallback (for the
     # pre-4.8 migration) was REMOVED in 4.10.3: it allowed UNAUTHENTICATED
@@ -872,7 +890,7 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
         )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.11.0"
+APP_VERSION = "4.11.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1105,7 +1123,9 @@ def login(body: dict = Body(...), request: FRequest = None, response: Response =
     user = next((u for u in users
                  if u["username"] == username
                  or ((u.get("email") or "").strip().lower() == _ident_l)), None)
-    if not user:
+    # T2: a revoked user cannot log in. Folded into the not-found branch so it's
+    # indistinguishable (same message + timing) — no account-enumeration signal.
+    if not user or user.get("revokedAt"):
         time.sleep(0.3)
         raise HTTPException(401, "Invalid username or password")
 

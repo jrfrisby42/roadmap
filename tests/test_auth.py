@@ -60,3 +60,41 @@ def test_login_rate_limited(client, team):
     # Once the window's RATE_MAX is exceeded, further attempts get 429.
     assert 429 in statuses
     server._rate.clear()  # don't leak the tripped limiter into later tests
+
+
+# ── T2 (4.11.0): user revocation is enforced at login AND on live tokens ────────
+import json as _json
+
+
+def _append_user(team, user):
+    with server.db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+        users = _json.loads(row["value"]) if row else []
+        users.append(user)
+        c.execute("UPDATE config SET value=? WHERE key='users'", (_json.dumps(users),))
+
+
+def test_revoked_user_live_token_rejected(client, team):
+    # A revoked user's EXISTING token must stop working immediately (not just at
+    # next login) — require_auth checks revocation per request.
+    _append_user(team, {"username": "gone", "role": "editor",
+                        "revokedAt": "2026-01-01T00:00:00Z"})
+    tok = server.create_token(team, "gone", "editor")
+    r = client.get("/api/all", headers={"Authorization": f"Bearer {tok}", "X-Team": team})
+    assert r.status_code == 401
+
+
+def test_revoked_user_login_rejected(client, team):
+    _append_user(team, {"username": "gone2", "role": "editor",
+                        "password": server.hash_password("secret123"),
+                        "revokedAt": "2026-01-01T00:00:00Z"})
+    r = client.post("/api/login", json={"team": team, "username": "gone2",
+                                        "password": "secret123"})
+    assert r.status_code == 401   # and generic message (folded into not-found path)
+
+
+def test_non_revoked_user_token_still_works(client, team):
+    # Revocation enforcement must NOT break ordinary auth for live users.
+    tok = server.create_token(team, "admin", "admin")
+    r = client.get("/api/all", headers={"Authorization": f"Bearer {tok}", "X-Team": team})
+    assert r.status_code == 200
