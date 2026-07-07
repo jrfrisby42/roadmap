@@ -23,9 +23,16 @@ Also confirmed this session: dev-team item_key wipe hit 4 items (10/21/33/223),
 all recovered to originals (FRAZ-10/15/27/169); scan found **no orphaned recurring
 chains** (every terminal recurring item already had a successor).
 
-## 4.11.0 — the structural work (do next, own verification pass)
+## 4.11.0 — the structural work (own verification pass)
 
-### T1. Kill the wholesale-PUT wipe class (HIGH, agent-tested) — the root cause
+### T1. Kill the wholesale-PUT wipe class — ✅ SHIPPED 4.11.0 (commit 3d8136a)
+`update_project` now merges (`merged = {**old, **body}`) instead of replacing the
+blob, so omitted fields are preserved while explicit sends (incl. empty-string
+clears) still apply. itemKey/attachments guards kept as belt-and-suspenders for
+the stale-SENT case. Tests added (omitted preserved + durable; explicit clear
+works). Retiring the per-field guards is optional cleanup. Original writeup below.
+
+<details><summary>T1 (original) — the root cause</summary>
 `update_project` (server.py ~1719) writes the client body as the ENTIRE item blob
 via `_save_project(c, pid, body)`. The classic edit modal (roadmap.html ~5308)
 builds that body **from scratch**, so any blob field it omits is destroyed. Today
@@ -47,8 +54,9 @@ it with a stale/forged value). Prefer (b) if we want server-owned fields
 (jira*/sprintHistory/reporter/release/etc.) structurally unreachable by any client
 PUT. Add tests asserting each server-owned field survives a modal-shaped PUT.
 Retire the per-field guards once the merge/whitelist lands.
+</details>
 
-### T2. Enforce user revocation (HIGH, reported)
+### T2. Enforce user revocation (HIGH, reported) — NEXT
 `revokedAt` is checked in forgot-password but NOT in `login` or `decode_token`
 (server.py ~1099/~316). A revoked user logs in next day and gets a fresh 24h token;
 existing tokens keep working. **Fix:** reject revoked users in `login`; ideally also
