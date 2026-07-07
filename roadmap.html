@@ -2035,7 +2035,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.12.0';
+const APP_VERSION = '4.12.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2606,6 +2606,13 @@ function populateDevSelects(){
     if(mv) m.value = mv;
   }
 }
+
+// A "rolled-up child" is a Jira sub-issue pulled in under an organizational parent
+// (via syncChildren). Those stay hidden in EVERY view. The `hidden` flag on a
+// TOP-LEVEL item (no parent) hides it from the GANTT ONLY — it still shows in
+// Kanban / List / Planning / Dashboard, etc. (recurrence_parent does NOT make an
+// item a child — recurring occurrences like "Maintenance Track" are top-level.)
+function _isRolledUpChild(p){ return !!(p && p.parent != null && p.parent !== ''); }
 
 // ── SHOW HIDDEN STATE ──
 let showHidden = false;
@@ -9245,7 +9252,7 @@ function getDashboardItems(){
   const ownerScope = getCurrentOwnerFilter();
 
   return projects.filter(p => {
-    if(p.hidden) return false;
+    if(p.hidden && _isRolledUpChild(p)) return false;   // hidden children roll up; hidden top-level shows here
     if(fDev  && !fDev.includes(p.dev||''))      return false;
     if(fProd && !fProd.includes(p.product||'')) return false;
     if(fType && !fType.includes(p.type||''))    return false;
@@ -9297,7 +9304,7 @@ function renderDashboard(){
   }
 
   const today      = new Date(); today.setHours(0,0,0,0);
-  const allItems   = projects.filter(p=>!p.hidden);
+  const allItems   = projects.filter(p=>!(p.hidden && _isRolledUpChild(p)));
 
   const activeItems   = items.filter(p => isActiveStatus(p.status));
   const terminalItems = items.filter(p => isTerminalStatus(p.status));
@@ -9462,7 +9469,7 @@ function renderDashboard(){
     </div>`;
 
   // ── SECTION 4: Maintenance & Operations ─────────────────────────────────
-  const recurringParents = projects.filter(p=>p.recurrence&&p.recurrence!=='none'&&!p.hidden);
+  const recurringParents = projects.filter(p=>p.recurrence&&p.recurrence!=='none'&&!(p.hidden && _isRolledUpChild(p)));
   const recurRows = recurringParents.map(parent => {
     const children = projects.filter(p=>p.parent===parent.id);
     const doneChildren = children.filter(p=>isTerminalStatus(p.status));
@@ -9640,7 +9647,7 @@ function renderKanban(){
   const searchQ  = (document.getElementById('itemSearch')?.value||'').trim().toLowerCase();
 
   const filteredItems = projects.filter(p => {
-    if(p.hidden) return false;
+    if(p.hidden && _isRolledUpChild(p)) return false;   // hidden children roll up; hidden top-level shows outside Gantt
     if(fDev  && !fDev.includes(p.dev||''))      return false;
     if(fProd && !fProd.includes(p.product||'')) return false;
     if(fType && !fType.includes(p.type||''))    return false;
@@ -13713,13 +13720,28 @@ function renderItemPage(p){
         <div style="font-size:12px;color:var(--text)">${esc(stripHtml(p.deferReason||''))}${p.deferNote?' — '+esc(stripHtml(p.deferNote)):''}</div>
         ${p.deferRevisit?`<div style="font-size:11px;color:var(--muted);margin-top:3px">Revisit: ${p.deferRevisit}</div>`:''}
       </div>` : '',
-      ipField('Hidden', p.hidden?'Yes':null),
+      `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 0">
+        <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Hidden</span>
+        <button onclick="ipToggleHidden(${p.id})" title="Hidden items are hidden from the Gantt only — they still show in Kanban, List, Planning and Dashboard"
+          style="padding:5px 12px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:12px;font-weight:700;background:${p.hidden?'var(--accent)':'var(--surface)'};color:${p.hidden?'#fff':'var(--text)'}">
+          ${p.hidden?'Hidden — click to show':'Visible — click to hide'}
+        </button>
+      </div>`,
       ipField('Item ID', `#${p.id}`, {muted:true}),
     ].filter(Boolean).join('') ||
       `<div style="font-size:12px;color:var(--muted)">No admin data</div>`;
   } else if(adminCard){
     adminCard.style.display = 'none';
   }
+}
+
+// Item-page Hidden toggle (admin only — mirrors the modal's Hidden field). Routes
+// through _ipPersist so it gets optimistic-concurrency + re-render for free.
+function ipToggleHidden(id){
+  const p = projects.find(x=>x.id===id);
+  if(!p || !isAdmin) return;
+  _ipPersist({...p, hidden: !p.hidden, _username: getUsername()},
+             {msg: (!p.hidden ? 'Item hidden (Gantt only)' : 'Item is now visible')});
 }
 
 async function fetchJiraStatusesForPage(tickets){
@@ -17977,7 +17999,7 @@ if ('serviceWorker' in navigator) {
     var ownerScope=_call('getCurrentOwnerFilter');
     var searchQ=((document.getElementById('itemSearch')||{}).value||'').trim().toLowerCase();
     return (_val('projects',[])||[]).filter(function(p){
-      if(p.hidden) return false;
+      if(p.hidden && _isRolledUpChild(p)) return false;   // hidden children roll up; hidden top-level shows on the board
       if(fDev && fDev.indexOf(p.dev||'')<0) return false;
       if(fProd && fProd.indexOf(p.product||'')<0) return false;
       if(fType && fType.indexOf(p.type||'')<0) return false;
