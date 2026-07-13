@@ -85,7 +85,15 @@ correctly in the update_project FF-pull and `sync_attachments_to_jira`); add an
 `_reindex_project`). Composes with T1.
 </details>
 
-## 4.11.0+ — medium findings (fold in where cheap)
+## 4.13.0 — SHIPPED (security batch, commit fd0be73)
+- ✅ Audit-actor spoofing — `_audit_actor()` allows only the 'System' sentinel;
+  else auth user. Applied across item/config/attachment/jira endpoints; comment
+  author forced to the poster.
+- ✅ `delete_comment` ownership (editor→own only, admin→any) + audit entry.
+- ✅ `/audit` reflected XSS — `date_from`/`date_to` validated to YYYY-MM-DD.
+- ✅ `add_attachment` client key confined to `items/{pid}/{attId}/`.
+
+## Still open — medium findings (fold in where cheap)
 - Planning commit: no draft-state/lock enforcement → double-commit re-inserts
   activity rows. Guard with `UPDATE planning_sessions SET status='committed' WHERE
   id=? AND status='draft'` (409 on rowcount 0); verify `locked_by`.
