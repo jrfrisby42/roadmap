@@ -93,32 +93,31 @@ correctly in the update_project FF-pull and `sync_attachments_to_jira`); add an
 - ✅ `/audit` reflected XSS — `date_from`/`date_to` validated to YYYY-MM-DD.
 - ✅ `add_attachment` client key confined to `items/{pid}/{attId}/`.
 
-## Still open — medium findings (fold in where cheap)
-- Planning commit: no draft-state/lock enforcement → double-commit re-inserts
-  activity rows. Guard with `UPDATE planning_sessions SET status='committed' WHERE
-  id=? AND status='draft'` (409 on rowcount 0); verify `locked_by`.
-- Boot backfill footgun: `_backfill_item_keys` re-keyed the wiped items with WRONG
-  fresh keys before recovery. Demote to detect-and-alarm (log.error + audit, don't
-  auto-mint for a keyless row whose id < max keyed id); assign keys at create-time
-  in child-sync (`_do_sync_children` ~3586) and `bulk_import` (~2512) instead.
-- Audit integrity: (a) the `update` diff only logs fields PRESENT in the body, so
-  field REMOVAL (the item_key wipe) left zero audit trail — capture removals, or
-  store the prior blob (see T-history below); (b) `_username`/`author`/`username` in
-  request bodies let any editor spoof the audit actor — use `auth["username"]`;
-  (c) `delete_comment` has no ownership check and no audit.
-- Reflected XSS on `/audit` via unescaped `date_from`/`date_to` (server.py ~2697);
-  admin-session-gated. `html.escape` + `^\d{4}-\d{2}-\d{2}$` validation.
-- `add_attachment` trusts a client-supplied S3 `key` (server.py ~2241) → cross-item/
-  tenant object read via the shared bucket. Validate `^items/{pid}/[0-9a-f]{32}/`.
+## 4.13.1 — SHIPPED (correctness + cleanup, commit aac30f2)
+- ✅ Planning commit: atomic draft-state + advisory-lock guard → double-commit 409s
+  (no more duplicate activity rows).
+- ✅ Boot backfill: anomaly tripwire — keyless row below max keyed id logged as ERROR
+  (still minted so it stays addressable). [create-time keying in child-sync/import
+  still worth adding later, but the wipe root cause is fixed by T1.]
+- ✅ `create_project` enforces `testWeeks < dueWeeks` + numeric guard (422 not 500).
+- ✅ Removed dead `startJiraBackgroundSync`/`_jiraSyncInterval`.
+- ✅ Jira issue-card href/onclick sinks → `escA(esc(...))`.
+
+## Still open — medium findings
+- **Hardcoded status names (4.13.2 — DEFERRED, needs its own pass + Gantt/editor
+  smoke).** Grew from 3 to ~9 logic sites using literal 'Released'/'In Testing':
+  Gantt scheduling (roadmap.html ~3402/3410/3418), modal (~3763, ~4575-4578),
+  save (~5453/5673), `PROTECTED_STATUSES` (~6781, a load-time const → make it a fn),
+  editor filter (~10471). Resolve via `statusIsReleased[]`/`statusIsTesting[]` +
+  `getReleasedStatus()`/`getTestingStatus()`. Latent (only bites teams that RENAME
+  the default statuses), so split out to avoid touching the Gantt/modal under time.
 - Attachment 50 MB cap is advisory (checks client-declared size); enforce via
   `ContentLengthRange` on the presign or verify object size on record.
-- `create_project` skips the `testWeeks >= dueWeeks` rule and doesn't coerce numeric
-  fields (feeds later 500s in recur/round_up).
-- 3 hardcoded status-name logic sites break rule 3 for teams that rename statuses:
-  Gantt scheduling (roadmap.html ~3338/3346), `PROTECTED_STATUSES` (~6716), editor
-  filter (~10403) — resolve via the status-flag maps.
-- Dead code: `startJiraBackgroundSync`/`_jiraSyncInterval` (roadmap.html ~14395) is a
-  superseded second sync engine — remove to avoid reviving the wrong one.
+- Audit integrity (c): the `update` diff only logs fields PRESENT in the body, so a
+  field REMOVAL leaves no audit trail — best solved by item-history (store prior blob;
+  Option B feature #1), not a standalone fix.
+- create-time key assignment in child-sync (`_do_sync_children`) and `bulk_import`
+  (currently keyless until next boot backfill).
 - Jira href/onclick sinks (roadmap.html ~14422–14448) use `esc()` in attribute/JS-
   string contexts — low risk (format-constrained), fix for consistency.
 
