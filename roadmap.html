@@ -2035,7 +2035,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.13.1';
+const APP_VERSION = '4.13.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -3399,7 +3399,7 @@ function render(){
 
         // Auto-status: if today is within the testing window → "In Testing"
         let displayStatus = p.status;
-        const statusOverridden = (testDays > 0 && effectiveTestStart && effectiveTestEnd && TODAY >= effectiveTestStart && TODAY <= effectiveTestEnd && p.status !== 'Released' && p.status !== 'In Testing');
+        const statusOverridden = (testDays > 0 && effectiveTestStart && effectiveTestEnd && TODAY >= effectiveTestStart && TODAY <= effectiveTestEnd && !statusIsReleased[p.status] && !statusIsTesting[p.status]);
         if(statusOverridden){
           displayStatus = 'In Testing';
         }
@@ -3407,7 +3407,7 @@ function render(){
         // Scheduled date display
         let schedClass = 'sched-date';
         if(testDays > 0 && effectiveTestStart && effectiveTestEnd && TODAY >= effectiveTestStart && TODAY <= effectiveTestEnd) schedClass += ' in-test';
-        else if(scheduledDate && TODAY > scheduledDate && p.status !== 'Released') schedClass += ' overdue';
+        else if(scheduledDate && TODAY > scheduledDate && !statusIsReleased[p.status]) schedClass += ' overdue';
         // Schedule column: computed date → expected date fallback → estimated weeks → '—'
         let schedStr;
         if(scheduledDate){
@@ -3415,7 +3415,7 @@ function render(){
         } else if(!s && e){
           // No start date but has expected date — show it
           schedStr = e.toLocaleDateString('en-US',{timeZone:MT_TZ,month:'short',day:'numeric'});
-          if(TODAY > e && p.status !== 'Released') schedClass += ' overdue';
+          if(TODAY > e && !statusIsReleased[p.status]) schedClass += ' overdue';
         } else if(p.dueWeeks){
           const totalWks = (p.dueWeeks || 0);
           schedStr = `${fmtEstimate(totalWks)} est.`;
@@ -3760,7 +3760,7 @@ function render(){
 let editingId=null;
 
 function toggleReleaseRow(){
-  const isReleased = document.getElementById('fStatus').value === 'Released';
+  const isReleased = !!statusIsReleased[document.getElementById('fStatus').value];
   const releaseRow = document.getElementById('releaseRow');
   // Only show for admins, and only when status = Released
   releaseRow.style.display = (isReleased && isAdmin) ? '' : 'none';
@@ -4571,16 +4571,18 @@ function openProjectModal(id){
     copySelect('fProduct','fProductEditor', ()=>{ refreshStatusOptions(); updateJiraFieldVisibility(); });
     // Refresh status options scoped to the project workflow
     refreshStatusOptions(p?.status);
-    // Editors cannot set status to Released — remove that option
-    const relOpt = document.getElementById('fStatusEditor')?.querySelector('option[value="Released"]');
-    if(relOpt) relOpt.remove();
-    // If item is currently Released, show as read-only
-    if(p?.status === 'Released'){
+    // Editors cannot set the Released status — remove that option (config-driven,
+    // resolved by value to avoid a selector-injection with a renamed status name).
+    const _relSt = getReleasedStatus();
+    const _fsEd0 = document.getElementById('fStatusEditor');
+    if(_fsEd0 && _relSt){ const _o=[...(_fsEd0.options||[])].find(o=>o.value===_relSt); if(_o) _o.remove(); }
+    // If item is currently the Released status, show as read-only
+    if(_relSt && p?.status === _relSt){
       const statEdSel = document.getElementById('fStatusEditor');
       if(statEdSel){
         statEdSel.disabled = true;
         const opt = document.createElement('option');
-        opt.value = 'Released'; opt.textContent = 'Released'; opt.selected = true;
+        opt.value = _relSt; opt.textContent = _relSt; opt.selected = true;
         statEdSel.appendChild(opt);
         statEdSel.style.opacity = '0.6';
       }
@@ -5450,7 +5452,7 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
   document.getElementById('testWeeksError').style.display = 'none';
 
   // Require release date when status is Released
-  if(data.status === 'Released' && !data.releaseDate){
+  if(statusIsReleased[data.status] && !data.releaseDate){
     document.getElementById('releaseError').style.display = 'block';
     document.getElementById('fRelease').focus();
     return;
@@ -5670,7 +5672,7 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
     if(savedProject && isTerminalStatus(savedProject.status)){
       const openActs = activities.filter(a => a.item_id===savedProject.id && (a.status==='Open'||a.status==='Read'));
       for(const a of openActs){
-        const reason = savedProject.status === 'Released'
+        const reason = statusIsReleased[savedProject.status]
           ? 'Auto-cleared: item Released'
           : 'Auto-cleared: terminal status';
         API.put('/api/activities/'+a.id, {status:'Auto-Cleared', action_taken:reason, resolved_by:'System'}).catch(()=>{});
@@ -6696,7 +6698,7 @@ function renderStatusList(){
     <span style="width:54px"></span>
   </div>` + statuses.map((s,i) => {
     const cnt        = projects.filter(p=>p.status===s).length;
-    const isSys      = PROTECTED_STATUSES.has(s);
+    const isSys      = isProtectedStatus(s);
     const isLocked   = isSys || cnt > 0;
     const lockTitle  = isSys ? 'System status — cannot be deleted' : `In use by ${cnt} item${cnt!==1?'s':''} — cannot be deleted`;
     const deleteBtn  = isLocked
@@ -6778,11 +6780,13 @@ function saveEditStatus(i){
 }
 
 // Statuses tied to app logic — cannot be deleted
-const PROTECTED_STATUSES = new Set(['Released', 'In Testing']);
+// A status is "protected" (undeletable) if it's the configured Released or
+// In-Testing status — required for release-date / testing-period logic (rule 3).
+function isProtectedStatus(s){ return !!(statusIsReleased[s] || statusIsTesting[s]); }
 
 function deleteStatus(i){
   const name = statuses[i];
-  if(PROTECTED_STATUSES.has(name)){
+  if(isProtectedStatus(name)){
     alert(`"${name}" is a system status and cannot be deleted.\nIt is required for release date and testing period logic.`);
     return;
   }
@@ -10468,7 +10472,7 @@ function refreshStatusOptions(currentStatusValue){
   if(fStEd){
     // Use currentStatusValue if provided, fall back to current select value
     const edPrev = currentStatusValue !== undefined ? currentStatusValue : fStEd.value;
-    const editorStatuses = validStatuses.filter(s => s !== 'Released');
+    const editorStatuses = validStatuses.filter(s => !statusIsReleased[s]);
     fStEd.innerHTML = editorStatuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
     if(editorStatuses.includes(edPrev)) fStEd.value = edPrev;
     // sync back to fStatus
