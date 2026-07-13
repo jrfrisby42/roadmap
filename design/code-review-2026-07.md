@@ -104,13 +104,12 @@ correctly in the update_project FF-pull and `sync_attachments_to_jira`); add an
 - ✅ Jira issue-card href/onclick sinks → `escA(esc(...))`.
 
 ## Still open — medium findings
-- **Hardcoded status names (4.13.2 — DEFERRED, needs its own pass + Gantt/editor
-  smoke).** Grew from 3 to ~9 logic sites using literal 'Released'/'In Testing':
-  Gantt scheduling (roadmap.html ~3402/3410/3418), modal (~3763, ~4575-4578),
-  save (~5453/5673), `PROTECTED_STATUSES` (~6781, a load-time const → make it a fn),
-  editor filter (~10471). Resolve via `statusIsReleased[]`/`statusIsTesting[]` +
-  `getReleasedStatus()`/`getTestingStatus()`. Latent (only bites teams that RENAME
-  the default statuses), so split out to avoid touching the Gantt/modal under time.
+- ✅ **Hardcoded status names — SHIPPED 4.13.2 (commit a890b58).** All ~10 logic
+  sites (Gantt scheduling/overdue, modal release-row + editor restriction, save
+  release-date/auto-clear, `PROTECTED_STATUSES` → `isProtectedStatus()`, editor
+  filter) now resolve via `statusIsReleased[]`/`statusIsTesting[]` +
+  `getReleasedStatus()`. Behavior identical for default statuses; correct for
+  renamed ones. (No frontend test harness — verify with a Gantt + status-editor smoke.)
 - Attachment 50 MB cap is advisory (checks client-declared size); enforce via
   `ContentLengthRange` on the presign or verify object size on record.
 - Audit integrity (c): the `update` diff only logs fields PRESENT in the body, so a
