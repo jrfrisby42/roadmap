@@ -193,3 +193,21 @@ def test_create_rejects_testweeks_ge_dueweeks(client, admin_headers):
     assert _create(client, admin_headers, dueWeeks=3, testWeeks=3).status_code == 422
     assert _create(client, admin_headers, dueWeeks=3, testWeeks=5).status_code == 422
     assert _create(client, admin_headers, dueWeeks=3, testWeeks=2).status_code == 200
+
+
+# ── 4.13.3: a no-op background sync must NOT bump the optimistic-concurrency token ─
+def test_save_project_preserves_updated_ts_when_passed(client, team, admin_headers):
+    # jira_pull_sync passes the existing updated_ts on a no-op poll so it doesn't
+    # invalidate open editors' base tokens (which caused a persistent spurious 409).
+    import json as _json
+    pid = _create(client, admin_headers).json()["id"]
+    item = next(p for p in client.get("/api/all", headers=admin_headers).json()["projects"]
+                if p["id"] == pid)
+    ts = item["updated_ts"]
+    assert ts
+    with server.db(team) as c:
+        data = _json.loads(c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()["data"])
+        data["jiraLastSync"] = "2026-01-01T00:00:00+00:00"      # sync-metadata churn only
+        server._save_project(c, pid, data, ts)                   # preserve the token
+        got = c.execute("SELECT updated_ts FROM projects WHERE id=?", (pid,)).fetchone()["updated_ts"]
+    assert got == ts                                             # token unchanged → no spurious conflict

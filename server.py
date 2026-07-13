@@ -897,7 +897,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.13.2"
+APP_VERSION = "4.13.3"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3547,7 +3547,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
     # forward-only status advance is applied only if the current status still equals
     # the one the decision was based on (else the user changed it — don't override).
     with db(team) as c:
-        cur_row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+        cur_row = c.execute("SELECT data, updated_ts FROM projects WHERE id=?", (pid,)).fetchone()
         if cur_row:
             current = json.loads(cur_row["data"])
             for _k in ("jiraCache", "jiraFeatureFlags", "featureFlags",
@@ -3556,7 +3556,14 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
                     current[_k] = p[_k]
             if any_changed and best_new_status and current.get("status") == old_status:
                 current["status"] = best_new_status
-            _save_project(c, pid, current)
+            # PRESERVE the optimistic-concurrency token (updated_ts) on a no-op poll.
+            # Background jira sync runs on a timer and on item-page open; if every poll
+            # bumped updated_ts it would invalidate every open editor's base token and
+            # produce a persistent spurious "update conflict" on save (T3 regression).
+            # Only a user-meaningful change (status advance or feature-flag change)
+            # bumps it; pure sync-metadata refreshes keep the existing token.
+            _keep_ts = None if (any_changed or ff_changed) else cur_row["updated_ts"]
+            _save_project(c, pid, current, _keep_ts)
         else:
             _save_project(c, pid, p)
 
