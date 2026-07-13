@@ -125,3 +125,16 @@ def test_commit_release_requires_release_number(client, admin_headers):
         "name": "R1", "type": "Release", "release_number": "",
     }, headers=admin_headers)
     assert r.status_code == 422
+
+
+# ── 4.13.1: a session commits exactly once — a second commit is a 409 ───────────
+def test_commit_is_idempotent_second_is_409(client, admin_headers):
+    client.put("/api/config/statusIsActive", json={"In Progress": True}, headers=admin_headers)
+    pid = _create_item(client, admin_headers, status="Planned")
+    sid = _create_session(client, admin_headers).json()["id"]
+    payload = {"name": "Sprint 24", "type": "Sprint",
+               "sprint_items": [{"id": pid, "start": "2026-07-01"}]}
+    r1 = client.post(f"/api/planning-sessions/{sid}/commit", json=payload, headers=admin_headers)
+    r2 = client.post(f"/api/planning-sessions/{sid}/commit", json=payload, headers=admin_headers)
+    assert r1.status_code == 200
+    assert r2.status_code == 409

@@ -897,7 +897,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.13.0"
+APP_VERSION = "4.13.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1585,15 +1585,26 @@ def _backfill_item_keys(team: str) -> int:
         rows = c.execute(
             "SELECT id, data FROM projects WHERE item_key IS NULL OR item_key='' ORDER BY id"
         ).fetchall()
+        # Anomaly tripwire: a keyless row whose id is BELOW the highest keyed id is
+        # almost certainly NOT a genuinely-new item — it likely LOST its key (the
+        # pre-4.11.0 wipe bug, now fixed). Still mint one so the item stays addressable,
+        # but log loudly so any regression surfaces instead of a silent wrong-key mint.
+        _mk = c.execute("SELECT MAX(id) AS m FROM projects WHERE item_key IS NOT NULL AND item_key!=''").fetchone()
+        _max_keyed_id = (_mk["m"] if _mk and _mk["m"] is not None else 0)
         assigned = 0
         for r in rows:
             data = json.loads(r["data"])
             if data.get("itemKey"):
                 continue
             prefix = prefixes.get(data.get("product")) or DEFAULT_KEY_PREFIX
-            data["itemKey"] = f"{prefix}-{_next_key_seq(c, prefix)}"
+            newkey = f"{prefix}-{_next_key_seq(c, prefix)}"
+            data["itemKey"] = newkey
             _save_project(c, r["id"], data)
             assigned += 1
+            if r["id"] < _max_keyed_id:
+                log.error("[ItemKey] ANOMALY: item %s (%r) was keyless below the max keyed id %s "
+                          "— likely lost its key; minted %s. Investigate.",
+                          r["id"], data.get("name", ""), _max_keyed_id, newkey)
     return assigned
 
 # One-time boot backfill for ALL existing teams — runs HERE (at import, after the
@@ -1655,6 +1666,15 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     username = _audit_actor(body.pop("_username", None), auth)
     body.pop("id", None)
     body.setdefault("reporter", username)   # who created the item (immutable-ish)
+    # Validate test period < time estimate (parity with update_project — create used
+    # to skip this, letting an item be born invalid). Numeric guard → 422 not 500.
+    try:
+        _test_wks = float(body.get("testWeeks") or 0)
+        _due_wks  = float(body.get("dueWeeks")  or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(422, "testWeeks and dueWeeks must be numbers")
+    if _test_wks > 0 and _due_wks > 0 and _test_wks >= _due_wks:
+        raise HTTPException(422, f"Test period ({_test_wks}w) cannot equal or exceed the time estimate ({_due_wks}w)")
     # Server-side rounding of parallelResources — must happen BEFORE the insert
     # so the persisted value matches what we return (not just the response).
     if "parallelResources" in body:
@@ -4436,6 +4456,17 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
     # ── Atomic DB write: save all changed projects + activities + session ──────
     committed_ts = datetime.now(timezone.utc).isoformat()
     with db(team) as c:
+        # A session commits exactly ONCE. If it's already committed (a retry, a
+        # double-click, or two workers), abort BEFORE re-applying changes or
+        # re-inserting activity rows. Also refuse if another user holds the advisory
+        # lock. Same transaction as the writes → SQLite's single-writer rule makes
+        # this atomic against a concurrent commit.
+        _srow = c.execute("SELECT status, locked_by FROM planning_sessions WHERE id=?",
+                          (session_id,)).fetchone()
+        if _srow and _srow["status"] == "committed":
+            raise HTTPException(409, "This planning session has already been committed.")
+        if _srow and _srow["locked_by"] and _srow["locked_by"] != auth["username"]:
+            raise HTTPException(409, f"This planning session is locked by {_srow['locked_by']}.")
         for item_id, updated in to_save.items():
             _save_project(c, item_id, updated)
         for act in activities:

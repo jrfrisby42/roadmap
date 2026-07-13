@@ -186,3 +186,10 @@ def test_update_audit_actor_allows_system_sentinel(client, team, admin_headers):
         row = c.execute("SELECT username FROM audit_log WHERE action='update' AND project_id=? "
                         "ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
     assert row["username"] == "System"       # the automated-ops sentinel is preserved
+
+
+# ── 4.13.1: create_project enforces testWeeks < dueWeeks (parity with update) ───
+def test_create_rejects_testweeks_ge_dueweeks(client, admin_headers):
+    assert _create(client, admin_headers, dueWeeks=3, testWeeks=3).status_code == 422
+    assert _create(client, admin_headers, dueWeeks=3, testWeeks=5).status_code == 422
+    assert _create(client, admin_headers, dueWeeks=3, testWeeks=2).status_code == 200

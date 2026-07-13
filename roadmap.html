@@ -2035,7 +2035,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.13.0';
+const APP_VERSION = '4.13.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -14475,26 +14475,9 @@ async function syncRoadmapToJira(saved, originalValues){
 
 // Item Page: load Jira section from cache + optionally fetch fresh
 // ── JIRA PULL SYNC ENGINE ─────────────────────────────────────────────────────
-
-let _jiraSyncInterval = null;
-
-function startJiraBackgroundSync(){
-  if(_jiraSyncInterval) clearInterval(_jiraSyncInterval);
-  const cfg     = window._jiraSyncConfigData || {};
-  const enabled = cfg.enabled  || false;
-  const minutes = parseInt(cfg.intervalMinutes) || 15;
-  if(!enabled || !jiraConfigured) return;
-  _jiraSyncInterval = setInterval(async ()=>{
-    const itemsToSync = projects.filter(p=>p.jiraTickets?.length && !isTerminalStatus(p.status));
-    for(const p of itemsToSync.slice(0,20)){
-      try { await API.post('/api/jira/pull/'+p.id, {username:'System'}); } catch(e){}
-    }
-    if(_itemPageId){
-      const fresh = projects.find(x=>x.id===_itemPageId);
-      if(fresh?.jiraTickets?.length) loadItemPageJira(fresh);
-    }
-  }, minutes * 60 * 1000);
-}
+// (The live background sync is initJiraSyncConfig → _jiraSyncTimer → runBackgroundJiraSync.
+//  A superseded second engine, startJiraBackgroundSync/_jiraSyncInterval, was removed in
+//  4.13.1 — it was uncalled and had drifted, so it was a trap for future edits.)
 
 function renderJiraIssueCard(d, canEdit){
   const JCAT = {'indeterminate':'#aaa','new':'#3b8fd4','done':'#22b96e','in-progress':'#e8a000'};
@@ -14503,17 +14486,17 @@ function renderJiraIssueCard(d, canEdit){
     ? `<div style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px">
         <div style="font-size:10px;font-weight:700;color:var(--muted);margin-bottom:4px">CHILD ISSUES</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px">${
-          d.children.map(c=>`<a href="${esc(d.url.replace(d.key,c))}" target="_blank" rel="noopener"
+          d.children.map(c=>`<a href="${escA(esc(d.url.replace(d.key,c)))}" target="_blank" rel="noopener"
             style="font-size:10px;font-weight:700;color:var(--accent);background:rgba(91,79,255,0.07);padding:2px 7px;border-radius:5px;text-decoration:none">${esc(c)}</a>`
           ).join('')
         }</div></div>` : '';
   const parentHtml = d.parent
-    ? `<div style="font-size:10px;color:var(--muted);margin-bottom:2px">Parent: <a href="${esc(d.url.replace(d.key,d.parent))}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(d.parent)}</a></div>` : '';
+    ? `<div style="font-size:10px;color:var(--muted);margin-bottom:2px">Parent: <a href="${escA(esc(d.url.replace(d.key,d.parent)))}" target="_blank" rel="noopener" style="color:var(--accent)">${esc(d.parent)}</a></div>` : '';
   const updatedHtml = d.updated
     ? `<span style="font-size:10px;color:var(--muted)">Updated ${new Date(d.updated).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</span>` : '';
   return `<div style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
     <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-      <a href="${esc(d.url)}" target="_blank" rel="noopener"
+      <a href="${escA(esc(d.url))}" target="_blank" rel="noopener"
         style="font-size:12px;font-weight:700;color:var(--accent);text-decoration:none">${esc(d.key)}</a>
       <span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;background:${catColor}22;color:${catColor}">${esc(d.status)}</span>
       <span style="font-size:10px;color:var(--muted);margin-left:auto">${esc(d.issueType||'')}</span>
@@ -14523,13 +14506,13 @@ function renderJiraIssueCard(d, canEdit){
     <div style="font-size:10px;color:var(--muted);margin-bottom:4px">${esc(d.project||'')}${d.assignee?' · '+esc(d.assignee):''}</div>
     ${childrenHtml}
     <div style="margin-top:6px;display:flex;align-items:center;gap:8px">
-      <a href="${esc(d.url)}" target="_blank" rel="noopener"
+      <a href="${escA(esc(d.url))}" target="_blank" rel="noopener"
         style="font-size:10px;font-weight:700;color:var(--accent);text-decoration:none;display:inline-flex;align-items:center;gap:3px">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
         Open in Jira
       </a>
       ${updatedHtml}
-      ${canEdit?`<button onclick="unlinkJiraFromItemPage('${esc(d.key)}')" style="font-size:10px;color:var(--accent2);background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-weight:700;margin-left:auto">Unlink</button>`:''}
+      ${canEdit?`<button onclick="unlinkJiraFromItemPage('${escA(esc(d.key))}')" style="font-size:10px;color:var(--accent2);background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-weight:700;margin-left:auto">Unlink</button>`:''}
     </div>
   </div>`;
 }
