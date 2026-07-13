@@ -889,8 +889,15 @@ def write_audit(team: str, action: str, username: str = "", project_id=None,
              project_id, project_name, json.dumps(changes) if changes else None)
         )
 
+def _audit_actor(requested, auth):
+    """Resolve the attribution/actor for a mutation. A client may request ONLY the
+    literal 'System' sentinel (used by automated ops like the client-side auto-release
+    loop); any other value is ignored and the authenticated user is used — so an
+    editor cannot attribute a change or comment to another real user."""
+    return "System" if requested == "System" else auth.get("username", "")
+
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.12.1"
+APP_VERSION = "4.13.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1645,7 +1652,7 @@ def _union_departments(team, item_depts):
 @app.post("/api/projects")
 def create_project(body: dict, auth: dict = Depends(require_role("admin", "editor"))):
     team = auth["team"]
-    username = body.pop("_username", auth["username"])
+    username = _audit_actor(body.pop("_username", None), auth)
     body.pop("id", None)
     body.setdefault("reporter", username)   # who created the item (immutable-ish)
     # Server-side rounding of parallelResources — must happen BEFORE the insert
@@ -1675,7 +1682,7 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
 @app.put("/api/projects/{pid}")
 def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admin", "editor"))):
     team = auth["team"]
-    username = body.pop("_username", auth["username"])
+    username = _audit_actor(body.pop("_username", None), auth)
     body.pop("id", None)
     # T3 optimistic concurrency: the client may send the updated_ts it loaded. If
     # present and it no longer matches the row's current updated_ts, someone else
@@ -1824,7 +1831,7 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
 def delete_project(pid: int, username: str = "",
                    auth: dict = Depends(require_role("admin"))):
     team = auth["team"]
-    username = username or auth["username"]
+    username = _audit_actor(username, auth)
     with db(team) as c:
         row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
         name = json.loads(row["data"]).get("name","") if row else ""
@@ -2029,7 +2036,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
 def set_config(key: str, body = Body(...), username: str = "",
                auth: dict = Depends(require_role("admin"))):
     team = auth["team"]
-    username = username or auth["username"]
+    username = _audit_actor(username, auth)
     if key not in VALID_KEYS:
         raise HTTPException(400, f"Unknown key: {key}")
     if key == "users":
@@ -2290,10 +2297,16 @@ def add_attachment(pid: int, body: dict = Body(...),
                    auth: dict = Depends(require_role("admin", "editor"))):
     """Record an attachment on the item blob after the browser's direct S3 PUT."""
     team = auth["team"]
-    username = body.get("_username") or auth["username"]
+    username = _audit_actor(body.get("_username"), auth)
     att_id = body.get("attId"); key = body.get("key")
     if not att_id or not key:
         raise HTTPException(422, "attId and key are required")
+    # Security: the recorded key must live under THIS item's prefix with the attId's
+    # uuid. Without this, an editor could record an arbitrary key (another item's or
+    # team's object in the shared bucket) and read it back via the presigned GET in
+    # list_attachments. Presign returns exactly this key shape, so legit clients pass.
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", str(att_id)) or not str(key).startswith(f"items/{pid}/{att_id}/"):
+        raise HTTPException(422, "Invalid attachment key for this item")
     rec = {
         "id": att_id, "key": key,
         "name": (body.get("name") or "file"),  # TRUE original filename
@@ -2553,7 +2566,7 @@ def my_recent(auth: dict = Depends(require_auth)):
 @app.post("/api/import")
 def bulk_import(body: dict = Body(...), auth: dict = Depends(require_role("admin"))):
     team = auth["team"]
-    username = body.pop("_username", auth["username"])
+    username = _audit_actor(body.pop("_username", None), auth)
     with db(team) as c:
         c.execute("DELETE FROM projects")
         for p in body.get("projects", []):
@@ -2609,6 +2622,12 @@ def audit_page(request: FRequest, team: str = "development", search: str = "",  
     except Exception:
         return RedirectResponse(url=f"/?team={team}&next=audit", status_code=302)
     # ── End auth check ─────────────────────────────────────────────────────────
+
+    # Harden reflected values: date_from/date_to are echoed into the HTML form's
+    # value="" attributes, so accept ONLY a strict YYYY-MM-DD shape (blank otherwise)
+    # — prevents an attribute-breakout reflected XSS via a crafted /audit?date_from=… link.
+    if date_from and not re.match(r"^\d{4}-\d{2}-\d{2}$", date_from): date_from = ""
+    if date_to and not re.match(r"^\d{4}-\d{2}-\d{2}$", date_to): date_to = ""
 
     # Default to last 7 days when no date filter supplied
     from datetime import timedelta
@@ -3139,7 +3158,7 @@ def link_jira_issue(body: dict = Body(...),
     ticket   = (body.get("ticket","")).strip().upper()
     item_id  = body.get("item_id")
     item_name= body.get("item_name","")
-    username = body.get("username","")
+    username = _audit_actor(body.get("username"), auth)
     if not ticket: raise HTTPException(400, "ticket required")
 
     # Duplicate check — scan all items
@@ -3330,7 +3349,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
       - Regressions/skips → audit log only, stop retrying until Jira status changes
     """
     team     = auth["team"]
-    username = body.get("username", auth["username"])
+    username = _audit_actor(body.get("username"), auth)
     if not jira_configured():
         raise HTTPException(503, "Jira not configured")
     # Check if Jira integration is enabled for this team
@@ -3728,7 +3747,7 @@ def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin
     team = auth["team"]
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     item_id = body.get("item_id")
-    author  = body.get("author", auth["username"])
+    author  = auth["username"]   # comment author is always the authenticated poster (no client override)
     # Stage 4: single-level threads. Normalize parent_id to the thread ROOT — if the
     # target is itself a reply, attach to its parent; ignore a parent on another item or
     # a missing one (→ top-level). Guarantees at most one level regardless of client.
@@ -3756,8 +3775,18 @@ def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin
 def delete_comment(cid: int, auth: dict = Depends(require_role("admin", "editor"))):
     team = auth["team"]
     with db(team) as c:
+        row = c.execute("SELECT id, item_id, author FROM comments WHERE id=?", (cid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Comment not found")
+        # Ownership: an editor may delete only their OWN comment; admins may delete any.
+        # (Deleting a top-level comment cascades to its replies — an admin-only power in
+        #  practice, but an editor deleting their own top-level comment still cascades.)
+        if auth["role"] != "admin" and row["author"] != auth["username"]:
+            raise HTTPException(403, "You can only delete your own comments")
         # Stage 4: cascade — deleting a top-level comment removes its replies too (no orphans).
         c.execute("DELETE FROM comments WHERE id=? OR parent_id=?", (cid, cid))
+    write_audit(team, "comment:delete", auth["username"], row["item_id"],
+                changes={"comment_id": cid, "author": row["author"]})
     return {"deleted": cid}
 
 # ── Recurrence: spawn next occurrence ─────────────────────────────────────────

@@ -109,3 +109,30 @@ def test_cascade_delete_removes_replies(client, team, admin_headers):
     assert len(_comments(client, admin_headers, pid)) == 3
     client.delete(f"/api/comments/{top}", headers=admin_headers)
     assert _comments(client, admin_headers, pid) == []   # parent + both replies gone
+
+
+# ── 4.13.0: delete-comment ownership (editors delete only their own; admins any) ──
+def test_editor_cannot_delete_others_comment(client, team, admin_headers):
+    pid = _mk(client, admin_headers)
+    # editor1 posts a comment (author is forced to the authenticated poster server-side)
+    cid = _post(client, _hdr(team, "editor1", "editor"), pid, "mine")["id"]
+    # a DIFFERENT editor cannot delete it
+    r = client.delete(f"/api/comments/{cid}", headers=_hdr(team, "editor2", "editor"))
+    assert r.status_code == 403
+    # the author can delete their own
+    assert client.delete(f"/api/comments/{cid}", headers=_hdr(team, "editor1", "editor")).status_code == 200
+
+
+def test_admin_can_delete_any_comment(client, team, admin_headers):
+    pid = _mk(client, admin_headers)
+    cid = _post(client, _hdr(team, "editor1", "editor"), pid, "theirs")["id"]
+    assert client.delete(f"/api/comments/{cid}", headers=admin_headers).status_code == 200
+
+
+def test_comment_author_is_authenticated_user(client, team, admin_headers):
+    # A client cannot post a comment as someone else.
+    pid = _mk(client, admin_headers)
+    r = client.post("/api/comments",
+                    json={"item_id": pid, "body": "hi", "author": "someone_else"},
+                    headers=_hdr(team, "editor1", "editor")).json()
+    assert r["author"] == "editor1"

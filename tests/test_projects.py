@@ -163,3 +163,26 @@ def test_update_without_token_bypasses_lock(client, team, admin_headers):
     r2 = client.put(f"/api/projects/{pid}", json={"name": "B", "status": "Planned"},
                     headers=admin_headers)
     assert r1.status_code == 200 and r2.status_code == 200
+
+
+# ── 4.13.0: audit actor is not spoofable via _username ──────────────────────────
+def test_update_audit_actor_not_spoofable(client, team, admin_headers):
+    pid = _create(client, admin_headers).json()["id"]
+    client.put(f"/api/projects/{pid}",
+               json={"name": "X", "status": "Planned", "_username": "impostor"},
+               headers=admin_headers)
+    with server.db(team) as c:
+        row = c.execute("SELECT username FROM audit_log WHERE action='update' AND project_id=? "
+                        "ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
+    assert row["username"] == "admin"        # spoofed _username ignored; real user recorded
+
+
+def test_update_audit_actor_allows_system_sentinel(client, team, admin_headers):
+    pid = _create(client, admin_headers).json()["id"]
+    client.put(f"/api/projects/{pid}",
+               json={"name": "Y", "status": "Planned", "_username": "System"},
+               headers=admin_headers)
+    with server.db(team) as c:
+        row = c.execute("SELECT username FROM audit_log WHERE action='update' AND project_id=? "
+                        "ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
+    assert row["username"] == "System"       # the automated-ops sentinel is preserved

@@ -98,8 +98,22 @@ def test_add_requires_attid_and_key(client, team, admin_headers):
 
 
 def test_add_unknown_item_404(client, team, admin_headers):
+    # Use a well-formed key for the item so the missing-item (404) path is what's exercised.
     assert client.post("/api/items/999999/attachments",
-                       json={"attId": "a", "key": "k"}, headers=admin_headers).status_code == 404
+                       json={"attId": "a", "key": "items/999999/a/x.png"},
+                       headers=admin_headers).status_code == 404
+
+
+def test_add_attachment_rejects_foreign_key(client, team, admin_headers):
+    # Security: a key that isn't under THIS item's prefix (another item/team's object
+    # in the shared bucket) must be rejected, else list_attachments would presign a
+    # GET for it.
+    pid = _mk(client, admin_headers)
+    r = client.post(f"/api/items/{pid}/attachments",
+                    json={"attId": "att1", "key": "items/999999/att1/secret.png",
+                          "name": "secret.png", "contentType": "image/png", "size": 10},
+                    headers=admin_headers)
+    assert r.status_code == 422
 
 
 def test_delete_unknown_attachment_404(client, team, admin_headers):

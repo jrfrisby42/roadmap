@@ -35,3 +35,13 @@ def test_audit_requires_admin_cookie(team):
     c.cookies.set("frazil_session", server.create_token(team, "viewer1", "viewer"))
     r2 = c.get(f"/audit?team={team}", follow_redirects=False)
     assert r2.status_code == 403
+
+
+def test_audit_date_params_not_reflected_xss(team):
+    # 4.13.0: date_from/date_to are echoed into the form; a non-date payload must be
+    # blanked (strict YYYY-MM-DD guard) so it can't break out of the value="" attribute.
+    c = TestClient(server.app)
+    c.cookies.set("frazil_session", server.create_token(team, "admin", "admin"))
+    r = c.get(f'/audit?team={team}&date_from="><script>alert(1)</script>', follow_redirects=False)
+    assert r.status_code == 200
+    assert "<script>alert(1)</script>" not in r.text
