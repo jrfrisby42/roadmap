@@ -2069,7 +2069,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.22.0';
+const APP_VERSION = '4.23.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -9749,12 +9749,18 @@ function renderKanban(){
       return `<div class="kanban-card" draggable="true" data-id="${p.id}" data-status="${escA(status)}"
         onclick="openProjectModal(${p.id})"
         style="position:relative;background:#fff;border:1px solid var(--border);border-left:3px solid ${isActiveStatus(status)?'var(--accent)':'var(--border)'};border-radius:8px;padding:10px 12px;cursor:pointer;user-select:none;margin-bottom:8px">
+        <!-- Open the full ticket page — top right -->
+        <button class="kanban-open-btn" data-id="${p.id}" title="Open ticket" draggable="false"
+          onclick="event.stopPropagation();openItemPage(${p.id})"
+          style="position:absolute;top:5px;right:26px;background:none;border:none;padding:2px;color:var(--muted);line-height:1;cursor:pointer">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
+        </button>
         <!-- Ellipsis tooltip trigger — top right -->
         <span class="kanban-tip-btn" data-id="${p.id}"
           style="position:absolute;top:6px;right:6px;font-size:13px;font-weight:900;letter-spacing:1px;color:var(--muted);line-height:1;padding:2px 4px;border-radius:3px;cursor:default;user-select:none"
           onclick="event.stopPropagation()">···</span>
-        <!-- Name row — leave room for ellipsis -->
-        <div style="margin-bottom:4px;padding-right:22px">
+        <!-- Name row — leave room for the icons -->
+        <div style="margin-bottom:4px;padding-right:44px">
           <span style="font-size:12px;font-weight:700;color:var(--text);line-height:1.3">${esc(p.name)}</span>
         </div>
         <!-- Activity / conflict indicators -->
@@ -9806,6 +9812,42 @@ function renderKanban(){
   wireKanbanDragDrop();
 }
 
+// Today's date (YYYY-MM-DD) in the app's Mountain-Time convention — used to stamp
+// a Start Date when a card is moved into an active status without one.
+function todayStrMT(){
+  return new Intl.DateTimeFormat('en-CA', { timeZone: MT_TZ, year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date());
+}
+
+// Lightweight owner picker for the Kanban "move into active status" flow. Resolves
+// to the chosen owner name, or null if the user cancels (→ the move is reverted).
+function promptKanbanOwner(p){
+  return new Promise(resolve => {
+    const devs = developers || [];
+    const bg = document.createElement('div');
+    bg.style.cssText = 'position:fixed;inset:0;background:rgba(20,40,63,.38);z-index:100002;display:flex;align-items:center;justify-content:center';
+    bg.innerHTML = `<div style="background:var(--surface,#fff);border-radius:12px;padding:20px 22px;width:340px;max-width:92vw;box-shadow:0 14px 44px rgba(20,40,63,.28);font-family:'Lato',sans-serif">
+      <div style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:4px">Assign an owner</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Moving &ldquo;<strong>${esc(p.name)}</strong>&rdquo; into an active status. Who&rsquo;s the owner?</div>
+      <select id="_kbOwnerSel" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:14px;margin-bottom:16px">
+        <option value="">&mdash; Select owner &mdash;</option>
+        ${devs.map(d=>`<option value="${escA(d)}">${esc(d)}</option>`).join('')}
+      </select>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        <button id="_kbOwnerCancel" style="padding:8px 14px;border:1px solid var(--border);background:transparent;color:var(--text);border-radius:8px;font-weight:700;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="_kbOwnerOk" style="padding:8px 16px;border:0;background:#0059A9;color:#fff;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer">Assign &amp; move</button>
+      </div>
+    </div>`;
+    document.body.appendChild(bg);
+    const sel = bg.querySelector('#_kbOwnerSel');
+    const done = v => { bg.remove(); resolve(v); };
+    setTimeout(()=>sel.focus(), 30);
+    bg.querySelector('#_kbOwnerCancel').onclick = () => done(null);
+    bg.querySelector('#_kbOwnerOk').onclick = () => { if(!sel.value){ sel.style.borderColor='#c0392b'; return; } done(sel.value); };
+    bg.addEventListener('click', e => { if(e.target === bg) done(null); });
+    bg.addEventListener('keydown', e => { if(e.key === 'Escape') done(null); });
+  });
+}
+
 function wireKanbanDragDrop(){
   let dragId = null;
   const tip = document.getElementById('tooltip');
@@ -9843,15 +9885,16 @@ function wireKanbanDragDrop(){
       const p = projects.find(x => x.id === dragId);
       if(!p || p.status === newStatus) return;
 
-      // Block: cannot drag to Active column without an owner
-      if(isActiveStatus(newStatus) && !p.dev){
-        showToast('Cannot move to an Active status — assign an Owner first.', 'error');
-        render(); renderKanban(); return;
-      }
-      // Block: cannot drag to Active column without a start date
-      if(isActiveStatus(newStatus) && !p.start){
-        showToast('Cannot move to an Active status — a Start Date is required.', 'error');
-        render(); renderKanban(); return;
+      // Moving into an active status: fill in what's needed instead of blocking.
+      // Start date defaults to today (if blank); owner is prompted (if blank).
+      let _setStart = null, _setOwner = null;
+      if(isActiveStatus(newStatus)){
+        if(!p.start) _setStart = todayStrMT();
+        if(!p.dev){
+          const owner = await promptKanbanOwner(p);
+          if(!owner){ render(); renderKanban(); return; }   // cancelled → revert the move
+          _setOwner = owner;
+        }
       }
 
       // Block: terminal columns — admin only
@@ -9866,8 +9909,10 @@ function wireKanbanDragDrop(){
         return;
       }
 
-      const oldStatus = p.status;
+      const oldStatus = p.status, oldStart = p.start, oldDev = p.dev;
       p.status = newStatus;
+      if(_setStart) p.start = _setStart;
+      if(_setOwner) p.dev = _setOwner;
       try {
         const updated = await API.put('/api/projects/'+p.id, {...p, _username:getUsername()});
         const i = projects.findIndex(x=>x.id===p.id);
@@ -9885,7 +9930,7 @@ function wireKanbanDragDrop(){
           await loadActivities();
         }
         render(); renderKanban();
-      } catch(err){ p.status = oldStatus; alert('Save failed: '+err.message); }
+      } catch(err){ p.status = oldStatus; p.start = oldStart; p.dev = oldDev; alert('Save failed: '+err.message); }
     });
   });
 }
@@ -18159,9 +18204,15 @@ if ('serviceWorker' in navigator) {
     var badge = multi ? '<span class="'+(_call('statusCls',p.status)||'')+'" style="padding:0 7px;border-radius:9px;font-size:10px;font-weight:700">'+esc(p.status)+'</span>' : '';
     var pts=(p.storyPoints!=null&&p.storyPoints!=='')?'<span class="frz-bchip frz-bchip-pts">'+esc(p.storyPoints)+' pts</span>':'';
     var wk=_fmtWeeks(p); var wkChip = wk ? '<span class="frz-bchip frz-bchip-wk">'+wk+'</span>' : '';
+    var openBtn = '<button class="frz-bcard-open" title="Open ticket" draggable="false" '
+      + 'onclick="event.stopPropagation();openItemPage('+p.id+')" '
+      + 'style="position:absolute;top:6px;right:7px;background:none;border:none;padding:1px;color:var(--frz-text-muted);line-height:1;cursor:pointer;z-index:1">'
+      + '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>'
+      + '</button>';
     return '<div class="frz-bcard" draggable="true" data-id="'+p.id+'" onclick="openProjectModal('+p.id+')">'
-      + (p.itemKey?'<div class="frz-bcard-key" style="display:flex;align-items:center;gap:4px">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></div>':'')
-      + '<div class="frz-bcard-name">'+esc(p.name||'')+' '+(_call('getItemActivityIndicator', p.id)||'')+'</div>'
+      + openBtn
+      + (p.itemKey?'<div class="frz-bcard-key" style="display:flex;align-items:center;gap:4px;padding-right:18px">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></div>':'')
+      + '<div class="frz-bcard-name" style="padding-right:16px">'+esc(p.name||'')+' '+(_call('getItemActivityIndicator', p.id)||'')+'</div>'
       + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+'</div>'
       + '</div>';
   }
@@ -18214,18 +18265,35 @@ if ('serviceWorker' in navigator) {
   function betaBoardDrop(id, newStatus){
     var ps=_val('projects',[])||[]; var p=ps.filter(function(x){return x.id===id;})[0];
     if(!p || !newStatus || p.status===newStatus) return;
-    if(_call('isActiveStatus',newStatus) && !p.dev){ _call('showToast','Cannot move to an Active status — assign an Owner first.','error'); return; }
-    if(_call('isActiveStatus',newStatus) && !p.start){ _call('showToast','Cannot move to an Active status — a Start Date is required.','error'); return; }
     if(isTermStatus(newStatus) && !_val('isAdmin',false)){ _call('showToast','Only admins can move items to a terminal status.','error'); return; }
     if(!_val('isAdmin',false) && _call('isLockedActive',p) && !_call('isActiveStatus',newStatus) && !isTermStatus(newStatus)){ _call('showToast','You cannot regress an active item — contact an admin.','error'); return; }
-    var oldStatus=p.status; p.status=newStatus;
-    var body=Object.assign({}, p, {_username:_call('getUsername')});
-    API.put('/api/projects/'+p.id, body).then(function(updated){
-      var i=ps.findIndex(function(x){return x.id===p.id;}); if(i>-1) ps[i]=updated;
-      // attributed entry to the item's Activity & History (spec requirement)
-      _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Board move: Status '+oldStatus+' → '+newStatus, {status:oldStatus}, {status:newStatus});
-      renderBetaKanban(); renderRail();
-    }).catch(function(err){ p.status=oldStatus; _call('showToast','Save failed: '+(err&&err.message||''),'error'); });
+    // Moving into an active status: fill in what's needed instead of blocking.
+    // Start date defaults to today (if blank); owner is prompted (if blank).
+    var setStart = null;
+    function commit(setOwner){
+      var oldStatus=p.status, oldStart=p.start, oldDev=p.dev;
+      p.status=newStatus;
+      if(setStart) p.start=setStart;
+      if(setOwner) p.dev=setOwner;
+      var body=Object.assign({}, p, {_username:_call('getUsername')});
+      API.put('/api/projects/'+p.id, body).then(function(updated){
+        var i=ps.findIndex(function(x){return x.id===p.id;}); if(i>-1) ps[i]=updated;
+        // attributed entry to the item's Activity & History (spec requirement)
+        _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Board move: Status '+oldStatus+' → '+newStatus, {status:oldStatus}, {status:newStatus});
+        renderBetaKanban(); renderRail();
+      }).catch(function(err){ p.status=oldStatus; p.start=oldStart; p.dev=oldDev; _call('showToast','Save failed: '+(err&&err.message||''),'error'); });
+    }
+    if(_call('isActiveStatus',newStatus)){
+      if(!p.start) setStart = _call('todayStrMT');
+      if(!p.dev){
+        _call('promptKanbanOwner', p).then(function(owner){
+          if(!owner){ renderBetaKanban(); return; }   // cancelled → revert (re-render restores the card)
+          commit(owner);
+        });
+        return;
+      }
+    }
+    commit(null);
   }
   function boardRowMenu(btn){
     var id=btn.getAttribute('data-boardmenu'); var b=_boards.filter(function(x){return x.id===id;})[0]; if(!b) return;
