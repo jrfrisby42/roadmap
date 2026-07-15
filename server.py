@@ -905,7 +905,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.15.1"
+APP_VERSION = "4.15.2"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1325,7 +1325,7 @@ _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
 <div class="card">
   <div class="hd"><h1>Submit a ticket</h1><p>File a request or report an issue. The team will follow up by email.</p></div>
   <form id="form" onsubmit="return submitForm(event)">
-    <div class="msg err" id="msg"></div>
+    <div class="msg" id="msg"></div>
     <div><label class="req">Project</label><select id="project"><option value="">Loading…</option></select></div>
     <div class="row">
       <div><label>Type</label><select id="type"><option value="">—</option></select></div>
@@ -1355,8 +1355,8 @@ _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
 <script>
 var qs=new URLSearchParams(location.search), $=function(s){return document.querySelector(s)};
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
-function showErr(m){var e=$('#msg');e.textContent=m;e.style.display='block'}
-function clearErr(){$('#msg').style.display='none'}
+function showErr(m){var e=$('#msg');e.textContent=m;e.className='msg err'}
+function clearErr(){$('#msg').className='msg'}
 var _projects=[], _selTeam='', _selProduct='';
 async function loadProjects(){
   try{ var d=await (await fetch('/api/intake/projects')).json(); _projects=d.projects||[];

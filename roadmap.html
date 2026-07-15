@@ -2058,7 +2058,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.15.1';
+const APP_VERSION = '4.15.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -13625,6 +13625,7 @@ function renderItemPage(p){
     ipField('Key', p.itemKey ? `<span style="font-family:monospace">${esc(p.itemKey)}</span>` : '—', {bold:true}),
     ipField('Project',       esc(p.product||'—')),
     ipField('Reporter',      esc(p.reporter||'—')),
+    ipField('Reporter Email', p.reporterEmail ? `<a href="mailto:${escA(p.reporterEmail)}" style="color:var(--accent);text-decoration:none">${esc(p.reporterEmail)}</a>` : ''),
     ipEditField('dueWeeks',          'Time Estimate',      p.dueWeeks ? fmtEstimate(p.dueWeeks) : '', 'number', {readonly:timeRO}),
     ipEditField('testWeeks',         'Test Period',        (p.testWeeks!==undefined && p.testWeeks!=='') ? fmtEstimate(p.testWeeks) : '', 'number', {readonly:timeRO}),
     ipEditField('parallelResources', 'Parallel Resources', String(p.parallelResources||1), 'number', {readonly:prRO}),
@@ -20087,6 +20088,7 @@ if ('serviceWorker' in navigator) {
     // Read-only details — the right-rail set (display-only v1; blanks auto-skip).
     var details=[ _frzPanelRow('Key',p.itemKey), _frzPanelRow('Project',p.product), _frzPanelRow('Type',p.type),
       _frzPanelRow('Owner',p.dev), _frzPanelRow('Assignee',p.assignee), _frzPanelRow('Reporter',p.reporter),
+      (p.reporterEmail ? '<div class="frz-lp-row"><span class="frz-lp-k">Reporter Email</span><span class="frz-lp-v"><a href="mailto:'+escA(p.reporterEmail)+'" style="color:var(--frz-accent)">'+esc(p.reporterEmail)+'</a></span></div>' : ''),
       _frzPanelRow('Priority',(p.priority&&PRIO_LBL[p.priority])?PRIO_LBL[p.priority]:null), _frzPanelRow('Department',dept),
       _frzPanelRow('Points',(p.storyPoints!=null&&p.storyPoints!=='')?p.storyPoints:null), _frzPanelRow('Sprint',sprint),
       _frzPanelRow('Release',rel), _frzPanelRow('Start',p.start), _frzPanelRow('Due',p.due), _frzPanelRow('Expected',p.revised) ].join('');
