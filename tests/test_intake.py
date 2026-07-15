@@ -306,3 +306,25 @@ def test_non_portal_item_no_completion_email(client, team, admin_headers, mailbo
     client.put(f"/api/projects/{pid}", json={"name": "Normal", "status": "Released"},
                headers=admin_headers)
     assert mailbox == []   # not a portal ticket → no reporter email
+
+
+# ── 4.17.0: "My Tickets" list (signed link) + track-by-email ──────────────────
+def test_my_tickets_token_gated_and_scoped(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    for title, em in [("Mine A", "me@x.com"), ("Mine B", "me@x.com"), ("Not mine", "other@x.com")]:
+        server._rate.clear()
+        client.post(f"/api/intake/{team}", json={"title": title, "email": em})
+    tok = server._reporter_list_token("me@x.com")
+    r = client.get(f"/my-tickets?email=me@x.com&t={tok}")
+    assert r.status_code == 200
+    assert "Mine A" in r.text and "Mine B" in r.text
+    assert "Not mine" not in r.text                              # only the requester's tickets
+    assert client.get("/my-tickets?email=me@x.com&t=bad").status_code == 404
+    assert client.get("/my-tickets?email=me@x.com").status_code == 404
+
+
+def test_intake_track_validates_email(client):
+    server._rate.clear()
+    assert client.post("/api/intake-track", json={"email": "not-an-email"}).status_code == 422
+    server._rate.clear()
+    assert client.post("/api/intake-track", json={"email": "ok@x.com"}).status_code == 200  # uniform 200

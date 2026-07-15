@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from urllib.request import urlopen, Request
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote as _urlq
 from fastapi import FastAPI, HTTPException, Body, Request as FRequest, Header, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -907,7 +908,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.16.1"
+APP_VERSION = "4.17.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1308,10 +1309,19 @@ def _ticket_token(team: str, pid) -> str:
     link the reporter can revisit). int/str pid stringify identically in the f-string."""
     return _sign(f"ticket:{team}:{pid}")
 
+def _reporter_list_token(email: str) -> str:
+    """Token for the cross-team 'my tickets' list, bound to the reporter's email."""
+    return _sign("reporter:" + (email or "").strip().lower())
+
+def _my_tickets_url(email: str) -> str:
+    return f"{APP_BASE_URL}/my-tickets?email={_urlq((email or '').strip(), safe='')}&t={_reporter_list_token(email)}"
+
 _PRIO_LABEL = {"1": "Urgent", "2": "High", "3": "Medium", "4": "Low"}
 
-def _intake_email_html(item, rows, heading, intro, cta_label, cta_url, note=None):
+def _intake_email_html(item, rows, heading, intro, cta_label, cta_url, note=None, secondary=None):
     esc = html.escape
+    sec_html = (f'<div style="text-align:center;margin:8px 0 0"><a href="{esc(secondary[1])}" '
+                f'style="color:#0059A9;font-size:12px;text-decoration:none">{esc(secondary[0])}</a></div>') if secondary else ""
     row_html = "".join(
         f'<tr><td style="padding:5px 0;color:#6b7280;font-size:13px;width:96px;vertical-align:top">{esc(k)}</td>'
         f'<td style="padding:5px 0;color:#1f2733;font-size:13px;font-weight:600">{esc(v)}</td></tr>'
@@ -1335,7 +1345,7 @@ def _intake_email_html(item, rows, heading, intro, cta_label, cta_url, note=None
 </div>
 <div style="text-align:center;margin:20px 0 4px">
 <a href="{esc(cta_url)}" style="background:#0059A9;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:11px 24px;border-radius:8px;display:inline-block">{esc(cta_label)}</a>
-</div></td></tr>
+</div>{sec_html}</td></tr>
 <tr><td style="padding:12px 24px;border-top:1px solid #eef1f4;color:#9aa4b1;font-size:11px;text-align:center;line-height:1.5">Submitted via the Frazil Flow ticket portal.<br>If the button doesn't work, paste this link:<br><span style="color:#6b7280;word-break:break-all">{esc(cta_url)}</span></td></tr>
 </table></td></tr></table></body></html>"""
 
@@ -1355,8 +1365,10 @@ def _intake_send_emails(team, item, pid):
         url = f"{APP_BASE_URL}/ticket?team={team}&id={pid}&t={_ticket_token(team, pid)}"
         body = _intake_email_html(item, base_rows, "We've received your ticket",
             "Thanks for reaching out — your ticket has been logged and the team will take a look. "
-            "You can check its status any time with the button below.", "View ticket status", url)
-        text = f"We've received your ticket {key}: {item.get('name','')}\nStatus: {item.get('status','')}\n\nTrack it: {url}\n"
+            "You can check its status any time with the button below.", "View ticket status", url,
+            secondary=("View all your tickets", _my_tickets_url(reporter_email)))
+        text = (f"We've received your ticket {key}: {item.get('name','')}\nStatus: {item.get('status','')}\n\n"
+                f"Track it: {url}\nAll your tickets: {_my_tickets_url(reporter_email)}\n")
         try: send_email(reporter_email, f"[{key}] Ticket received — {item.get('name','')}", text, body)
         except Exception as e: log.warning(f"[Intake] reporter email failed for {pid}: {e}")
     notify  = _cfg_val(team, "intakeNotifyEmail", "") or ""
@@ -1399,6 +1411,7 @@ def _ticket_status_page(p):
 <div class="k">{esc(key)}</div><h1 style="margin:4px 0 12px;font-size:19px">{esc(p.get("name") or "Ticket")}</h1>
 <div style="margin-bottom:14px">Status: <span class="badge">{esc(p.get("status") or "—")}</span></div>
 {row_html}{desc_html}{att_html}
+{(f'<div style="margin-top:18px;padding-top:14px;border-top:1px solid #eef1f4"><a href="{esc(_my_tickets_url(p.get("reporterEmail")))}" style="color:#0059A9;font-size:13px;font-weight:700;text-decoration:none">← All your tickets</a></div>') if p.get("reporterEmail") else ""}
 </div><div class="foot">Read-only status view of your submitted ticket.</div></div></body></html>"""
 
 def _ticket_error_page(msg):
@@ -1464,6 +1477,14 @@ _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
   <div class="done" id="done"><div style="font-size:34px">✅</div>
     <h2 style="margin:8px 0 4px">Thanks — your ticket was created.</h2>
     <p style="color:#6b7280">Reference: <span class="k" id="doneKey"></span></p></div>
+  <div style="border-top:1px solid #eef1f4;padding:16px 24px;background:#fafbfc">
+    <div style="font-size:13px;font-weight:700;color:#1f2733;margin-bottom:6px">Already submitted a ticket?</div>
+    <div style="display:flex;gap:8px">
+      <input id="trackEmail" type="email" placeholder="you@example.com" style="flex:1;padding:8px 10px;border:1px solid var(--bd);border-radius:8px;font-size:14px">
+      <button type="button" id="trackBtn" style="background:#eef2f7;color:#0059A9;border:1px solid #cfe0f4;border-radius:8px;padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap">Email my tickets</button>
+    </div>
+    <div id="trackMsg" style="font-size:12px;margin-top:6px;display:none"></div>
+  </div>
   <div class="foot">Powered by Frazil Flow</div>
 </div>
 <script>
@@ -1530,6 +1551,14 @@ async function submitForm(ev){
   }catch(e){ showErr(e.message||'Submission failed'); btn.disabled=false; }
   return false;
 }
+$('#trackBtn').addEventListener('click', async function(){
+  var em=($('#trackEmail').value||'').trim(), m=$('#trackMsg');
+  if(!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(em)){ m.style.display='block'; m.style.color='#a5281c'; m.textContent='Enter a valid email address.'; return; }
+  $('#trackBtn').disabled=true;
+  try{ await fetch('/api/intake-track',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:em})}); }catch(e){}
+  m.style.display='block'; m.style.color='#1f7a34'; m.textContent='If that address has tickets, we just emailed you a link to view them.';
+  $('#trackBtn').disabled=false;
+});
 $('#email').value=qs.get('email')||''; $('#name').value=qs.get('name')||'';
 if(['2','3','4'].indexOf(qs.get('priority'))>=0) $('#priority').value=qs.get('priority');
 loadProjects();
@@ -1559,6 +1588,79 @@ def ticket_status(team: str = "", id: str = "", t: str = ""):
         return HTMLResponse(_ticket_error_page("Ticket not found."), status_code=404)
     p = json.loads(row["data"]); p["id"] = pid
     return HTMLResponse(_ticket_status_page(p), headers={"Cache-Control": "no-cache"})
+
+def _my_tickets_page(email, items):
+    esc = html.escape
+    if items:
+        cards = "".join(
+            f'<a href="{esc(APP_BASE_URL)}/ticket?team={esc(p["_team"])}&id={p["id"]}&t={esc(_ticket_token(p["_team"], p["id"]))}" '
+            f'style="display:block;text-decoration:none;color:inherit;border:1px solid #e6ebf1;border-radius:10px;padding:12px 14px;margin-bottom:10px">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">'
+            f'<span style="font-family:ui-monospace,Menlo,monospace;color:#0059A9;font-weight:700;font-size:12px">{esc(p.get("itemKey") or "#"+str(p["id"]))}</span>'
+            f'<span style="background:#eaf2fb;color:#0059A9;border:1px solid #cfe0f4;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700">{esc(p.get("status") or "—")}</span></div>'
+            f'<div style="font-size:14px;font-weight:600;color:#1f2733;margin-top:6px">{esc(p.get("name") or "Ticket")}</div>'
+            f'<div style="font-size:12px;color:#6b7280;margin-top:2px">{esc(p.get("product") or "")}{" · " if p.get("product") and p.get("createdAt") else ""}{esc((p.get("createdAt") or "")[:10])}</div></a>'
+            for p in items)
+    else:
+        cards = '<div style="color:#6b7280;font-size:14px;text-align:center;padding:20px 0">No tickets found for this email yet.</div>'
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Your tickets</title>
+<style>body{{margin:0;background:#f4f6f9;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2733;padding:28px 16px}}
+.card{{max-width:560px;margin:0 auto;background:#fff;border:1px solid #e3e8ee;border-radius:14px;overflow:hidden;box-shadow:0 6px 26px rgba(20,40,70,.07)}}
+.hd{{background:#0059A9;color:#fff;padding:15px 24px;font-weight:700;font-size:16px}}.bd{{padding:20px 24px}}
+.foot{{padding:12px 24px;border-top:1px solid #eef1f4;color:#9aa4b1;font-size:11px;text-align:center}}</style></head>
+<body><div class="card"><div class="hd">Frazil&nbsp;Flow</div><div class="bd">
+<h1 style="margin:0 0 4px;font-size:19px">Your tickets</h1>
+<p style="margin:0 0 16px;color:#6b7280;font-size:13px">{esc(email)}</p>
+{cards}
+<div style="text-align:center;margin-top:8px"><a href="{esc(APP_BASE_URL)}/report" style="color:#0059A9;font-size:13px;font-weight:700;text-decoration:none">+ Submit a new ticket</a></div>
+</div><div class="foot">Private to you — please don't share this link.</div></div></body></html>"""
+
+@app.get("/my-tickets", response_class=HTMLResponse)
+def my_tickets_page(email: str = "", t: str = ""):
+    """Public, token-gated list of every portal ticket for a reporter email."""
+    email_n = (email or "").strip().lower()
+    if not (email_n and t and hmac.compare_digest(_reporter_list_token(email_n), t)):
+        return HTMLResponse(_ticket_error_page("This link is invalid or has expired."), status_code=404)
+    items = []
+    try:
+        for d in sorted(os.listdir(TENANTS_DIR)):
+            if not (os.path.isdir(os.path.join(TENANTS_DIR, d))
+                    and re.match(r"^[a-z0-9]+$", d) and _intake_open(d)):
+                continue
+            with db(d) as c:
+                recs = c.execute("SELECT id, data FROM projects").fetchall()
+            for r in recs:
+                try:
+                    p = json.loads(r["data"])
+                except Exception:
+                    continue
+                if p.get("source") == "portal" and (p.get("reporterEmail") or "").strip().lower() == email_n:
+                    p["id"] = r["id"]; p["_team"] = d
+                    items.append(p)
+    except FileNotFoundError:
+        pass
+    items.sort(key=lambda x: (x.get("createdAt") or ""), reverse=True)
+    return HTMLResponse(_my_tickets_page(email_n, items), headers={"Cache-Control": "no-cache"})
+
+@app.post("/api/intake-track")
+def intake_track(body: dict = Body(...), request: FRequest = None):
+    """Public: email a reporter the private link to their tickets list. Uniform
+    response (no account enumeration); rate-limited."""
+    ip = (request.client.host if request else "unknown")
+    _check_rate_limit("intake-track:" + ip)
+    email = (body.get("email") or "").strip()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(422, "A valid email address is required.")
+    if mail_configured():
+        try:
+            url = _my_tickets_url(email)
+            body_html = _intake_email_html({"name": "Your tickets"}, [], "Your Frazil Flow tickets",
+                "Here's your private link to view every ticket you've submitted. Please don't share it.",
+                "View my tickets", url)
+            send_email(email, "Your Frazil Flow tickets", f"View all your tickets: {url}\n", body_html)
+        except Exception as e:
+            log.warning(f"[Intake] track email failed: {e}")
+    return {"ok": True}
 
 # ── Login ─────────────────────────────────────────────────────────────────────
 @app.post("/api/login")
@@ -2976,9 +3078,11 @@ def _reporter_email(team, item, pid, heading, intro, note=None):
             ("Type", item.get("type") or ""), ("Priority", prio),
             ("Project", item.get("product") or "")]
     url = f"{APP_BASE_URL}/ticket?team={team}&id={pid}&t={_ticket_token(team, pid)}"
-    body = _intake_email_html(item, rows, heading, intro, "View ticket status", url, note=note)
+    body = _intake_email_html(item, rows, heading, intro, "View ticket status", url, note=note,
+                              secondary=("View all your tickets", _my_tickets_url(email)))
     text = (f"{heading}\n\n{intro}\n\n" + (f"{note}\n\n" if note else "")
-            + f"Ticket: {key}\nStatus: {item.get('status','')}\n\nTrack it: {url}\n")
+            + f"Ticket: {key}\nStatus: {item.get('status','')}\n\nTrack it: {url}\n"
+            + f"All your tickets: {_my_tickets_url(email)}\n")
     try:
         send_email(email, f"[{key}] {heading} — {item.get('name','')}", text, body)
     except Exception as e:
