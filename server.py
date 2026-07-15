@@ -943,7 +943,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.23.3"
+APP_VERSION = "4.23.4"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1800,7 +1800,7 @@ def ticket_reply(body: dict = Body(...), request: FRequest = None):
     name = item.get("name", "")
     try:                                     # in-app: watchers + owner + assignee
         _notify(team, _intake_notify_usernames(team, item, pid), "watch_comment", pid, name,
-                f"{who} replied on {name or 'a ticket'}", "Reporter")
+                f"{who} replied on {name or 'an item'}", "Reporter")
     except Exception as e:
         log.warning(f"[Intake] reporter-reply notify failed for {pid}: {e}")
     try:                                     # email the team inbox(es)
