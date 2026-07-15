@@ -401,6 +401,21 @@ def test_notify_email_resolver_prefers_project_override(client, team, admin_head
     assert server._intake_notify_email(team, "") == "team@x.com"         # no product → team
 
 
+def test_brand_mark_route_serves_png(client):
+    r = client.get("/brand-mark.png")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+    assert r.content[:8] == b"\x89PNG\r\n\x1a\n"      # real PNG bytes
+
+
+def test_email_header_uses_hosted_brand_mark(client, team, admin_headers, mailbox):
+    # The email logo must be a hosted URL (data: URIs are blocked by Gmail/Outlook).
+    html = server._intake_email_html({"name": "X", "description": ""}, [],
+                                     "Head", "Intro", "CTA", "https://x/y")
+    assert "/brand-mark.png" in html
+    assert "data:image/png" not in html               # not an inline data URI
+
+
 def test_submit_returns_ticket_url(client, team, admin_headers):
     # The created-page "View your ticket" link needs a token-bearing status URL.
     _expose(client, admin_headers, types=["Bug"])

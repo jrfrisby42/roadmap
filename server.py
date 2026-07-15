@@ -916,7 +916,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.20.0"
+APP_VERSION = "4.21.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1106,6 +1106,12 @@ def pwa_apple_icon():
 @app.get("/favicon.png")
 def favicon_png():
     return _pwa_png(_FAVICON_B64)
+
+@app.get("/brand-mark.png")
+def brand_mark_png():
+    # The Flow 'f' mark as a hosted PNG. Emails reference this by URL because
+    # Gmail/Outlook block data: URI images — a hosted src is the reliable path.
+    return _pwa_png(_FLOW_MARK_PNG.split(",", 1)[1])
 
 # ── List teams (for the login dropdown) ──────────────────────────────────────
 @app.get("/api/teams")
@@ -1355,7 +1361,11 @@ def _intake_email_html(item, rows, heading, intro, cta_label, cta_url, note=None
     return f"""<!doctype html><html><body style="margin:0;background:#f4f6f9;padding:24px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
 <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #e3e8ee;border-radius:14px;overflow:hidden">
-<tr><td style="background:#0059A9;padding:15px 24px;color:#ffffff;font-weight:700;font-size:16px">Frazil&nbsp;Flow</td></tr>
+<tr><td style="background:#0059A9;padding:13px 24px">
+<table role="presentation" cellpadding="0" cellspacing="0"><tr>
+<td style="background:#ffffff;border-radius:7px;padding:4px;vertical-align:middle"><img src="{APP_BASE_URL}/brand-mark.png" width="22" height="22" alt="Flow" style="display:block;border:0"></td>
+<td style="padding-left:10px;color:#ffffff;font-weight:700;font-size:16px;vertical-align:middle">Frazil&nbsp;Flow</td>
+</tr></table></td></tr>
 <tr><td style="padding:22px 24px">
 <h1 style="margin:0 0 8px;font-size:18px;color:#1f2733">{esc(heading)}</h1>
 <p style="margin:0 0 16px;color:#4b5563;font-size:14px;line-height:1.55">{esc(intro)}</p>

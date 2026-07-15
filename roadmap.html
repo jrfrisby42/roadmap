@@ -2065,7 +2065,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.20.0';
+const APP_VERSION = '4.21.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -13850,6 +13850,7 @@ function _renderCommentBody(body){
   }
   const safe = esc(body);
   const valid = new Set((users||[]).map(u => (u&&u.username)||u).filter(Boolean));
+  valid.add('reporter');   // portal @reporter chips like a user mention (styling only; server gates the email on a portal ticket)
   return safe.replace(/@([A-Za-z0-9._-]+)/g, (m, name) =>
     valid.has(name) ? `<span class="frz-mention">@${name}</span>` : m);
 }
@@ -20549,7 +20550,17 @@ if ('serviceWorker' in navigator) {
   function _mentionUsers(prefix){
     var us=(_val('users',[])||[]).map(function(u){ return (u&&u.username)||u; }).filter(Boolean);
     prefix=(prefix||'').toLowerCase();
-    return us.filter(function(u){ return String(u).toLowerCase().indexOf(prefix)===0; }).slice(0,8);
+    var out=us.filter(function(u){ return String(u).toLowerCase().indexOf(prefix)===0; }).slice(0,8);
+    // On a portal ticket, offer "reporter" as a mention target — picking it inserts the
+    // same .frz-mention chip a user mention does (so it clearly "does something"), and the
+    // server emails the reporter on @reporter. Gated to portal tickets with an email.
+    try {
+      var id=_val('_itemPageId'), p=(_val('projects',[])||[]).filter(function(x){return x.id===id;})[0];
+      if(p && p.source==='portal' && p.reporterEmail && 'reporter'.indexOf(prefix)===0 && out.indexOf('reporter')<0){
+        out.unshift('reporter'); out=out.slice(0,8);
+      }
+    } catch(e){}
+    return out;
   }
   function _closeMention(){ if(_mentionMenu){ _mentionMenu.remove(); _mentionMenu=null; } }
   function _mentionActive(){ return _mentionMenu ? _mentionMenu.querySelector('.frz-mm-opt.is-active') : null; }
