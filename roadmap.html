@@ -2076,7 +2076,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.23.4';
+const APP_VERSION = '4.23.5';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16042,15 +16042,18 @@ if ('serviceWorker' in navigator) {
 
   /* List detail panel — docked right (split). top is set in JS to align below the bar. */
   .frz-list-panel { position:fixed; right:0; bottom:0; width:420px; background:var(--frz-bg-surface); border-left:1px solid var(--frz-border-strong);
-                    box-shadow:-8px 0 24px rgba(20,40,63,.10); overflow-y:auto; z-index:80; padding:16px 18px 28px; outline:none; }
+                    box-shadow:-8px 0 24px rgba(20,40,63,.10); display:flex; flex-direction:column; z-index:80; outline:none; }
+  .frz-list-panel .frz-lp-scroll { flex:1 1 auto; overflow-y:auto; padding:16px 18px; }
   body.frz-panel-open #frzContent { padding-right:420px; }   /* keep the list clear of the panel in split mode */
   .frz-list-panel .frz-lp-hd-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
   .frz-list-panel .frz-lp-actions { display:flex; align-items:center; gap:4px; }
   .frz-list-panel .frz-lp-close, .frz-list-panel .frz-lp-full { background:none; border:0; cursor:pointer; color:var(--frz-text-secondary); font-size:16px; line-height:1; padding:4px 6px; border-radius:6px; }
   .frz-list-panel .frz-lp-close:hover, .frz-list-panel .frz-lp-full:hover { background:var(--frz-bg-app); color:var(--frz-accent); }
   .frz-list-panel .frz-lp-name { font-size:17px; font-weight:800; color:var(--frz-text); margin:8px 0 8px; line-height:1.3; }
-  .frz-list-panel .frz-lp-openbtn { display:inline-flex; align-items:center; gap:7px; margin-top:12px; background:var(--frz-accent); color:#fff; border:0; padding:8px 14px; border-radius:7px; font-family:'Lato',sans-serif; font-weight:700; font-size:13px; cursor:pointer; }
+  .frz-list-panel .frz-lp-openbtn { display:inline-flex; align-items:center; gap:7px; background:var(--frz-accent); color:#fff; border:0; padding:8px 14px; border-radius:7px; font-family:'Lato',sans-serif; font-weight:700; font-size:13px; cursor:pointer; }
   .frz-list-panel .frz-lp-openbtn:hover { background:var(--frz-accent-hover); }
+  /* Sticky bottom action bar (full-bleed): keeps the primary action pinned + out of the header. */
+  .frz-list-panel .frz-lp-footer { flex:0 0 auto; padding:11px 18px; border-top:1px solid var(--frz-border); background:var(--frz-bg-surface); display:flex; justify-content:flex-end; }
   .frz-list-panel .frz-lp-badges { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .frz-list-panel .frz-lp-prio { font-size:11px; font-weight:700; }
   .frz-list-panel .frz-lp-details { margin:16px 0; border:1px solid var(--frz-border); border-radius:8px; overflow:hidden; }
@@ -20236,8 +20239,7 @@ if ('serviceWorker' in navigator) {
       + '<div class="frz-lp-actions"><button type="button" class="frz-lp-full" title="Open full page" aria-label="Open full page">⤢</button>'
       + '<button type="button" class="frz-lp-close" title="Close" aria-label="Close">✕</button></div></div>'
       + '<div class="frz-lp-name">'+esc(p.name||'')+'</div>'
-      + '<div class="frz-lp-badges">'+statusCtl+prio+'</div>'
-      + '<button type="button" class="frz-lp-openbtn" title="Open the full item page (schedule, activity, comments)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open Item Page</button></div>'
+      + '<div class="frz-lp-badges">'+statusCtl+prio+'</div></div>'
       + (details?'<div class="frz-lp-details">'+details+'</div>':'')
       + '<div class="frz-lp-sec"><div class="frz-lp-sec-hd">Description</div><div id="frzLpDesc"></div></div>'
       + '<div class="frz-lp-sec"><div class="frz-lp-sec-hd">Comments</div><div id="frzLpComposer"></div><div id="frzLpThread"></div></div>';
@@ -20259,7 +20261,9 @@ if ('serviceWorker' in navigator) {
     _frzPanelEl.style.display=''; _frzPanelEl.scrollTop=0;
     var _c=document.getElementById('frzContent');                 // align the fixed panel below the top bar
     _frzPanelEl.style.top=(_c?Math.max(0,_c.getBoundingClientRect().top):56)+'px';
-    _frzPanelEl.innerHTML=_frzPanelChrome(p, canEdit);
+    _frzPanelEl.innerHTML='<div class="frz-lp-scroll">'+_frzPanelChrome(p, canEdit)+'</div>'
+      + '<div class="frz-lp-footer"><button type="button" class="frz-lp-openbtn" title="Open the full item page (schedule, activity, comments)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open Item Page</button></div>';
+    var _sc=_frzPanelEl.querySelector('.frz-lp-scroll'); if(_sc) _sc.scrollTop=0;
     _frzPanelEl.querySelector('.frz-lp-close').addEventListener('click', function(){ frzClosePanel(); });
     _frzPanelEl.querySelector('.frz-lp-full').addEventListener('click', function(){ _frzPanelOpenFull(id); });
     var _lpOpen=_frzPanelEl.querySelector('.frz-lp-openbtn'); if(_lpOpen) _lpOpen.addEventListener('click', function(){ _frzPanelOpenFull(id); });
