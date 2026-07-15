@@ -2065,7 +2065,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.19.1';
+const APP_VERSION = '4.20.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -14147,12 +14147,11 @@ function renderIntakePortalSettings(){
   const projWrap = document.getElementById('tsIntakeProjects');
   const projNames = (products||[]).map(p => (p&&p.name)||p).filter(Boolean);
   const projOffered = intakeProjects.length ? new Set(intakeProjects) : new Set(projNames);   // empty = all
-  const fallback = (intakeNotifyEmail||'').trim();
   if(projWrap){
     projWrap.innerHTML = projNames.length ? projNames.map(n =>
       `<div style="display:flex;align-items:center;gap:8px">
          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;flex:0 0 auto;min-width:140px"><input type="checkbox" class="ts-intake-proj" data-name="${escA(n)}" ${projOffered.has(n)?'checked':''} style="accent-color:var(--accent)"> ${esc(n)}</label>
-         <input type="email" class="ts-intake-proj-email" data-name="${escA(n)}" value="${escA(intakeProjectEmails[n]||'')}" placeholder="${escA(fallback ? ('Notify: '+fallback) : 'Optional notify email for this project')}" style="flex:1;min-width:0;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">
+         <input type="email" class="ts-intake-proj-email" data-name="${escA(n)}" value="${escA(intakeProjectEmails[n]||'')}" placeholder="project-inbox@example.com" style="flex:1;min-width:0;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">
        </div>`
     ).join('') : '<span style="font-size:12px;color:var(--muted)">No Projects configured — add some in the Projects tab.</span>';
     projWrap.querySelectorAll('.ts-intake-proj').forEach(cb => cb.onchange = _saveIntakeProjects);

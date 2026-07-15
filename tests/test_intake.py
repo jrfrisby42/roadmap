@@ -401,6 +401,28 @@ def test_notify_email_resolver_prefers_project_override(client, team, admin_head
     assert server._intake_notify_email(team, "") == "team@x.com"         # no product → team
 
 
+def test_submit_returns_ticket_url(client, team, admin_headers):
+    # The created-page "View your ticket" link needs a token-bearing status URL.
+    _expose(client, admin_headers, types=["Bug"])
+    server._rate.clear()
+    d = client.post(f"/api/intake/{team}", json={"title": "Linkme", "email": "a@b.com"}).json()
+    assert "url" in d and f"/ticket?team={team}&id={d['id']}" in d["url"]
+    assert f"t={server._ticket_token(team, d['id'])}" in d["url"]   # valid token embedded
+
+
+def test_my_tickets_submit_link_keeps_email(client, team, admin_headers):
+    # Submitting a new ticket from the My Tickets list should carry the reporter's
+    # email so /report pre-fills it.
+    _expose(client, admin_headers, types=["Bug"])
+    server._rate.clear()
+    client.post(f"/api/intake/{team}", json={"title": "T", "email": "me@x.com"})
+    tok = server._reporter_list_token("me@x.com")
+    r = client.get(f"/my-tickets?email=me@x.com&t={tok}")
+    assert "/report?email=me%40x.com" in r.text          # list page link carries email
+    # Landing (no token) also carries the email through when provided.
+    assert "/report?email=me%40x.com" in client.get("/my-tickets?email=me@x.com").text
+
+
 def test_creation_email_routes_to_project_override(client, team, admin_headers, mailbox):
     _expose(client, admin_headers, types=["Bug"], projects=["Fraznet", "HubSpot"])
     _set(client, admin_headers, "intakeNotifyEmail", "team@x.com")
