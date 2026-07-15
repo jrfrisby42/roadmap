@@ -22,7 +22,7 @@
     --border: #d8d8e0;
     --text: #1a1a2e;
     --muted: #7070a0;
-    --accent: #5b4fff;
+    --accent: #0059A9;
     --accent2: #e8394a;
     --today-line: #000000;
     --bar-green: #22b96e;
@@ -39,7 +39,7 @@
     --row-sep:  #272b44;        /* row separators — visible but subtle */
     --text:     #eef0fa;
     --muted:    #9096c8;
-    --accent:   #7b6fff;
+    --accent:   #2F86DE;
     --accent2:  #f05060;
     --today-line: rgba(255,255,255,0.65);
     --bar-green-dk: #2d7a52;
@@ -260,7 +260,7 @@
     display: flex; align-items: center; gap: 6px;
   }
   .ms-btn:hover, .ms-btn.open { border-color: var(--accent); }
-  .ms-btn.filtered { border-color: var(--accent); background: rgba(91,79,255,0.07); color: var(--accent); }
+  .ms-btn.filtered { border-color: var(--accent); background: rgba(0,89,169,0.07); color: var(--accent); }
   .ms-panel {
     display: none; position: absolute; top: calc(100% + 4px); left: 0;
     background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
@@ -461,7 +461,7 @@
   /* Semantic status badge colors — used by statusCls() */
   .s-released   { background: rgba(29,184,106,0.12);  color: #1a9a59; border: 1px solid rgba(29,184,106,0.3); }
   .s-inprogress { background: rgba(0,144,212,0.10);   color: #0078b8; border: 1px solid rgba(0,144,212,0.25); }
-  .s-planned    { background: rgba(91,79,255,0.10);   color: #4a3de0; border: 1px solid rgba(91,79,255,0.25); }
+  .s-planned    { background: rgba(0,89,169,0.10);   color: #0059A9; border: 1px solid rgba(0,89,169,0.25); }
   .s-testing    { background: rgba(212,160,0,0.12);   color: #a07800; border: 1px solid rgba(212,160,0,0.3); }
   .s-tbd        { background: rgba(170,170,204,0.15); color: #8888aa; border: 1px solid rgba(170,170,204,0.35); }
   .s-deferred   { background: rgba(232,160,0,0.12);   color: #c06000; border: 1px solid rgba(232,160,0,0.3); }
@@ -483,7 +483,7 @@
   .wk-col { flex: 1; text-align: center; line-height: 22px; font-size: 10px; color: var(--muted); border-right: 1px solid rgba(200,200,220,0.5); }
   .wk-col.ms { border-right: 1px solid var(--border); }
   .chart-row { height: var(--row-h); position: relative; border-bottom: 1px solid var(--row-sep); display: flex; transition: background 0.1s; }
-  .chart-row:hover { background: rgba(91,79,255,0.03); }
+  .chart-row:hover { background: rgba(0,89,169,0.03); }
   .chart-row.grp { background: var(--surface); border-bottom: 1px solid var(--border); }
   .wk-cell { flex: 1; border-right: 1px solid rgba(200,200,220,0.32); height: 100%; }
   .wk-cell.ms { border-right: 1px solid rgba(200,200,220,0.65); }
@@ -585,7 +585,7 @@
   .form-row { margin-bottom: 10px; }
   .form-row label { display: block; font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 4px; }
   .form-row input, .form-row select { width: 100%; padding: 7px 10px; font-size: 13px; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 6px; font-family: 'Lato', sans-serif; outline: none; }
-  .form-row input:focus, .form-row select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,79,255,0.1); }
+  .form-row input:focus, .form-row select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,89,169,0.1); }
   .field-error { border-color: var(--accent2) !important; box-shadow: 0 0 0 3px rgba(232,57,74,0.15) !important; animation: shake 0.3s ease; }
   @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-4px)} 75%{transform:translateX(4px)} }
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -606,7 +606,7 @@
   .rte-btn:hover { background: var(--surface2); border-color: var(--accent); }
   .rte-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
   .rte-box { min-height: 140px; max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 9pt; line-height: 1.55; font-family: 'Lato', sans-serif; color: var(--text); background: var(--surface); outline: none; }
-  .rte-box:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,79,255,0.1); }
+  .rte-box:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,89,169,0.1); }
   .rte-box * { font-family: 'Lato', sans-serif !important; font-size: 9pt !important; color: var(--text) !important; background: transparent !important; }
   .rte-box ul { padding-left: 18px; margin: 4px 0; }
   .rte-box li { margin: 2px 0; }
@@ -646,7 +646,7 @@
   .dev-item { display: flex; align-items: center; gap: 8px; padding: 10px 13px; border-bottom: 1px solid var(--border); background: #fff; transition: background 0.1s; cursor: grab; }
   .dev-item:last-child { border-bottom: none; }
   .dev-item:hover { background: var(--surface); }
-  .dev-item.drag-over { border-top: 2px solid var(--accent); background: rgba(91,79,255,0.05); }
+  .dev-item.drag-over { border-top: 2px solid var(--accent); background: rgba(0,89,169,0.05); }
   .dev-item.dragging  { opacity: 0.4; }
 
   /* ── Capacity Calendar ── */
@@ -661,7 +661,7 @@
   .cap-cal-dow  { font-size: 9px; font-weight: 900; text-align: center; color: var(--muted); text-transform: uppercase; padding-bottom: 4px; }
   .cap-cal-cell { position: relative; border-radius: 5px; cursor: pointer; transition: all 0.1s; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 4px 2px; min-height: 36px; border: 1px solid transparent; transition: border-color 0.12s; user-select: none; }
   .cap-cal-cell:hover { border-color: var(--accent) !important; z-index: 2; }
-  .cap-cal-cell.selected { border-color: var(--accent) !important; outline: 2px solid rgba(91,79,255,0.4); background: rgba(91,79,255,0.15) !important; color: var(--accent) !important; z-index: 3; }
+  .cap-cal-cell.selected { border-color: var(--accent) !important; outline: 2px solid rgba(0,89,169,0.4); background: rgba(0,89,169,0.15) !important; color: var(--accent) !important; z-index: 3; }
   .cap-cal-cell.today { font-weight: 900; }
   .cap-cal-cell.other-month { opacity: 0.35; pointer-events: none; }
   .cap-cal-cell.weekend { opacity: 0.5; pointer-events: none; }
@@ -674,7 +674,7 @@
   .cap-health-over { background: rgba(232,57,74,0.18);   color: #a01525; }  /* over capacity — red */
   .cap-health-off  { background: rgba(170,170,204,0.12); color: #888; }
   /* multi-select range highlight */
-  .cap-cal-cell.in-range { outline: 2px solid rgba(91,79,255,0.25); }
+  .cap-cal-cell.in-range { outline: 2px solid rgba(0,89,169,0.25); }
   body.dark-mode .cap-cal-wrap { background: var(--surface) !important; }
   body.dark-mode .cap-cal-cell.cap-health-ok   { background: rgba(232,160,0,0.22)  !important; color: #f0c040 !important; }  /* under — yellow */
   body.dark-mode .cap-cal-cell.cap-health-warn { background: rgba(34,185,110,0.22) !important; color: #3dd68a !important; }  /* at — green */
@@ -690,7 +690,7 @@
   .dev-empty { padding: 20px; text-align: center; color: var(--muted); font-size: 13px; }
   .add-dev-row { display: flex; gap: 8px; }
   .add-dev-row input { flex: 1; padding: 8px 10px; font-size: 13px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-family: 'Lato', sans-serif; outline: none; }
-  .add-dev-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,79,255,0.1); }
+  .add-dev-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,89,169,0.1); }
   .btn-add-dev { background: var(--accent); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; font-family: 'Lato', sans-serif; font-weight: 700; font-size: 13px; cursor: pointer; white-space: nowrap; }
   .btn-add-dev:hover { filter: brightness(1.1); }
 
@@ -741,7 +741,7 @@
 <body>
 <!-- LOADING OVERLAY -->
 <div id="loadingOverlay" style="display:flex;position:fixed;inset:0;z-index:9999;background:#fff;align-items:center;justify-content:center;flex-direction:column;gap:12px">
-  <div style="width:40px;height:40px;border:3px solid #eee;border-top-color:#5b4fff;border-radius:50%;animation:spin 0.8s linear infinite"></div>
+  <div style="width:40px;height:40px;border:3px solid #eee;border-top-color:#0059A9;border-radius:50%;animation:spin 0.8s linear infinite"></div>
   <div style="font-size:13px;color:#7070a0;font-family:Lato,sans-serif">Loading data…</div>
 </div>
 <style>@keyframes spin{to{transform:rotate(360deg)}}
@@ -1041,7 +1041,7 @@
   <!-- Phase 4: Capacity View toggle -->
   <button id="capViewToggleBtn" onclick="toggleCapacityView()"
     class="leg-item" title="Toggle capacity graph and echo rows"
-    style="background:none;border:1px solid rgba(91,79,255,0.3);cursor:pointer;font-family:'Lato',sans-serif;font-size:11px;font-weight:700;color:var(--accent);padding:3px 10px;border-radius:6px;gap:5px;margin-left:8px">
+    style="background:none;border:1px solid rgba(0,89,169,0.3);cursor:pointer;font-family:'Lato',sans-serif;font-size:11px;font-weight:700;color:var(--accent);padding:3px 10px;border-radius:6px;gap:5px;margin-left:8px">
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
     Show Capacity
   </button>
@@ -1079,7 +1079,7 @@
 
 <!-- LIST VIEW (Phase 1d-i) — server-paginated item table backed by /api/items -->
 <div id="listView" style="display:none;padding:16px 20px">
-  <div id="listBulkBar" style="display:none;align-items:center;gap:8px;margin-bottom:10px;padding:8px 12px;background:rgba(91,79,255,0.08);border:1px solid var(--accent);border-radius:8px;flex-wrap:wrap">
+  <div id="listBulkBar" style="display:none;align-items:center;gap:8px;margin-bottom:10px;padding:8px 12px;background:rgba(0,89,169,0.08);border:1px solid var(--accent);border-radius:8px;flex-wrap:wrap">
     <span id="listBulkCount" style="font-size:12px;font-weight:700;color:var(--accent)"></span>
     <span style="font-size:12px;color:var(--muted)">Set</span>
     <select id="listBulkField" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none">
@@ -1135,7 +1135,7 @@
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
     <!-- Session status + type badge -->
     <span id="planningSessionStatus" style="font-size:11px;color:var(--muted)">No active session</span>
-    <span id="planningSessionTypeBadge" style="display:none;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(91,79,255,0.12);color:var(--accent)"></span>
+    <span id="planningSessionTypeBadge" style="display:none;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;background:rgba(0,89,169,0.12);color:var(--accent)"></span>
     <!-- New Session button (shown when no session active) -->
     <button id="planningStartBtn" onclick="openNewSessionModal()"
       style="padding:6px 14px;font-size:12px;font-weight:700;background:var(--accent);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif">
@@ -1167,7 +1167,7 @@
         <label class="ms-opt" data-val="atrisk" style="display:flex;align-items:center;gap:7px;padding:5px 12px;cursor:pointer;font-size:12px"><input type="checkbox" value="atrisk" onchange="onPlanningStatusCheck()"> At Risk</label>
       </div>
     </div>
-    <span id="planningChangeCount" style="display:none;font-size:11px;font-weight:700;background:rgba(91,79,255,0.1);color:var(--accent);padding:2px 8px;border-radius:8px"></span>
+    <span id="planningChangeCount" style="display:none;font-size:11px;font-weight:700;background:rgba(0,89,169,0.1);color:var(--accent);padding:2px 8px;border-radius:8px"></span>
   </div>
 
   <!-- Planning filter bar removed — filters now in top bar (project/owner/type) and session bar (status) -->
@@ -1200,12 +1200,12 @@
       </div>
       <!-- Sprint-only bucket: Add to Sprint (hidden unless Sprint session) -->
       <div id="planningBucketSprint" style="display:none;flex:1;flex-direction:column;overflow:hidden">
-        <div style="padding:12px 16px;background:rgba(91,79,255,0.06);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <div style="padding:12px 16px;background:rgba(0,89,169,0.06);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
           <span style="font-size:13px;font-weight:900;color:var(--accent)">Add to Sprint</span>
           <span id="planningSprintCount" style="font-size:11px;color:var(--muted);background:rgba(0,0,0,0.06);padding:1px 7px;border-radius:8px"></span>
         </div>
-        <div style="padding:8px 10px;font-size:11px;color:var(--muted);background:rgba(91,79,255,0.03);border-bottom:1px solid var(--border);flex-shrink:0">
+        <div style="padding:8px 10px;font-size:11px;color:var(--muted);background:rgba(0,89,169,0.03);border-bottom:1px solid var(--border);flex-shrink:0">
           Items move to first <strong>Active</strong> status on commit.
         </div>
         <div id="planningSprintItems" style="flex:1;overflow-y:auto;padding:10px"></div>
@@ -1703,7 +1703,7 @@
           <label style="display:flex;align-items:center;justify-content:space-between">
             <span>JIRA Tickets</span>
             <button id="jiraCreateBtn" type="button" onclick="createJiraIssueFromModal()"
-              style="display:none;font-size:10px;font-weight:700;background:rgba(91,79,255,0.08);color:var(--accent);border:1px solid rgba(91,79,255,0.25);padding:3px 9px;border-radius:5px;cursor:pointer;font-family:'Lato',sans-serif">
+              style="display:none;font-size:10px;font-weight:700;background:rgba(0,89,169,0.08);color:var(--accent);border:1px solid rgba(0,89,169,0.25);padding:3px 9px;border-radius:5px;cursor:pointer;font-family:'Lato',sans-serif">
               + Create Jira Issue
             </button>
           </label>
@@ -1794,7 +1794,7 @@
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <h2 style="margin:0"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M2 12h2m16 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg> Admin Panel</h2>
       <a id="auditLogLink" href="/audit" target="_blank"
-         style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--accent);text-decoration:none;background:rgba(91,79,255,0.07);padding:6px 12px;border-radius:7px;border:1px solid rgba(91,79,255,0.2)">
+         style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--accent);text-decoration:none;background:rgba(0,89,169,0.07);padding:6px 12px;border-radius:7px;border:1px solid rgba(0,89,169,0.2)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg> Audit Log
       </a>
     </div>
@@ -2076,7 +2076,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.23.7';
+const APP_VERSION = '4.24.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2721,8 +2721,8 @@ function updateCapacityToggleBtn(){
   btn.innerHTML = _showCapacityView
     ? `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> Hide Capacity`
     : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> Show Capacity`;
-  btn.style.background  = (_showCapacityView && available) ? 'rgba(91,79,255,0.1)' : 'none';
-  btn.style.borderColor = (_showCapacityView && available) ? 'var(--accent)' : 'rgba(91,79,255,0.3)';
+  btn.style.background  = (_showCapacityView && available) ? 'rgba(0,89,169,0.1)' : 'none';
+  btn.style.borderColor = (_showCapacityView && available) ? 'var(--accent)' : 'rgba(0,89,169,0.3)';
   btn.style.color       = 'var(--accent)';
 }
 
@@ -4489,7 +4489,7 @@ function openProjectModal(id){
         <div class="form-row" style="margin-bottom:0" id="editorEstimateRow">
           <label style="display:flex;align-items:center;gap:4px">
             Time Estimate
-            ${isActive ? '<span style="font-size:9px;background:rgba(91,79,255,0.1);color:var(--accent);padding:1px 5px;border-radius:4px;font-weight:700">locked</span>' : ''}
+            ${isActive ? '<span style="font-size:9px;background:rgba(0,89,169,0.1);color:var(--accent);padding:1px 5px;border-radius:4px;font-weight:700">locked</span>' : ''}
           </label>
           <select id="fDueWeeksEditor" style="width:100%" ${isActive ? 'disabled' : ''}>
           </select>
@@ -4555,7 +4555,7 @@ function openProjectModal(id){
         <label style="display:flex;align-items:center;justify-content:space-between">
           <span>JIRA</span>
           <button id="jiraCreateBtnEditor" type="button" onclick="createJiraIssueFromModal()"
-            style="display:none;font-size:9px;font-weight:700;background:rgba(91,79,255,0.08);color:var(--accent);border:1px solid rgba(91,79,255,0.25);padding:2px 7px;border-radius:4px;cursor:pointer;font-family:'Lato',sans-serif">
+            style="display:none;font-size:9px;font-weight:700;background:rgba(0,89,169,0.08);color:var(--accent);border:1px solid rgba(0,89,169,0.25);padding:2px 7px;border-radius:4px;cursor:pointer;font-family:'Lato',sans-serif">
             + Create
           </button>
         </label>
@@ -6523,7 +6523,7 @@ function renderUserList(){
     const ownerFilter = u.ownerFilter || '';
 
     const rolePill  = `<span style="font-size:10px;padding:1px 7px;border-radius:8px;font-weight:700;${
-      role==='admin'  ? 'background:rgba(91,79,255,0.12);color:var(--accent)' :
+      role==='admin'  ? 'background:rgba(0,89,169,0.12);color:var(--accent)' :
       role==='editor' ? 'background:rgba(34,185,110,0.12);color:#22b96e' :
                         'background:rgba(0,0,0,0.06);color:var(--muted)'}">${role}</span>`;
     const ownerPill = role==='editor' && ownerFilter
@@ -6532,7 +6532,7 @@ function renderUserList(){
     const deleteBtn = canDelete ? `<button class="btn-ic del" onclick="deleteUser(${i})" title="Delete"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`
       : isBuiltin ? `<span class="btn-ic" style="opacity:0.35;cursor:default" title="Built-in"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>` : '';
     const logoutBtn = canLogout ? `<button class="btn-ic" onclick="forceLogoutUser(${i})" title="Force logout" style="font-size:13px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polygon points="23 7 12 2 1 7 12 12 23 7"/><line x1="12" y1="17" x2="12" y2="22"/><line x1="7" y1="17" x2="17" y2="17"/></svg></button>` : '';
-    const selfBadge = isSelf ? ' <span style="font-size:10px;background:rgba(91,79,255,0.1);color:var(--accent);padding:1px 6px;border-radius:8px;font-weight:700">you</span>' : '';
+    const selfBadge = isSelf ? ' <span style="font-size:10px;background:rgba(0,89,169,0.1);color:var(--accent);padding:1px 6px;border-radius:8px;font-weight:700">you</span>' : '';
     const emailTxt = u.email ? `<span style="font-size:11px;color:var(--muted);margin-left:2px">${esc(u.email)}</span>` : '';
     const noPwBadge = (!u.password) ? ` <span style="font-size:10px;background:rgba(240,165,0,0.15);color:#b06f00;padding:1px 6px;border-radius:8px;font-weight:700" title="No password set — pending setup link">pending</span>` : '';
     const linkBtn = (isAdmin && u.email) ? `<button class="btn-ic" onclick="sendUserLink(${i})" title="Email a password setup/reset link"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg></button>` : '';
@@ -6781,7 +6781,7 @@ function renderStatusList(){
     const radio = (val, fn, name) => `<input type="radio" name="${name}" ${val?'checked':''} onchange="${fn}" style="accent-color:var(--accent);cursor:pointer;width:15px;height:15px">`;
     return `<div class="dev-item" draggable="true" data-idx="${i}" style="gap:8px">
       <span class="drag-handle" title="Drag to reorder">⠿</span>
-      <span class="dev-nm" style="flex:1">${esc(s)}${tag}${isDef?` <span style="font-size:9px;background:rgba(91,79,255,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Default</span>`:''}${isDefer?` <span style="font-size:9px;background:rgba(232,160,0,0.12);color:#c06000;padding:1px 5px;border-radius:5px">Deferred</span>`:''}${isReleased?` <span style="font-size:9px;background:rgba(34,185,110,0.12);color:#22b96e;padding:1px 5px;border-radius:5px">Released</span>`:''}${isApproved?` <span style="font-size:9px;background:rgba(0,144,212,0.12);color:#0090d4;padding:1px 5px;border-radius:5px">Approved</span>`:''}${isTesting2?` <span style="font-size:9px;background:rgba(91,79,255,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Testing</span>`:''}${isBlocked2?` <span style="font-size:9px;background:rgba(232,57,74,0.12);color:#e8394a;padding:1px 5px;border-radius:5px">Blocked</span>`:''} <span style="font-size:10px;color:var(--muted);font-weight:400">(${cnt})</span></span>
+      <span class="dev-nm" style="flex:1">${esc(s)}${tag}${isDef?` <span style="font-size:9px;background:rgba(0,89,169,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Default</span>`:''}${isDefer?` <span style="font-size:9px;background:rgba(232,160,0,0.12);color:#c06000;padding:1px 5px;border-radius:5px">Deferred</span>`:''}${isReleased?` <span style="font-size:9px;background:rgba(34,185,110,0.12);color:#22b96e;padding:1px 5px;border-radius:5px">Released</span>`:''}${isApproved?` <span style="font-size:9px;background:rgba(0,144,212,0.12);color:#0090d4;padding:1px 5px;border-radius:5px">Approved</span>`:''}${isTesting2?` <span style="font-size:9px;background:rgba(0,89,169,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Testing</span>`:''}${isBlocked2?` <span style="font-size:9px;background:rgba(232,57,74,0.12);color:#e8394a;padding:1px 5px;border-radius:5px">Blocked</span>`:''} <span style="font-size:10px;color:var(--muted);font-weight:400">(${cnt})</span></span>
       <span style="width:56px;text-align:center">${chk(isActive,   `toggleStatusActive(${i},this.checked)`)}</span>
       <span style="width:60px;text-align:center">${chk(isTerm,     `toggleStatusTerminal(${i},this.checked)`)}</span>
       <span style="width:80px;text-align:center">${chk(ignored,    `toggleStatusIgnore(${i},this.checked)`)}</span>
@@ -7271,11 +7271,11 @@ function renderProductList(){
     const ignored = productIgnoreConflicts[p.name] || false;
     const assignedStatuses = p.statuses || [];
     const statusPills = assignedStatuses.length
-      ? assignedStatuses.map(s=>`<span style="font-size:10px;background:rgba(91,79,255,0.1);color:var(--accent);padding:1px 6px;border-radius:8px">${esc(s)}</span>`).join(' ')
+      ? assignedStatuses.map(s=>`<span style="font-size:10px;background:rgba(0,89,169,0.1);color:var(--accent);padding:1px 6px;border-radius:8px">${esc(s)}</span>`).join(' ')
       : `<span style="font-size:10px;color:var(--muted)">All statuses</span>`;
     return `<div class="dev-item" data-idx="${i}" style="flex-wrap:wrap;gap:6px">
       <span class="dev-nm" style="flex:1;min-width:120px">${esc(p.name)}${tag}</span>
-      ${p.keyPrefix ? `<span style="font-size:10px;font-family:monospace;background:rgba(91,79,255,0.1);color:var(--accent);padding:1px 6px;border-radius:6px;flex-shrink:0">${esc(p.keyPrefix)}</span>` : ''}
+      ${p.keyPrefix ? `<span style="font-size:10px;font-family:monospace;background:rgba(0,89,169,0.1);color:var(--accent);padding:1px 6px;border-radius:6px;flex-shrink:0">${esc(p.keyPrefix)}</span>` : ''}
       <span style="font-size:11px;color:var(--muted);flex-shrink:0">${cnt} item${cnt!==1?'s':''}</span>
       <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;flex:2">${statusPills}</div>
       <label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;flex-shrink:0" title="Ignore capacity conflicts for every item in this project (useful for small projects with a single assignee)">
@@ -7298,7 +7298,7 @@ function startEditProduct(i){
     const isRequired = isDefault || isDeferred;
     // Required statuses are always checked and cannot be unchecked
     const isChecked  = assigned.includes(s) || isRequired;
-    const badge = isDefault  ? ` <span style="font-size:9px;background:rgba(91,79,255,0.12);color:var(--accent);padding:1px 4px;border-radius:4px">Default</span>`
+    const badge = isDefault  ? ` <span style="font-size:9px;background:rgba(0,89,169,0.12);color:var(--accent);padding:1px 4px;border-radius:4px">Default</span>`
                 : isDeferred ? ` <span style="font-size:9px;background:rgba(232,160,0,0.12);color:#c06000;padding:1px 4px;border-radius:4px">Deferred</span>`
                 : '';
     return `<label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;margin:2px 6px 2px 0;cursor:${isRequired?'not-allowed':'pointer'}" title="${isRequired?'Required — cannot be removed':''}">
@@ -7893,7 +7893,7 @@ document.getElementById('myAccountBtn')?.addEventListener('click', ()=>{
   document.getElementById('myAccountError').style.display = 'none';
   // Show role with color pill
   const role = me.role || currentRole || 'viewer';
-  const roleColors = { admin:'rgba(91,79,255,0.12);color:var(--accent)', editor:'rgba(34,185,110,0.12);color:#22b96e', viewer:'rgba(0,0,0,0.06);color:var(--muted)' };
+  const roleColors = { admin:'rgba(0,89,169,0.12);color:var(--accent)', editor:'rgba(34,185,110,0.12);color:#22b96e', viewer:'rgba(0,0,0,0.06);color:var(--muted)' };
   const roleStyle = roleColors[role] || roleColors.viewer;
   const ownerTag  = role === 'editor' && me.ownerFilter
     ? ` <span style="font-size:11px;padding:1px 7px;border-radius:8px;background:rgba(0,120,180,0.1);color:#0078b4;font-weight:700"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> ${esc(me.ownerFilter)}</span>` : '';
@@ -8123,12 +8123,12 @@ function populateAcOwnerFilter(){
 }
 
 const AC_STATUS_COLOR = {
-  'Blocked':'#e8394a', 'At Risk':'#e8394a', 'Pending Approval':'#5b4fff',
-  'Due Date Change':'#5b4fff', 'Delay Date Change':'#5b4fff', 'Needs Decision':'#3b8fd4',
+  'Blocked':'#e8394a', 'At Risk':'#e8394a', 'Pending Approval':'#0059A9',
+  'Due Date Change':'#0059A9', 'Delay Date Change':'#0059A9', 'Needs Decision':'#3b8fd4',
   'Needs Date Check':'#f0c030', 'Flagged Issue':'#e8394a',
   'Admin Override':'#7c3aed', 'Capacity Conflict':'#e8a000',
   'Jira Linked':'#0052cc', 'Jira Unlinked':'#aaa',
-  'Jira Created':'#0052cc', 'Jira Sync':'#0052cc', 'Priority Change':'#5b4fff',
+  'Jira Created':'#0052cc', 'Jira Sync':'#0052cc', 'Priority Change':'#0059A9',
   'Action Taken':'#22b96e'
 };
 
@@ -9465,7 +9465,7 @@ function renderDashboard(){
   // ── SECTION 2: Release History ───────────────────────────────────────────
   const sortedReleases = [...releasedItems].sort((a,b)=>(b.releaseDate||'').localeCompare(a.releaseDate||''));
   const relRows = sortedReleases.map(p => {
-    const tickets = (p.jiraTickets||[]).map(t=>`<a href="https://freezingpointllc.atlassian.net/browse/${escA(t)}" target="_blank" rel="noopener" style="font-size:10px;color:var(--accent);text-decoration:none;background:rgba(91,79,255,0.08);padding:1px 5px;border-radius:4px">${esc(t)}</a>`).join(' ');
+    const tickets = (p.jiraTickets||[]).map(t=>`<a href="https://freezingpointllc.atlassian.net/browse/${escA(t)}" target="_blank" rel="noopener" style="font-size:10px;color:var(--accent);text-decoration:none;background:rgba(0,89,169,0.08);padding:1px 5px;border-radius:4px">${esc(t)}</a>`).join(' ');
     const flags = (p.featureFlags||[]).map(f=>`<a href="${escA('https://features.fraznet.com/#/namespaces/qa/flags/'+encodeURIComponent(f))}" target="_blank" rel="noopener" style="font-size:10px;color:#22b96e;text-decoration:none;background:rgba(34,185,110,0.08);padding:1px 5px;border-radius:4px">${esc(f)}</a>`).join(' ');
     return `<tr onclick="openItemPage(${p.id})" style="border-bottom:1px solid var(--border);cursor:pointer" onmouseenter="this.style.background='var(--surface2)'" onmouseleave="this.style.background=''">
       <td style="padding:8px 10px;font-weight:700;font-size:12px">${esc(p.name)}</td>
@@ -9550,7 +9550,7 @@ function renderDashboard(){
           </span>
         </td>
         <td style="padding:8px 10px;font-size:11px;color:var(--muted)">${startStr}</td>
-        <td style="padding:8px 10px;font-size:11px"><span style="padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(91,79,255,0.1);color:var(--accent)">${esc(parent.recurrence)}</span></td>
+        <td style="padding:8px 10px;font-size:11px"><span style="padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(0,89,169,0.1);color:var(--accent)">${esc(parent.recurrence)}</span></td>
         <td style="padding:8px 10px;font-size:11px;color:var(--muted)">${esc(parent.dev||'—')}</td>
         <td style="padding:8px 10px;font-size:11px;color:var(--muted)">${doneChildren.length} completed / ${children.length} total</td>
       </tr>`;
@@ -9892,7 +9892,7 @@ function wireKanbanDragDrop(){
   });
 
   document.querySelectorAll('.kanban-drop-zone').forEach(zone => {
-    zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.background = 'rgba(91,79,255,0.05)'; });
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.style.background = 'rgba(0,89,169,0.05)'; });
     zone.addEventListener('dragleave', () => { zone.style.background = ''; });
     zone.addEventListener('drop', async e => {
       e.preventDefault();
@@ -10719,10 +10719,10 @@ function renderSavedViewsMenu(){
     const isActive = sv.id === _activeViewId;
     const isDef    = sv.id === defId;
     return `<button onclick="applySavedView('${sv.id}')"
-      style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:9px 16px 9px 24px;background:${isActive?'rgba(91,79,255,0.07)':'none'};border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:12px;color:${isActive?'var(--accent)':'var(--text)'}">
+      style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:9px 16px 9px 24px;background:${isActive?'rgba(0,89,169,0.07)':'none'};border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:12px;color:${isActive?'var(--accent)':'var(--text)'}">
       <span>${sv.icon||''}</span>
       <span style="flex:1">${esc(sv.name)}</span>
-      ${isDef?`<span style="font-size:9px;color:var(--accent);background:rgba(91,79,255,0.1);padding:1px 5px;border-radius:6px">Default</span>`:''}
+      ${isDef?`<span style="font-size:9px;color:var(--accent);background:rgba(0,89,169,0.1);padding:1px 5px;border-radius:6px">Default</span>`:''}
       ${isActive?`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="20 6 9 17 4 12"/></svg>`:''}
     </button>`;
   }).join('');
@@ -11185,7 +11185,7 @@ function planningCard(p, rank, isDeferred, isApproved=false, isSprint=false, isA
     Deferred: ${esc(stripHtml(draft.deferReason))}${draft.deferNote?' — '+esc(stripHtml(draft.deferNote)):''}
     ${draft.deferRevisit?`<span style="color:var(--muted)"> · revisit ${draft.deferRevisit}</span>`:''}
   </div>` : '';
-  const sessionBadge = (hasSession && changed) ? `<span style="font-size:9px;background:rgba(91,79,255,0.12);color:var(--accent);padding:1px 5px;border-radius:5px;flex-shrink:0">modified</span>` : '';
+  const sessionBadge = (hasSession && changed) ? `<span style="font-size:9px;background:rgba(0,89,169,0.12);color:var(--accent);padding:1px 5px;border-radius:5px;flex-shrink:0">modified</span>` : '';
   const rankBadge = rank ? `<span style="font-size:10px;font-weight:900;color:var(--muted);width:22px;text-align:center;flex-shrink:0">#${rank}</span>` : '';
 
   // Status badge
@@ -11292,7 +11292,7 @@ function planningCard(p, rank, isDeferred, isApproved=false, isSprint=false, isA
       if(sessionType === 'Review'){
         actionBtns = `<button onclick="approveItem(${p.id});event.stopPropagation();" style="${btnStyle('rgba(34,185,110,0.1)','#22b96e','#1a8a52')};margin-bottom:3px">✓ Approve</button>`;
       } else if(sessionType === 'Sprint'){
-        actionBtns = `<button onclick="addToSprint(${p.id});event.stopPropagation();" style="${btnStyle('rgba(91,79,255,0.1)','var(--accent)','var(--accent)')};margin-bottom:3px">+ Add</button>
+        actionBtns = `<button onclick="addToSprint(${p.id});event.stopPropagation();" style="${btnStyle('rgba(0,89,169,0.1)','var(--accent)','var(--accent)')};margin-bottom:3px">+ Add</button>
           <button onclick="flagAtRisk(${p.id});event.stopPropagation();" style="${btnStyle('rgba(232,57,74,0.07)','var(--accent2)','var(--accent2)')};margin-bottom:3px">⚑ At Risk</button>`;
       } else if(sessionType === 'Release'){
         actionBtns = `<button onclick="addToRelease(${p.id});event.stopPropagation();" style="${btnStyle('rgba(34,185,110,0.1)','#22b96e','#1a8a52')};margin-bottom:3px">↑ Release</button>
@@ -11380,7 +11380,7 @@ function wireStackDragDrop(container, items){
     card.addEventListener('dragend', ()=>{ card.style.opacity=''; dragId=null; });
     card.addEventListener('dragover', e=>{
       e.preventDefault();
-      card.style.background = 'rgba(91,79,255,0.05)';
+      card.style.background = 'rgba(0,89,169,0.05)';
     });
     card.addEventListener('dragleave', ()=>{ card.style.background=''; });
     card.addEventListener('drop', e=>{
@@ -11592,7 +11592,7 @@ function wireStackDragDropSprintTargets(){
   const sprintEl  = document.getElementById('planningSprintItems');
   const atRiskEl  = document.getElementById('planningAtRiskItems');
   if(sprintEl && _planningSession?.type === 'Sprint'){
-    sprintEl.addEventListener('dragover',  e=>{ e.preventDefault(); sprintEl.style.background='rgba(91,79,255,0.06)'; });
+    sprintEl.addEventListener('dragover',  e=>{ e.preventDefault(); sprintEl.style.background='rgba(0,89,169,0.06)'; });
     sprintEl.addEventListener('dragleave', ()=>{ sprintEl.style.background=''; });
     sprintEl.addEventListener('drop', e=>{
       e.preventDefault(); sprintEl.style.background='';
@@ -11898,7 +11898,7 @@ async function _restorePlanningSessionFromServer(){
     if(statusEl){ statusEl.textContent = `Session: "${s.name}" (restored)`; statusEl.style.color = 'var(--accent)'; }
     const badge = document.getElementById('planningSessionTypeBadge');
     if(badge){
-      const BADGE_BG    = { Review:'rgba(0,144,212,0.12)', Sprint:'rgba(91,79,255,0.12)', Release:'rgba(34,185,110,0.12)' };
+      const BADGE_BG    = { Review:'rgba(0,144,212,0.12)', Sprint:'rgba(0,89,169,0.12)', Release:'rgba(34,185,110,0.12)' };
       const BADGE_COLOR = { Review:'#0090d4', Sprint:'var(--accent)', Release:'#22b96e' };
       badge.style.background = BADGE_BG[s.type] || 'rgba(0,0,0,0.07)';
       badge.style.color      = BADGE_COLOR[s.type] || 'var(--muted)';
@@ -11974,7 +11974,7 @@ function startPlanningSession(name, type){
   if(statusEl){ statusEl.textContent = `Session: "${name}"`; statusEl.style.color = 'var(--accent)'; }
   const badge = document.getElementById('planningSessionTypeBadge');
   if(badge){
-    const BADGE_BG    = { Review:'rgba(0,144,212,0.12)', Sprint:'rgba(91,79,255,0.12)', Release:'rgba(34,185,110,0.12)' };
+    const BADGE_BG    = { Review:'rgba(0,144,212,0.12)', Sprint:'rgba(0,89,169,0.12)', Release:'rgba(34,185,110,0.12)' };
     const BADGE_COLOR = { Review:'#0090d4', Sprint:'var(--accent)', Release:'#22b96e' };
     badge.style.background = BADGE_BG[type]    || 'rgba(0,0,0,0.07)';
     badge.style.color      = BADGE_COLOR[type] || 'var(--muted)';
@@ -12699,12 +12699,12 @@ function showCommitSummary(session, changes){
   if(body) body.innerHTML = changes.map(c => {
     const tags = [];
     if(c.approved)   tags.push(`<span style="background:rgba(34,185,110,0.12);color:#1a8a52;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700">Approved → ${esc(c.statusTo||'Approved')}</span>`);
-    if(c.sprint)     tags.push(`<span style="background:rgba(91,79,255,0.1);color:var(--accent);padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700">Sprint → ${esc(c.statusTo||'Active')}${c.startDate?' · '+c.startDate:''}</span>`);
+    if(c.sprint)     tags.push(`<span style="background:rgba(0,89,169,0.1);color:var(--accent);padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700">Sprint → ${esc(c.statusTo||'Active')}${c.startDate?' · '+c.startDate:''}</span>`);
     if(c.atRisk)     tags.push(`<span style="background:rgba(232,57,74,0.1);color:var(--accent2);padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700">⚑ At Risk</span>`);
     if(c.release)    tags.push(`<span style="background:rgba(34,185,110,0.12);color:#1a8a52;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700">↑ Released${c.releaseNumber?' '+esc(c.releaseNumber):''} → ${esc(c.statusTo||'Released')}${c.releaseDate?' · '+c.releaseDate:''}</span>`);
     if(c.blocked)    tags.push(`<span style="background:rgba(232,57,74,0.1);color:var(--accent2);padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700">⊘ Blocked</span>`);
     if(c.deferred)   tags.push(`<span style="background:rgba(232,160,0,0.12);color:#c06000;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700">Deferred: ${esc(stripHtml(c.deferReason||''))}</span>`);
-    if(c.priorityFrom !== undefined) tags.push(`<span style="background:rgba(91,79,255,0.1);color:var(--accent);padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700">Priority: ${PRIO_LABELS[c.priorityFrom]||'—'} → ${PRIO_LABELS[c.priorityTo]||'—'}</span>`);
+    if(c.priorityFrom !== undefined) tags.push(`<span style="background:rgba(0,89,169,0.1);color:var(--accent);padding:1px 7px;border-radius:8px;font-size:10px;font-weight:700">Priority: ${PRIO_LABELS[c.priorityFrom]||'—'} → ${PRIO_LABELS[c.priorityTo]||'—'}</span>`);
     if(!tags.length) return '';
     return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--border);border-radius:7px;background:var(--surface)">
       <div style="flex:1;min-width:0">
@@ -12959,7 +12959,7 @@ function flagPill(f, {fromJira=false, showDelete=false, onDelete='', size='md'}=
   const delBtn = showDelete && onDelete
     ? `<button type="button" onclick="${onDelete}" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;line-height:1;padding:0 0 0 2px;font-family:'Lato',sans-serif;flex-shrink:0" title="Remove">×</button>`
     : '';
-  return `<span style="display:inline-flex;align-items:center;gap:0;padding:3px 8px;background:rgba(91,79,255,0.08);color:var(--accent);border:1px solid rgba(91,79,255,0.2);border-radius:10px;font-size:${fs};font-weight:700;font-family:'Lato',sans-serif;white-space:nowrap"
+  return `<span style="display:inline-flex;align-items:center;gap:0;padding:3px 8px;background:rgba(0,89,169,0.08);color:var(--accent);border:1px solid rgba(0,89,169,0.2);border-radius:10px;font-size:${fs};font-weight:700;font-family:'Lato',sans-serif;white-space:nowrap"
     >${link}${jiraBadge}${delBtn}</span>`;
 }
 
@@ -14681,7 +14681,7 @@ function renderJiraIssueCard(d, canEdit){
         <div style="font-size:10px;font-weight:700;color:var(--muted);margin-bottom:4px">CHILD ISSUES</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px">${
           d.children.map(c=>`<a href="${escA(esc(d.url.replace(d.key,c)))}" target="_blank" rel="noopener"
-            style="font-size:10px;font-weight:700;color:var(--accent);background:rgba(91,79,255,0.07);padding:2px 7px;border-radius:5px;text-decoration:none">${esc(c)}</a>`
+            style="font-size:10px;font-weight:700;color:var(--accent);background:rgba(0,89,169,0.07);padding:2px 7px;border-radius:5px;text-decoration:none">${esc(c)}</a>`
           ).join('')
         }</div></div>` : '';
   const parentHtml = d.parent
@@ -15455,10 +15455,10 @@ if ('serviceWorker' in navigator) {
     --frz-radius-chip:999px; --frz-radius-control:8px;
     --frz-topbar-h:52px; --frz-rail-w:232px; --frz-rail-w-collapsed:56px;
     --frz-anim:.18s ease;
-    /* Rebrand reused production content: its primary buttons, links, focus rings
-       and toggle accent-color all read var(--accent) (#5b4fff indigo). Custom
-       properties resolve from the nearest ancestor, so overriding --accent HERE
-       turns the entire reused subtree Frazil-blue — production :root is untouched. */
+    /* Reused production content reads var(--accent). The old production indigo
+       accent has been retired app-wide — :root --accent is now Frazil-blue too —
+       so this override is belt-and-suspenders, keeping the reused subtree blue
+       regardless of where --accent is resolved from. */
     --accent:#0059A9;
     /* Same mechanism for chrome NEUTRALS: the reused production views are colored
        by the classic warm-gray tokens (--surface #f5f5f7, --border #d8d8e0, etc.).

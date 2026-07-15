@@ -943,7 +943,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.23.7"
+APP_VERSION = "4.24.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3507,7 +3507,7 @@ def _audit_forbidden_page(team: str) -> str:
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <title>Access Denied — Audit Log</title>
 <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
-<style>*{{box-sizing:border-box;margin:0;padding:0}}body{{font-family:'Lato',sans-serif;background:#f5f5f7;color:#1a1a2e;display:flex;align-items:center;justify-content:center;min-height:100vh}}.card{{background:#fff;border-radius:12px;padding:40px;text-align:center;max-width:400px;box-shadow:0 4px 20px rgba(0,0,0,.1)}}h1{{font-size:20px;font-weight:900;margin-bottom:12px;color:#e8394a}}p{{font-size:13px;color:#7070a0;margin-bottom:20px}}a{{background:#5b4fff;color:#fff;padding:9px 20px;border-radius:7px;text-decoration:none;font-weight:700;font-size:13px}}</style>
+<style>*{{box-sizing:border-box;margin:0;padding:0}}body{{font-family:'Lato',sans-serif;background:#f5f5f7;color:#1a1a2e;display:flex;align-items:center;justify-content:center;min-height:100vh}}.card{{background:#fff;border-radius:12px;padding:40px;text-align:center;max-width:400px;box-shadow:0 4px 20px rgba(0,0,0,.1)}}h1{{font-size:20px;font-weight:900;margin-bottom:12px;color:#e8394a}}p{{font-size:13px;color:#7070a0;margin-bottom:20px}}a{{background:#0059A9;color:#fff;padding:9px 20px;border-radius:7px;text-decoration:none;font-weight:700;font-size:13px}}</style>
 </head><body>
 <div class="card">
   <h1>⛔ Access Denied</h1>
@@ -3575,7 +3575,7 @@ def audit_page(request: FRequest, team: str = "development", search: str = "",  
         all_users = [r[0] for r in c.execute("SELECT DISTINCT username FROM audit_log ORDER BY username").fetchall()]
         all_actions = sorted(set(r[0].split(":")[0] for r in c.execute("SELECT DISTINCT action FROM audit_log").fetchall()))
 
-    ACTION_COLOR = {"create":"#22b96e","update":"#5b4fff","delete":"#e8394a",
+    ACTION_COLOR = {"create":"#22b96e","update":"#0059A9","delete":"#e8394a",
                     "import":"#f0a500","login":"#0090d4","config":"#e8a000",
                     "jira_desc_overwrite":"#c0392b",   # pre-replace description capture (recovery surface)
                     "jira":"#0052cc"}                  # jira:* actions (e.g. jira:attach-sync) — Jira blue
@@ -3627,7 +3627,7 @@ body{{font-family:'Lato',sans-serif;background:#f5f5f7;color:#1a1a2e;font-size:1
 .filters{{background:#fff;border-bottom:1px solid #d8d8e0;padding:12px 28px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}}
 .filters label{{font-size:11px;font-weight:700;color:#7070a0;text-transform:uppercase;letter-spacing:.5px;margin-right:2px}}
 .filters input,.filters select{{padding:6px 10px;font-size:12px;border:1px solid #d8d8e0;border-radius:6px;font-family:'Lato',sans-serif;outline:none;background:#fff;color:#1a1a2e}}
-.filters input:focus,.filters select:focus{{border-color:#5b4fff}}
+.filters input:focus,.filters select:focus{{border-color:#0059A9}}
 .search-wrap{{display:flex;align-items:center;gap:8px;flex:1;max-width:320px}}
 .search-wrap input{{flex:1}}
 .wrap{{padding:24px 28px}}
@@ -3638,9 +3638,9 @@ td{{padding:10px 14px;border-bottom:1px solid #ebebf0;vertical-align:top}}
 tr:last-child td{{border-bottom:none}}
 tr:hover td{{background:#fafafe}}
 .btn{{border:none;padding:7px 16px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer}}
-.btn-primary{{background:#5b4fff;color:#fff}}
+.btn-primary{{background:#0059A9;color:#fff}}
 .btn-ghost{{background:transparent;border:1px solid #d8d8e0;color:#7070a0}}
-.badge-count{{background:#5b4fff;color:#fff;font-size:10px;font-weight:900;padding:1px 7px;border-radius:8px;margin-left:6px}}
+.badge-count{{background:#0059A9;color:#fff;font-size:10px;font-weight:900;padding:1px 7px;border-radius:8px;margin-left:6px}}
 </style>
 </head><body>
 <div class="header">
