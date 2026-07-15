@@ -1985,6 +1985,10 @@
             <div id="tsIntakeProjects" style="display:flex;flex-direction:column;gap:6px;max-width:520px"></div>
             <div style="font-size:12px;font-weight:700;color:var(--text);margin:12px 0 6px">Types offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all)</span></div>
             <div id="tsIntakeTypes" style="display:flex;flex-wrap:wrap;gap:8px 16px"></div>
+            <div style="margin:14px 0 4px">
+              <label style="display:block;font-size:12px;font-weight:700;color:var(--text);margin-bottom:4px">Allowed email domains <span style="font-weight:400;color:var(--muted)">— only these domains may submit tickets (comma-separated; leave blank to allow any)</span></label>
+              <input type="text" id="tsIntakeDomains" placeholder="frazil.com, frazil.app" style="width:100%;max-width:480px;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;font-family:'Lato',sans-serif;outline:none">
+            </div>
           </div>
         </div>
       </div>
@@ -2065,7 +2069,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.21.1';
+const APP_VERSION = '4.22.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2266,6 +2270,7 @@ let intakeProjects = [];        // which Projects (products) the portal offers (
 let intakeNotifyEmail = '';     // team inbox that gets a copy of each portal ticket. (config)
 let intakeTypes = [];           // which item Types the portal offers (empty = all). (config)
 let intakeProjectEmails = {};   // optional per-Project notify email override {product: email}; falls back to intakeNotifyEmail. (config)
+let intakeDomains = [];         // allowed reporter email domains for the portal (empty = allow any). (config)
 let productIgnoreConflicts = {}; // { [productName]: bool } — exempt a whole project from capacity-conflict accounting
 
 // Re-render whichever view is currently active (used by top-bar filter changes)
@@ -6452,6 +6457,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       intakeNotifyEmail = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : '';
       intakeTypes   = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];
       if(data.intakeProjectEmails && typeof data.intakeProjectEmails === 'object') intakeProjectEmails = data.intakeProjectEmails;
+      if(Array.isArray(data.intakeDomains)) intakeDomains = data.intakeDomains;
       if(data.productIgnoreConflicts) productIgnoreConflicts = data.productIgnoreConflicts;
       // Don't import users unless explicitly present — protects login
       if(data.users && Array.isArray(data.users) && data.users.length){
@@ -14166,6 +14172,15 @@ function renderIntakePortalSettings(){
     ).join('') : '<span style="font-size:12px;color:var(--muted)">No Types configured — add some in the Types tab.</span>';
     typesWrap.querySelectorAll('.ts-intake-type').forEach(cb => cb.onchange = _saveIntakeTypes);
   }
+  const doms = document.getElementById('tsIntakeDomains');
+  if(doms){
+    doms.value = (intakeDomains||[]).join(', ');
+    doms.onchange = () => {
+      intakeDomains = doms.value.split(/[,;\s]+/).map(s => s.trim().toLowerCase().replace(/^@/,'')).filter(Boolean);
+      saveConfig('intakeDomains', intakeDomains);
+      doms.value = intakeDomains.join(', ');   // reflect the normalized list
+    };
+  }
   chk.onchange = () => {
     intakeEnabled = chk.checked;
     if(details) details.style.display = intakeEnabled ? '' : 'none';
@@ -14897,6 +14912,7 @@ async function boot(){
     intakeTypes           = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];                  // offered Types (empty = all)
     intakeNotifyEmail     = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : ''; // team inbox copy
     intakeProjectEmails   = (data.intakeProjectEmails && typeof data.intakeProjectEmails === 'object') ? data.intakeProjectEmails : {}; // per-project override
+    intakeDomains         = Array.isArray(data.intakeDomains) ? data.intakeDomains : [];              // allowed reporter email domains (empty = any)
     productIgnoreConflicts = data.productIgnoreConflicts || {};
     // Jira mappings (Team Settings)
     window._jiraProjectMappingData = data.jiraProjectMapping || {};

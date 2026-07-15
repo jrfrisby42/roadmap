@@ -236,6 +236,31 @@ MAIL_FROM    = os.environ.get("MAIL_FROM", "notifications@frazil.app")
 AWS_REGION   = os.environ.get("AWS_REGION", "us-west-2")
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "https://roadmap.frazil.app").rstrip("/")
 
+# Cloudflare Turnstile (bot protection on the public intake portal). CAPTCHA is
+# enforced only when BOTH keys are set — otherwise the portal behaves as before.
+TURNSTILE_SITE_KEY   = os.environ.get("TURNSTILE_SITE_KEY", "").strip()
+TURNSTILE_SECRET_KEY = os.environ.get("TURNSTILE_SECRET_KEY", "").strip()
+
+def _turnstile_enabled() -> bool:
+    return bool(TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY)
+
+def _verify_turnstile(token: str, ip: str = "") -> bool:
+    """Validate a Turnstile token against Cloudflare's siteverify API. Fail-CLOSED
+    (returns False) on any error so a broken/spoofed token can't slip through."""
+    if not token:
+        return False
+    try:
+        from urllib.parse import urlencode
+        data = urlencode({
+            "secret": TURNSTILE_SECRET_KEY, "response": token, "remoteip": ip or "",
+        }).encode()
+        req = Request("https://challenges.cloudflare.com/turnstile/v0/siteverify", data=data)
+        with urlopen(req, timeout=8) as resp:
+            return bool(json.loads(resp.read().decode()).get("success"))
+    except Exception as e:
+        log.warning(f"[Turnstile] verify failed: {e}")
+        return False
+
 def mail_configured() -> bool:
     """True when sending is possible: boto3 importable + a From address set.
     (SES authorization comes from the instance role and is checked at send time.)"""
@@ -698,6 +723,7 @@ def init_team_db(team: str):
             "intakeNotifyEmail": "",  # team inbox that gets a copy of each portal ticket
             "intakeTypes": [],     # empty = offer ALL of the team's types
             "intakeProjectEmails": {},  # optional per-project notify override {product: email}; falls back to intakeNotifyEmail
+            "intakeDomains": [],   # allowed reporter email domains (empty = allow any)
         }
         for k, v in defaults.items():
             c.execute("INSERT OR IGNORE INTO config(key,value) VALUES(?,?)",
@@ -768,10 +794,11 @@ def _migrate_config_keys(team: str):
         "intakeTypes":      [],
         "intakeNotifyEmail": "",
         "intakeProjectEmails": {},
+        "intakeDomains": [],
     }
     # Keys where False/0/empty-string is a valid intentional value — only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -916,7 +943,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.21.1"
+APP_VERSION = "4.22.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1171,6 +1198,21 @@ def _intake_notify_email(team: str, product: str = "") -> str:
             return addr
     return _cfg_val(team, "intakeNotifyEmail", "") or ""
 
+def _intake_domain_ok(team: str, email: str) -> bool:
+    """True if the reporter email is allowed to submit. When a team sets an
+    `intakeDomains` allowlist, the email's domain must match one (case-insensitive,
+    a leading '@' or '*.' is tolerated). Empty allowlist = allow any domain."""
+    allow = _cfg_val(team, "intakeDomains", []) or []
+    doms = [str(d).strip().lower().lstrip("@").lstrip("*.").lstrip(".")
+            for d in allow if str(d).strip()]
+    if not doms:
+        return True
+    dom = (email.rsplit("@", 1)[-1] if "@" in email else "").strip().lower()
+    if not dom:
+        return False
+    # match the exact domain or any subdomain of an allowed domain
+    return any(dom == d or dom.endswith("." + d) for d in doms)
+
 def _intake_notify_usernames(team: str, item: dict, pid) -> set:
     """Flow users to bell-notify about a portal ticket: its watchers + the assignee
     + the owner. `assignee` is already a username; the `dev` owner is a developer
@@ -1244,6 +1286,9 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     team = re.sub(r"[^a-z0-9]", "", (team or "").lower())
     if not team or not valid_team(team) or not _intake_open(team):
         raise HTTPException(404, "This team is not accepting portal submissions.")
+    # Bot protection: verify the Cloudflare Turnstile token when configured.
+    if _turnstile_enabled() and not _verify_turnstile(body.get("turnstileToken") or "", ip):
+        raise HTTPException(403, "Verification failed — please complete the CAPTCHA and try again.")
     title = (body.get("title") or "").strip()[:200]
     desc  = _strip_tags((body.get("description") or "").strip())[:5000]  # plain text only
     email = (body.get("email") or "").strip()[:200]
@@ -1258,6 +1303,9 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
         raise HTTPException(422, "A short summary (title) is required.")
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         raise HTTPException(422, "A valid email address is required.")
+    if not _intake_domain_ok(team, email):
+        raise HTTPException(422, "Tickets can only be submitted from an approved email domain. "
+                                 "Please use your organization email, or contact the team.")
     # Project: must be one this team exposes (the portal only offers those).
     exposed = _intake_projects(team)
     if product and product not in exposed:
@@ -1544,7 +1592,8 @@ _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
   .done{padding:34px 24px;text-align:center;display:none}
   .done .k{font-family:ui-monospace,Menlo,monospace;font-weight:700;color:var(--acc);font-size:17px}
   .foot{padding:12px 24px;border-top:1px solid var(--bd);color:var(--mut);font-size:11px;text-align:center}
-</style></head><body>
+  .cf-turnstile{margin:2px 0}
+</style><!--TURNSTILE_SCRIPT--></head><body>
 <div class="card">
   <div class="hd" style="display:flex;align-items:center;gap:12px"><!--FLOWMARK_HD--><div><h1>Submit a ticket</h1><p>File a request or report an issue. The team will follow up by email.</p></div></div>
   <form id="form" onsubmit="return submitForm(event)">
@@ -1568,6 +1617,7 @@ _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
       <div><label class="req">Your email</label><input id="email" type="email" maxlength="200" placeholder="you@example.com" required></div>
       <div><label>Your name</label><input id="name" maxlength="120" placeholder="Optional"></div>
     </div>
+    <!--TURNSTILE_WIDGET-->
     <button id="submitBtn" type="submit">Submit ticket</button>
   </form>
   <div class="done" id="done"><div style="display:flex;justify-content:center;margin-bottom:6px"><!--FLOWMARK_DONE--></div>
@@ -1639,15 +1689,17 @@ $('#files').addEventListener('change',onFiles);
 async function submitForm(ev){
   ev.preventDefault(); clearErr();
   var team=_selTeam; if(!team){ showErr('Please choose a project.'); return false; }
+  var cf=document.querySelector('[name="cf-turnstile-response"]');   // present only when Turnstile is enabled
+  if(cf && !cf.value){ showErr('Please complete the verification below.'); return false; }
   var btn=$('#submitBtn'); btn.disabled=true;
-  var payload={title:$('#title').value,description:$('#desc').value,type:$('#type').value,priority:$('#priority').value,product:_selProduct,department:($('#dept')?$('#dept').value:''),email:$('#email').value,name:$('#name').value,attachments:_atts};
+  var payload={title:$('#title').value,description:$('#desc').value,type:$('#type').value,priority:$('#priority').value,product:_selProduct,department:($('#dept')?$('#dept').value:''),email:$('#email').value,name:$('#name').value,attachments:_atts,turnstileToken:(cf&&cf.value)||''};
   try{
     var r=await fetch('/api/intake/'+encodeURIComponent(team),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     var d=await r.json().catch(function(){return {}});
     if(!r.ok) throw new Error((d&&d.detail)||('Submission failed ('+r.status+')'));
     $('#form').style.display='none'; $('#done').style.display='block'; $('#doneKey').textContent=(d.itemKey||('#'+d.id));
     if(d.url){ var dl=$('#doneLink'); dl.href=d.url; dl.style.display='inline-block'; }
-  }catch(e){ showErr(e.message||'Submission failed'); btn.disabled=false; }
+  }catch(e){ if(window.turnstile){ try{ turnstile.reset(); }catch(_e){} } showErr(e.message||'Submission failed'); btn.disabled=false; }
   return false;
 }
 $('#trackBtn').addEventListener('click', async function(){
@@ -1681,7 +1733,13 @@ _INTAKE_PAGE = (_INTAKE_PAGE
 @app.get("/report", response_class=HTMLResponse)
 def intake_portal():
     """Public server-rendered ticket-submission portal (no auth, no app load)."""
-    return HTMLResponse(content=_INTAKE_PAGE, headers={"Cache-Control": "no-cache"})
+    if _turnstile_enabled():
+        script = '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>'
+        widget = f'<div class="cf-turnstile" data-sitekey="{html.escape(TURNSTILE_SITE_KEY)}" data-theme="light"></div>'
+    else:
+        script = widget = ""
+    page = _INTAKE_PAGE.replace("<!--TURNSTILE_SCRIPT-->", script).replace("<!--TURNSTILE_WIDGET-->", widget)
+    return HTMLResponse(content=page, headers={"Cache-Control": "no-cache"})
 
 @app.get("/ticket", response_class=HTMLResponse)
 def ticket_status(team: str = "", id: str = "", t: str = ""):
@@ -2211,7 +2269,8 @@ def get_all(auth: dict = Depends(require_auth)):
             "intakeProjects": cfg_map.get("intakeProjects", []),
             "intakeTypes": cfg_map.get("intakeTypes", []),
             "intakeNotifyEmail": cfg_map.get("intakeNotifyEmail", ""),
-            "intakeProjectEmails": cfg_map.get("intakeProjectEmails", {})}
+            "intakeProjectEmails": cfg_map.get("intakeProjectEmails", {}),
+            "intakeDomains": cfg_map.get("intakeDomains", [])}
 
 
 # ── Force-seed config keys (idempotent, for migration/repair) ─────────────────
@@ -2825,7 +2884,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "changeReasons","deferReasons","departments",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
-              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails"}
+              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",

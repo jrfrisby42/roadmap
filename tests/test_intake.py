@@ -420,6 +420,62 @@ def test_reporter_reply_notifies_owner_in_app(client, team, admin_headers):
     assert "admin" in users            # owner resolved to a username → got the in-app bell
 
 
+# ── 4.22.0: domain whitelist + Cloudflare Turnstile CAPTCHA ───────────────────
+def test_intake_domains_settable_and_returned(client, team, admin_headers):
+    assert client.put("/api/config/intakeDomains", json=["frazil.com"],
+                      headers=admin_headers).status_code == 200
+    assert client.get("/api/all", headers=admin_headers).json()["intakeDomains"] == ["frazil.com"]
+
+
+def test_intake_domain_ok_helper(client, team, admin_headers):
+    _set(client, admin_headers, "intakeDomains", ["frazil.com", "@frazil.app"])
+    assert server._intake_domain_ok(team, "a@frazil.com")          # exact
+    assert server._intake_domain_ok(team, "a@sub.frazil.com")      # subdomain
+    assert server._intake_domain_ok(team, "a@frazil.app")          # leading @ in config tolerated
+    assert not server._intake_domain_ok(team, "a@evil.com")        # not allowed
+    _set(client, admin_headers, "intakeDomains", [])
+    assert server._intake_domain_ok(team, "a@anything.io")         # empty allowlist = allow any
+
+
+def test_domain_whitelist_enforced_on_submit(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    _set(client, admin_headers, "intakeDomains", ["frazil.com"])
+    server._rate.clear()
+    assert client.post(f"/api/intake/{team}", json={"title": "x", "email": "bob@gmail.com"}).status_code == 422
+    server._rate.clear()
+    assert client.post(f"/api/intake/{team}", json={"title": "x", "email": "bob@frazil.com"}).status_code == 200
+    server._rate.clear()
+    assert client.post(f"/api/intake/{team}", json={"title": "x", "email": "b@mail.frazil.com"}).status_code == 200
+
+
+def test_turnstile_verify_fail_closed_on_empty(client):
+    assert server._verify_turnstile("") is False                   # no token → never passes
+
+
+def test_submit_requires_turnstile_when_enabled(client, team, admin_headers, monkeypatch):
+    _expose(client, admin_headers, types=["Bug"])
+    monkeypatch.setattr(server, "TURNSTILE_SITE_KEY", "site")
+    monkeypatch.setattr(server, "TURNSTILE_SECRET_KEY", "secret")
+    monkeypatch.setattr(server, "_verify_turnstile", lambda tok, ip="": tok == "good")  # stub the network call
+    server._rate.clear()
+    assert client.post(f"/api/intake/{team}", json={"title": "x", "email": "a@b.com"}).status_code == 403
+    server._rate.clear()
+    assert client.post(f"/api/intake/{team}",
+                       json={"title": "x", "email": "a@b.com", "turnstileToken": "bad"}).status_code == 403
+    server._rate.clear()
+    assert client.post(f"/api/intake/{team}",
+                       json={"title": "x", "email": "a@b.com", "turnstileToken": "good"}).status_code == 200
+
+
+def test_report_page_injects_turnstile_only_when_enabled(client, monkeypatch):
+    assert "data-sitekey" not in client.get("/report").text               # disabled → no widget
+    assert "challenges.cloudflare.com" not in client.get("/report").text
+    monkeypatch.setattr(server, "TURNSTILE_SITE_KEY", "sitekey123")
+    monkeypatch.setattr(server, "TURNSTILE_SECRET_KEY", "secret")
+    r = client.get("/report")
+    assert 'data-sitekey="sitekey123"' in r.text and "challenges.cloudflare.com/turnstile" in r.text
+
+
 def test_brand_mark_route_serves_png(client):
     r = client.get("/brand-mark.png")
     assert r.status_code == 200
