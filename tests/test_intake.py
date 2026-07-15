@@ -237,3 +237,72 @@ def test_ticket_status_page_hides_internal_fields(client, team, admin_headers):
     r = client.get(f"/ticket?team={team}&id={pid}&t={server._ticket_token(team, pid)}")
     assert r.status_code == 200
     assert "SecretOwnerName" not in r.text
+
+
+# ── 4.16.1: reporter emails on completion / deferral / @reporter comment ──────
+import pytest
+
+
+@pytest.fixture
+def mailbox(monkeypatch):
+    sent = []
+    monkeypatch.setattr(server, "mail_configured", lambda: True)
+    monkeypatch.setattr(server, "send_email",
+                        lambda to, subj, text, html=None: sent.append((to, subj)))
+    return sent
+
+
+def _portal_ticket(client, team, admin_headers, mailbox, **extra):
+    server._rate.clear()
+    pid = client.post(f"/api/intake/{team}",
+                      json={"title": "T", "email": "rep@x.com", **extra}).json()["id"]
+    mailbox.clear()   # drop the creation emails
+    return pid
+
+
+def test_reporter_emailed_on_completion(client, team, admin_headers, mailbox):
+    _expose(client, admin_headers, types=["Bug"])
+    _set(client, admin_headers, "statusIsTerminal", {"Released": True})
+    pid = _portal_ticket(client, team, admin_headers, mailbox)
+    r = client.put(f"/api/projects/{pid}", json={"name": "T", "status": "Released"},
+                   headers=admin_headers)
+    assert r.status_code == 200
+    assert any(to == "rep@x.com" and "complete" in subj.lower() for to, subj in mailbox)
+
+
+def test_reporter_emailed_on_deferral(client, team, admin_headers, mailbox):
+    _expose(client, admin_headers, types=["Bug"])
+    _set(client, admin_headers, "statuses", ["New", "Deferred"])
+    _set(client, admin_headers, "statusIsDeferred", {"Deferred": True})
+    pid = _portal_ticket(client, team, admin_headers, mailbox)
+    client.put(f"/api/projects/{pid}", json={"name": "T", "status": "Deferred"}, headers=admin_headers)
+    assert any(to == "rep@x.com" and "deferred" in subj.lower() for to, subj in mailbox)
+
+
+def test_reporter_emailed_on_at_reporter_comment(client, team, admin_headers, mailbox):
+    _expose(client, admin_headers, types=["Bug"])
+    pid = _portal_ticket(client, team, admin_headers, mailbox)
+    r = client.post("/api/comments",
+                    json={"item_id": pid, "body": "Hi @reporter — which browser were you using?"},
+                    headers=admin_headers)
+    assert r.status_code == 200
+    assert any(to == "rep@x.com" for to, subj in mailbox)
+
+
+def test_no_reporter_email_without_at_reporter(client, team, admin_headers, mailbox):
+    _expose(client, admin_headers, types=["Bug"])
+    pid = _portal_ticket(client, team, admin_headers, mailbox)
+    client.post("/api/comments", json={"item_id": pid, "body": "internal note, no mention"},
+                headers=admin_headers)
+    assert not any(to == "rep@x.com" for to, subj in mailbox)
+
+
+def test_non_portal_item_no_completion_email(client, team, admin_headers, mailbox):
+    _set(client, admin_headers, "statuses", ["New", "Released"])
+    _set(client, admin_headers, "statusIsTerminal", {"Released": True})
+    pid = client.post("/api/projects", json={"name": "Normal", "status": "New"},
+                      headers=admin_headers).json()["id"]
+    mailbox.clear()
+    client.put(f"/api/projects/{pid}", json={"name": "Normal", "status": "Released"},
+               headers=admin_headers)
+    assert mailbox == []   # not a portal ticket → no reporter email

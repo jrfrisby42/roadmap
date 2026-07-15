@@ -907,7 +907,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.16.0"
+APP_VERSION = "4.16.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1310,15 +1310,18 @@ def _ticket_token(team: str, pid) -> str:
 
 _PRIO_LABEL = {"1": "Urgent", "2": "High", "3": "Medium", "4": "Low"}
 
-def _intake_email_html(item, rows, heading, intro, cta_label, cta_url):
+def _intake_email_html(item, rows, heading, intro, cta_label, cta_url, note=None):
     esc = html.escape
     row_html = "".join(
         f'<tr><td style="padding:5px 0;color:#6b7280;font-size:13px;width:96px;vertical-align:top">{esc(k)}</td>'
         f'<td style="padding:5px 0;color:#1f2733;font-size:13px;font-weight:600">{esc(v)}</td></tr>'
         for k, v in rows if v)
-    desc = esc(item.get("description") or "")
+    # `note` (e.g. a team comment) is shown as a highlighted block; otherwise the item's description.
+    block = esc(note) if note is not None else esc(item.get("description") or "")
+    lbl = ('<div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;'
+           'letter-spacing:.4px;margin-bottom:5px">Message from the team</div>') if note is not None else ""
     desc_html = (f'<div style="margin-top:12px;padding-top:12px;border-top:1px solid #eef1f4;'
-                 f'color:#1f2733;font-size:13px;white-space:pre-wrap;line-height:1.5">{desc}</div>') if desc else ""
+                 f'color:#1f2733;font-size:13px;white-space:pre-wrap;line-height:1.5">{lbl}{block}</div>') if block else ""
     return f"""<!doctype html><html><body style="margin:0;background:#f4f6f9;padding:24px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
 <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #e3e8ee;border-radius:14px;overflow:hidden">
@@ -2260,6 +2263,11 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
         _notify_item_update(team, pid, old, merged, username)
     except Exception as e:
         log.warning(f"[Notify] update hook failed for item {pid}: {e}")
+    # Portal reporter email on completion / deferral (best-effort).
+    try:
+        _notify_reporter_status(team, old, merged, pid)
+    except Exception as e:
+        log.warning(f"[Intake] reporter status email failed for item {pid}: {e}")
 
     # ── FF pull: when item moves to the Released status and has Jira tickets ──────
     # Best-effort and isolated from the main update. The Jira hierarchy walk is a
@@ -2945,6 +2953,64 @@ def _notify_on_comment(team, item_id, author, text, parent_id=None):
             notified.add(pa)
     watchers = _get_watchers(team, item_id) - notified          # avoid double-notifying the mentioned / replied-to
     _notify(team, watchers, "watch_comment", item_id, name, f"{author} commented on {name or 'an item'}", author)
+    # Portal reporter: a comment mentioning the literal @reporter emails them the note.
+    if re.search(r'@reporter\b', text or '', re.I):
+        try:
+            _notify_reporter_comment(team, item_id, text)
+        except Exception as e:
+            log.warning(f"[Intake] reporter comment email failed for {item_id}: {e}")
+
+# ── Portal reporter emails (external, best-effort) ────────────────────────────
+# Reporter of a portal ticket (source=='portal' + reporterEmail) gets emailed on
+# key lifecycle events: created (at submit), COMPLETED (→ terminal), DEFERRED
+# (→ deferred status), and when a comment mentions the literal @reporter.
+def _reporter_email(team, item, pid, heading, intro, note=None):
+    if not mail_configured():
+        return
+    email = (item.get("reporterEmail") or "").strip()
+    if item.get("source") != "portal" or not email:
+        return
+    key  = item.get("itemKey") or f"#{pid}"
+    prio = _PRIO_LABEL.get(str(item.get("priority") or ""), "")
+    rows = [("Ticket", key), ("Status", item.get("status") or ""),
+            ("Type", item.get("type") or ""), ("Priority", prio),
+            ("Project", item.get("product") or "")]
+    url = f"{APP_BASE_URL}/ticket?team={team}&id={pid}&t={_ticket_token(team, pid)}"
+    body = _intake_email_html(item, rows, heading, intro, "View ticket status", url, note=note)
+    text = (f"{heading}\n\n{intro}\n\n" + (f"{note}\n\n" if note else "")
+            + f"Ticket: {key}\nStatus: {item.get('status','')}\n\nTrack it: {url}\n")
+    try:
+        send_email(email, f"[{key}] {heading} — {item.get('name','')}", text, body)
+    except Exception as e:
+        log.warning(f"[Intake] reporter email failed for {pid}: {e}")
+
+def _notify_reporter_status(team, old, new, pid):
+    """Email the reporter when a portal ticket enters a terminal (complete) or
+    deferred status — transition-triggered, so it fires once per change."""
+    if new.get("source") != "portal" or not (new.get("reporterEmail") or "").strip():
+        return
+    os_, ns_ = old.get("status", ""), new.get("status", "")
+    if not ns_ or ns_ == os_:
+        return
+    term = _cfg_val(team, "statusIsTerminal", {}) or {}
+    defr = _cfg_val(team, "statusIsDeferred", {}) or {}
+    if term.get(ns_) and not term.get(os_):
+        _reporter_email(team, new, pid, "Your ticket is complete",
+            "Good news — the team has completed your ticket. The current status and details are below.")
+    elif defr.get(ns_) and not defr.get(os_):
+        _reporter_email(team, new, pid, "Your ticket has been deferred",
+            "Your ticket has been deferred for now — it's still logged and can be revisited. "
+            "You can check its status any time.")
+
+def _notify_reporter_comment(team, pid, text):
+    with db(team) as c:
+        row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+    if not row:
+        return
+    item = json.loads(row["data"])
+    note = _strip_tags(re.sub(r'@reporter\b', '', text or '', flags=re.I)).strip()
+    _reporter_email(team, item, pid, "There's an update on your ticket",
+        "The team added a note to your ticket:", note=note or "(no message)")
 
 @app.get("/api/notifications")
 def list_notifications(auth: dict = Depends(require_auth)):
