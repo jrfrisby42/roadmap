@@ -13,12 +13,16 @@ def _set(client, admin_headers, key, value):
     return client.put(f"/api/config/{key}", json=value, headers=admin_headers)
 
 
-def _expose(client, admin_headers, types=None):
+def _expose(client, admin_headers, types=None, projects=None):
     _set(client, admin_headers, "statuses", ["New", "In Progress", "Released"])
     _set(client, admin_headers, "statusIsDefault", {"New": True})
     _set(client, admin_headers, "types", [{"name": "Bug"}, {"name": "Feature"}, {"name": "Request"}])
+    _set(client, admin_headers, "products", [{"name": "Fraznet"}, {"name": "HubSpot"}])
+    _set(client, admin_headers, "departments", ["Sales", "Ops"])
     if types is not None:
         _set(client, admin_headers, "intakeTypes", types)
+    if projects is not None:
+        _set(client, admin_headers, "intakeProjects", projects)
     _set(client, admin_headers, "intakeEnabled", True)
 
 
@@ -34,18 +38,21 @@ def test_intake_config_is_admin_only(client, editor_headers):
 
 # ── discovery endpoints ───────────────────────────────────────────────────────
 def test_disabled_team_not_listed_and_config_404(client, team, admin_headers):
-    # Default: not exposed.
-    teams = client.get("/api/intake/teams").json()["teams"]
-    assert not any(t["slug"] == team for t in teams)
+    # Default: not exposed → none of this team's projects appear.
+    projs = client.get("/api/intake/projects").json()["projects"]
+    assert not any(p["team"] == team for p in projs)
     assert client.get(f"/api/intake/config/{team}").status_code == 404
 
 
-def test_exposed_team_listed_with_types(client, team, admin_headers):
-    _expose(client, admin_headers, types=["Bug", "Request"])
-    teams = client.get("/api/intake/teams").json()["teams"]         # PUBLIC, no auth
-    assert any(t["slug"] == team for t in teams)
+def test_exposed_projects_listed_with_config(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug", "Request"], projects=["Fraznet"])
+    projs = client.get("/api/intake/projects").json()["projects"]   # PUBLIC, no auth
+    mine = [p for p in projs if p["team"] == team]
+    assert [p["product"] for p in mine] == ["Fraznet"]              # only the exposed project
     cfg = client.get(f"/api/intake/config/{team}").json()
-    assert cfg["types"] == ["Bug", "Request"]                       # restricted allowlist
+    assert cfg["types"] == ["Bug", "Request"]                       # restricted Types allowlist
+    assert cfg["departments"] == ["Sales", "Ops"]                   # driven by the team's departments
+    assert cfg["projects"] == ["Fraznet"]
 
 
 def test_empty_allowlist_offers_all_types(client, team, admin_headers):
@@ -160,3 +167,36 @@ def test_submit_records_intake_attachment_and_rejects_foreign_key(client, team, 
     keys = [a["key"] for a in (it.get("attachments") or [])]
     assert f"intake/{team}/abc123/shot.png" in keys        # our-prefix key kept
     assert not any(k.startswith("items/") for k in keys)   # foreign key dropped
+
+
+# ── 4.15.0: project + department on submission ────────────────────────────────
+def test_submit_records_project_and_department(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"], projects=["Fraznet", "HubSpot"])
+    server._rate.clear()
+    r = client.post(f"/api/intake/{team}",
+                    json={"title": "P item", "email": "a@b.com",
+                          "product": "HubSpot", "department": "Sales"})
+    assert r.status_code == 200
+    it = next(p for p in client.get("/api/all", headers=admin_headers).json()["projects"]
+              if p["name"] == "P item")
+    assert it["product"] == "HubSpot"
+    assert it["departments"] == ["Sales"]
+
+
+def test_submit_rejects_unexposed_project(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"], projects=["Fraznet"])   # only Fraznet exposed
+    server._rate.clear()
+    r = client.post(f"/api/intake/{team}",
+                    json={"title": "x", "email": "a@b.com", "product": "HubSpot"})
+    assert r.status_code == 422
+
+
+def test_submit_ignores_unknown_department(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    server._rate.clear()
+    r = client.post(f"/api/intake/{team}",
+                    json={"title": "dept x", "email": "a@b.com", "department": "Nope"})
+    assert r.status_code == 200
+    it = next(p for p in client.get("/api/all", headers=admin_headers).json()["projects"]
+              if p["name"] == "dept x")
+    assert it["departments"] == []

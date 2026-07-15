@@ -688,6 +688,7 @@ def init_team_db(team: str):
             # Public intake portal (/report): whether this team is exposed in the
             # external ticket-creation page, and which item Types it offers there.
             "intakeEnabled": False,
+            "intakeProjects": [],  # which projects (products) are exposed; empty = all
             "intakeTypes": [],     # empty = offer ALL of the team's types
         }
         for k, v in defaults.items():
@@ -755,11 +756,12 @@ def _migrate_config_keys(team: str):
         "statusIsBlocked":  {},
         "richTextEditor":   True,
         "intakeEnabled":    False,
+        "intakeProjects":   [],
         "intakeTypes":      [],
     }
     # Keys where False/0/empty-string is a valid intentional value — only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeTypes"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -903,7 +905,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.14.2"
+APP_VERSION = "4.15.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1133,6 +1135,17 @@ def _intake_types(team: str) -> list:
     names = [n for n in names if n]
     return [n for n in names if n in allow] if allow else names
 
+def _intake_projects(team: str) -> list:
+    """Exposed product/project names for a team (intakeProjects ∩ products; empty = all)."""
+    sel = _cfg_val(team, "intakeProjects", []) or []
+    prods = [(p.get("name") if isinstance(p, dict) else p)
+             for p in (_cfg_val(team, "products", []) or [])]
+    prods = [p for p in prods if p]
+    return [p for p in prods if p in sel] if sel else prods
+
+def _intake_departments(team: str) -> list:
+    return [d for d in (_cfg_val(team, "departments", []) or []) if d]
+
 # Public attachment upload for the portal: a tighter allowlist + a lower size cap
 # than the authenticated flow (it's a no-auth surface). Objects go under an
 # intake/{team}/{uuid}/ prefix; the submit endpoint only accepts keys with that shape.
@@ -1143,26 +1156,36 @@ _INTAKE_MAX_ATTACH_BYTES = 15 * 1024 * 1024   # 15 MB
 def _intake_attachment_key(team: str, att_id: str, name: str) -> str:
     return f"intake/{team}/{att_id}/{_sanitize_filename(name)}"
 
-@app.get("/api/intake/teams")
-def intake_teams():
-    """Public: teams that opted into the ticket portal (slug + display label)."""
-    out = []
+@app.get("/api/intake/projects")
+def intake_projects_list():
+    """Public: exposed projects across all opted-in teams (team + product + label).
+    Labels are disambiguated with the team when the same product name spans teams."""
+    raw = []
     try:
         for d in sorted(os.listdir(TENANTS_DIR)):
             if (os.path.isdir(os.path.join(TENANTS_DIR, d))
                     and re.match(r"^[a-z0-9]+$", d) and _intake_open(d)):
-                out.append({"slug": d, "name": _intake_label(d)})
+                for prod in _intake_projects(d):
+                    raw.append({"team": d, "product": prod})
     except FileNotFoundError:
         pass
-    return {"teams": out}
+    dup = {}
+    for r in raw:
+        dup[r["product"]] = dup.get(r["product"], 0) + 1
+    out = [{"team": r["team"], "product": r["product"],
+            "label": r["product"] if dup[r["product"]] == 1
+                     else f'{r["product"]} · {_intake_label(r["team"])}'} for r in raw]
+    out.sort(key=lambda x: x["label"].lower())
+    return {"projects": out}
 
 @app.get("/api/intake/config/{team}")
 def intake_team_config(team: str):
-    """Public: a team's intake form config (allowed Types). 404 if not exposed."""
+    """Public: a team's intake form config (Types + Departments). 404 if not exposed."""
     team = re.sub(r"[^a-z0-9]", "", (team or "").lower())
     if not team or not valid_team(team) or not _intake_open(team):
         raise HTTPException(404, "This team is not accepting portal submissions.")
-    return {"team": team, "name": _intake_label(team), "types": _intake_types(team)}
+    return {"team": team, "name": _intake_label(team), "types": _intake_types(team),
+            "departments": _intake_departments(team), "projects": _intake_projects(team)}
 
 @app.post("/api/intake/{team}")
 def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
@@ -1178,12 +1201,20 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     name  = (body.get("name") or "").strip()[:120]
     ttype = (body.get("type") or "").strip()
     prio  = str(body.get("priority") or "").strip()
+    product = (body.get("product") or "").strip()
+    dept    = (body.get("department") or "").strip()
     if prio not in ("1", "2", "3", "4", ""):
         prio = ""                    # 1=Urgent … 4=Low; anything else = unset
     if not title:
         raise HTTPException(422, "A short summary (title) is required.")
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         raise HTTPException(422, "A valid email address is required.")
+    # Project: must be one this team exposes (the portal only offers those).
+    exposed = _intake_projects(team)
+    if product and product not in exposed:
+        raise HTTPException(422, "Unknown project for this team.")
+    # Department: keep only a value the team actually defines.
+    departments = [dept] if dept and dept in _intake_departments(team) else []
     allowed = _intake_types(team)
     if allowed and ttype not in allowed:
         ttype = allowed[0]           # coerce to a valid Type rather than reject the report
@@ -1216,7 +1247,8 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
         or ((_cfg_val(team, "statuses", []) or ["New"])[0])
     item = {
         "name": title, "description": desc, "type": ttype or "",
-        "priority": prio, "status": default_status, "reporter": name or email,
+        "priority": prio, "product": product, "departments": departments,
+        "status": default_status, "reporter": name or email,
         "reporterEmail": email, "source": "portal", "attachments": atts,
     }
     with db(team) as c:
@@ -1294,7 +1326,7 @@ _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
   <div class="hd"><h1>Submit a ticket</h1><p>File a request or report an issue. The team will follow up by email.</p></div>
   <form id="form" onsubmit="return submitForm(event)">
     <div class="msg err" id="msg"></div>
-    <div><label class="req">Team</label><select id="team"><option value="">Loading…</option></select></div>
+    <div><label class="req">Project</label><select id="project"><option value="">Loading…</option></select></div>
     <div class="row">
       <div><label>Type</label><select id="type"><option value="">—</option></select></div>
       <div><label>Priority</label><select id="priority">
@@ -1302,6 +1334,7 @@ _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
         <option value="2">High</option><option value="3">Medium</option><option value="4">Low</option>
       </select></div>
     </div>
+    <div id="deptWrap" style="display:none"><label>Department</label><select id="dept"><option value="">—</option></select></div>
     <div><label class="req">Summary</label><input id="title" maxlength="200" placeholder="Short summary of the request or issue" required></div>
     <div><label>Details</label><textarea id="desc" maxlength="5000" placeholder="What happened? What do you need? Steps, links, etc."></textarea></div>
     <div><label>Attachments <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--mut)">— screenshots, PDFs (optional, up to 10)</span></label>
@@ -1325,20 +1358,29 @@ var qs=new URLSearchParams(location.search), $=function(s){return document.query
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
 function showErr(m){var e=$('#msg');e.textContent=m;e.style.display='block'}
 function clearErr(){$('#msg').style.display='none'}
-async function loadTeams(){
-  try{ var d=await (await fetch('/api/intake/teams')).json();
-    $('#team').innerHTML='<option value="">Select a team…</option>'+d.teams.map(function(t){return '<option value="'+esc(t.slug)+'">'+esc(t.name)+'</option>'}).join('');
-    var pre=qs.get('team'); if(pre && d.teams.some(function(t){return t.slug===pre})){ $('#team').value=pre; loadTypes(pre); }
-  }catch(e){ $('#team').innerHTML='<option value="">Unavailable</option>'; }
+var _projects=[], _selTeam='', _selProduct='';
+async function loadProjects(){
+  try{ var d=await (await fetch('/api/intake/projects')).json(); _projects=d.projects||[];
+    $('#project').innerHTML='<option value="">Select a project…</option>'+_projects.map(function(p,i){return '<option value="'+i+'">'+esc(p.label)+'</option>'}).join('');
+    var pp=qs.get('product'), pt=qs.get('team'), idx=-1;
+    for(var i=0;i<_projects.length;i++){ if(_projects[i].product===pp && (!pt||_projects[i].team===pt)){ idx=i; break; } }
+    if(idx>=0){ $('#project').value=String(idx); selectProject(idx); }
+  }catch(e){ $('#project').innerHTML='<option value="">Unavailable</option>'; }
 }
-async function loadTypes(team){
+async function selectProject(idx){
+  var p=_projects[idx]; if(!p){ _selTeam=''; _selProduct=''; return; }
+  _selTeam=p.team; _selProduct=p.product;
   var ts=$('#type'); ts.innerHTML='<option value="">Loading…</option>';
-  try{ var d=await (await fetch('/api/intake/config/'+encodeURIComponent(team))).json();
+  try{ var d=await (await fetch('/api/intake/config/'+encodeURIComponent(p.team))).json();
     ts.innerHTML=(d.types&&d.types.length?'':'<option value="">—</option>')+(d.types||[]).map(function(t){return '<option value="'+esc(t)+'">'+esc(t)+'</option>'}).join('');
-    var pt=qs.get('type'); if(pt && (d.types||[]).indexOf(pt)>=0) ts.value=pt;
-  }catch(e){ ts.innerHTML='<option value="">—</option>'; }
+    var qt=qs.get('type'); if(qt && (d.types||[]).indexOf(qt)>=0) ts.value=qt;
+    var depts=d.departments||[], dw=$('#deptWrap'), ds=$('#dept');
+    if(depts.length){ dw.style.display=''; ds.innerHTML='<option value="">—</option>'+depts.map(function(x){return '<option value="'+esc(x)+'">'+esc(x)+'</option>'}).join('');
+      var qd=qs.get('dept'); if(qd && depts.indexOf(qd)>=0) ds.value=qd;
+    } else { dw.style.display='none'; ds.innerHTML='<option value="">—</option>'; }
+  }catch(e){ ts.innerHTML='<option value="">—</option>'; $('#deptWrap').style.display='none'; }
 }
-$('#team').addEventListener('change',function(e){ if(e.target.value) loadTypes(e.target.value); });
+$('#project').addEventListener('change',function(e){ selectProject(+e.target.value); });
 var _atts=[];
 function renderAtts(){
   $('#attList').innerHTML=_atts.map(function(a,i){return '<div style="display:flex;align-items:center;gap:8px;font-size:12px;background:#f4f6f9;border:1px solid var(--bd);border-radius:6px;padding:5px 9px"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(a.name)+'</span><button type="button" class="attrm" data-i="'+i+'" style="background:none;border:none;color:#a5281c;cursor:pointer;font-weight:700;padding:0;font-size:14px">&times;</button></div>';}).join('');
@@ -1346,7 +1388,7 @@ function renderAtts(){
 }
 async function onFiles(ev){
   var files=[].slice.call(ev.target.files||[]); ev.target.value=''; clearErr();
-  var team=$('#team').value; if(!team){ showErr('Choose a team before attaching files.'); return; }
+  var team=_selTeam; if(!team){ showErr('Choose a project before attaching files.'); return; }
   var st=$('#attStatus');
   for(var i=0;i<files.length;i++){
     if(_atts.length>=10){ showErr('You can attach up to 10 files.'); break; }
@@ -1364,9 +1406,9 @@ async function onFiles(ev){
 $('#files').addEventListener('change',onFiles);
 async function submitForm(ev){
   ev.preventDefault(); clearErr();
-  var team=$('#team').value; if(!team){ showErr('Please choose a team.'); return false; }
+  var team=_selTeam; if(!team){ showErr('Please choose a project.'); return false; }
   var btn=$('#submitBtn'); btn.disabled=true;
-  var payload={title:$('#title').value,description:$('#desc').value,type:$('#type').value,priority:$('#priority').value,email:$('#email').value,name:$('#name').value,attachments:_atts};
+  var payload={title:$('#title').value,description:$('#desc').value,type:$('#type').value,priority:$('#priority').value,product:_selProduct,department:($('#dept')?$('#dept').value:''),email:$('#email').value,name:$('#name').value,attachments:_atts};
   try{
     var r=await fetch('/api/intake/'+encodeURIComponent(team),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     var d=await r.json().catch(function(){return {}});
@@ -1377,7 +1419,7 @@ async function submitForm(ev){
 }
 $('#email').value=qs.get('email')||''; $('#name').value=qs.get('name')||'';
 if(['1','2','3','4'].indexOf(qs.get('priority'))>=0) $('#priority').value=qs.get('priority');
-loadTeams();
+loadProjects();
 </script></body></html>"""
 
 @app.get("/report", response_class=HTMLResponse)
@@ -1727,6 +1769,7 @@ def get_all(auth: dict = Depends(require_auth)):
             # absent) so an admin's explicit False reaches the client and reverts the editor.
             "richTextEditor": cfg_map.get("richTextEditor", True),
             "intakeEnabled": cfg_map.get("intakeEnabled", False),
+            "intakeProjects": cfg_map.get("intakeProjects", []),
             "intakeTypes": cfg_map.get("intakeTypes", [])}
 
 
@@ -2336,7 +2379,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "changeReasons","deferReasons","departments",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
-              "richTextEditor","intakeEnabled","intakeTypes"}
+              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",

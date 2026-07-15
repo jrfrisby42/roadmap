@@ -1974,7 +1974,9 @@
             <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Portal link (share this):
               <a id="tsIntakeLink" href="/report" target="_blank" style="color:var(--accent);font-weight:700"></a>
             </div>
-            <div style="font-size:12px;font-weight:700;color:var(--text);margin:8px 0 6px">Types offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all)</span></div>
+            <div style="font-size:12px;font-weight:700;color:var(--text);margin:8px 0 6px">Projects offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all)</span></div>
+            <div id="tsIntakeProjects" style="display:flex;flex-wrap:wrap;gap:8px 16px"></div>
+            <div style="font-size:12px;font-weight:700;color:var(--text);margin:12px 0 6px">Types offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all)</span></div>
             <div id="tsIntakeTypes" style="display:flex;flex-wrap:wrap;gap:8px 16px"></div>
           </div>
         </div>
@@ -2056,7 +2058,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.14.2';
+const APP_VERSION = '4.15.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2253,6 +2255,7 @@ let typeIgnoreConflicts = {};   // { [typeName]: bool }
 let typeScheduled = {};         // { [typeName]: bool } — scheduled types appear on the Gantt + consume capacity; missing = scheduled (fail-safe)
 let richTextEditor = true;      // /beta Tiptap editor master switch (config). Default ON; admin can flip false to revert Description+Comments to the classic editor with no redeploy. Classic root ignores this.
 let intakeEnabled = false;      // public /report portal: is this team exposed? (config)
+let intakeProjects = [];        // which Projects (products) the portal offers (empty = all). (config)
 let intakeTypes = [];           // which item Types the portal offers (empty = all). (config)
 let productIgnoreConflicts = {}; // { [productName]: bool } — exempt a whole project from capacity-conflict accounting
 
@@ -6436,6 +6439,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       if(data.typeScheduled)         typeScheduled         = data.typeScheduled;
       if(data.richTextEditor !== undefined) richTextEditor  = data.richTextEditor !== false;
       intakeEnabled = data.intakeEnabled === true;
+      intakeProjects = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];
       intakeTypes   = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];
       if(data.productIgnoreConflicts) productIgnoreConflicts = data.productIgnoreConflicts;
       // Don't import users unless explicitly present — protects login
@@ -14123,6 +14127,15 @@ function renderIntakePortalSettings(){
     const url = location.origin + '/report' + (teamSlug ? ('?team='+encodeURIComponent(teamSlug)) : '');
     link.href = url; link.textContent = url;
   }
+  const projWrap = document.getElementById('tsIntakeProjects');
+  const projNames = (products||[]).map(p => (p&&p.name)||p).filter(Boolean);
+  const projOffered = intakeProjects.length ? new Set(intakeProjects) : new Set(projNames);   // empty = all
+  if(projWrap){
+    projWrap.innerHTML = projNames.length ? projNames.map(n =>
+      `<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" class="ts-intake-proj" data-name="${escA(n)}" ${projOffered.has(n)?'checked':''} style="accent-color:var(--accent)"> ${esc(n)}</label>`
+    ).join('') : '<span style="font-size:12px;color:var(--muted)">No Projects configured — add some in the Projects tab.</span>';
+    projWrap.querySelectorAll('.ts-intake-proj').forEach(cb => cb.onchange = _saveIntakeProjects);
+  }
   const allNames = (types||[]).map(t => (t&&t.name)||t).filter(Boolean);
   const offered = intakeTypes.length ? new Set(intakeTypes) : new Set(allNames);   // empty = all
   if(typesWrap){
@@ -14143,6 +14156,12 @@ function _saveIntakeTypes(){
   // All checked (or none) → store [] (means "all offered"); else the explicit subset.
   intakeTypes = (checked.length === 0 || checked.length === allNames.length) ? [] : checked;
   saveConfig('intakeTypes', intakeTypes);
+}
+function _saveIntakeProjects(){
+  const allNames = (products||[]).map(p => (p&&p.name)||p).filter(Boolean);
+  const checked = [...document.querySelectorAll('.ts-intake-proj')].filter(c=>c.checked).map(c=>c.getAttribute('data-name'));
+  intakeProjects = (checked.length === 0 || checked.length === allNames.length) ? [] : checked;
+  saveConfig('intakeProjects', intakeProjects);
 }
 
 function updateJiraEnabledUI(enabled){
