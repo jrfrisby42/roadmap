@@ -1493,7 +1493,14 @@
 <div class="modal-bg" id="modalBg">
   <div class="modal">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <h2 id="modalTitle" style="margin:0">Edit Project</h2>
+      <div style="display:flex;align-items:center;gap:12px">
+        <h2 id="modalTitle" style="margin:0">Edit Project</h2>
+        <button type="button" id="modalOpenPageBtn" onclick="openItemPageFromModal()" title="Open the full ticket page (schedule, activity, comments)"
+          style="display:none;align-items:center;gap:6px;background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          Open full ticket
+        </button>
+      </div>
       <button id="flagIssueBtn" style="display:none;background:none;border:1px solid #e8a000;color:#c06000;padding:5px 11px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer;align-items:center;gap:5px" onclick="openFlagIssue(editingId)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
         Flag Issue
@@ -2069,7 +2076,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.23.0';
+const APP_VERSION = '4.23.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -4176,6 +4183,14 @@ document.getElementById('fParallel')?.addEventListener('change', ()=>{
   }
 });
 
+// Jump from the quick-edit modal to the full item page (closes the modal first).
+function openItemPageFromModal(){
+  const id = editingId;
+  if(!id) return;
+  document.getElementById('modalBg').classList.remove('open');
+  openItemPage(id);
+}
+
 function openProjectModal(id){
   if(!isAdmin && !isEditor){ if(id) openItemPage(id); return; } // viewers → item page
   editingId=id;
@@ -4733,13 +4748,15 @@ function openProjectModal(id){
   if(flagBtn) flagBtn.style.display = (id && (isAdmin || isEditor)) ? 'flex' : 'none';
   // Wire item page links
   const itemUrl = id ? `${location.pathname}?item=${id}` : '#';
+  // Hide the item-page affordances when already on the item page (recursive), or for new items.
+  const onItemPage = !!(id && _itemPageId && _itemPageId === id);
   const itemPageLink = document.getElementById('itemPageLink');
   if(itemPageLink){
     itemPageLink.href = itemUrl;
-    // Hide the "open item page" link when already on the item page (recursive)
-    const onItemPage = !!(id && _itemPageId && _itemPageId === id);
     itemPageLink.style.display = (id && !onItemPage) ? 'block' : 'none';
   }
+  const modalOpenPageBtn = document.getElementById('modalOpenPageBtn');
+  if(modalOpenPageBtn) modalOpenPageBtn.style.display = (id && !onItemPage) ? 'inline-flex' : 'none';
   // Show jiraModalRow only when Jira is configured AND the item's project is mapped
   const jiraModalRow = document.getElementById('jiraModalRow');
   const featureFlagsRow = document.getElementById('featureFlagsRow');
