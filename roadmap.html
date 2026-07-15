@@ -1495,10 +1495,10 @@
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <div style="display:flex;align-items:center;gap:12px">
         <h2 id="modalTitle" style="margin:0">Edit Project</h2>
-        <button type="button" id="modalOpenPageBtn" onclick="openItemPageFromModal()" title="Open the full ticket page (schedule, activity, comments)"
+        <button type="button" id="modalOpenPageBtn" onclick="openItemPageFromModal()" title="Open the full item page (schedule, activity, comments)"
           style="display:none;align-items:center;gap:6px;background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-          Open full ticket
+          Open Item Page
         </button>
       </div>
       <button id="flagIssueBtn" style="display:none;background:none;border:1px solid #e8a000;color:#c06000;padding:5px 11px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer;align-items:center;gap:5px" onclick="openFlagIssue(editingId)">
@@ -2076,7 +2076,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.23.2';
+const APP_VERSION = '4.23.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -9766,8 +9766,8 @@ function renderKanban(){
       return `<div class="kanban-card" draggable="true" data-id="${p.id}" data-status="${escA(status)}"
         onclick="openProjectModal(${p.id})"
         style="position:relative;background:#fff;border:1px solid var(--border);border-left:3px solid ${isActiveStatus(status)?'var(--accent)':'var(--border)'};border-radius:8px;padding:10px 12px;cursor:pointer;user-select:none;margin-bottom:8px">
-        <!-- Open the full ticket page — top right -->
-        <button class="kanban-open-btn" data-id="${p.id}" title="Open ticket" draggable="false"
+        <!-- Open the full item page — top right -->
+        <button class="kanban-open-btn" data-id="${p.id}" title="Open item page" draggable="false"
           onclick="event.stopPropagation();openItemPage(${p.id})"
           style="position:absolute;top:5px;right:26px;background:none;border:none;padding:2px;color:var(--muted);line-height:1;cursor:pointer">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
@@ -18223,7 +18223,7 @@ if ('serviceWorker' in navigator) {
     var badge = multi ? '<span class="'+(_call('statusCls',p.status)||'')+'" style="padding:0 7px;border-radius:9px;font-size:10px;font-weight:700">'+esc(p.status)+'</span>' : '';
     var pts=(p.storyPoints!=null&&p.storyPoints!=='')?'<span class="frz-bchip frz-bchip-pts">'+esc(p.storyPoints)+' pts</span>':'';
     var wk=_fmtWeeks(p); var wkChip = wk ? '<span class="frz-bchip frz-bchip-wk">'+wk+'</span>' : '';
-    var openBtn = '<button class="frz-bcard-open" title="Open ticket" draggable="false" '
+    var openBtn = '<button class="frz-bcard-open" title="Open item page" draggable="false" '
       + 'onclick="event.stopPropagation();openItemPage('+p.id+')" '
       + 'style="position:absolute;top:6px;right:7px;background:none;border:none;padding:1px;color:var(--frz-text-muted);line-height:1;cursor:pointer;z-index:1">'
       + '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>'
@@ -20237,7 +20237,7 @@ if ('serviceWorker' in navigator) {
       + '<button type="button" class="frz-lp-close" title="Close" aria-label="Close">✕</button></div></div>'
       + '<div class="frz-lp-name">'+esc(p.name||'')+'</div>'
       + '<div class="frz-lp-badges">'+statusCtl+prio+'</div>'
-      + '<button type="button" class="frz-lp-openbtn" title="Open the full ticket page (schedule, activity, comments)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open full ticket</button></div>'
+      + '<button type="button" class="frz-lp-openbtn" title="Open the full item page (schedule, activity, comments)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open Item Page</button></div>'
       + (details?'<div class="frz-lp-details">'+details+'</div>':'')
       + '<div class="frz-lp-sec"><div class="frz-lp-sec-hd">Description</div><div id="frzLpDesc"></div></div>'
       + '<div class="frz-lp-sec"><div class="frz-lp-sec-hd">Comments</div><div id="frzLpComposer"></div><div id="frzLpThread"></div></div>';
