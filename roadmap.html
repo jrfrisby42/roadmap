@@ -2076,7 +2076,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.23.5';
+const APP_VERSION = '4.23.6';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -19162,7 +19162,7 @@ if ('serviceWorker' in navigator) {
       '<button type="button" id="frzDeptAddBtn" style="display:inline-flex;align-items:center;background:none;border:1px dashed var(--frz-border-strong);color:var(--frz-accent);padding:2px 9px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">+ Add</button>'+
       '<span id="frzDeptAddRow" style="display:none;align-items:center;gap:4px">'+
         '<input id="frzDeptInput" list="frzDeptList" placeholder="Department…" autocomplete="off" style="padding:3px 8px;font-size:12px;border:1px solid var(--frz-accent);border-radius:8px;background:var(--frz-bg-surface);color:var(--frz-text);outline:none;width:130px">'+
-        '<datalist id="frzDeptList">'+(_val('departments',[])||[]).map(function(d){ return '<option value="'+escA(d)+'"></option>'; }).join('')+'</datalist>'+
+        '<datalist id="frzDeptList">'+(_val('departments',[])||[]).filter(function(d){ return !depts.some(function(s){ return _deptKey(s)===_deptKey(d); }); }).map(function(d){ return '<option value="'+escA(d)+'"></option>'; }).join('')+'</datalist>'+
         '<button type="button" id="frzDeptAdd" style="background:var(--frz-accent);color:#fff;border:none;padding:3px 9px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Add</button>'+
       '</span>' : '';
     wrap.innerHTML=lbl+'<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center">'+(chips||(canEdit?'':'<span style="font-size:13px;color:var(--frz-text)">—</span>'))+add+'</div>';
