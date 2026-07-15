@@ -401,6 +401,25 @@ def test_notify_email_resolver_prefers_project_override(client, team, admin_head
     assert server._intake_notify_email(team, "") == "team@x.com"         # no product → team
 
 
+def test_reporter_reply_notifies_owner_in_app(client, team, admin_headers):
+    # A reporter reply must bell-notify the ticket's owner even if they never
+    # watched/commented (the gap: portal tickets start with zero watchers). Owner
+    # is the `dev` label resolved to a username (here it equals "admin").
+    _expose(client, admin_headers, types=["Bug"])
+    server._rate.clear()
+    pid = client.post(f"/api/intake/{team}", json={"title": "Own me", "email": "rep@x.com"}).json()["id"]
+    # Triage: set the owner label to the admin's username (no assignee → no auto-watch).
+    client.put(f"/api/projects/{pid}", json={"name": "Own me", "status": "New", "dev": "admin"},
+               headers=admin_headers)
+    server._rate.clear()
+    client.post("/api/ticket-reply",
+                json={"team": team, "id": pid, "t": server._ticket_token(team, pid), "message": "any update?"})
+    with server.db(team) as c:
+        users = {r["username"] for r in c.execute(
+            "SELECT username FROM notifications WHERE item_id=? AND type='watch_comment'", (pid,)).fetchall()}
+    assert "admin" in users            # owner resolved to a username → got the in-app bell
+
+
 def test_brand_mark_route_serves_png(client):
     r = client.get("/brand-mark.png")
     assert r.status_code == 200

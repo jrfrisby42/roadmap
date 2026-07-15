@@ -916,7 +916,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.21.0"
+APP_VERSION = "4.21.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1170,6 +1170,27 @@ def _intake_notify_email(team: str, product: str = "") -> str:
         if addr:
             return addr
     return _cfg_val(team, "intakeNotifyEmail", "") or ""
+
+def _intake_notify_usernames(team: str, item: dict, pid) -> set:
+    """Flow users to bell-notify about a portal ticket: its watchers + the assignee
+    + the owner. `assignee` is already a username; the `dev` owner is a developer
+    label, resolved to Flow username(s) by a direct match or a user's ownerFilter.
+    Best-effort — used for reporter replies (the team email path is separate)."""
+    targets = set(_get_watchers(team, pid))
+    if item.get("assignee"):
+        targets.add(item["assignee"])
+    owner = (item.get("dev") or "").strip()
+    if owner:
+        try:
+            with db(team) as c:
+                urow = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+            for u in (json.loads(urow["value"]) if urow else []):
+                uname = u.get("username")
+                if uname and (uname == owner or u.get("ownerFilter") == owner):
+                    targets.add(uname)
+        except Exception:
+            pass
+    return targets
 
 def _intake_departments(team: str) -> list:
     return [d for d in (_cfg_val(team, "departments", []) or []) if d]
@@ -1719,8 +1740,8 @@ def ticket_reply(body: dict = Body(...), request: FRequest = None):
         c.execute("INSERT INTO comments(item_id,author,body,created_ts,parent_id,source) "
                   "VALUES(?,?,?,?,?,?)", (pid, who, msg, ts, None, "portal"))
     name = item.get("name", "")
-    try:                                     # in-app watchers
-        _notify(team, _get_watchers(team, pid), "watch_comment", pid, name,
+    try:                                     # in-app: watchers + owner + assignee
+        _notify(team, _intake_notify_usernames(team, item, pid), "watch_comment", pid, name,
                 f"{who} replied on {name or 'a ticket'}", "Reporter")
     except Exception as e:
         log.warning(f"[Intake] reporter-reply notify failed for {pid}: {e}")
