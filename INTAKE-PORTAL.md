@@ -1,4 +1,4 @@
-# Public Ticket Portal — Integration & Testing Guide
+# Public Ticket Portal - Integration & Testing Guide
 
 The public intake portal lets **external, non-logged-in users** file tickets into a
 team's roadmap. It is served at:
@@ -14,14 +14,14 @@ the reporter's email captured for follow-up.
 
 ---
 
-## Part 1 — Passing the reporter's email (and other fields) via the link
+## Part 1 - Passing the reporter's email (and other fields) via the link
 
 When you launch the portal **from another internal tool where the user is already
 signed in**, you can pre-fill the form by adding query parameters to the `/report`
 URL. This is how we satisfy "the email should come from the URL when the ticket is
 launched from another tool."
 
-### Quick reference — all parameters are optional and must be URL-encoded
+### Quick reference - all parameters are optional and must be URL-encoded
 
 | Param      | Prefills           | Notes |
 |------------|--------------------|-------|
@@ -41,7 +41,7 @@ Launch pre-filled for a logged-in user filing a Fraznet bug:
 https://flow.frazil.app/report?team=development&product=Fraznet&type=Bug&priority=2&email=jane.doe%40frazil.com&name=Jane%20Doe
 ```
 
-Minimal — just carry the email through:
+Minimal - just carry the email through:
 
 ```
 https://flow.frazil.app/report?email=jane.doe%40frazil.com
@@ -56,8 +56,8 @@ JavaScript:
 const url = 'https://flow.frazil.app/report?' + new URLSearchParams({
   email: currentUser.email,      // e.g. "jane.doe@frazil.com"
   name:  currentUser.fullName,   // optional
-  product: 'Fraznet',            // optional — must match an exposed project
-  priority: '2',                 // optional — 2=High, 3=Medium, 4=Low
+  product: 'Fraznet',            // optional - must match an exposed project
+  priority: '2',                 // optional - 2=High, 3=Medium, 4=Low
 }).toString();
 // → open in a new tab, or use as an <a href>
 ```
@@ -88,11 +88,11 @@ url = "https://flow.frazil.app/report?" + urlencode({
 - The reporter can always return to **all** their tickets: the confirmation email and
   the portal's "Open the full list of tickets you've submitted" link go to a private,
   token-signed `/my-tickets` view (they request it by email; the link is emailed to
-  them — it is never guessable).
+  them - it is never guessable).
 
 ---
 
-## Part 2 — Testing the portal
+## Part 2 - Testing the portal
 
 ### Local setup
 
@@ -105,18 +105,18 @@ python server.py           # serves http://localhost:8000
 so the widget always renders without a real Cloudflare site. Set both and restart:
 
 ```
-# .env  (LOCAL/DEV ONLY — never use these in production)
+# .env  (LOCAL/DEV ONLY - never use these in production)
 TURNSTILE_SITE_KEY=1x00000000000000000000AA        # widget always PASSES
 TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
 ```
 
 Other Cloudflare test site keys (pair with the always-pass secret above for the
 `siteverify` side, or the matching test secret):
-- `2x00000000000000000000AB` — widget always **blocks** (test the failure path)
-- `3x00000000000000000000FF` — **forces** an interactive challenge
+- `2x00000000000000000000AB` - widget always **blocks** (test the failure path)
+- `3x00000000000000000000FF` - **forces** an interactive challenge
 
 To test the **portal with CAPTCHA disabled**, simply leave `TURNSTILE_SITE_KEY` /
-`TURNSTILE_SECRET_KEY` unset — the widget and the server check both switch off.
+`TURNSTILE_SECRET_KEY` unset - the widget and the server check both switch off.
 
 **Email in local/dev:** without AWS/SES configured, email sending is a no-op (the app
 logs and continues). To watch what *would* send, check the server log for
@@ -192,7 +192,7 @@ Then file one real test ticket end-to-end and confirm the confirmation email lan
 
 ---
 
-## Reference — related endpoints
+## Reference - related endpoints
 
 | Endpoint | Purpose |
 |----------|---------|
