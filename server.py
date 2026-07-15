@@ -632,6 +632,11 @@ def init_team_db(team: str):
             c.execute("ALTER TABLE comments ADD COLUMN parent_id INTEGER")
         except Exception:
             pass  # column already exists
+        # 1B: portal reporter replies (source='portal') — drives the public /ticket thread.
+        try:
+            c.execute("ALTER TABLE comments ADD COLUMN source TEXT")
+        except Exception:
+            pass  # column already exists
         # ── Phase 1 (JIRA-REPLACEMENT.md): indexed columns mirrored from item JSON ──
         for _col, _defn in [
             ("item_key", "TEXT"), ("type", "TEXT"), ("status", "TEXT"),
@@ -862,6 +867,7 @@ def boot():
     for _entry in _os.listdir(TENANTS_DIR):
         _tpath = _os.path.join(TENANTS_DIR, _entry)
         if _os.path.isdir(_tpath) and _os.path.exists(_os.path.join(_tpath, "roadmap.db")):
+            init_team_db(_entry)          # ensure schema (adds new columns e.g. comments.source)
             _migrate_config_keys(_entry)
     # NOTE: item-key backfill runs in a separate pass (see _backfill_all_teams_keys
     # below) — boot() executes at import, too early to reference that helper here.
@@ -908,7 +914,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.17.0"
+APP_VERSION = "4.18.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1381,7 +1387,15 @@ def _intake_send_emails(team, item, pid):
         try: send_email(addr, f"[{key}] New portal ticket — {item.get('name','')}", text, body)
         except Exception as e: log.warning(f"[Intake] team email failed to {addr} for {pid}: {e}")
 
-def _ticket_status_page(p):
+_TICKET_REPLY_JS = ("<script>(function(){var q=new URLSearchParams(location.search),team=q.get('team'),"
+    "id=q.get('id'),t=q.get('t');var btn=document.getElementById('replyBtn'),ta=document.getElementById('reply'),"
+    "m=document.getElementById('replyMsg');if(!btn)return;btn.addEventListener('click',async function(){"
+    "var msg=(ta.value||'').trim();if(!msg)return;btn.disabled=true;try{var r=await fetch('/api/ticket-reply',"
+    "{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({team:team,id:id,t:t,message:msg})});"
+    "if(!r.ok)throw 0;location.reload();}catch(e){m.style.display='block';m.style.color='#a5281c';"
+    "m.textContent='Could not send \\u2014 please try again.';btn.disabled=false;}});})();</script>")
+
+def _ticket_status_page(p, comments):
     esc = html.escape
     prio = _PRIO_LABEL.get(str(p.get("priority") or ""), "")
     rows = [("Type", p.get("type")), ("Priority", prio), ("Project", p.get("product")),
@@ -1399,6 +1413,24 @@ def _ticket_status_page(p):
         lis = "".join(f'<li style="font-size:13px;color:#374151">{esc(a.get("name"))}</li>' for a in atts)
         att_html = (f'<div style="margin-top:16px"><div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Attachments</div>'
                     f'<ul style="margin:0;padding-left:18px">{lis}</ul></div>')
+    # Conversation: team notes tagged @reporter + the reporter's own replies, chronological.
+    bubbles = ""
+    for c in comments:
+        is_rep = (c.get("source") == "portal")
+        who, bg, align = ("You", "#eaf2fb", "flex-end") if is_rep else ("Team", "#f7f9fb", "flex-start")
+        txt = esc(_strip_tags(re.sub(r'@reporter\b', '', c.get("body") or '', flags=re.I)).strip())
+        ts = esc((c.get("created_ts") or "")[:16])
+        bubbles += (f'<div style="display:flex;justify-content:{align};margin-bottom:8px">'
+                    f'<div style="max-width:82%;background:{bg};border:1px solid #e6ebf1;border-radius:10px;padding:8px 11px">'
+                    f'<div style="font-size:11px;font-weight:700;color:#6b7280;margin-bottom:2px">{who} · {ts}</div>'
+                    f'<div style="font-size:13px;color:#1f2733;white-space:pre-wrap;line-height:1.45">{txt}</div></div></div>')
+    thread_html = ('<div style="margin-top:18px;padding-top:14px;border-top:1px solid #eef1f4">'
+        '<div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Conversation</div>'
+        + (bubbles or '<div style="font-size:13px;color:#9aa4b1;margin-bottom:8px">No messages yet — add a note below if you have more to share.</div>')
+        + '<textarea id="reply" placeholder="Add a reply for the team…" style="width:100%;min-height:66px;padding:9px 11px;border:1px solid #dfe4ea;border-radius:8px;font-family:inherit;font-size:14px;box-sizing:border-box"></textarea>'
+        + '<div id="replyMsg" style="font-size:12px;margin:6px 0;display:none"></div>'
+        + '<div style="text-align:right"><button id="replyBtn" style="background:#0059A9;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-weight:700;font-size:14px;cursor:pointer">Send reply</button></div></div>')
+    myt = (f'<div style="margin-top:18px;padding-top:14px;border-top:1px solid #eef1f4"><a href="{esc(_my_tickets_url(p.get("reporterEmail")))}" style="color:#0059A9;font-size:13px;font-weight:700;text-decoration:none">← All your tickets</a></div>') if p.get("reporterEmail") else ""
     key = p.get("itemKey") or f"#{p.get('id','')}"
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>{esc(key)} — Ticket status</title>
 <style>body{{margin:0;background:#f4f6f9;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2733;padding:28px 16px}}
@@ -1410,9 +1442,8 @@ def _ticket_status_page(p):
 <body><div class="card"><div class="hd">Frazil&nbsp;Flow</div><div class="bd">
 <div class="k">{esc(key)}</div><h1 style="margin:4px 0 12px;font-size:19px">{esc(p.get("name") or "Ticket")}</h1>
 <div style="margin-bottom:14px">Status: <span class="badge">{esc(p.get("status") or "—")}</span></div>
-{row_html}{desc_html}{att_html}
-{(f'<div style="margin-top:18px;padding-top:14px;border-top:1px solid #eef1f4"><a href="{esc(_my_tickets_url(p.get("reporterEmail")))}" style="color:#0059A9;font-size:13px;font-weight:700;text-decoration:none">← All your tickets</a></div>') if p.get("reporterEmail") else ""}
-</div><div class="foot">Read-only status view of your submitted ticket.</div></div></body></html>"""
+{row_html}{desc_html}{att_html}{thread_html}{myt}
+</div><div class="foot">A private view of your ticket — replies go straight to the team.</div></div>{_TICKET_REPLY_JS}</body></html>"""
 
 def _ticket_error_page(msg):
     esc = html.escape
@@ -1584,10 +1615,68 @@ def ticket_status(team: str = "", id: str = "", t: str = ""):
         return HTMLResponse(_ticket_error_page("Ticket not found."), status_code=404)
     with db(team_s) as c:
         row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
-    if not row:
-        return HTMLResponse(_ticket_error_page("Ticket not found."), status_code=404)
+        if not row:
+            return HTMLResponse(_ticket_error_page("Ticket not found."), status_code=404)
+        # Reporter-facing thread: reporter replies (source='portal') + team notes tagged @reporter.
+        crows = c.execute(
+            "SELECT author, body, created_ts, source FROM comments WHERE item_id=? ORDER BY id ASC", (pid,)
+        ).fetchall()
     p = json.loads(row["data"]); p["id"] = pid
-    return HTMLResponse(_ticket_status_page(p), headers={"Cache-Control": "no-cache"})
+    comments = [dict(c) for c in crows
+                if c["source"] == "portal" or re.search(r'@reporter\b', c["body"] or '', re.I)]
+    return HTMLResponse(_ticket_status_page(p, comments), headers={"Cache-Control": "no-cache"})
+
+@app.post("/api/ticket-reply")
+def ticket_reply(body: dict = Body(...), request: FRequest = None):
+    """Public: a reporter posts a reply on their ticket (token-gated, rate-limited).
+    Stored as a comment (source='portal'); the team is notified in-app + by email."""
+    ip = (request.client.host if request else "unknown")
+    _check_rate_limit("ticket-reply:" + ip)
+    team = re.sub(r"[^a-z0-9]", "", (body.get("team") or "").lower())
+    rid = str(body.get("id") or "")
+    tok = body.get("t") or ""
+    if not (team and valid_team(team) and rid and tok
+            and hmac.compare_digest(_ticket_token(team, rid), tok)):
+        raise HTTPException(404, "Invalid ticket link.")
+    try:
+        pid = int(rid)
+    except (TypeError, ValueError):
+        raise HTTPException(404, "Ticket not found.")
+    msg = _strip_tags((body.get("message") or "").strip())[:5000]
+    if not msg:
+        raise HTTPException(422, "A message is required.")
+    with db(team) as c:
+        row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Ticket not found.")
+        item = json.loads(row["data"])
+        if item.get("source") != "portal":
+            raise HTTPException(404, "Ticket not found.")
+        who = f"{item.get('reporter') or item.get('reporterEmail') or 'Reporter'} (reporter)"
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        c.execute("INSERT INTO comments(item_id,author,body,created_ts,parent_id,source) "
+                  "VALUES(?,?,?,?,?,?)", (pid, who, msg, ts, None, "portal"))
+    name = item.get("name", "")
+    try:                                     # in-app watchers
+        _notify(team, _get_watchers(team, pid), "watch_comment", pid, name,
+                f"{who} replied on {name or 'a ticket'}", "Reporter")
+    except Exception as e:
+        log.warning(f"[Intake] reporter-reply notify failed for {pid}: {e}")
+    try:                                     # email the team inbox(es)
+        notify = _cfg_val(team, "intakeNotifyEmail", "") or ""
+        if notify and mail_configured():
+            key = item.get("itemKey") or f"#{pid}"
+            app_url = f"{APP_BASE_URL}/item/{pid}"
+            html_body = _intake_email_html(item, [("Ticket", key), ("Status", item.get("status") or "")],
+                "The reporter replied", f"{who} added a reply to their ticket:", "Open in Flow", app_url, note=msg)
+            for addr in [a.strip() for a in re.split(r"[,;]", notify) if a.strip()]:
+                try:
+                    send_email(addr, f"[{key}] Reporter reply — {name}", f"{who} replied:\n\n{msg}\n\nOpen: {app_url}\n", html_body)
+                except Exception as e:
+                    log.warning(f"[Intake] reporter-reply email to {addr} failed: {e}")
+    except Exception as e:
+        log.warning(f"[Intake] reporter-reply team email failed for {pid}: {e}")
+    return {"ok": True}
 
 def _my_tickets_page(email, items):
     esc = html.escape

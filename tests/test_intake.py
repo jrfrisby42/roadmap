@@ -328,3 +328,40 @@ def test_intake_track_validates_email(client):
     assert client.post("/api/intake-track", json={"email": "not-an-email"}).status_code == 422
     server._rate.clear()
     assert client.post("/api/intake-track", json={"email": "ok@x.com"}).status_code == 200  # uniform 200
+
+
+# ── 4.18.0: reporter reply thread on the status page (1B) ─────────────────────
+def test_ticket_reply_token_gated_and_stored(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    server._rate.clear()
+    pid = client.post(f"/api/intake/{team}", json={"title": "Reply me", "email": "rep@x.com"}).json()["id"]
+    tok = server._ticket_token(team, pid)
+    server._rate.clear()
+    assert client.post("/api/ticket-reply",
+                       json={"team": team, "id": pid, "t": "bad", "message": "hi"}).status_code == 404
+    server._rate.clear()
+    assert client.post("/api/ticket-reply",
+                       json={"team": team, "id": pid, "t": tok, "message": "   "}).status_code == 422
+    server._rate.clear()
+    assert client.post("/api/ticket-reply",
+                       json={"team": team, "id": pid, "t": tok, "message": "Chrome 120"}).status_code == 200
+    with server.db(team) as c:
+        row = c.execute("SELECT author, body, source FROM comments WHERE item_id=? ORDER BY id DESC LIMIT 1",
+                        (pid,)).fetchone()
+    assert row["source"] == "portal" and "Chrome 120" in row["body"] and "(reporter)" in row["author"]
+
+
+def test_ticket_page_shows_reporter_thread_only(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    server._rate.clear()
+    pid = client.post(f"/api/intake/{team}", json={"title": "Thread", "email": "rep@x.com"}).json()["id"]
+    client.post("/api/comments", json={"item_id": pid, "body": "@reporter what version?"}, headers=admin_headers)
+    client.post("/api/comments", json={"item_id": pid, "body": "internal only note"}, headers=admin_headers)
+    server._rate.clear()
+    client.post("/api/ticket-reply",
+                json={"team": team, "id": pid, "t": server._ticket_token(team, pid), "message": "version 120"})
+    r = client.get(f"/ticket?team={team}&id={pid}&t={server._ticket_token(team, pid)}")
+    assert r.status_code == 200
+    assert "what version?" in r.text          # team's @reporter note is shown
+    assert "version 120" in r.text            # reporter reply is shown
+    assert "internal only note" not in r.text  # internal comment stays hidden
