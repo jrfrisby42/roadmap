@@ -697,6 +697,7 @@ def init_team_db(team: str):
             "intakeProjects": [],  # which projects (products) are exposed; empty = all
             "intakeNotifyEmail": "",  # team inbox that gets a copy of each portal ticket
             "intakeTypes": [],     # empty = offer ALL of the team's types
+            "intakeProjectEmails": {},  # optional per-project notify override {product: email}; falls back to intakeNotifyEmail
         }
         for k, v in defaults.items():
             c.execute("INSERT OR IGNORE INTO config(key,value) VALUES(?,?)",
@@ -766,10 +767,11 @@ def _migrate_config_keys(team: str):
         "intakeProjects":   [],
         "intakeTypes":      [],
         "intakeNotifyEmail": "",
+        "intakeProjectEmails": {},
     }
     # Keys where False/0/empty-string is a valid intentional value — only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -914,7 +916,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.18.0"
+APP_VERSION = "4.19.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1152,6 +1154,17 @@ def _intake_projects(team: str) -> list:
     prods = [p for p in prods if p]
     return [p for p in prods if p in sel] if sel else prods
 
+def _intake_notify_email(team: str, product: str = "") -> str:
+    """Where a portal ticket's team-copy goes: the per-project override if one is
+    set for this product, else the team-wide intakeNotifyEmail. Either value may be
+    a comma/semicolon-separated list of addresses."""
+    per = _cfg_val(team, "intakeProjectEmails", {}) or {}
+    if isinstance(per, dict) and product:
+        addr = (per.get(product) or "").strip()
+        if addr:
+            return addr
+    return _cfg_val(team, "intakeNotifyEmail", "") or ""
+
 def _intake_departments(team: str) -> list:
     return [d for d in (_cfg_val(team, "departments", []) or []) if d]
 
@@ -1377,7 +1390,7 @@ def _intake_send_emails(team, item, pid):
                 f"Track it: {url}\nAll your tickets: {_my_tickets_url(reporter_email)}\n")
         try: send_email(reporter_email, f"[{key}] Ticket received — {item.get('name','')}", text, body)
         except Exception as e: log.warning(f"[Intake] reporter email failed for {pid}: {e}")
-    notify  = _cfg_val(team, "intakeNotifyEmail", "") or ""
+    notify  = _intake_notify_email(team, item.get("product") or "")
     app_url = f"{APP_BASE_URL}/item/{pid}"
     team_rows = base_rows + [("Reporter", f"{item.get('reporter','')} <{reporter_email}>".strip())]
     for addr in [a.strip() for a in re.split(r"[,;]", notify) if a.strip()]:
@@ -1515,6 +1528,7 @@ _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
       <button type="button" id="trackBtn" style="background:#eef2f7;color:#0059A9;border:1px solid #cfe0f4;border-radius:8px;padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap">Email my tickets</button>
     </div>
     <div id="trackMsg" style="font-size:12px;margin-top:6px;display:none"></div>
+    <div style="margin-top:10px"><a id="myTicketsLink" href="/my-tickets" style="color:#0059A9;font-size:13px;font-weight:700;text-decoration:none">Open the full list of tickets you've submitted →</a></div>
   </div>
   <div class="foot">Powered by Frazil Flow</div>
 </div>
@@ -1592,6 +1606,14 @@ $('#trackBtn').addEventListener('click', async function(){
 });
 $('#email').value=qs.get('email')||''; $('#name').value=qs.get('name')||'';
 if(['2','3','4'].indexOf(qs.get('priority'))>=0) $('#priority').value=qs.get('priority');
+// Carry the reporter's email through to the My Tickets list view (it pre-fills the
+// request-a-link box there). Seeded from ?email= and kept in sync with either input.
+function _syncMyTickets(){ var em=($('#trackEmail').value||$('#email').value||'').trim();
+  $('#myTicketsLink').href='/my-tickets'+(em?('?email='+encodeURIComponent(em)):''); }
+$('#trackEmail').value=qs.get('email')||'';
+$('#trackEmail').addEventListener('input',_syncMyTickets);
+$('#email').addEventListener('input',_syncMyTickets);
+_syncMyTickets();
 loadProjects();
 </script></body></html>"""
 
@@ -1663,7 +1685,7 @@ def ticket_reply(body: dict = Body(...), request: FRequest = None):
     except Exception as e:
         log.warning(f"[Intake] reporter-reply notify failed for {pid}: {e}")
     try:                                     # email the team inbox(es)
-        notify = _cfg_val(team, "intakeNotifyEmail", "") or ""
+        notify = _intake_notify_email(team, item.get("product") or "")
         if notify and mail_configured():
             key = item.get("itemKey") or f"#{pid}"
             app_url = f"{APP_BASE_URL}/item/{pid}"
@@ -1704,12 +1726,44 @@ def _my_tickets_page(email, items):
 <div style="text-align:center;margin-top:8px"><a href="{esc(APP_BASE_URL)}/report" style="color:#0059A9;font-size:13px;font-weight:700;text-decoration:none">+ Submit a new ticket</a></div>
 </div><div class="foot">Private to you — please don't share this link.</div></div></body></html>"""
 
+def _my_tickets_landing(email=""):
+    """Self-service landing for /my-tickets when there's no valid token: the list is
+    token-gated (anti-enumeration), so we can't show tickets directly — instead we
+    take an email and mail its owner the private link (via /api/intake-track). Also
+    the graceful destination for an expired emailed link."""
+    esc = html.escape
+    pref = esc(email or "")
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Your tickets</title>
+<style>body{{margin:0;background:#f4f6f9;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2733;padding:28px 16px}}
+.card{{max-width:480px;margin:0 auto;background:#fff;border:1px solid #e3e8ee;border-radius:14px;overflow:hidden;box-shadow:0 6px 26px rgba(20,40,70,.07)}}
+.hd{{background:#0059A9;color:#fff;padding:15px 24px;font-weight:700;font-size:16px}}.bd{{padding:22px 24px}}
+input{{width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #cdd6e0;border-radius:8px;font-size:14px}}
+button{{margin-top:10px;width:100%;background:#0059A9;color:#fff;border:0;border-radius:8px;padding:10px;font-weight:700;font-size:14px;cursor:pointer}}
+.foot{{padding:12px 24px;border-top:1px solid #eef1f4;color:#9aa4b1;font-size:11px;text-align:center}}</style></head>
+<body><div class="card"><div class="hd">Frazil&nbsp;Flow</div><div class="bd">
+<h1 style="margin:0 0 4px;font-size:19px">View your tickets</h1>
+<p style="margin:0 0 16px;color:#6b7280;font-size:13px">Enter the email you used to submit tickets and we'll send you a private link to your list.</p>
+<label style="display:block;font-size:12px;font-weight:700;margin-bottom:5px">Your email</label>
+<input id="em" type="email" placeholder="you@example.com" value="{pref}">
+<button type="button" id="go">Email me my tickets link</button>
+<div id="m" style="font-size:13px;margin-top:10px;display:none"></div>
+<div style="text-align:center;margin-top:16px"><a href="{esc(APP_BASE_URL)}/report" style="color:#0059A9;font-size:13px;font-weight:700;text-decoration:none">+ Submit a new ticket</a></div>
+</div><div class="foot">Powered by Frazil Flow</div></div>
+<script>(function(){{var b=document.getElementById('go'),e=document.getElementById('em'),m=document.getElementById('m');
+b.addEventListener('click',async function(){{var v=(e.value||'').trim();
+if(!/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(v)){{m.style.display='block';m.style.color='#a5281c';m.textContent='Enter a valid email address.';return;}}
+b.disabled=true;try{{await fetch('/api/intake-track',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{email:v}})}});}}catch(err){{}}
+m.style.display='block';m.style.color='#1f7a34';m.textContent='If that address has tickets, we just emailed you a link to view them.';b.disabled=false;}});
+if(e.value)e.focus();}})();</script></body></html>"""
+
 @app.get("/my-tickets", response_class=HTMLResponse)
 def my_tickets_page(email: str = "", t: str = ""):
-    """Public, token-gated list of every portal ticket for a reporter email."""
+    """Public list of every portal ticket for a reporter email. Token-gated to
+    prevent enumeration; without a valid token we show a self-service landing that
+    emails the private link rather than a dead end."""
     email_n = (email or "").strip().lower()
     if not (email_n and t and hmac.compare_digest(_reporter_list_token(email_n), t)):
-        return HTMLResponse(_ticket_error_page("This link is invalid or has expired."), status_code=404)
+        return HTMLResponse(_my_tickets_landing(email_n), headers={"Cache-Control": "no-cache"})
     items = []
     try:
         for d in sorted(os.listdir(TENANTS_DIR)):
@@ -2095,7 +2149,8 @@ def get_all(auth: dict = Depends(require_auth)):
             "intakeEnabled": cfg_map.get("intakeEnabled", False),
             "intakeProjects": cfg_map.get("intakeProjects", []),
             "intakeTypes": cfg_map.get("intakeTypes", []),
-            "intakeNotifyEmail": cfg_map.get("intakeNotifyEmail", "")}
+            "intakeNotifyEmail": cfg_map.get("intakeNotifyEmail", ""),
+            "intakeProjectEmails": cfg_map.get("intakeProjectEmails", {})}
 
 
 # ── Force-seed config keys (idempotent, for migration/repair) ─────────────────
@@ -2709,7 +2764,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "changeReasons","deferReasons","departments",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
-              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail"}
+              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",

@@ -319,8 +319,12 @@ def test_my_tickets_token_gated_and_scoped(client, team, admin_headers):
     assert r.status_code == 200
     assert "Mine A" in r.text and "Mine B" in r.text
     assert "Not mine" not in r.text                              # only the requester's tickets
-    assert client.get("/my-tickets?email=me@x.com&t=bad").status_code == 404
-    assert client.get("/my-tickets?email=me@x.com").status_code == 404
+    # Without a valid token: self-service landing (200), but it must NOT leak any tickets.
+    for bad in (f"/my-tickets?email=me@x.com&t=bad", "/my-tickets?email=me@x.com", "/my-tickets"):
+        rb = client.get(bad)
+        assert rb.status_code == 200
+        assert "Email me my tickets link" in rb.text             # the request-a-link landing
+        assert "Mine A" not in rb.text and "Mine B" not in rb.text  # no ticket leak without a token
 
 
 def test_intake_track_validates_email(client):
@@ -365,3 +369,45 @@ def test_ticket_page_shows_reporter_thread_only(client, team, admin_headers):
     assert "what version?" in r.text          # team's @reporter note is shown
     assert "version 120" in r.text            # reporter reply is shown
     assert "internal only note" not in r.text  # internal comment stays hidden
+
+
+# ── 4.19.0: intake config persistence + optional per-project notify email ─────
+def test_intake_project_emails_settable_and_returned(client, team, admin_headers):
+    # Regression for the "settings revert on refresh" bug: the key round-trips
+    # through set_config → /api/all (boot reads it from there).
+    assert _set(client, admin_headers, "intakeProjectEmails",
+                {"Fraznet": "net@x.com"}).status_code == 200
+    allr = client.get("/api/all", headers=admin_headers).json()
+    assert allr["intakeProjectEmails"] == {"Fraznet": "net@x.com"}
+
+
+def test_all_returns_intake_config_for_boot(client, team, admin_headers):
+    # /api/all must expose every intake key so boot() can hydrate the settings UI
+    # (the reverting-on-refresh symptom was boot never loading these).
+    _set(client, admin_headers, "intakeEnabled", True)
+    _set(client, admin_headers, "intakeNotifyEmail", "ops@x.com")
+    _set(client, admin_headers, "intakeTypes", ["Bug"])
+    allr = client.get("/api/all", headers=admin_headers).json()
+    for k in ("intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails"):
+        assert k in allr, f"/api/all missing {k}"
+    assert allr["intakeEnabled"] is True and allr["intakeNotifyEmail"] == "ops@x.com"
+
+
+def test_notify_email_resolver_prefers_project_override(client, team, admin_headers):
+    _set(client, admin_headers, "intakeNotifyEmail", "team@x.com")
+    _set(client, admin_headers, "intakeProjectEmails", {"Fraznet": "net@x.com"})
+    assert server._intake_notify_email(team, "Fraznet") == "net@x.com"   # override wins
+    assert server._intake_notify_email(team, "HubSpot") == "team@x.com"  # falls back to team
+    assert server._intake_notify_email(team, "") == "team@x.com"         # no product → team
+
+
+def test_creation_email_routes_to_project_override(client, team, admin_headers, mailbox):
+    _expose(client, admin_headers, types=["Bug"], projects=["Fraznet", "HubSpot"])
+    _set(client, admin_headers, "intakeNotifyEmail", "team@x.com")
+    _set(client, admin_headers, "intakeProjectEmails", {"Fraznet": "net@x.com"})
+    server._rate.clear()
+    client.post(f"/api/intake/{team}",
+                json={"title": "Routed", "email": "rep@x.com", "product": "Fraznet"})
+    team_recips = [to for to, subj in mailbox if "new portal ticket" in subj.lower()]
+    assert "net@x.com" in team_recips        # routed to the project's inbox
+    assert "team@x.com" not in team_recips   # not the team default when an override exists
