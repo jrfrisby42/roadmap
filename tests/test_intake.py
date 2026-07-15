@@ -116,22 +116,24 @@ def test_submit_captures_priority(client, team, admin_headers):
     _expose(client, admin_headers, types=["Bug"])
     server._rate.clear()
     r = client.post(f"/api/intake/{team}",
-                    json={"title": "Urgent thing", "email": "a@b.com", "priority": "1"})
+                    json={"title": "High thing", "email": "a@b.com", "priority": "2"})
     assert r.status_code == 200
     it = next(p for p in client.get("/api/all", headers=admin_headers).json()["projects"]
-              if p["name"] == "Urgent thing")
-    assert it["priority"] == "1"
+              if p["name"] == "High thing")
+    assert it["priority"] == "2"
 
 
-def test_submit_ignores_invalid_priority(client, team, admin_headers):
+def test_submit_rejects_urgent_and_invalid_priority(client, team, admin_headers):
+    # The portal only offers High(2)/Medium(3)/Low(4) — Urgent(1) and junk are dropped.
     _expose(client, admin_headers, types=["Bug"])
-    server._rate.clear()
-    r = client.post(f"/api/intake/{team}",
-                    json={"title": "Bad prio", "email": "a@b.com", "priority": "99"})
-    assert r.status_code == 200
-    it = next(p for p in client.get("/api/all", headers=admin_headers).json()["projects"]
-              if p["name"] == "Bad prio")
-    assert it["priority"] == ""
+    for bad in ("1", "99"):
+        server._rate.clear()
+        r = client.post(f"/api/intake/{team}",
+                        json={"title": f"prio {bad}", "email": "a@b.com", "priority": bad})
+        assert r.status_code == 200
+        it = next(p for p in client.get("/api/all", headers=admin_headers).json()["projects"]
+                  if p["name"] == f"prio {bad}")
+        assert it["priority"] == ""
 
 
 # ── 4.14.2: portal attachments (public presign + submit-records) ──────────────

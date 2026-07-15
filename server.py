@@ -905,7 +905,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.15.0"
+APP_VERSION = "4.15.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1203,8 +1203,8 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     prio  = str(body.get("priority") or "").strip()
     product = (body.get("product") or "").strip()
     dept    = (body.get("department") or "").strip()
-    if prio not in ("1", "2", "3", "4", ""):
-        prio = ""                    # 1=Urgent … 4=Low; anything else = unset
+    if prio not in ("2", "3", "4", ""):
+        prio = ""                    # portal offers High(2)/Medium(3)/Low(4) only — never Urgent
     if not title:
         raise HTTPException(422, "A short summary (title) is required.")
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
@@ -1330,8 +1330,7 @@ _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
     <div class="row">
       <div><label>Type</label><select id="type"><option value="">—</option></select></div>
       <div><label>Priority</label><select id="priority">
-        <option value="">Normal</option><option value="1">Urgent</option>
-        <option value="2">High</option><option value="3">Medium</option><option value="4">Low</option>
+        <option value="2">High</option><option value="3" selected>Medium</option><option value="4">Low</option>
       </select></div>
     </div>
     <div id="deptWrap" style="display:none"><label>Department</label><select id="dept"><option value="">—</option></select></div>
@@ -1418,7 +1417,7 @@ async function submitForm(ev){
   return false;
 }
 $('#email').value=qs.get('email')||''; $('#name').value=qs.get('name')||'';
-if(['1','2','3','4'].indexOf(qs.get('priority'))>=0) $('#priority').value=qs.get('priority');
+if(['2','3','4'].indexOf(qs.get('priority'))>=0) $('#priority').value=qs.get('priority');
 loadProjects();
 </script></body></html>"""
 
