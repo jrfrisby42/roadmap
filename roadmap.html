@@ -1974,6 +1974,10 @@
             <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Portal link (share this):
               <a id="tsIntakeLink" href="/report" target="_blank" style="color:var(--accent);font-weight:700"></a>
             </div>
+            <div style="margin:10px 0 4px">
+              <label style="display:block;font-size:12px;font-weight:700;color:var(--text);margin-bottom:4px">Team notification email <span style="font-weight:400;color:var(--muted)">— gets a copy of every submitted ticket (comma-separate for several)</span></label>
+              <input type="text" id="tsIntakeNotify" placeholder="team-inbox@example.com" style="width:100%;max-width:380px;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;font-family:'Lato',sans-serif;outline:none">
+            </div>
             <div style="font-size:12px;font-weight:700;color:var(--text);margin:8px 0 6px">Projects offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all)</span></div>
             <div id="tsIntakeProjects" style="display:flex;flex-wrap:wrap;gap:8px 16px"></div>
             <div style="font-size:12px;font-weight:700;color:var(--text);margin:12px 0 6px">Types offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all)</span></div>
@@ -2058,7 +2062,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.15.2';
+const APP_VERSION = '4.16.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2256,6 +2260,7 @@ let typeScheduled = {};         // { [typeName]: bool } — scheduled types appe
 let richTextEditor = true;      // /beta Tiptap editor master switch (config). Default ON; admin can flip false to revert Description+Comments to the classic editor with no redeploy. Classic root ignores this.
 let intakeEnabled = false;      // public /report portal: is this team exposed? (config)
 let intakeProjects = [];        // which Projects (products) the portal offers (empty = all). (config)
+let intakeNotifyEmail = '';     // team inbox that gets a copy of each portal ticket. (config)
 let intakeTypes = [];           // which item Types the portal offers (empty = all). (config)
 let productIgnoreConflicts = {}; // { [productName]: bool } — exempt a whole project from capacity-conflict accounting
 
@@ -6440,6 +6445,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       if(data.richTextEditor !== undefined) richTextEditor  = data.richTextEditor !== false;
       intakeEnabled = data.intakeEnabled === true;
       intakeProjects = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];
+      intakeNotifyEmail = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : '';
       intakeTypes   = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];
       if(data.productIgnoreConflicts) productIgnoreConflicts = data.productIgnoreConflicts;
       // Don't import users unless explicitly present — protects login
@@ -14127,6 +14133,11 @@ function renderIntakePortalSettings(){
   if(link){
     const url = location.origin + '/report' + (teamSlug ? ('?team='+encodeURIComponent(teamSlug)) : '');
     link.href = url; link.textContent = url;
+  }
+  const notify = document.getElementById('tsIntakeNotify');
+  if(notify){
+    notify.value = intakeNotifyEmail || '';
+    notify.onchange = () => { intakeNotifyEmail = notify.value.trim(); saveConfig('intakeNotifyEmail', intakeNotifyEmail); };
   }
   const projWrap = document.getElementById('tsIntakeProjects');
   const projNames = (products||[]).map(p => (p&&p.name)||p).filter(Boolean);

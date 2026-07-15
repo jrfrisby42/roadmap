@@ -202,3 +202,38 @@ def test_submit_ignores_unknown_department(client, team, admin_headers):
     it = next(p for p in client.get("/api/all", headers=admin_headers).json()["projects"]
               if p["name"] == "dept x")
     assert it["departments"] == []
+
+
+# ── 4.16.0: confirmation emails + public ticket status page ───────────────────
+def test_intake_notify_email_settable(client, admin_headers):
+    assert client.put("/api/config/intakeNotifyEmail", json="ops@example.com",
+                      headers=admin_headers).status_code == 200
+
+
+def test_ticket_status_page_token_gated(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    server._rate.clear()
+    pid = client.post(f"/api/intake/{team}",
+                      json={"title": "Track me", "email": "a@b.com"}).json()["id"]
+    tok = server._ticket_token(team, pid)
+    ok = client.get(f"/ticket?team={team}&id={pid}&t={tok}")
+    assert ok.status_code == 200 and "Track me" in ok.text        # valid token shows the ticket
+    assert client.get(f"/ticket?team={team}&id={pid}&t=deadbeef").status_code == 404  # bad token
+    assert client.get(f"/ticket?team={team}&id={pid}").status_code == 404             # no token
+
+
+def test_ticket_status_page_hides_internal_fields(client, team, admin_headers):
+    # A submitter-safe view: it must not leak internal-only fields like the owner.
+    _expose(client, admin_headers, types=["Bug"])
+    server._rate.clear()
+    pid = client.post(f"/api/intake/{team}",
+                      json={"title": "NoLeak", "email": "a@b.com"}).json()["id"]
+    # stamp an owner on the item, then confirm it isn't rendered on the public page
+    with server.db(team) as c:
+        import json as _json
+        d = _json.loads(c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()["data"])
+        d["dev"] = "SecretOwnerName"
+        server._save_project(c, pid, d)
+    r = client.get(f"/ticket?team={team}&id={pid}&t={server._ticket_token(team, pid)}")
+    assert r.status_code == 200
+    assert "SecretOwnerName" not in r.text

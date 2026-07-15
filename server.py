@@ -689,6 +689,7 @@ def init_team_db(team: str):
             # external ticket-creation page, and which item Types it offers there.
             "intakeEnabled": False,
             "intakeProjects": [],  # which projects (products) are exposed; empty = all
+            "intakeNotifyEmail": "",  # team inbox that gets a copy of each portal ticket
             "intakeTypes": [],     # empty = offer ALL of the team's types
         }
         for k, v in defaults.items():
@@ -758,10 +759,11 @@ def _migrate_config_keys(team: str):
         "intakeEnabled":    False,
         "intakeProjects":   [],
         "intakeTypes":      [],
+        "intakeNotifyEmail": "",
     }
     # Keys where False/0/empty-string is a valid intentional value — only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -905,7 +907,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.15.2"
+APP_VERSION = "4.16.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1250,6 +1252,7 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
         "priority": prio, "product": product, "departments": departments,
         "status": default_status, "reporter": name or email,
         "reporterEmail": email, "source": "portal", "attachments": atts,
+        "createdAt": now_iso,
     }
     with db(team) as c:
         _assign_item_key(c, item)
@@ -1258,6 +1261,11 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
         write_audit(team, "intake:create", "Portal", item["id"], title, changes={"email": email})
     except Exception as e:
         log.warning(f"[Intake] audit failed for item {item.get('id')}: {e}")
+    # Confirmation emails to the reporter + the team inbox (best-effort — never fail the submit).
+    try:
+        _intake_send_emails(team, item, item["id"])
+    except Exception as e:
+        log.warning(f"[Intake] email hook failed for item {item.get('id')}: {e}")
     return {"ok": True, "itemKey": item.get("itemKey"), "id": item["id"]}
 
 @app.post("/api/intake/{team}/attach")
@@ -1294,6 +1302,109 @@ def intake_presign(team: str, body: dict = Body(...), request: FRequest = None):
         raise HTTPException(502, "Could not presign the upload (storage unavailable).")
     return {"attId": att_id, "key": key, "url": url,
             "name": _sanitize_filename(filename), "headers": put_headers}
+
+def _ticket_token(team: str, pid) -> str:
+    """Unguessable, stateless status-link token (no expiry — a 'track your ticket'
+    link the reporter can revisit). int/str pid stringify identically in the f-string."""
+    return _sign(f"ticket:{team}:{pid}")
+
+_PRIO_LABEL = {"1": "Urgent", "2": "High", "3": "Medium", "4": "Low"}
+
+def _intake_email_html(item, rows, heading, intro, cta_label, cta_url):
+    esc = html.escape
+    row_html = "".join(
+        f'<tr><td style="padding:5px 0;color:#6b7280;font-size:13px;width:96px;vertical-align:top">{esc(k)}</td>'
+        f'<td style="padding:5px 0;color:#1f2733;font-size:13px;font-weight:600">{esc(v)}</td></tr>'
+        for k, v in rows if v)
+    desc = esc(item.get("description") or "")
+    desc_html = (f'<div style="margin-top:12px;padding-top:12px;border-top:1px solid #eef1f4;'
+                 f'color:#1f2733;font-size:13px;white-space:pre-wrap;line-height:1.5">{desc}</div>') if desc else ""
+    return f"""<!doctype html><html><body style="margin:0;background:#f4f6f9;padding:24px;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+<table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border:1px solid #e3e8ee;border-radius:14px;overflow:hidden">
+<tr><td style="background:#0059A9;padding:15px 24px;color:#ffffff;font-weight:700;font-size:16px">Frazil&nbsp;Flow</td></tr>
+<tr><td style="padding:22px 24px">
+<h1 style="margin:0 0 8px;font-size:18px;color:#1f2733">{esc(heading)}</h1>
+<p style="margin:0 0 16px;color:#4b5563;font-size:14px;line-height:1.55">{esc(intro)}</p>
+<div style="background:#f7f9fb;border:1px solid #eef1f4;border-radius:10px;padding:14px 16px">
+<div style="font-size:15px;font-weight:700;color:#1f2733;margin-bottom:8px">{esc(item.get("name") or "Ticket")}</div>
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%">{row_html}</table>{desc_html}
+</div>
+<div style="text-align:center;margin:20px 0 4px">
+<a href="{esc(cta_url)}" style="background:#0059A9;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:11px 24px;border-radius:8px;display:inline-block">{esc(cta_label)}</a>
+</div></td></tr>
+<tr><td style="padding:12px 24px;border-top:1px solid #eef1f4;color:#9aa4b1;font-size:11px;text-align:center;line-height:1.5">Submitted via the Frazil Flow ticket portal.<br>If the button doesn't work, paste this link:<br><span style="color:#6b7280;word-break:break-all">{esc(cta_url)}</span></td></tr>
+</table></td></tr></table></body></html>"""
+
+def _intake_send_emails(team, item, pid):
+    """Confirmation to the reporter (public status link) + a copy to the team inbox
+    (in-app item link). No-op if email isn't configured; each send is best-effort."""
+    if not mail_configured():
+        return
+    key   = item.get("itemKey") or f"#{pid}"
+    label = _intake_label(team)
+    prio  = _PRIO_LABEL.get(str(item.get("priority") or ""), "")
+    base_rows = [("Ticket", key), ("Status", item.get("status") or ""),
+                 ("Type", item.get("type") or ""), ("Priority", prio),
+                 ("Project", item.get("product") or "")]
+    reporter_email = (item.get("reporterEmail") or "").strip()
+    if reporter_email:
+        url = f"{APP_BASE_URL}/ticket?team={team}&id={pid}&t={_ticket_token(team, pid)}"
+        body = _intake_email_html(item, base_rows, "We've received your ticket",
+            "Thanks for reaching out — your ticket has been logged and the team will take a look. "
+            "You can check its status any time with the button below.", "View ticket status", url)
+        text = f"We've received your ticket {key}: {item.get('name','')}\nStatus: {item.get('status','')}\n\nTrack it: {url}\n"
+        try: send_email(reporter_email, f"[{key}] Ticket received — {item.get('name','')}", text, body)
+        except Exception as e: log.warning(f"[Intake] reporter email failed for {pid}: {e}")
+    notify  = _cfg_val(team, "intakeNotifyEmail", "") or ""
+    app_url = f"{APP_BASE_URL}/item/{pid}"
+    team_rows = base_rows + [("Reporter", f"{item.get('reporter','')} <{reporter_email}>".strip())]
+    for addr in [a.strip() for a in re.split(r"[,;]", notify) if a.strip()]:
+        body = _intake_email_html(item, team_rows, "New ticket submitted",
+            f"A new ticket was submitted through the {label} portal.", "Open in Flow", app_url)
+        text = f"New portal ticket {key}: {item.get('name','')}\nReporter: {item.get('reporter','')} <{reporter_email}>\n\nOpen: {app_url}\n"
+        try: send_email(addr, f"[{key}] New portal ticket — {item.get('name','')}", text, body)
+        except Exception as e: log.warning(f"[Intake] team email failed to {addr} for {pid}: {e}")
+
+def _ticket_status_page(p):
+    esc = html.escape
+    prio = _PRIO_LABEL.get(str(p.get("priority") or ""), "")
+    rows = [("Type", p.get("type")), ("Priority", prio), ("Project", p.get("product")),
+            ("Submitted", (p.get("createdAt") or "")[:10])]
+    row_html = "".join(
+        f'<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f0f3f6;font-size:14px">'
+        f'<span style="color:#6b7280">{esc(k)}</span><span style="color:#1f2733;font-weight:600">{esc(v)}</span></div>'
+        for k, v in rows if v)
+    desc = esc(p.get("description") or "")
+    desc_html = (f'<div style="margin-top:16px"><div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Details</div>'
+                 f'<div style="font-size:14px;color:#1f2733;white-space:pre-wrap;line-height:1.55">{desc}</div></div>') if desc else ""
+    atts = [a for a in (p.get("attachments") or []) if isinstance(a, dict) and a.get("name")]
+    att_html = ""
+    if atts:
+        lis = "".join(f'<li style="font-size:13px;color:#374151">{esc(a.get("name"))}</li>' for a in atts)
+        att_html = (f'<div style="margin-top:16px"><div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Attachments</div>'
+                    f'<ul style="margin:0;padding-left:18px">{lis}</ul></div>')
+    key = p.get("itemKey") or f"#{p.get('id','')}"
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>{esc(key)} — Ticket status</title>
+<style>body{{margin:0;background:#f4f6f9;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2733;padding:28px 16px}}
+.card{{max-width:560px;margin:0 auto;background:#fff;border:1px solid #e3e8ee;border-radius:14px;overflow:hidden;box-shadow:0 6px 26px rgba(20,40,70,.07)}}
+.hd{{background:#0059A9;color:#fff;padding:15px 24px;font-weight:700;font-size:16px}}.bd{{padding:22px 24px}}
+.k{{font-family:ui-monospace,Menlo,monospace;color:#0059A9;font-weight:700;font-size:13px}}
+.badge{{display:inline-block;background:#eaf2fb;color:#0059A9;border:1px solid #cfe0f4;border-radius:999px;padding:3px 12px;font-size:13px;font-weight:700}}
+.foot{{padding:12px 24px;border-top:1px solid #eef1f4;color:#9aa4b1;font-size:11px;text-align:center}}</style></head>
+<body><div class="card"><div class="hd">Frazil&nbsp;Flow</div><div class="bd">
+<div class="k">{esc(key)}</div><h1 style="margin:4px 0 12px;font-size:19px">{esc(p.get("name") or "Ticket")}</h1>
+<div style="margin-bottom:14px">Status: <span class="badge">{esc(p.get("status") or "—")}</span></div>
+{row_html}{desc_html}{att_html}
+</div><div class="foot">Read-only status view of your submitted ticket.</div></div></body></html>"""
+
+def _ticket_error_page(msg):
+    esc = html.escape
+    return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Ticket status</title></head>
+<body style="margin:0;background:#f4f6f9;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1f2733;padding:60px 16px;text-align:center">
+<div style="max-width:440px;margin:0 auto;background:#fff;border:1px solid #e3e8ee;border-radius:14px;padding:34px 24px">
+<div style="font-size:34px">🔍</div><h1 style="font-size:18px;margin:10px 0 6px">{esc(msg)}</h1>
+<p style="color:#6b7280;font-size:13px;margin:0">Please use the link from your confirmation email.</p></div></body></html>"""
 
 _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1425,6 +1536,26 @@ loadProjects();
 def intake_portal():
     """Public server-rendered ticket-submission portal (no auth, no app load)."""
     return HTMLResponse(content=_INTAKE_PAGE, headers={"Cache-Control": "no-cache"})
+
+@app.get("/ticket", response_class=HTMLResponse)
+def ticket_status(team: str = "", id: str = "", t: str = ""):
+    """Public read-only ticket status page (no login). Gated by an HMAC token so
+    tickets can't be enumerated; shows a submitter-safe subset (no owner/comments)."""
+    team_s = re.sub(r"[^a-z0-9]", "", (team or "").lower())
+    if not (team_s and valid_team(team_s) and id and t
+            and hmac.compare_digest(_ticket_token(team_s, id), t)):
+        return HTMLResponse(_ticket_error_page("This ticket link is invalid or has expired."),
+                            status_code=404)
+    try:
+        pid = int(id)
+    except (TypeError, ValueError):
+        return HTMLResponse(_ticket_error_page("Ticket not found."), status_code=404)
+    with db(team_s) as c:
+        row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+    if not row:
+        return HTMLResponse(_ticket_error_page("Ticket not found."), status_code=404)
+    p = json.loads(row["data"]); p["id"] = pid
+    return HTMLResponse(_ticket_status_page(p), headers={"Cache-Control": "no-cache"})
 
 # ── Login ─────────────────────────────────────────────────────────────────────
 @app.post("/api/login")
@@ -1769,7 +1900,8 @@ def get_all(auth: dict = Depends(require_auth)):
             "richTextEditor": cfg_map.get("richTextEditor", True),
             "intakeEnabled": cfg_map.get("intakeEnabled", False),
             "intakeProjects": cfg_map.get("intakeProjects", []),
-            "intakeTypes": cfg_map.get("intakeTypes", [])}
+            "intakeTypes": cfg_map.get("intakeTypes", []),
+            "intakeNotifyEmail": cfg_map.get("intakeNotifyEmail", "")}
 
 
 # ── Force-seed config keys (idempotent, for migration/repair) ─────────────────
@@ -2378,7 +2510,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "changeReasons","deferReasons","departments",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
-              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes"}
+              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",
