@@ -38,7 +38,7 @@ launched from another tool."
 Launch pre-filled for a logged-in user filing a Fraznet bug:
 
 ```
-https://flow.frazil.app/report?team=development&product=Fraznet&type=Bug&priority=2&email=jane.doe%40frazil.com&name=Jane%20Doe
+https://flow.frazil.app/report?product=Fraznet&type=Bug&priority=2&email=jane.doe%40frazil.com&name=Jane%20Doe
 ```
 
 Minimal - just carry the email through:
