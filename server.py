@@ -685,6 +685,10 @@ def init_team_db(team: str):
             # surface; flipping to False reverts Description+Comments to the classic
             # lightweight editor with no redeploy. Classic root never reads this.
             "richTextEditor": True,
+            # Public intake portal (/report): whether this team is exposed in the
+            # external ticket-creation page, and which item Types it offers there.
+            "intakeEnabled": False,
+            "intakeTypes": [],     # empty = offer ALL of the team's types
         }
         for k, v in defaults.items():
             c.execute("INSERT OR IGNORE INTO config(key,value) VALUES(?,?)",
@@ -750,10 +754,12 @@ def _migrate_config_keys(team: str):
         "statusIsTesting":  {},
         "statusIsBlocked":  {},
         "richTextEditor":   True,
+        "intakeEnabled":    False,
+        "intakeTypes":      [],
     }
     # Keys where False/0/empty-string is a valid intentional value — only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeTypes"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -897,7 +903,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.13.3"
+APP_VERSION = "4.14.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1100,6 +1106,180 @@ def list_teams():
     except FileNotFoundError:
         teams = []
     return {"teams": teams}
+
+# ── Public intake portal (Tier 2): unauthenticated "Report an issue" ──────────
+# A team opts in via the `intakeEnabled` config flag and picks which item Types
+# are offered via `intakeTypes` (empty = all). These three endpoints are PUBLIC
+# (no auth) and drive the server-rendered /report page. Writes are rate-limited,
+# type-restricted, and land at the team's default status.
+def _cfg_val(team: str, key: str, default):
+    try:
+        with db(team) as c:
+            row = c.execute("SELECT value FROM config WHERE key=?", (key,)).fetchone()
+        return json.loads(row["value"]) if row else default
+    except Exception:
+        return default
+
+def _intake_open(team: str) -> bool:
+    return bool(_cfg_val(team, "intakeEnabled", False))
+
+def _intake_label(team: str) -> str:
+    return team[:1].upper() + team[1:] if team else team
+
+def _intake_types(team: str) -> list:
+    allow = _cfg_val(team, "intakeTypes", []) or []
+    names = [(t.get("name") if isinstance(t, dict) else t)
+             for t in (_cfg_val(team, "types", []) or [])]
+    names = [n for n in names if n]
+    return [n for n in names if n in allow] if allow else names
+
+@app.get("/api/intake/teams")
+def intake_teams():
+    """Public: teams that opted into the ticket portal (slug + display label)."""
+    out = []
+    try:
+        for d in sorted(os.listdir(TENANTS_DIR)):
+            if (os.path.isdir(os.path.join(TENANTS_DIR, d))
+                    and re.match(r"^[a-z0-9]+$", d) and _intake_open(d)):
+                out.append({"slug": d, "name": _intake_label(d)})
+    except FileNotFoundError:
+        pass
+    return {"teams": out}
+
+@app.get("/api/intake/config/{team}")
+def intake_team_config(team: str):
+    """Public: a team's intake form config (allowed Types). 404 if not exposed."""
+    team = re.sub(r"[^a-z0-9]", "", (team or "").lower())
+    if not team or not valid_team(team) or not _intake_open(team):
+        raise HTTPException(404, "This team is not accepting portal submissions.")
+    return {"team": team, "name": _intake_label(team), "types": _intake_types(team)}
+
+@app.post("/api/intake/{team}")
+def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
+    """Public: create a ticket from the portal. Rate-limited, type-restricted."""
+    ip = (request.client.host if request else "unknown")
+    _check_rate_limit("intake:" + ip)
+    team = re.sub(r"[^a-z0-9]", "", (team or "").lower())
+    if not team or not valid_team(team) or not _intake_open(team):
+        raise HTTPException(404, "This team is not accepting portal submissions.")
+    title = (body.get("title") or "").strip()[:200]
+    desc  = _strip_tags((body.get("description") or "").strip())[:5000]  # plain text only
+    email = (body.get("email") or "").strip()[:200]
+    name  = (body.get("name") or "").strip()[:120]
+    ttype = (body.get("type") or "").strip()
+    if not title:
+        raise HTTPException(422, "A short summary (title) is required.")
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(422, "A valid email address is required.")
+    allowed = _intake_types(team)
+    if allowed and ttype not in allowed:
+        ttype = allowed[0]           # coerce to a valid Type rather than reject the report
+    # Land at the team's configured default status (fallback: first status / "New").
+    def_map = _cfg_val(team, "statusIsDefault", {}) or {}
+    default_status = next((s for s, v in def_map.items() if v), "") \
+        or ((_cfg_val(team, "statuses", []) or ["New"])[0])
+    item = {
+        "name": title, "description": desc, "type": ttype or "",
+        "status": default_status, "reporter": name or email,
+        "reporterEmail": email, "source": "portal",
+    }
+    with db(team) as c:
+        _assign_item_key(c, item)
+        item["id"] = _insert_project(c, item)
+    try:
+        write_audit(team, "intake:create", "Portal", item["id"], title, changes={"email": email})
+    except Exception as e:
+        log.warning(f"[Intake] audit failed for item {item.get('id')}: {e}")
+    return {"ok": True, "itemKey": item.get("itemKey"), "id": item["id"]}
+
+_INTAKE_PAGE = """<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>Submit a Ticket — Frazil Flow</title>
+<style>
+  :root{ --acc:#0059A9; --bd:#dfe4ea; --mut:#6b7280; --bg:#f4f6f9; --tx:#1f2733; }
+  *{box-sizing:border-box} body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--tx);line-height:1.5;padding:28px 16px}
+  .card{max-width:560px;margin:0 auto;background:#fff;border:1px solid var(--bd);border-radius:14px;
+    box-shadow:0 6px 26px rgba(20,40,70,.07);overflow:hidden}
+  .hd{padding:20px 24px;border-bottom:1px solid var(--bd)}
+  .hd h1{margin:0;font-size:19px} .hd p{margin:4px 0 0;color:var(--mut);font-size:13px}
+  form{padding:20px 24px;display:flex;flex-direction:column;gap:14px}
+  label{display:block;font-size:12px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px}
+  .req::after{content:" *";color:#c0392b}
+  input,select,textarea{width:100%;padding:9px 11px;border:1px solid var(--bd);border-radius:8px;
+    font:inherit;font-size:14px;background:#fff;color:var(--tx)}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc);box-shadow:0 0 0 3px rgba(0,89,169,.12)}
+  textarea{min-height:110px;resize:vertical}
+  .row{display:flex;gap:12px} .row>div{flex:1}
+  button{background:var(--acc);color:#fff;border:none;border-radius:8px;padding:11px 16px;font:inherit;
+    font-weight:700;font-size:14px;cursor:pointer} button:disabled{opacity:.55;cursor:default}
+  .msg{font-size:13px;padding:9px 12px;border-radius:8px;display:none}
+  .msg.err{display:block;background:#fdeceb;color:#a5281c;border:1px solid #f3c4bf}
+  .done{padding:34px 24px;text-align:center;display:none}
+  .done .k{font-family:ui-monospace,Menlo,monospace;font-weight:700;color:var(--acc);font-size:17px}
+  .foot{padding:12px 24px;border-top:1px solid var(--bd);color:var(--mut);font-size:11px;text-align:center}
+</style></head><body>
+<div class="card">
+  <div class="hd"><h1>Submit a ticket</h1><p>File a request or report an issue. The team will follow up by email.</p></div>
+  <form id="form" onsubmit="return submitForm(event)">
+    <div class="msg err" id="msg"></div>
+    <div class="row">
+      <div><label class="req">Team</label><select id="team"><option value="">Loading…</option></select></div>
+      <div><label>Type</label><select id="type"><option value="">—</option></select></div>
+    </div>
+    <div><label class="req">Summary</label><input id="title" maxlength="200" placeholder="Short summary of the request or issue" required></div>
+    <div><label>Details</label><textarea id="desc" maxlength="5000" placeholder="What happened? What do you need? Steps, links, etc."></textarea></div>
+    <div class="row">
+      <div><label class="req">Your email</label><input id="email" type="email" maxlength="200" placeholder="you@example.com" required></div>
+      <div><label>Your name</label><input id="name" maxlength="120" placeholder="Optional"></div>
+    </div>
+    <button id="submitBtn" type="submit">Submit ticket</button>
+  </form>
+  <div class="done" id="done"><div style="font-size:34px">✅</div>
+    <h2 style="margin:8px 0 4px">Thanks — your ticket was created.</h2>
+    <p style="color:#6b7280">Reference: <span class="k" id="doneKey"></span></p></div>
+  <div class="foot">Powered by Frazil Flow</div>
+</div>
+<script>
+var qs=new URLSearchParams(location.search), $=function(s){return document.querySelector(s)};
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function showErr(m){var e=$('#msg');e.textContent=m;e.style.display='block'}
+function clearErr(){$('#msg').style.display='none'}
+async function loadTeams(){
+  try{ var d=await (await fetch('/api/intake/teams')).json();
+    $('#team').innerHTML='<option value="">Select a team…</option>'+d.teams.map(function(t){return '<option value="'+esc(t.slug)+'">'+esc(t.name)+'</option>'}).join('');
+    var pre=qs.get('team'); if(pre && d.teams.some(function(t){return t.slug===pre})){ $('#team').value=pre; loadTypes(pre); }
+  }catch(e){ $('#team').innerHTML='<option value="">Unavailable</option>'; }
+}
+async function loadTypes(team){
+  var ts=$('#type'); ts.innerHTML='<option value="">Loading…</option>';
+  try{ var d=await (await fetch('/api/intake/config/'+encodeURIComponent(team))).json();
+    ts.innerHTML=(d.types&&d.types.length?'':'<option value="">—</option>')+(d.types||[]).map(function(t){return '<option value="'+esc(t)+'">'+esc(t)+'</option>'}).join('');
+    var pt=qs.get('type'); if(pt && (d.types||[]).indexOf(pt)>=0) ts.value=pt;
+  }catch(e){ ts.innerHTML='<option value="">—</option>'; }
+}
+$('#team').addEventListener('change',function(e){ if(e.target.value) loadTypes(e.target.value); });
+async function submitForm(ev){
+  ev.preventDefault(); clearErr();
+  var team=$('#team').value; if(!team){ showErr('Please choose a team.'); return false; }
+  var btn=$('#submitBtn'); btn.disabled=true;
+  var payload={title:$('#title').value,description:$('#desc').value,type:$('#type').value,email:$('#email').value,name:$('#name').value};
+  try{
+    var r=await fetch('/api/intake/'+encodeURIComponent(team),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    var d=await r.json().catch(function(){return {}});
+    if(!r.ok) throw new Error((d&&d.detail)||('Submission failed ('+r.status+')'));
+    $('#form').style.display='none'; $('#done').style.display='block'; $('#doneKey').textContent=(d.itemKey||('#'+d.id));
+  }catch(e){ showErr(e.message||'Submission failed'); btn.disabled=false; }
+  return false;
+}
+$('#email').value=qs.get('email')||''; $('#name').value=qs.get('name')||'';
+loadTeams();
+</script></body></html>"""
+
+@app.get("/report", response_class=HTMLResponse)
+def intake_portal():
+    """Public server-rendered ticket-submission portal (no auth, no app load)."""
+    return HTMLResponse(content=_INTAKE_PAGE, headers={"Cache-Control": "no-cache"})
 
 # ── Login ─────────────────────────────────────────────────────────────────────
 @app.post("/api/login")
@@ -1441,7 +1621,9 @@ def get_all(auth: dict = Depends(require_auth)):
             "jiraSyncConfig": cfg("jiraSyncConfig") or {},
             # /beta rich-text editor master switch — boolean preserved (default ON when
             # absent) so an admin's explicit False reaches the client and reverts the editor.
-            "richTextEditor": cfg_map.get("richTextEditor", True)}
+            "richTextEditor": cfg_map.get("richTextEditor", True),
+            "intakeEnabled": cfg_map.get("intakeEnabled", False),
+            "intakeTypes": cfg_map.get("intakeTypes", [])}
 
 
 # ── Force-seed config keys (idempotent, for migration/repair) ─────────────────
@@ -2050,7 +2232,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "changeReasons","deferReasons","departments",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
-              "richTextEditor"}
+              "richTextEditor","intakeEnabled","intakeTypes"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",
