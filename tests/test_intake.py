@@ -102,3 +102,26 @@ def test_report_page_served(client):
     r = client.get("/report")
     assert r.status_code == 200
     assert "Submit a ticket" in r.text
+
+
+# ── 4.14.1: priority flag on the portal ───────────────────────────────────────
+def test_submit_captures_priority(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    server._rate.clear()
+    r = client.post(f"/api/intake/{team}",
+                    json={"title": "Urgent thing", "email": "a@b.com", "priority": "1"})
+    assert r.status_code == 200
+    it = next(p for p in client.get("/api/all", headers=admin_headers).json()["projects"]
+              if p["name"] == "Urgent thing")
+    assert it["priority"] == "1"
+
+
+def test_submit_ignores_invalid_priority(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    server._rate.clear()
+    r = client.post(f"/api/intake/{team}",
+                    json={"title": "Bad prio", "email": "a@b.com", "priority": "99"})
+    assert r.status_code == 200
+    it = next(p for p in client.get("/api/all", headers=admin_headers).json()["projects"]
+              if p["name"] == "Bad prio")
+    assert it["priority"] == ""

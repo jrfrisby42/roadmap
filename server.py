@@ -903,7 +903,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.14.0"
+APP_VERSION = "4.14.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1167,6 +1167,9 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     email = (body.get("email") or "").strip()[:200]
     name  = (body.get("name") or "").strip()[:120]
     ttype = (body.get("type") or "").strip()
+    prio  = str(body.get("priority") or "").strip()
+    if prio not in ("1", "2", "3", "4", ""):
+        prio = ""                    # 1=Urgent … 4=Low; anything else = unset
     if not title:
         raise HTTPException(422, "A short summary (title) is required.")
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
@@ -1180,7 +1183,7 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
         or ((_cfg_val(team, "statuses", []) or ["New"])[0])
     item = {
         "name": title, "description": desc, "type": ttype or "",
-        "status": default_status, "reporter": name or email,
+        "priority": prio, "status": default_status, "reporter": name or email,
         "reporterEmail": email, "source": "portal",
     }
     with db(team) as c:
@@ -1223,9 +1226,13 @@ _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
   <div class="hd"><h1>Submit a ticket</h1><p>File a request or report an issue. The team will follow up by email.</p></div>
   <form id="form" onsubmit="return submitForm(event)">
     <div class="msg err" id="msg"></div>
+    <div><label class="req">Team</label><select id="team"><option value="">Loading…</option></select></div>
     <div class="row">
-      <div><label class="req">Team</label><select id="team"><option value="">Loading…</option></select></div>
       <div><label>Type</label><select id="type"><option value="">—</option></select></div>
+      <div><label>Priority</label><select id="priority">
+        <option value="">Normal</option><option value="1">Urgent</option>
+        <option value="2">High</option><option value="3">Medium</option><option value="4">Low</option>
+      </select></div>
     </div>
     <div><label class="req">Summary</label><input id="title" maxlength="200" placeholder="Short summary of the request or issue" required></div>
     <div><label>Details</label><textarea id="desc" maxlength="5000" placeholder="What happened? What do you need? Steps, links, etc."></textarea></div>
@@ -1263,7 +1270,7 @@ async function submitForm(ev){
   ev.preventDefault(); clearErr();
   var team=$('#team').value; if(!team){ showErr('Please choose a team.'); return false; }
   var btn=$('#submitBtn'); btn.disabled=true;
-  var payload={title:$('#title').value,description:$('#desc').value,type:$('#type').value,email:$('#email').value,name:$('#name').value};
+  var payload={title:$('#title').value,description:$('#desc').value,type:$('#type').value,priority:$('#priority').value,email:$('#email').value,name:$('#name').value};
   try{
     var r=await fetch('/api/intake/'+encodeURIComponent(team),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     var d=await r.json().catch(function(){return {}});
@@ -1273,6 +1280,7 @@ async function submitForm(ev){
   return false;
 }
 $('#email').value=qs.get('email')||''; $('#name').value=qs.get('name')||'';
+if(['1','2','3','4'].indexOf(qs.get('priority'))>=0) $('#priority').value=qs.get('priority');
 loadTeams();
 </script></body></html>"""
 
