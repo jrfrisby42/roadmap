@@ -903,7 +903,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.14.1"
+APP_VERSION = "4.14.2"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1133,6 +1133,16 @@ def _intake_types(team: str) -> list:
     names = [n for n in names if n]
     return [n for n in names if n in allow] if allow else names
 
+# Public attachment upload for the portal: a tighter allowlist + a lower size cap
+# than the authenticated flow (it's a no-auth surface). Objects go under an
+# intake/{team}/{uuid}/ prefix; the submit endpoint only accepts keys with that shape.
+_INTAKE_ATTACH_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp",
+                        "application/pdf", "text/plain"}
+_INTAKE_MAX_ATTACH_BYTES = 15 * 1024 * 1024   # 15 MB
+
+def _intake_attachment_key(team: str, att_id: str, name: str) -> str:
+    return f"intake/{team}/{att_id}/{_sanitize_filename(name)}"
+
 @app.get("/api/intake/teams")
 def intake_teams():
     """Public: teams that opted into the ticket portal (slug + display label)."""
@@ -1177,6 +1187,29 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     allowed = _intake_types(team)
     if allowed and ttype not in allowed:
         ttype = allowed[0]           # coerce to a valid Type rather than reject the report
+    # Attachments: accept only records whose key sits under THIS team's intake
+    # prefix (uploaded via the presign endpoint below) — never let a client record
+    # an arbitrary S3 key. Capped at 10; size clamped to the public limit.
+    atts = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for a in (body.get("attachments") or [])[:10]:
+        if not isinstance(a, dict):
+            continue
+        key = str(a.get("key") or "")
+        aid = str(a.get("attId") or a.get("id") or "")
+        if not key.startswith(f"intake/{team}/") or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", aid):
+            continue
+        try:
+            asize = int(a.get("size") or 0)
+        except (TypeError, ValueError):
+            asize = 0
+        atts.append({
+            "id": aid, "key": key,
+            "name": (a.get("name") or "file")[:200],
+            "contentType": (a.get("contentType") or "application/octet-stream")[:120],
+            "size": max(0, min(asize, _INTAKE_MAX_ATTACH_BYTES)),
+            "by": email, "at": now_iso,
+        })
     # Land at the team's configured default status (fallback: first status / "New").
     def_map = _cfg_val(team, "statusIsDefault", {}) or {}
     default_status = next((s for s, v in def_map.items() if v), "") \
@@ -1184,7 +1217,7 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     item = {
         "name": title, "description": desc, "type": ttype or "",
         "priority": prio, "status": default_status, "reporter": name or email,
-        "reporterEmail": email, "source": "portal",
+        "reporterEmail": email, "source": "portal", "attachments": atts,
     }
     with db(team) as c:
         _assign_item_key(c, item)
@@ -1194,6 +1227,41 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     except Exception as e:
         log.warning(f"[Intake] audit failed for item {item.get('id')}: {e}")
     return {"ok": True, "itemKey": item.get("itemKey"), "id": item["id"]}
+
+@app.post("/api/intake/{team}/attach")
+def intake_presign(team: str, body: dict = Body(...), request: FRequest = None):
+    """Public: presigned S3 PUT for a portal attachment. Rate-limited, type/size-capped."""
+    ip = (request.client.host if request else "unknown")
+    _check_rate_limit("intake-att:" + ip)
+    team = re.sub(r"[^a-z0-9]", "", (team or "").lower())
+    if not team or not valid_team(team) or not _intake_open(team):
+        raise HTTPException(404, "This team is not accepting portal submissions.")
+    filename = body.get("filename") or "file"
+    ctype = (body.get("contentType") or "application/octet-stream").split(";")[0].strip().lower()
+    try:
+        size = int(body.get("size") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(422, "size must be an integer")
+    if ctype not in _INTAKE_ATTACH_TYPES:
+        raise HTTPException(415, "Only images (PNG/JPG/GIF/WebP), PDF, or plain text are allowed.")
+    if size > _INTAKE_MAX_ATTACH_BYTES:
+        raise HTTPException(413, "File exceeds the 15 MB limit.")
+    att_id = _uuid.uuid4().hex
+    key = _intake_attachment_key(team, att_id, filename)
+    params = {"Bucket": ATTACH_BUCKET, "Key": key, "ContentType": ctype}
+    put_headers = {"Content-Type": ctype}
+    if ATTACH_KMS_KEY_ID:
+        params["ServerSideEncryption"] = "aws:kms"
+        params["SSEKMSKeyId"] = ATTACH_KMS_KEY_ID
+        put_headers["x-amz-server-side-encryption"] = "aws:kms"
+        put_headers["x-amz-server-side-encryption-aws-kms-key-id"] = ATTACH_KMS_KEY_ID
+    try:
+        url = _s3_client().generate_presigned_url("put_object", Params=params, ExpiresIn=300)
+    except Exception as e:
+        log.warning("[Intake] presign failed for team %s: %s", team, e)
+        raise HTTPException(502, "Could not presign the upload (storage unavailable).")
+    return {"attId": att_id, "key": key, "url": url,
+            "name": _sanitize_filename(filename), "headers": put_headers}
 
 _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1236,6 +1304,11 @@ _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
     </div>
     <div><label class="req">Summary</label><input id="title" maxlength="200" placeholder="Short summary of the request or issue" required></div>
     <div><label>Details</label><textarea id="desc" maxlength="5000" placeholder="What happened? What do you need? Steps, links, etc."></textarea></div>
+    <div><label>Attachments <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--mut)">— screenshots, PDFs (optional, up to 10)</span></label>
+      <input id="files" type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain" style="font-size:13px;padding:6px 0;border:none">
+      <div id="attStatus" style="font-size:12px;color:var(--mut);display:none;margin-top:4px"></div>
+      <div id="attList" style="display:flex;flex-direction:column;gap:6px;margin-top:8px"></div>
+    </div>
     <div class="row">
       <div><label class="req">Your email</label><input id="email" type="email" maxlength="200" placeholder="you@example.com" required></div>
       <div><label>Your name</label><input id="name" maxlength="120" placeholder="Optional"></div>
@@ -1266,11 +1339,34 @@ async function loadTypes(team){
   }catch(e){ ts.innerHTML='<option value="">—</option>'; }
 }
 $('#team').addEventListener('change',function(e){ if(e.target.value) loadTypes(e.target.value); });
+var _atts=[];
+function renderAtts(){
+  $('#attList').innerHTML=_atts.map(function(a,i){return '<div style="display:flex;align-items:center;gap:8px;font-size:12px;background:#f4f6f9;border:1px solid var(--bd);border-radius:6px;padding:5px 9px"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(a.name)+'</span><button type="button" class="attrm" data-i="'+i+'" style="background:none;border:none;color:#a5281c;cursor:pointer;font-weight:700;padding:0;font-size:14px">&times;</button></div>';}).join('');
+  Array.prototype.forEach.call(document.querySelectorAll('.attrm'),function(b){ b.onclick=function(){ _atts.splice(+b.getAttribute('data-i'),1); renderAtts(); }; });
+}
+async function onFiles(ev){
+  var files=[].slice.call(ev.target.files||[]); ev.target.value=''; clearErr();
+  var team=$('#team').value; if(!team){ showErr('Choose a team before attaching files.'); return; }
+  var st=$('#attStatus');
+  for(var i=0;i<files.length;i++){
+    if(_atts.length>=10){ showErr('You can attach up to 10 files.'); break; }
+    var f=files[i]; if(st){ st.style.display='block'; st.textContent='Uploading '+f.name+'…'; }
+    try{
+      var pr=await fetch('/api/intake/'+encodeURIComponent(team)+'/attach',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:f.name,contentType:f.type||'application/octet-stream',size:f.size})});
+      var pd=await pr.json().catch(function(){return {}}); if(!pr.ok) throw new Error((pd&&pd.detail)||'rejected');
+      var put=await fetch(pd.url,{method:'PUT',headers:pd.headers||{'Content-Type':f.type||'application/octet-stream'},body:f});
+      if(!put.ok) throw new Error('upload failed');
+      _atts.push({attId:pd.attId,key:pd.key,name:pd.name||f.name,contentType:f.type||'application/octet-stream',size:f.size}); renderAtts();
+    }catch(e){ showErr(f.name+': '+(e.message||'upload failed')); }
+  }
+  if(st) st.style.display='none';
+}
+$('#files').addEventListener('change',onFiles);
 async function submitForm(ev){
   ev.preventDefault(); clearErr();
   var team=$('#team').value; if(!team){ showErr('Please choose a team.'); return false; }
   var btn=$('#submitBtn'); btn.disabled=true;
-  var payload={title:$('#title').value,description:$('#desc').value,type:$('#type').value,priority:$('#priority').value,email:$('#email').value,name:$('#name').value};
+  var payload={title:$('#title').value,description:$('#desc').value,type:$('#type').value,priority:$('#priority').value,email:$('#email').value,name:$('#name').value,attachments:_atts};
   try{
     var r=await fetch('/api/intake/'+encodeURIComponent(team),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     var d=await r.json().catch(function(){return {}});

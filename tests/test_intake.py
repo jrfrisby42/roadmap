@@ -125,3 +125,38 @@ def test_submit_ignores_invalid_priority(client, team, admin_headers):
     it = next(p for p in client.get("/api/all", headers=admin_headers).json()["projects"]
               if p["name"] == "Bad prio")
     assert it["priority"] == ""
+
+
+# ── 4.14.2: portal attachments (public presign + submit-records) ──────────────
+def test_intake_presign_validation(client, team, admin_headers):
+    # Disabled team → 404 (before any S3 call).
+    server._rate.clear()
+    assert client.post(f"/api/intake/{team}/attach",
+                       json={"filename": "a.png", "contentType": "image/png", "size": 10}).status_code == 404
+    _expose(client, admin_headers, types=["Bug"])
+    server._rate.clear()
+    # Disallowed content-type → 415.
+    assert client.post(f"/api/intake/{team}/attach",
+                       json={"filename": "a.exe", "contentType": "application/x-msdownload",
+                             "size": 10}).status_code == 415
+    server._rate.clear()
+    # Oversized → 413.
+    assert client.post(f"/api/intake/{team}/attach",
+                       json={"filename": "big.png", "contentType": "image/png",
+                             "size": 99_000_000}).status_code == 413
+
+
+def test_submit_records_intake_attachment_and_rejects_foreign_key(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    server._rate.clear()
+    good = {"attId": "abc123", "key": f"intake/{team}/abc123/shot.png",
+            "name": "shot.png", "contentType": "image/png", "size": 100}
+    foreign = {"attId": "x", "key": "items/5/x/secret.png", "name": "secret.png", "size": 1}
+    r = client.post(f"/api/intake/{team}",
+                    json={"title": "With shot", "email": "a@b.com", "attachments": [good, foreign]})
+    assert r.status_code == 200
+    it = next(p for p in client.get("/api/all", headers=admin_headers).json()["projects"]
+              if p["name"] == "With shot")
+    keys = [a["key"] for a in (it.get("attachments") or [])]
+    assert f"intake/{team}/abc123/shot.png" in keys        # our-prefix key kept
+    assert not any(k.startswith("items/") for k in keys)   # foreign key dropped
