@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file gives Claude Code the context it needs to be useful immediately. Read it before touching code. See `ARCHITECTURE.md` for deep references and `DEPLOYMENT.md` for production operations.
+This file gives Claude Code the context it needs to be useful immediately. Read it before touching code. See `ARCHITECTURE.md` for deep references, `DEPLOYMENT.md` for production operations, and `INTAKE-PORTAL.md` for the public ticket portal's deep-link (prefill) parameters + testing guide.
 
 ---
 
