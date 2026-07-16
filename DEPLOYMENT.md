@@ -246,3 +246,45 @@ Changing `.env` requires a service restart.
 | **Total** | **~$15–17/mo** |
 
 Reserved instance (1yr) brings the compute to ~$7.50/mo.
+
+---
+
+## Automated database backups (off-box → S3)
+
+`tools/backup-dbs.sh` takes a WAL-safe hot backup (`sqlite3 .backup`) of every
+`/data/tenants/*/roadmap.db`, gzips it, and uploads to
+`s3://$BUCKET/db-backups/<team>/<UTC-timestamp>.db.gz`. Auto-discovers teams, so
+new teams need no config change. This is the off-box insurance beyond EBS
+snapshots (and complements the in-app **Admin → Data → Full Backup**, which is a
+manual, per-team JSON via `GET /api/export`).
+
+**One-time setup:**
+1. **Bucket + IAM.** Use a dedicated bucket (recommended), e.g. `frazil-flow-backups`,
+   and grant the EC2 instance role `s3:PutObject` on `arn:aws:s3:::frazil-flow-backups/db-backups/*`.
+   (The attachments-bucket grant is prefix-scoped to `items/*`+`intake/*`, and the
+   role is denied `ListBucket` — don't assume backups can reuse it; the first run
+   surfaces `AccessDenied` if the policy is missing.)
+2. **Install the script:**
+   ```bash
+   scp tools/backup-dbs.sh ubuntu@52.35.224.183:/tmp/
+   ssh ubuntu@52.35.224.183 'sudo mv /tmp/backup-dbs.sh /opt/roadmap/ && sudo chmod +x /opt/roadmap/backup-dbs.sh'
+   ```
+3. **Verify a first run** (surfaces any IAM issue immediately):
+   ```bash
+   ssh ubuntu@52.35.224.183 'sudo BUCKET=frazil-flow-backups /opt/roadmap/backup-dbs.sh'
+   ```
+4. **Schedule (cron, every 6h):** `sudo crontab -e` →
+   ```
+   0 */6 * * * BUCKET=frazil-flow-backups /opt/roadmap/backup-dbs.sh >> /var/log/roadmap-backup.log 2>&1
+   ```
+5. **Retention:** add an S3 lifecycle rule on the `db-backups/` prefix (e.g. expire
+   after 30 days). The role is denied `ListBucket`, so the script cannot prune.
+
+**Restore:** `aws s3 cp s3://…/<team>/<ts>.db.gz .`, `gunzip`, stop the service,
+replace `/data/tenants/<team>/roadmap.db`, start the service. (Test restores
+periodically — an untested backup is a hope, not a backup.)
+
+**Upgrade path (continuous / PITR):** for near-zero-loss recovery, Litestream can
+stream each DB to S3 with point-in-time restore. It needs a per-DB config entry
+(regenerated when a team is added), so the cron snapshot above is the simpler
+baseline; add Litestream if the recovery-window requirement tightens.
