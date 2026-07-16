@@ -1496,7 +1496,7 @@
       <div style="display:flex;align-items:center;gap:12px">
         <h2 id="modalTitle" style="margin:0">Edit Project</h2>
         <button type="button" id="modalOpenPageBtn" onclick="openItemPageFromModal()" title="Open the full item page (schedule, activity, comments)"
-          style="display:none;align-items:center;gap:6px;background:var(--frz-accent,#0059A9);color:#fff;border:none;padding:6px 13px;border-radius:8px;font-family:'Lato',sans-serif;font-weight:600;font-size:13px;cursor:pointer">
+          style="display:none;align-items:center;gap:6px;background:#0059A9;color:#fff;border:none;padding:6px 13px;border-radius:8px;font-family:'Lato',sans-serif;font-weight:600;font-size:13px;cursor:pointer">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           Open Item Page
         </button>
@@ -2079,7 +2079,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.25.0';
+const APP_VERSION = '4.26.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -15861,6 +15861,13 @@ if ('serviceWorker' in navigator) {
     --accent:#2F86DE;   /* de-indigo'd reused subtree, dark accent */
     --surface2:var(--frz-bg-surface);   /* dark: lift hijacked chrome buttons/hovers off the page (production button rule paints var(--surface2)) */
   }
+  /* Dark mode: the lighter accent (#2F86DE) washes out as a solid fill under white
+     button text. Primary action buttons use the deeper Frazil blue so they stay
+     crisp (links/chips keep the lighter accent). Out-specifies the base rules. */
+  body.dark-mode .frz-beta .frz-newitem,
+  body.dark-mode .frz-beta .frz-list-panel .frz-lp-openbtn { background:#0059A9; }
+  body.dark-mode .frz-beta .frz-newitem:hover,
+  body.dark-mode .frz-beta .frz-list-panel .frz-lp-openbtn:hover { background:#004A8F; }
   /* ── Body-level modal recolor (Flow shell active) ───────────────────────────
      Production modals (.modal-bg) open at <body> level, OUTSIDE .frz-beta, so
      they never inherit the shell's token remaps and keep classic indigo/grays.

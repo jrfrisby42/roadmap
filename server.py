@@ -943,7 +943,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.25.0"
+APP_VERSION = "4.26.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1556,7 +1556,7 @@ def _ticket_status_page(p, comments):
 <div class="k">{esc(key)}</div><h1 style="margin:4px 0 12px;font-size:19px">{esc(p.get("name") or "Ticket")}</h1>
 <div style="margin-bottom:14px">Status: <span class="badge">{esc(p.get("status") or "—")}</span></div>
 {row_html}{desc_html}{att_html}{thread_html}{myt}
-</div><div class="foot">A private view of your ticket — replies go straight to the team.</div></div>{_TICKET_REPLY_JS}</body></html>"""
+</div><div class="foot">Reporter View - Replies go straight to the team.</div></div>{_TICKET_REPLY_JS}</body></html>"""
 
 def _ticket_error_page(msg):
     esc = html.escape

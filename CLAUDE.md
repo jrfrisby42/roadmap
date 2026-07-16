@@ -462,6 +462,9 @@ These are real choices we've made, not oversights. If something looks like it wo
 - Server code is generally 4-space indent, type hints where convenient but not exhaustive.
 - Frontend uses 2-space indent. Function names are camelCase.
 - Error messages should be specific: `"Test period (3w) cannot equal or exceed the time estimate (3w)"` not `"Invalid"`.
+- **No em dashes anywhere** (neither the U+2014 character nor the `&mdash;` entity), in UI copy, page text, emails, comments, or docs. Use a spaced hyphen (` - `), a colon, or reword.
+- **Never render the legacy indigo accent** (`#5b4fff` / `rgb(91,79,255)` / `#7b6fff` / `#4a3de0`). Use Frazil blue `#0059A9` (dark `#2F86DE`) via `var(--accent)`/`var(--frz-accent)`.
+- **Terminology by surface:** external/reporter-facing (portal, `/ticket`, `/my-tickets`, emails) says "ticket"; internal staff UI (item page, modal, Kanban, List, notifications) says "Item".
 
 ---
 
