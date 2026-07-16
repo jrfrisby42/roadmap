@@ -945,7 +945,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.30.0"
+APP_VERSION = "4.31.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1292,7 +1292,12 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     if _turnstile_enabled() and not _verify_turnstile(body.get("turnstileToken") or "", ip):
         raise HTTPException(403, "Verification failed - please complete the CAPTCHA and try again.")
     title = (body.get("title") or "").strip()[:200]
-    desc  = _strip_tags((body.get("description") or "").strip())[:5000]  # plain text only
+    _desc_txt = _strip_tags((body.get("description") or "").strip())[:5000]  # user text, tags removed
+    # Store as safe HTML: escaped text + <br> line breaks. Description is an HTML field
+    # everywhere in the app (item page / modal render it via innerHTML, the rich-text
+    # editor round-trips it), so plain "\n" would collapse on display and be lost on the
+    # next save. Escaping first keeps it safe on the public status page + emails.
+    desc = html.escape(_desc_txt.replace("\r\n", "\n").replace("\r", "\n")).replace("\n", "<br>")
     email = (body.get("email") or "").strip()[:200]
     name  = (body.get("name") or "").strip()[:120]
     ttype = (body.get("type") or "").strip()
@@ -1437,6 +1442,20 @@ def _depts_for_email(team: str, email: str) -> list:
 
 _PRIO_LABEL = {"1": "Urgent", "2": "High", "3": "Medium", "4": "Low"}
 
+def _status_color(team, status):
+    """Status swatch matching the logged-in view (roadmap.html ~L11276): terminal =
+    green, testing = blue, active = accent blue, everything else = muted grey. Driven
+    by the team's config-driven status-flag maps (never hardcoded status names)."""
+    if not status:
+        return "#6b7280"
+    if (_cfg_val(team, "statusIsTerminal", {}) or {}).get(status):
+        return "#22b96e"
+    if (_cfg_val(team, "statusIsTesting", {}) or {}).get(status):
+        return "#0090d4"
+    if (_cfg_val(team, "statusIsActive", {}) or {}).get(status):
+        return "#0059A9"
+    return "#6b7280"
+
 def _intake_email_html(item, rows, heading, intro, cta_label, cta_url, note=None, secondary=None):
     esc = html.escape
     sec_html = (f'<div style="text-align:center;margin:8px 0 0"><a href="{esc(secondary[1])}" '
@@ -1445,8 +1464,10 @@ def _intake_email_html(item, rows, heading, intro, cta_label, cta_url, note=None
         f'<tr><td style="padding:5px 0;color:#6b7280;font-size:13px;width:96px;vertical-align:top">{esc(k)}</td>'
         f'<td style="padding:5px 0;color:#1f2733;font-size:13px;font-weight:600">{esc(v)}</td></tr>'
         for k, v in rows if v)
-    # `note` (e.g. a team comment) is shown as a highlighted block; otherwise the item's description.
-    block = esc(note) if note is not None else esc(item.get("description") or "")
+    # `note` (a team comment) is plain text -> escape + honor its line breaks. The item
+    # description is stored as safe HTML (escaped text + <br>), so render it as-is; the
+    # pre-wrap container below also keeps any legacy plain-text descriptions readable.
+    block = esc(note).replace("\n", "<br>") if note is not None else (item.get("description") or "")
     lbl = ('<div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;'
            'letter-spacing:.4px;margin-bottom:5px">Message from the team</div>') if note is not None else ""
     desc_html = (f'<div style="margin-top:12px;padding-top:12px;border-top:1px solid #eef1f4;'
@@ -1575,7 +1596,7 @@ def _ticket_status_page(p, comments):
         f'<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f0f3f6;font-size:14px">'
         f'<span style="color:#6b7280">{esc(k)}</span><span style="color:#1f2733;font-weight:600">{esc(v)}</span></div>'
         for k, v in rows if v)
-    desc = esc(p.get("description") or "")
+    desc = p.get("description") or ""   # stored as safe HTML (escaped text + <br>); pre-wrap also covers legacy plain text
     desc_html = (f'<div style="margin-top:16px"><div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Details</div>'
                  f'<div style="font-size:14px;color:#1f2733;white-space:pre-wrap;line-height:1.55">{desc}</div></div>') if desc else ""
     atts = [a for a in (p.get("attachments") or []) if isinstance(a, dict) and a.get("name")]
@@ -1612,7 +1633,7 @@ def _ticket_status_page(p, comments):
 .foot{{padding:12px 24px;border-top:1px solid #eef1f4;color:#9aa4b1;font-size:11px;text-align:center}}</style></head>
 <body><div class="card">{_flow_hd()}<div class="bd">
 <div class="k">{esc(key)}</div><h1 style="margin:4px 0 12px;font-size:19px">{esc(p.get("name") or "Ticket")}</h1>
-<div style="margin-bottom:14px">Status: <span class="badge">{esc(p.get("status") or "-")}</span></div>
+<div style="margin-bottom:14px">Status: <span class="badge" style="background:{_status_color(p.get('_team',''), p.get('status'))}22;color:{_status_color(p.get('_team',''), p.get('status'))};border-color:{_status_color(p.get('_team',''), p.get('status'))}55">{esc(p.get("status") or "-")}</span></div>
 {row_html}{desc_html}{att_html}{thread_html}{myt}
 </div><div class="foot">Reporter View - Replies go straight to the team.</div></div>{_TICKET_REPLY_JS}</body></html>"""
 
@@ -1820,7 +1841,7 @@ def ticket_status(team: str = "", id: str = "", t: str = ""):
         crows = c.execute(
             "SELECT author, body, created_ts, source FROM comments WHERE item_id=? ORDER BY id ASC", (pid,)
         ).fetchall()
-    p = json.loads(row["data"]); p["id"] = pid
+    p = json.loads(row["data"]); p["id"] = pid; p["_team"] = team_s
     comments = [dict(c) for c in crows
                 if c["source"] == "portal" or re.search(r'@reporter\b', c["body"] or '', re.I)]
     return HTMLResponse(_ticket_status_page(p, comments), headers={"Cache-Control": "no-cache"})
@@ -1882,16 +1903,25 @@ def _my_tickets_page(email, items, scopes=None, active=None):
     `active` = (team, dept) when viewing a dept queue, else None (the reporter's own)."""
     esc = html.escape
     scopes = scopes or []
+    _col_cache = {}
+    def _stcol(tm, st):   # memoized so a long queue doesn't re-read config per row
+        k = (tm, st)
+        if k not in _col_cache:
+            _col_cache[k] = _status_color(tm, st)
+        return _col_cache[k]
     if items:
         cards = "".join(
             f'<a href="{esc(APP_BASE_URL)}/ticket?team={esc(p["_team"])}&id={p["id"]}&t={esc(_ticket_token(p["_team"], p["id"]))}" '
             f'style="display:block;text-decoration:none;color:inherit;border:1px solid #e6ebf1;border-radius:10px;padding:12px 14px;margin-bottom:10px">'
             f'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">'
             f'<span style="font-family:ui-monospace,Menlo,monospace;color:#0059A9;font-weight:700;font-size:12px">{esc(p.get("itemKey") or "#"+str(p["id"]))}</span>'
-            f'<span style="background:#eaf2fb;color:#0059A9;border:1px solid #cfe0f4;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700">{esc(p.get("status") or "-")}</span></div>'
+            f'<span style="display:inline-flex;align-items:center;gap:6px">'
+            f'<span style="font-size:11px;color:#9aa4b1;font-weight:600;text-transform:uppercase;letter-spacing:.3px">Status</span>'
+            f'<span style="background:{_c}22;color:{_c};border:1px solid {_c}55;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700">{esc(p.get("status") or "-")}</span>'
+            f'</span></div>'
             f'<div style="font-size:14px;font-weight:600;color:#1f2733;margin-top:6px">{esc(p.get("name") or "Ticket")}</div>'
             f'<div style="font-size:12px;color:#6b7280;margin-top:2px">{esc(p.get("product") or "")}{" · " if p.get("product") and p.get("createdAt") else ""}{esc((p.get("createdAt") or "")[:10])}</div></a>'
-            for p in items)
+            for p in items for _c in [_stcol(p["_team"], p.get("status"))])
     elif active:
         cards = '<div style="color:#6b7280;font-size:14px;text-align:center;padding:20px 0">No tickets for this department yet.</div>'
     else:

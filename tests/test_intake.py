@@ -626,3 +626,55 @@ def test_non_member_sees_no_toggle(client, team, admin_headers):
     assert r.status_code == 200
     assert "Just mine" in r.text
     assert "dept=" not in r.text                                # no toggle pills
+
+
+# ── 4.31.0: description line-breaks persist + status pill color ───────────────
+def _submit(client, team, **body):
+    server._rate.clear()
+    return client.post(f"/api/intake/{team}", json={"email": "rep@x.com", **body})
+
+
+def _item_named(client, admin_headers, name):
+    allr = client.get("/api/all", headers=admin_headers).json()
+    return next(p for p in allr["projects"] if p["name"] == name)
+
+
+def test_description_newlines_persist_as_html(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    _submit(client, team, title="Multi line", description="line1\nline2\n\nline4")
+    it = _item_named(client, admin_headers, "Multi line")
+    # Stored as HTML with <br> so line breaks survive the app's innerHTML/editor round-trip.
+    assert it["description"] == "line1<br>line2<br><br>line4"
+
+
+def test_description_html_is_escaped(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    _submit(client, team, title="Sneaky", description="<script>alert(1)</script>a < b")
+    it = _item_named(client, admin_headers, "Sneaky")
+    assert "<script" not in it["description"]      # tag stripped
+    assert "&lt;" in it["description"]              # stray '<' escaped, not left raw
+
+
+def test_status_page_shows_line_breaks(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    pid = _submit(client, team, title="Wrapped", description="first\nsecond").json()["id"]
+    r = client.get(f"/ticket?team={team}&id={pid}&t={server._ticket_token(team, pid)}")
+    assert r.status_code == 200
+    assert "first<br>second" in r.text
+
+
+def test_status_pill_uses_configured_color(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    _set(client, admin_headers, "statusIsActive", {"New": True})   # default status is active
+    pid = _submit(client, team, title="Colored").json()["id"]
+    r = client.get(f"/ticket?team={team}&id={pid}&t={server._ticket_token(team, pid)}")
+    assert "#0059A9" in r.text                     # active-status accent, matching the app
+
+
+def test_my_tickets_card_has_status_label(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    _submit(client, team, title="Mine one")
+    tok = server._reporter_list_token("rep@x.com")
+    r = client.get(f"/my-tickets?email=rep@x.com&t={tok}")
+    assert r.status_code == 200
+    assert ">Status<" in r.text                     # the clarifying label next to the pill
