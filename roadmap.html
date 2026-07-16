@@ -48,7 +48,7 @@
 
   /* ── Dark mode: global element overrides ── */
   body.dark-mode select,
-  body.dark-mode button:not(.primary):not(.btn-save):not(.btn-cancel):not(.btn-danger):not(.btn-ic):not(.rte-btn):not(.frz-lp-openbtn):not(.frz-bcard-open):not(#modalOpenPageBtn) {
+  body.dark-mode button:not(.primary):not(.btn-save):not(.btn-cancel):not(.btn-danger):not(.btn-ic):not(.rte-btn):not(.frz-newitem):not(.frz-lp-openbtn):not(.frz-bcard-open):not(#modalOpenPageBtn) {
     background: var(--surface2) !important;
     color: var(--text) !important;
     border-color: var(--border) !important;
@@ -1496,7 +1496,7 @@
       <div style="display:flex;align-items:center;gap:12px">
         <h2 id="modalTitle" style="margin:0">Edit Project</h2>
         <button type="button" id="modalOpenPageBtn" onclick="openItemPageFromModal()" title="Open the full item page (schedule, activity, comments)"
-          style="display:none;align-items:center;gap:6px;background:var(--accent);color:#fff;border:none;padding:6px 13px;border-radius:8px;font-family:'Lato',sans-serif;font-weight:600;font-size:13px;cursor:pointer">
+          style="display:none;align-items:center;gap:6px;background:#0059A9;color:#fff;border:none;padding:6px 13px;border-radius:8px;font-family:'Lato',sans-serif;font-weight:600;font-size:13px;cursor:pointer">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           Open Item Page
         </button>
@@ -2079,7 +2079,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.27.0';
+const APP_VERSION = '4.27.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -13854,8 +13854,8 @@ function renderItemPage(p){
       </div>` : '',
       `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 0">
         <span style="display:flex;flex-direction:column;gap:1px">
-          <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Hidden</span>
-          <span style="font-size:10px;color:var(--muted);font-weight:400">Hides from the Gantt only (still shows in Kanban, List, Planning, Dashboard)</span>
+          <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Gantt visibility</span>
+          <span style="font-size:10px;color:var(--muted);font-weight:400">"Hidden" removes it from the Gantt only (still shows in Kanban, List, Planning, Dashboard)</span>
         </span>
         <button onclick="ipToggleHidden(${p.id})" title="Hidden items are hidden from the Gantt only - they still show in Kanban, List, Planning and Dashboard"
           style="padding:5px 12px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:12px;font-weight:700;background:${p.hidden?'var(--accent)':'var(--surface)'};color:${p.hidden?'#fff':'var(--text)'}">
@@ -15926,8 +15926,17 @@ if ('serviceWorker' in navigator) {
   body.dark-mode #frzDeptAdd,
   body.dark-mode #frzFilterBar .frz-chip-clear,
   body.dark-mode #frzSettingsModal .frz-theme-seg button.is-active {
-    background:var(--frz-accent) !important; color:#fff !important; border-color:var(--frz-accent) !important;
+    background:#0059A9 !important; color:#fff !important; border-color:#0059A9 !important;
   }
+  /* Dark: primary action buttons use the deeper Frazil blue - the lighter
+     --frz-accent (#2F86DE) washes out as a solid fill under white text. These
+     classes are excluded from the wash rule above, so this applies cleanly. */
+  body.dark-mode .frz-beta .frz-newitem,
+  body.dark-mode .frz-beta .frz-list-panel .frz-lp-openbtn {
+    background:#0059A9 !important; border-color:#0059A9 !important; color:#fff !important;
+  }
+  body.dark-mode .frz-beta .frz-newitem:hover,
+  body.dark-mode .frz-beta .frz-list-panel .frz-lp-openbtn:hover { background:#004A8F !important; }
   /* The @mention typeahead is appended to <body> (above the shell), so it is
      intentionally unscoped - restyle it directly under body.dark-mode. */
   body.dark-mode .frz-mention-menu { background:#181b26; border-color:#3d4358; }
