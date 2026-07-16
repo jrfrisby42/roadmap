@@ -563,3 +563,66 @@ def test_no_department_notify_without_meta(client, team, admin_headers, mailbox)
     # no departmentMeta configured -> no dept emails (only reporter, since no team notify set)
     assert not any("ticket - T" in subj and to not in ("rep@x.com",) and "IT ticket" in subj
                    for to, subj in mailbox)
+
+
+# ── 4.30.0: My Tickets department queue + toggle ─────────────────────────────
+def _submit_dept_ticket(client, team, title, reporter, dept):
+    server._rate.clear()
+    return client.post(f"/api/intake/{team}",
+                       json={"title": title, "email": reporter, "department": dept})
+
+
+def test_dept_queue_lists_dept_tickets(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    _set(client, admin_headers, "departments", ["IT", "Sales"])
+    _set(client, admin_headers, "departmentMeta", {"IT": {"emails": "member@x.com"}})
+    _submit_dept_ticket(client, team, "Printer down", "rep1@x.com", "IT")
+    tok = server._reporter_list_token("member@x.com")
+    r = client.get(f"/my-tickets?email=member@x.com&t={tok}&team={team}&dept=IT")
+    assert r.status_code == 200
+    assert "Printer down" in r.text          # a ticket the member never reported
+    assert "IT tickets" in r.text            # dept-queue heading
+
+
+def test_dept_queue_blocked_when_not_member(client, team, admin_headers):
+    # A valid token for an email that ISN'T on the dept's list must NOT open the queue.
+    _expose(client, admin_headers, types=["Bug"])
+    _set(client, admin_headers, "departments", ["IT"])
+    _set(client, admin_headers, "departmentMeta", {"IT": {"emails": "member@x.com"}})
+    _submit_dept_ticket(client, team, "Secret", "rep2@x.com", "IT")
+    tok = server._reporter_list_token("outsider@x.com")   # valid token, wrong person
+    r = client.get(f"/my-tickets?email=outsider@x.com&t={tok}&team={team}&dept=IT")
+    assert r.status_code == 404
+    assert "Secret" not in r.text
+
+
+def test_dept_queue_requires_valid_token(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    _set(client, admin_headers, "departments", ["IT"])
+    _set(client, admin_headers, "departmentMeta", {"IT": {"emails": "member@x.com"}})
+    r = client.get(f"/my-tickets?email=member@x.com&t=bogus&team={team}&dept=IT")
+    # Bad token -> self-service landing (never the queue), no 500.
+    assert r.status_code == 200
+    assert "View your tickets" in r.text
+
+
+def test_my_tickets_toggle_shows_dept_pill(client, team, admin_headers):
+    # A dept member landing on their own tickets sees a toggle pill linking to the queue.
+    _expose(client, admin_headers, types=["Bug"])
+    _set(client, admin_headers, "departments", ["IT"])
+    _set(client, admin_headers, "departmentMeta", {"IT": {"emails": "member2@x.com"}})
+    tok = server._reporter_list_token("member2@x.com")
+    r = client.get(f"/my-tickets?email=member2@x.com&t={tok}")
+    assert r.status_code == 200
+    assert "My tickets" in r.text and "dept=IT" in r.text      # toggle present
+
+
+def test_non_member_sees_no_toggle(client, team, admin_headers):
+    # A plain reporter (in no dept) gets their own list with no dept pills.
+    _expose(client, admin_headers, types=["Bug"])
+    _submit_dept_ticket(client, team, "Just mine", "solo@x.com", "")
+    tok = server._reporter_list_token("solo@x.com")
+    r = client.get(f"/my-tickets?email=solo@x.com&t={tok}")
+    assert r.status_code == 200
+    assert "Just mine" in r.text
+    assert "dept=" not in r.text                                # no toggle pills

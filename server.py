@@ -945,7 +945,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.29.0"
+APP_VERSION = "4.30.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1413,6 +1413,28 @@ def _reporter_list_token(email: str) -> str:
 def _my_tickets_url(email: str) -> str:
     return f"{APP_BASE_URL}/my-tickets?email={_urlq((email or '').strip(), safe='')}&t={_reporter_list_token(email)}"
 
+def _dept_queue_url(email: str, team: str, dept: str) -> str:
+    """Token-gated dept-queue link for a dept member (bound to their email)."""
+    return (f"{APP_BASE_URL}/my-tickets?email={_urlq((email or '').strip(), safe='')}"
+            f"&t={_reporter_list_token(email)}&team={_urlq(team, safe='')}&dept={_urlq(dept, safe='')}")
+
+def _depts_for_email(team: str, email: str) -> list:
+    """Dept names in `team` whose departmentMeta[d].emails include `email` (case-
+    insensitive). Drives the /my-tickets dept-queue toggle + its access gate."""
+    email = (email or "").strip().lower()
+    if not email:
+        return []
+    meta = _cfg_val(team, "departmentMeta", {}) or {}
+    out = []
+    if isinstance(meta, dict):
+        for name, entry in meta.items():
+            if not isinstance(entry, dict):
+                continue
+            addrs = [a.strip().lower() for a in re.split(r"[,;]", entry.get("emails", "") or "") if a.strip()]
+            if email in addrs:
+                out.append(name)
+    return sorted(out)
+
 _PRIO_LABEL = {"1": "Urgent", "2": "High", "3": "Medium", "4": "Low"}
 
 def _intake_email_html(item, rows, heading, intro, cta_label, cta_url, note=None, secondary=None):
@@ -1501,12 +1523,18 @@ def _intake_send_emails(team, item, pid):
     turl = f"{APP_BASE_URL}/ticket?team={team}&id={pid}&t={_ticket_token(team, pid)}"
     for addr, depts in dept_map.items():
         dlabel = ", ".join(sorted(depts))
+        qdept = sorted(depts)[0]
+        qurl = _dept_queue_url(addr, team, qdept)
         drows = base_rows + [("Department", dlabel),
                              ("Reporter", f"{item.get('reporter','')} <{reporter_email}>".strip())]
         body = _intake_email_html(item, drows, f"New ticket for {dlabel}",
-            f"A new ticket was submitted for the {dlabel} department.", "View ticket", turl)
+            f"A new ticket was submitted for the {dlabel} department. Open your "
+            f"department queue below to see it alongside the rest.",
+            f"Open the {qdept} queue", qurl,
+            secondary=("View just this ticket", turl))
         text = (f"New {dlabel} ticket {key}: {item.get('name','')}\n"
-                f"Reporter: {item.get('reporter','')} <{reporter_email}>\n\nView: {turl}\n")
+                f"Reporter: {item.get('reporter','')} <{reporter_email}>\n\n"
+                f"{qdept} queue: {qurl}\nThis ticket: {turl}\n")
         try: send_email(addr, f"[{key}] New {dlabel} ticket - {item.get('name','')}", text, body)
         except Exception as e: log.warning(f"[Intake] dept email failed to {addr} for {pid}: {e}")
 
@@ -1849,8 +1877,11 @@ def ticket_reply(body: dict = Body(...), request: FRequest = None):
         log.warning(f"[Intake] reporter-reply team email failed for {pid}: {e}")
     return {"ok": True}
 
-def _my_tickets_page(email, items):
+def _my_tickets_page(email, items, scopes=None, active=None):
+    """`scopes` = [(team, dept)] dept memberships for this email (drives the toggle);
+    `active` = (team, dept) when viewing a dept queue, else None (the reporter's own)."""
     esc = html.escape
+    scopes = scopes or []
     if items:
         cards = "".join(
             f'<a href="{esc(APP_BASE_URL)}/ticket?team={esc(p["_team"])}&id={p["id"]}&t={esc(_ticket_token(p["_team"], p["id"]))}" '
@@ -1861,16 +1892,39 @@ def _my_tickets_page(email, items):
             f'<div style="font-size:14px;font-weight:600;color:#1f2733;margin-top:6px">{esc(p.get("name") or "Ticket")}</div>'
             f'<div style="font-size:12px;color:#6b7280;margin-top:2px">{esc(p.get("product") or "")}{" · " if p.get("product") and p.get("createdAt") else ""}{esc((p.get("createdAt") or "")[:10])}</div></a>'
             for p in items)
+    elif active:
+        cards = '<div style="color:#6b7280;font-size:14px;text-align:center;padding:20px 0">No tickets for this department yet.</div>'
     else:
         cards = '<div style="color:#6b7280;font-size:14px;text-align:center;padding:20px 0">No tickets found for this email yet.</div>'
+    # Toggle: "My tickets" + one pill per (team, dept) this email belongs to.
+    toggle = ""
+    if scopes:
+        name_counts = {}
+        for st, sd in scopes:
+            name_counts[sd] = name_counts.get(sd, 0) + 1
+        def _pill(label, url, is_active):
+            style = ("background:#0059A9;color:#fff;border:1px solid #0059A9" if is_active
+                     else "background:#fff;color:#0059A9;border:1px solid #cfe0f4")
+            return (f'<a href="{esc(url)}" style="display:inline-block;text-decoration:none;'
+                    f'border-radius:999px;padding:6px 14px;font-size:13px;font-weight:700;{style}">{esc(label)}</a>')
+        pills = [_pill("My tickets", _my_tickets_url(email), active is None)]
+        for st, sd in scopes:
+            label = f"{sd} ({st})" if name_counts.get(sd, 0) > 1 else sd
+            is_active = bool(active) and active[0] == st and active[1] == sd
+            pills.append(_pill(label, _dept_queue_url(email, st, sd), is_active))
+        toggle = ('<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">'
+                  + "".join(pills) + "</div>")
+    heading = f"{esc(active[1])} tickets" if active else "Your tickets"
+    subtitle = (f"Department queue · {esc(email)}" if active else esc(email))
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Your tickets</title>
 <style>body{{margin:0;background:#f4f6f9;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2733;padding:28px 16px}}
 .card{{max-width:560px;margin:0 auto;background:#fff;border:1px solid #e3e8ee;border-radius:14px;overflow:hidden;box-shadow:0 6px 26px rgba(20,40,70,.07)}}
 .hd{{background:#0059A9;color:#fff;padding:15px 24px;font-weight:700;font-size:16px}}.bd{{padding:20px 24px}}
 .foot{{padding:12px 24px;border-top:1px solid #eef1f4;color:#9aa4b1;font-size:11px;text-align:center}}</style></head>
 <body><div class="card">{_flow_hd()}<div class="bd">
-<h1 style="margin:0 0 4px;font-size:19px">Your tickets</h1>
-<p style="margin:0 0 16px;color:#6b7280;font-size:13px">{esc(email)}</p>
+<h1 style="margin:0 0 4px;font-size:19px">{heading}</h1>
+<p style="margin:0 0 16px;color:#6b7280;font-size:13px">{subtitle}</p>
+{toggle}
 {cards}
 <div style="text-align:center;margin-top:8px"><a href="{esc(APP_BASE_URL)}/report{('?email=' + _urlq(email, safe='')) if email else ''}" style="color:#0059A9;font-size:13px;font-weight:700;text-decoration:none">+ Submit a new ticket</a></div>
 </div><div class="foot">Private to you - please don't share this link.</div></div></body></html>"""
@@ -1906,19 +1960,32 @@ m.style.display='block';m.style.color='#1f7a34';m.textContent='If that address h
 if(e.value)e.focus();}})();</script></body></html>"""
 
 @app.get("/my-tickets", response_class=HTMLResponse)
-def my_tickets_page(email: str = "", t: str = ""):
-    """Public list of every portal ticket for a reporter email. Token-gated to
-    prevent enumeration; without a valid token we show a self-service landing that
-    emails the private link rather than a dead end."""
+def my_tickets_page(email: str = "", t: str = "", team: str = "", dept: str = ""):
+    """Public list of portal tickets, token-gated to the email (anti-enumeration).
+    Default = the reporter's own tickets across teams. With `&team=&dept=` it shows
+    that department's queue - but ONLY if the email is on that dept's notify list
+    (otherwise 404). A toggle switches between "My tickets" and each dept the email
+    belongs to. Without a valid token: self-service landing that mails the link."""
     email_n = (email or "").strip().lower()
     if not (email_n and t and hmac.compare_digest(_reporter_list_token(email_n), t)):
         return HTMLResponse(_my_tickets_landing(email_n), headers={"Cache-Control": "no-cache"})
-    items = []
+    want_team = (team or "").strip().lower()
+    want_dept = (dept or "").strip()
+    scopes = []          # [(team, dept)] dept memberships for this email
+    mine = []            # the reporter's own portal tickets
+    dept_items = []      # tickets in the requested dept scope
+    dept_ok = False
     try:
         for d in sorted(os.listdir(TENANTS_DIR)):
             if not (os.path.isdir(os.path.join(TENANTS_DIR, d))
                     and re.match(r"^[a-z0-9]+$", d) and _intake_open(d)):
                 continue
+            memberships = _depts_for_email(d, email_n)
+            for dn in memberships:
+                scopes.append((d, dn))
+            scoped_here = bool(want_dept) and d == want_team and want_dept in memberships
+            if scoped_here:
+                dept_ok = True
             with db(d) as c:
                 recs = c.execute("SELECT id, data FROM projects").fetchall()
             for r in recs:
@@ -1926,13 +1993,27 @@ def my_tickets_page(email: str = "", t: str = ""):
                     p = json.loads(r["data"])
                 except Exception:
                     continue
-                if p.get("source") == "portal" and (p.get("reporterEmail") or "").strip().lower() == email_n:
-                    p["id"] = r["id"]; p["_team"] = d
-                    items.append(p)
+                if p.get("source") != "portal":
+                    continue
+                p["id"] = r["id"]; p["_team"] = d
+                if (p.get("reporterEmail") or "").strip().lower() == email_n:
+                    mine.append(p)
+                if scoped_here and want_dept in (p.get("departments") or []):
+                    dept_items.append(p)
     except FileNotFoundError:
         pass
-    items.sort(key=lambda x: (x.get("createdAt") or ""), reverse=True)
-    return HTMLResponse(_my_tickets_page(email_n, items), headers={"Cache-Control": "no-cache"})
+    scopes.sort()
+    # A dept scope was requested but this email isn't a member (or the team isn't
+    # open) -> 404, so a valid token can't be used to enumerate other queues.
+    if (want_team or want_dept) and not dept_ok:
+        raise HTTPException(404, "Not found")
+    if dept_ok:
+        dept_items.sort(key=lambda x: (x.get("createdAt") or ""), reverse=True)
+        return HTMLResponse(_my_tickets_page(email_n, dept_items, scopes, (want_team, want_dept)),
+                            headers={"Cache-Control": "no-cache"})
+    mine.sort(key=lambda x: (x.get("createdAt") or ""), reverse=True)
+    return HTMLResponse(_my_tickets_page(email_n, mine, scopes, None),
+                        headers={"Cache-Control": "no-cache"})
 
 @app.post("/api/intake-track")
 def intake_track(body: dict = Body(...), request: FRequest = None):
