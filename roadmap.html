@@ -2092,7 +2092,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.31.1';
+const APP_VERSION = '4.32.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -4210,6 +4210,7 @@ function openItemPageFromModal(){
 
 function openProjectModal(id){
   if(!isAdmin && !isEditor){ if(id) openItemPage(id); return; } // viewers → item page
+  if(id && _isListPhone()){ openItemPage(id); return; }         // mobile: existing item → full page, never the edit modal (New Item, id null, still opens the sheet)
   editingId=id;
   const p=id?projects.find(x=>x.id===id):null;
 
@@ -15609,6 +15610,8 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-main { display:flex; flex-direction:column; min-width:0; min-height:0; }
   .frz-beta .frz-topbar { height:var(--frz-topbar-h); display:flex; align-items:center; gap:10px; padding:0 14px; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-surface); flex-shrink:0; }
   .frz-beta .frz-collapse { width:30px; height:30px; border:0; background:transparent; cursor:pointer; border-radius:8px; color:var(--frz-text-secondary); display:grid; place-items:center; flex-shrink:0; }
+  .frz-beta .frz-menu-close { display:none; margin-left:auto; width:36px; height:36px; border:0; background:transparent; cursor:pointer; border-radius:8px; color:var(--frz-text); font-size:20px; line-height:1; place-items:center; flex-shrink:0; }
+  .frz-beta .frz-menu-close:hover { background:var(--frz-bg-app); }
   .frz-beta .frz-collapse:hover { background:var(--frz-bg-app); }
   /* Collapse toggle lives in the rail now: right side of the brand when expanded
      (vertically centered with the logo), top of the icon list when collapsed. */
@@ -16284,10 +16287,14 @@ if ('serviceWorker' in navigator) {
        width, and let "More" (setCollapsed(false)) open the rail as an overlay drawer. */
     .frz-beta, .frz-beta.frz-narrow, .frz-beta.is-collapsed { grid-template-columns:1fr; }
     .frz-beta .frz-rail { display:none; }
+    /* The menu is its own full-screen scrolling page on phone (not a cramped drawer).
+       The brand row pins the top with an X to close, .frz-scroll fills + scrolls, the
+       footer (Settings/Admin) pins the bottom. */
     .frz-beta:not(.is-collapsed) .frz-rail {
-      display:flex; position:fixed; top:0; bottom:0; left:0; width:var(--frz-rail-w); max-width:84vw; z-index:90;
-      box-shadow:8px 0 28px rgba(20,40,63,.28);
+      display:flex; position:fixed; inset:0; width:100%; max-width:100%; z-index:95;
     }
+    .frz-beta .frz-collapse { display:none; }      /* the collapse toggle is meaningless full-screen */
+    .frz-beta .frz-menu-close { display:grid; }    /* ...the X closes the menu instead */
     .frz-beta .frz-scrim { inset:0; z-index:85; }
 
     /* Search opened from the bottom nav: full-width overlay pinned to the top bar. */
@@ -16516,6 +16523,7 @@ if ('serviceWorker' in navigator) {
             '<img class="frz-logo frz-logo-mark" src="'+FLOW_LOGO_MARK+'" alt="Flow">'+
           '</a>'+
           '<button class="frz-collapse" id="frzCollapse" aria-label="Toggle navigation" title="Toggle navigation [">'+IC.collapse+'</button>'+
+          '<button class="frz-menu-close" id="frzMenuClose" aria-label="Close menu" title="Close">✕</button>'+
         '</div>'+
         '<div class="frz-scroll">'+
           '<nav class="frz-section" id="frzViewNav" aria-label="Views"><div class="frz-heading">VIEWS</div></nav>'+
@@ -18022,6 +18030,8 @@ if ('serviceWorker' in navigator) {
     }); }
     // Bottom-nav More → open the rail drawer (overlays at narrow widths).
     var bmore=document.getElementById('frzBotMore'); if(bmore){ bmore.addEventListener('click', function(){ setCollapsed(false,false); }); }
+    // Full-screen mobile menu: the X in the brand row closes it (persists collapsed).
+    var mclose=document.getElementById('frzMenuClose'); if(mclose){ mclose.addEventListener('click', function(){ setCollapsed(true,false); }); }
     // Phase 5: Gantt nudge → open the same scope as a List.
     var gl=document.getElementById('frzGanttList'); if(gl){ gl.addEventListener('click', function(){ navigate('/list'+_frzCarryQS(true), false); }); }
     // On phone, tapping any rail destination closes the drawer (the collapse toggle is excluded).
@@ -20309,7 +20319,9 @@ if ('serviceWorker' in navigator) {
         if(e.target.closest('.list-chevron') || e.target.closest('.list-cb-cell')) return;  // expand/select → classic
         var row=e.target.closest('tr.list-row'); if(!row || !row.dataset.id) return;
         e.stopPropagation();                                            // pre-empt classic openItemPage
-        frzOpenPanel(parseInt(row.dataset.id,10));
+        var _rid=parseInt(row.dataset.id,10);
+        if(window.innerWidth<=640){ openItem(_rid); return; }           // mobile: full page, not the side panel
+        frzOpenPanel(_rid);
       }, true);   // CAPTURE - runs before the classic bubble handler
       // keep the active-row highlight across list re-renders (filter / page / tree toggle)
       try { new MutationObserver(function(){ _frzApplyPanelHighlight(); }).observe(lb, {childList:true, subtree:true}); } catch(e){}
