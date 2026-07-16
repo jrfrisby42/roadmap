@@ -6,7 +6,7 @@ This file gives Claude Code the context it needs to be useful immediately. Read 
 
 ## What this project is
 
-**Frazil Roadmap** (now branded **Frazil Flow**) is an internal, multi-tenant team roadmap / Gantt / Kanban / planning tool. It is live in production at `https://flow.frazil.app` (running on EC2; the legacy `https://roadmap.frazil.app` 301-redirects to it via Caddy). Current version is **4.9.26** (set in both `server.py` `APP_VERSION` and `roadmap.html` `const APP_VERSION`).
+**Frazil Roadmap** (now branded **Frazil Flow**) is an internal, multi-tenant team roadmap / Gantt / Kanban / planning tool. It is live in production at `https://flow.frazil.app` (running on EC2; the legacy `https://roadmap.frazil.app` 301-redirects to it via Caddy). Current version is **4.32.1** (set in both `server.py` `APP_VERSION` and `roadmap.html` `const APP_VERSION`).
 
 The whole app is **two files**:
 
@@ -56,6 +56,14 @@ The Flow shell is an **additive** left-rail UI built on top of the original app.
 - **My Home (Stage 5)** — personal landing at `/my-home` that **absorbed My Work**; three tabs: **Assigned to me** (assignee == current user, non-terminal, sorted priority → due → name, reusing `_listRowHtml`), **Recent** (backed by `GET /api/my/recent`), **Watching** (backed by `GET /api/my/watching`). Rail entry navigates here; `/my-work` redirects in.
 - **List columns (4.9.22–4.9.26)** — model-driven List render; user-reorderable columns (↑/↓ in the Columns picker, persisted per-user via `frazil_beta_listorder_<user>`); added Project/Description columns; Gantt inline legend; CSV export follows display order.
 - **List filter-aware pills + resizable columns (4.10.1)** — rail count pills reflect the active filter; Name/Description are drag-resizable (widths per-user in `frazil_beta_listwidths_<user>`). ⚠ **KNOWN DEFERRED BUG:** the PROJECTS count pills only *approximate* assignee/`q` filters (inert until Assignee is used) — full writeup + fix in `design/flow-road-off-jira.md` item #10.
+
+**Shipped 4.10.0 → 4.32.1 (this list predates them):**
+- **Public intake portal (Tier 2)** — unauthenticated ticket submission at `/report`, token-gated status pages (`/ticket`), and a cross-team reporter list (`/my-tickets`). Server-rendered in `server.py`; config keys `intakeEnabled/Types/Projects/NotifyEmail/Domains/ProjectEmails`, Cloudflare Turnstile, SES emails. **Full guide in `INTAKE-PORTAL.md`.** Terminology: reporter-facing says "ticket", internal says "Item" (see rule below).
+- **Departments (4.28–4.30, COMPLETE)** — admin-managed per-team departments with per-dept color + notify emails (config key **`departmentMeta`**). Dept-notify emails fire on portal submit (deduped vs reporter/team), and a **no-login department queue** lives on `/my-tickets?team=&dept=` (gated to the email's dept membership; anti-enumeration 404). Plan: `design/department-feature-plan.md`.
+- **Portal ticket readability (4.31)** — reporter **descriptions store as safe HTML** (`html.escape(text).replace("\n","<br>")`) so line breaks persist through the app's `innerHTML`/Tiptap round-trip and show in emails. Public pages/emails render the description **as-is** (don't re-escape). Portal **status pills mirror the logged-in badge** via `_status_color`/`_status_cls` (replicates `statusCls`: 7 flags in priority order + positional fallback; returns the exact `.s-*` swatch). Portal pages carry `/favicon.png`.
+- **Mobile companion UI (4.10.0, extended 4.32.x)** — phone-only (`@media (max-width:640px)`), desktop-inert. Bottom tab bar + FAB; **item taps open the item PAGE, not a modal** (guarded in `openProjectModal` + the List panel interceptor; New Item stays a sheet); the left menu is a **full-screen scrolling page** with an X to close. ⚠ **CSS gotcha:** the full-screen rail rule must match the specificity of the `.frz-narrow` drawer rule (~L15714) or the rail stays a 232px drawer under the scrim. New Item modal fields stack via `.form-grid{grid-template-columns:1fr}`.
+
+> **Current version is 4.32.1** (keep `server.py APP_VERSION` and `roadmap.html const APP_VERSION` in sync). The "4.9.26" in the intro paragraph above is stale historical text.
 
 **New `server.py` surface (all additive):**
 - Shared config-backed endpoints (any authed user): `GET/PUT /api/boards`, `/api/sprints`, `/api/releases` (config keys, NOT `VALID_KEYS`).
