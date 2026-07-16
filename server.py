@@ -945,7 +945,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.28.0"
+APP_VERSION = "4.29.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1450,9 +1450,17 @@ def _intake_email_html(item, rows, heading, intro, cta_label, cta_url, note=None
 <tr><td style="padding:12px 24px;border-top:1px solid #eef1f4;color:#9aa4b1;font-size:11px;text-align:center;line-height:1.5">Submitted via the Frazil Flow ticket portal.<br>If the button doesn't work, paste this link:<br><span style="color:#6b7280;word-break:break-all">{esc(cta_url)}</span></td></tr>
 </table></td></tr></table></body></html>"""
 
+def _department_emails(team, dept):
+    """Notify addresses configured for a department (departmentMeta[dept].emails)."""
+    meta = _cfg_val(team, "departmentMeta", {}) or {}
+    entry = meta.get(dept) if isinstance(meta, dict) else None
+    emails = (entry.get("emails", "") if isinstance(entry, dict) else "") or ""
+    return [a.strip() for a in re.split(r"[,;]", emails) if a.strip()]
+
 def _intake_send_emails(team, item, pid):
     """Confirmation to the reporter (public status link) + a copy to the team inbox
-    (in-app item link). No-op if email isn't configured; each send is best-effort."""
+    (in-app item link) + each department's notify list. No-op if email isn't
+    configured; each send is best-effort."""
     if not mail_configured():
         return
     key   = item.get("itemKey") or f"#{pid}"
@@ -1481,6 +1489,26 @@ def _intake_send_emails(team, item, pid):
         text = f"New portal ticket {key}: {item.get('name','')}\nReporter: {item.get('reporter','')} <{reporter_email}>\n\nOpen: {app_url}\n"
         try: send_email(addr, f"[{key}] New portal ticket - {item.get('name','')}", text, body)
         except Exception as e: log.warning(f"[Intake] team email failed to {addr} for {pid}: {e}")
+    # Department notify lists - one email per address (grouped across the item's
+    # departments), deduped against the reporter + team-notify addresses above.
+    sent = {reporter_email.lower()} | {a.strip().lower() for a in re.split(r"[,;]", notify) if a.strip()}
+    dept_map = {}   # addr -> set(dept names)
+    for dept in (item.get("departments") or []):
+        for addr in _department_emails(team, dept):
+            if addr.lower() in sent:
+                continue
+            dept_map.setdefault(addr, set()).add(dept)
+    turl = f"{APP_BASE_URL}/ticket?team={team}&id={pid}&t={_ticket_token(team, pid)}"
+    for addr, depts in dept_map.items():
+        dlabel = ", ".join(sorted(depts))
+        drows = base_rows + [("Department", dlabel),
+                             ("Reporter", f"{item.get('reporter','')} <{reporter_email}>".strip())]
+        body = _intake_email_html(item, drows, f"New ticket for {dlabel}",
+            f"A new ticket was submitted for the {dlabel} department.", "View ticket", turl)
+        text = (f"New {dlabel} ticket {key}: {item.get('name','')}\n"
+                f"Reporter: {item.get('reporter','')} <{reporter_email}>\n\nView: {turl}\n")
+        try: send_email(addr, f"[{key}] New {dlabel} ticket - {item.get('name','')}", text, body)
+        except Exception as e: log.warning(f"[Intake] dept email failed to {addr} for {pid}: {e}")
 
 _TICKET_REPLY_JS = ("<script>(function(){var q=new URLSearchParams(location.search),team=q.get('team'),"
     "id=q.get('id'),t=q.get('t');var btn=document.getElementById('replyBtn'),ta=document.getElementById('reply'),"

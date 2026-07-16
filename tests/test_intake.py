@@ -523,3 +523,43 @@ def test_creation_email_routes_to_project_override(client, team, admin_headers, 
     team_recips = [to for to, subj in mailbox if "new portal ticket" in subj.lower()]
     assert "net@x.com" in team_recips        # routed to the project's inbox
     assert "team@x.com" not in team_recips   # not the team default when an override exists
+
+
+# ── 4.29.0: department notify emails on submit ────────────────────────────────
+def test_department_notify_on_submit(client, team, admin_headers, mailbox):
+    _expose(client, admin_headers, types=["Bug"])
+    _set(client, admin_headers, "departments", ["IT", "Sales"])
+    _set(client, admin_headers, "departmentMeta",
+         {"IT": {"color": "#0059A9", "emails": "it1@x.com, it2@x.com"}})
+    server._rate.clear()
+    r = client.post(f"/api/intake/{team}",
+                    json={"title": "Dept ticket", "email": "rep@x.com", "department": "IT"})
+    assert r.status_code == 200
+    recips = [to for to, subj in mailbox]
+    assert "it1@x.com" in recips and "it2@x.com" in recips
+    assert any(to == "it1@x.com" and "IT ticket" in subj for to, subj in mailbox)
+
+
+def test_department_notify_deduped_vs_team(client, team, admin_headers, mailbox):
+    # An address that already got the team-notify copy must NOT get a second dept email.
+    _expose(client, admin_headers, types=["Bug"])
+    _set(client, admin_headers, "departments", ["IT"])
+    _set(client, admin_headers, "intakeNotifyEmail", "shared@x.com")
+    _set(client, admin_headers, "departmentMeta",
+         {"IT": {"emails": "shared@x.com, it2@x.com"}})
+    server._rate.clear()
+    client.post(f"/api/intake/{team}",
+                json={"title": "T", "email": "rep@x.com", "department": "IT"})
+    assert len([to for to, _ in mailbox if to == "shared@x.com"]) == 1   # team copy only, no dupe
+    assert "it2@x.com" in [to for to, _ in mailbox]                       # other dept addr still notified
+
+
+def test_no_department_notify_without_meta(client, team, admin_headers, mailbox):
+    _expose(client, admin_headers, types=["Bug"])
+    _set(client, admin_headers, "departments", ["IT"])
+    server._rate.clear()
+    client.post(f"/api/intake/{team}",
+                json={"title": "T", "email": "rep@x.com", "department": "IT"})
+    # no departmentMeta configured -> no dept emails (only reporter, since no team notify set)
+    assert not any("ticket - T" in subj and to not in ("rep@x.com",) and "IT ticket" in subj
+                   for to, subj in mailbox)
