@@ -55,3 +55,25 @@ def test_update_unions_departments(client, team, admin_headers):
 def test_editor_can_create_a_department(client, team, admin_headers, editor_headers):
     _mk(client, editor_headers, departments=["FieldOps"])
     assert "FieldOps" in _cfg_departments(client, admin_headers)
+
+
+# ── Phase 1: departmentMeta config (per-dept color + notify emails) ────────────
+def test_department_meta_in_valid_keys():
+    assert "departmentMeta" in server.VALID_KEYS
+
+
+def test_department_meta_round_trips(client, team, admin_headers):
+    meta = {"IT": {"color": "#0059A9", "emails": "it@x.com, ops@x.com"},
+            "FINANCE": {"color": "#22b96e", "emails": "fin@x.com"}}
+    assert client.put("/api/config/departmentMeta", json=meta, headers=admin_headers).status_code == 200
+    got = client.get("/api/all", headers=admin_headers).json()["departmentMeta"]
+    assert got == meta
+
+
+def test_department_meta_admin_only(client, team, editor_headers):
+    assert client.put("/api/config/departmentMeta", json={"IT": {"color": "#000"}},
+                      headers=editor_headers).status_code == 403
+
+
+def test_department_meta_defaults_empty(client, team, admin_headers):
+    assert client.get("/api/all", headers=admin_headers).json()["departmentMeta"] == {}

@@ -724,6 +724,7 @@ def init_team_db(team: str):
             "intakeTypes": [],     # empty = offer ALL of the team's types
             "intakeProjectEmails": {},  # optional per-project notify override {product: email}; falls back to intakeNotifyEmail
             "intakeDomains": [],   # allowed reporter email domains (empty = allow any)
+            "departmentMeta": {},  # per-department {name: {color, emails}} - pill color + notify list
         }
         for k, v in defaults.items():
             c.execute("INSERT OR IGNORE INTO config(key,value) VALUES(?,?)",
@@ -795,10 +796,11 @@ def _migrate_config_keys(team: str):
         "intakeNotifyEmail": "",
         "intakeProjectEmails": {},
         "intakeDomains": [],
+        "departmentMeta": {},
     }
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -943,7 +945,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.27.2"
+APP_VERSION = "4.28.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2308,7 +2310,8 @@ def get_all(auth: dict = Depends(require_auth)):
             "intakeTypes": cfg_map.get("intakeTypes", []),
             "intakeNotifyEmail": cfg_map.get("intakeNotifyEmail", ""),
             "intakeProjectEmails": cfg_map.get("intakeProjectEmails", {}),
-            "intakeDomains": cfg_map.get("intakeDomains", [])}
+            "intakeDomains": cfg_map.get("intakeDomains", []),
+            "departmentMeta": cfg_map.get("departmentMeta", {})}
 
 
 # ── Force-seed config keys (idempotent, for migration/repair) ─────────────────
@@ -2922,7 +2925,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "changeReasons","deferReasons","departments",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
-              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains"}
+              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains","departmentMeta"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",

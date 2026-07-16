@@ -1804,6 +1804,7 @@
       <button class="admin-tab" data-tab="typesTab">Types</button>
       <button class="admin-tab" data-tab="statusTab">Statuses</button>
       <button class="admin-tab" data-tab="delayTab">Reasons</button>
+      <button class="admin-tab" data-tab="deptTab">Departments</button>
       <button class="admin-tab" data-tab="usersTab">Users</button>
       <button class="admin-tab" data-tab="dataTab">Data</button>
       <button class="admin-tab" data-tab="teamSettingsTab">⚙ Team Settings</button>
@@ -1888,6 +1889,18 @@
         </div>
       </div>
 
+    </div>
+
+    <!-- DEPARTMENTS TAB -->
+    <div class="admin-pane" id="deptTab">
+      <div style="font-size:11px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;padding-bottom:6px;border-bottom:2px solid var(--border)">
+        <span>Departments <span style="font-size:10px;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0"> - pill color and the emails notified when a ticket is submitted for the department</span></span>
+      </div>
+      <div id="deptAdminList" style="margin-bottom:10px"></div>
+      <div class="add-dev-row">
+        <input type="text" id="newDeptName" placeholder="New department name…">
+        <button class="btn-add-dev" id="addDeptBtn">+ Add</button>
+      </div>
     </div>
 
     <!-- USERS TAB -->
@@ -2079,7 +2092,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.27.2';
+const APP_VERSION = '4.28.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2281,6 +2294,7 @@ let intakeNotifyEmail = '';     // team inbox that gets a copy of each portal ti
 let intakeTypes = [];           // which item Types the portal offers (empty = all). (config)
 let intakeProjectEmails = {};   // optional per-Project notify email override {product: email}; falls back to intakeNotifyEmail. (config)
 let intakeDomains = [];         // allowed reporter email domains for the portal (empty = allow any). (config)
+let departmentMeta = {};        // per-department {name:{color,emails}} - pill color + notify list. (config)
 let productIgnoreConflicts = {}; // { [productName]: bool } - exempt a whole project from capacity-conflict accounting
 
 // Re-render whichever view is currently active (used by top-bar filter changes)
@@ -6392,6 +6406,7 @@ function openAdminPanel(tabId){
   document.getElementById('adminModalBg').classList.add('open');
   // Tab-specific init
   if(targetTab==='teamSettingsTab') openTeamSettingsTab();
+  if(targetTab==='deptTab') renderDepartments();
 }
 
 // Tab switching
@@ -6403,6 +6418,7 @@ document.querySelectorAll('.admin-tab').forEach(tab => {
     const pane = document.getElementById(tab.dataset.tab);
     if(pane) pane.classList.add('active');
     if(tab.dataset.tab === 'teamSettingsTab') openTeamSettingsTab();
+    if(tab.dataset.tab === 'deptTab') renderDepartments();
   });
 });
 
@@ -7029,6 +7045,55 @@ document.getElementById('addChangeReasonBtn')?.addEventListener('click', ()=>{
 document.getElementById('newChangeReasonName')?.addEventListener('keydown', e=>{
   if(e.key==='Enter'){ e.preventDefault(); document.getElementById('addChangeReasonBtn')?.click(); }
 });
+
+// ── Departments admin (name + pill color + notify emails) ─────────────────────
+function _deptNames(){ return (departments||[]).map(d => (d&&d.name)||d).filter(Boolean); }
+function renderDepartments(){
+  const host = document.getElementById('deptAdminList'); if(!host) return;
+  const names = _deptNames();
+  if(!names.length){ host.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px 0">No departments yet - add one below.</div>'; return; }
+  host.innerHTML = names.map(n => {
+    const meta = departmentMeta[n] || {};
+    const color = meta.color || '#0059A9';
+    const emails = meta.emails || '';
+    return `<div class="dept-row" data-dept="${escA(n)}" style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--row-sep)">
+      <input type="color" class="dept-color" value="${escA(color)}" title="Pill color" style="width:34px;height:28px;padding:0;border:1px solid var(--border);border-radius:5px;background:none;cursor:pointer;flex-shrink:0">
+      <span style="font-size:13px;font-weight:700;color:var(--text);min-width:120px;flex-shrink:0">${esc(n)}</span>
+      <input type="text" class="dept-emails" value="${escA(emails)}" placeholder="notify emails (comma-separated)" style="flex:1;min-width:0;padding:6px 9px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">
+      <button type="button" class="dept-del" title="Remove department" style="border:0;background:none;color:var(--accent2);font-size:16px;line-height:1;cursor:pointer;padding:2px 6px;flex-shrink:0">×</button>
+    </div>`;
+  }).join('');
+  host.querySelectorAll('.dept-row').forEach(row => {
+    const name = row.getAttribute('data-dept');
+    row.querySelector('.dept-color').addEventListener('change', e => _setDeptMeta(name, 'color', e.target.value));
+    row.querySelector('.dept-emails').addEventListener('change', e => _setDeptMeta(name, 'emails', e.target.value.trim()));
+    row.querySelector('.dept-del').addEventListener('click', () => _removeDepartment(name));
+  });
+}
+function _setDeptMeta(name, key, val){
+  if(!departmentMeta[name] || typeof departmentMeta[name] !== 'object') departmentMeta[name] = {};
+  departmentMeta[name][key] = val;
+  saveConfig('departmentMeta', departmentMeta);
+}
+function _addDepartment(){
+  const inp = document.getElementById('newDeptName'); const v = (inp&&inp.value||'').trim();
+  if(!v) return;
+  if(_deptNames().some(n => String(n).toLowerCase() === v.toLowerCase())){ if(inp) inp.value=''; return; }  // case-insensitive dedupe
+  departments = [..._deptNames(), v];
+  saveConfig('departments', departments);
+  if(inp) inp.value='';
+  renderDepartments();
+}
+function _removeDepartment(name){
+  if(!confirm('Remove department "'+name+'"?\n\nItems already tagged with it keep the tag, but it will no longer be offered.')) return;
+  departments = _deptNames().filter(n => n !== name);
+  delete departmentMeta[name];
+  saveConfig('departments', departments);
+  saveConfig('departmentMeta', departmentMeta);
+  renderDepartments();
+}
+document.getElementById('addDeptBtn')?.addEventListener('click', _addDepartment);
+document.getElementById('newDeptName')?.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); _addDepartment(); } });
 
 document.getElementById('addDeferReasonBtn')?.addEventListener('click', ()=>{
   const inp = document.getElementById('newDeferReasonName');
@@ -14993,6 +15058,7 @@ async function boot(){
     intakeNotifyEmail     = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : ''; // team inbox copy
     intakeProjectEmails   = (data.intakeProjectEmails && typeof data.intakeProjectEmails === 'object') ? data.intakeProjectEmails : {}; // per-project override
     intakeDomains         = Array.isArray(data.intakeDomains) ? data.intakeDomains : [];              // allowed reporter email domains (empty = any)
+    departmentMeta        = (data.departmentMeta && typeof data.departmentMeta === 'object') ? data.departmentMeta : {};  // per-dept color + notify emails
     productIgnoreConflicts = data.productIgnoreConflicts || {};
     // Jira mappings (Team Settings)
     window._jiraProjectMappingData = data.jiraProjectMapping || {};
@@ -19175,6 +19241,18 @@ if ('serviceWorker' in navigator) {
   // fed by the shared `departments` config list. New values persist server-side
   // on save (create/update union); add/remove logs to Activity & History.
   function _deptKey(d){ return String(d||'').trim().toLowerCase(); }
+  // Readable text color for an arbitrary pill background (luminance -> black/white).
+  function _contrastText(hex){
+    hex=String(hex||'').replace('#',''); if(hex.length!==6) return '#fff';
+    var r=parseInt(hex.slice(0,2),16), g=parseInt(hex.slice(2,4),16), b=parseInt(hex.slice(4,6),16);
+    return ((0.299*r+0.587*g+0.114*b)/255) > 0.6 ? '#1f2733' : '#fff';
+  }
+  // Department pill style: the admin-chosen color (auto-contrast text) or the default soft chip.
+  function _deptChipStyle(name){
+    var m=(_val('departmentMeta',{})||{})[name]||{}, c=m&&m.color;
+    if(c) return 'background:'+c+';color:'+_contrastText(c)+';border:1px solid '+c;
+    return 'background:var(--frz-accent-soft);color:var(--frz-accent);border:1px solid var(--frz-accent-soft-border)';
+  }
   function injectDepartments(p){
     var fields=document.getElementById('ipFields'); if(!fields || !p) return;
     var canEdit=(_val('isAdmin',false)||_val('isEditor',false));
@@ -19183,8 +19261,8 @@ if ('serviceWorker' in navigator) {
     var depts=Array.isArray(p.departments)?p.departments.filter(Boolean):[];
     var lbl='<span style="font-size:10px;font-weight:700;color:var(--frz-text-muted);text-transform:uppercase;letter-spacing:.4px">Departments</span>';
     var chips=depts.map(function(d){
-      return '<span style="display:inline-flex;align-items:center;gap:4px;background:var(--frz-accent-soft);color:var(--frz-accent);border:1px solid var(--frz-accent-soft-border);border-radius:10px;padding:2px 4px 2px 9px;font-size:12px;font-weight:600">'+esc(d)+
-        (canEdit?'<button type="button" class="frz-dept-x" data-dept="'+escA(d)+'" title="Remove" style="border:0;background:none;color:var(--frz-accent);cursor:pointer;font-size:14px;line-height:1;padding:0 2px">×</button>':'')+'</span>';
+      return '<span style="display:inline-flex;align-items:center;gap:4px;'+_deptChipStyle(d)+';border-radius:10px;padding:2px 4px 2px 9px;font-size:12px;font-weight:600">'+esc(d)+
+        (canEdit?'<button type="button" class="frz-dept-x" data-dept="'+escA(d)+'" title="Remove" style="border:0;background:none;color:inherit;opacity:0.8;cursor:pointer;font-size:14px;line-height:1;padding:0 2px">×</button>':'')+'</span>';
     }).join('');
     var add = canEdit ?
       '<button type="button" id="frzDeptAddBtn" style="display:inline-flex;align-items:center;background:none;border:1px dashed var(--frz-border-strong);color:var(--frz-accent);padding:2px 9px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">+ Add</button>'+
