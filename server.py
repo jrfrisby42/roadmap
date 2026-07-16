@@ -943,7 +943,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.24.0"
+APP_VERSION = "4.25.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2213,6 +2213,44 @@ def force_change_password(body: dict = Body(...), auth: dict = Depends(require_a
     return {"ok": True, "token": token}
 
 # ── Data ──────────────────────────────────────────────────────────────────────
+@app.get("/api/export")
+def export_team(auth: dict = Depends(require_role("admin"))):
+    """Admin-only complete backup of a team's data: every table, faithfully, in one
+    JSON file. Unlike the client-side export (in-memory only), this includes comments,
+    activities, audit log, capacity overrides, planning sessions, watchers,
+    notifications, key counters, and recent views. Downloadable / restorable.
+    NOTE: config.users includes password hashes (needed for a faithful restore) —
+    the file is sensitive; it's admin-gated. Read-only; never mutates."""
+    team = auth["team"]
+    def _rows(c, q):
+        return [dict(r) for r in c.execute(q).fetchall()]
+    with db(team) as c:
+        data = {
+            "_meta": {
+                "team": team, "app_version": APP_VERSION, "schema": 1,
+                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "exported_by": auth.get("username", ""),
+            },
+            # projects: parse the JSON blob so the dump is clean + restorable
+            "projects": [{"id": r["id"], "data": json.loads(r["data"])}
+                         for r in c.execute("SELECT id, data FROM projects").fetchall()],
+            # config: key → parsed value
+            "config": {r["key"]: json.loads(r["value"])
+                       for r in c.execute("SELECT key, value FROM config").fetchall()},
+            "comments":           _rows(c, "SELECT * FROM comments"),
+            "activities":         _rows(c, "SELECT * FROM activities"),
+            "audit_log":          _rows(c, "SELECT * FROM audit_log"),
+            "capacity_overrides": _rows(c, "SELECT * FROM capacity_overrides"),
+            "planning_sessions":  _rows(c, "SELECT * FROM planning_sessions"),
+            "notifications":      _rows(c, "SELECT * FROM notifications"),
+            "watchers":           _rows(c, "SELECT * FROM watchers"),
+            "key_counters":       _rows(c, "SELECT * FROM key_counters"),
+            "recent_views":       _rows(c, "SELECT * FROM recent_views"),
+        }
+    fname = f"{team}-backup-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json"
+    write_audit(team, "export", _audit_actor("", auth))
+    return JSONResponse(data, headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
 @app.get("/api/all")
 def get_all(auth: dict = Depends(require_auth)):
     team = auth["team"]

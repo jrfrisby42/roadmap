@@ -1922,8 +1922,11 @@
       <div style="display:flex;flex-direction:column;gap:16px">
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px">
           <div style="font-size:13px;font-weight:700;margin-bottom:4px">Export Data</div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Download all projects, developers, statuses, and settings as a JSON file. Use this to back up your data or transfer it to another browser.</div>
-          <button class="btn-save" id="exportDataBtn">⬇ Export to JSON</button>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:12px"><strong>Full Backup</strong> is a complete server-side snapshot — every item plus comments, activity, audit log, watchers, planning data, and settings. Use it for backups. <em>Quick Export</em> is a lighter in-browser dump (items + core lists only).</div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn-save" id="fullBackupBtn">⬇ Full Backup</button>
+            <button id="exportDataBtn" style="background:none;border:1px solid var(--border);color:var(--text);padding:7px 14px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">⬇ Quick Export</button>
+          </div>
         </div>
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px">
           <div style="font-size:13px;font-weight:700;margin-bottom:4px">Import Data</div>
@@ -2076,7 +2079,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.24.0';
+const APP_VERSION = '4.25.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -6407,6 +6410,22 @@ document.getElementById('adminDoneBtn')?.addEventListener('click', ()=>document.
 document.getElementById('adminModalBg')?.addEventListener('click', e=>{ if(e.target===e.currentTarget) e.currentTarget.classList.remove('open'); });
 
 // ── DATA EXPORT / IMPORT ──
+document.getElementById('fullBackupBtn')?.addEventListener('click', async (e)=>{
+  const btn = e.currentTarget, orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Preparing…';
+  try {
+    const r = await fetch('/api/export', { headers: API._authHeaders() });
+    if(!r.ok) throw new Error('Export failed ('+r.status+')');
+    const blob = await r.blob();
+    const m = (r.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/);
+    const fname = m ? m[1] : ('backup-'+new Date().toISOString().slice(0,10)+'.json');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = fname; a.click();
+    URL.revokeObjectURL(url);
+  } catch(err){ alert('Backup failed: '+(err.message||err)); }
+  finally { btn.disabled = false; btn.textContent = orig; }
+});
+
 document.getElementById('exportDataBtn')?.addEventListener('click', ()=>{
   const payload = {
     _version: 1,
