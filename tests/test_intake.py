@@ -688,3 +688,14 @@ def test_my_tickets_card_has_status_label(client, team, admin_headers):
     r = client.get(f"/my-tickets?email=rep@x.com&t={tok}")
     assert r.status_code == 200
     assert ">Status<" in r.text                     # the clarifying label next to the pill
+
+
+def test_portal_pages_have_favicon(client, team, admin_headers):
+    # 4.32.1: the public portal pages carry the app favicon so the tab icon matches.
+    _expose(client, admin_headers, types=["Bug"])
+    pid = _submit(client, team, title="Fav").json()["id"]
+    st = client.get(f"/ticket?team={team}&id={pid}&t={server._ticket_token(team, pid)}")
+    assert 'href="/favicon.png"' in st.text
+    assert 'href="/favicon.png"' in client.get("/report").text
+    tok = server._reporter_list_token("rep@x.com")
+    assert 'href="/favicon.png"' in client.get(f"/my-tickets?email=rep@x.com&t={tok}").text

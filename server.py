@@ -945,7 +945,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.32.0"
+APP_VERSION = "4.32.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1648,7 +1648,7 @@ def _ticket_status_page(p, comments):
     myt = (f'<div style="margin-top:18px;padding-top:14px;border-top:1px solid #eef1f4"><a href="{esc(_my_tickets_url(p.get("reporterEmail")))}" style="color:#0059A9;font-size:13px;font-weight:700;text-decoration:none">← All your tickets</a></div>') if p.get("reporterEmail") else ""
     key = p.get("itemKey") or f"#{p.get('id','')}"
     sc_bg, sc_fg, sc_bd = _status_color(p.get("_team", ""), p.get("status"))
-    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>{esc(key)} - Ticket status</title>
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><title>{esc(key)} - Ticket status</title>
 <style>body{{margin:0;background:#f4f6f9;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2733;padding:28px 16px}}
 .card{{max-width:560px;margin:0 auto;background:#fff;border:1px solid #e3e8ee;border-radius:14px;overflow:hidden;box-shadow:0 6px 26px rgba(20,40,70,.07)}}
 .hd{{background:#0059A9;color:#fff;padding:15px 24px;font-weight:700;font-size:16px}}.bd{{padding:22px 24px}}
@@ -1663,7 +1663,7 @@ def _ticket_status_page(p, comments):
 
 def _ticket_error_page(msg):
     esc = html.escape
-    return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Ticket status</title></head>
+    return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><title>Ticket status</title></head>
 <body style="margin:0;background:#f4f6f9;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1f2733;padding:60px 16px;text-align:center">
 <div style="max-width:440px;margin:0 auto;background:#fff;border:1px solid #e3e8ee;border-radius:14px;padding:34px 24px">
 <div style="display:flex;justify-content:center;margin-bottom:10px">{_flow_mark(46, "#0059A9")}</div><h1 style="font-size:18px;margin:10px 0 6px">{esc(msg)}</h1>
@@ -1671,7 +1671,7 @@ def _ticket_error_page(msg):
 
 _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex"><title>Submit a Ticket - Frazil Flow</title>
+<meta name="robots" content="noindex"><link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><title>Submit a Ticket - Frazil Flow</title>
 <style>
   :root{ --acc:#0059A9; --bd:#dfe4ea; --mut:#6b7280; --bg:#f4f6f9; --tx:#1f2733; }
   *{box-sizing:border-box} body{margin:0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
@@ -1970,7 +1970,7 @@ def _my_tickets_page(email, items, scopes=None, active=None):
                   + "".join(pills) + "</div>")
     heading = f"{esc(active[1])} tickets" if active else "Your tickets"
     subtitle = (f"Department queue · {esc(email)}" if active else esc(email))
-    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Your tickets</title>
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><title>Your tickets</title>
 <style>body{{margin:0;background:#f4f6f9;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2733;padding:28px 16px}}
 .card{{max-width:560px;margin:0 auto;background:#fff;border:1px solid #e3e8ee;border-radius:14px;overflow:hidden;box-shadow:0 6px 26px rgba(20,40,70,.07)}}
 .hd{{background:#0059A9;color:#fff;padding:15px 24px;font-weight:700;font-size:16px}}.bd{{padding:20px 24px}}
@@ -1990,7 +1990,7 @@ def _my_tickets_landing(email=""):
     the graceful destination for an expired emailed link."""
     esc = html.escape
     pref = esc(email or "")
-    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Your tickets</title>
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><link rel="icon" type="image/png" href="/favicon.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><title>Your tickets</title>
 <style>body{{margin:0;background:#f4f6f9;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2733;padding:28px 16px}}
 .card{{max-width:480px;margin:0 auto;background:#fff;border:1px solid #e3e8ee;border-radius:14px;overflow:hidden;box-shadow:0 6px 26px rgba(20,40,70,.07)}}
 .hd{{background:#0059A9;color:#fff;padding:15px 24px;font-weight:700;font-size:16px}}.bd{{padding:22px 24px}}

@@ -2092,7 +2092,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.32.0';
+const APP_VERSION = '4.32.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16290,8 +16290,12 @@ if ('serviceWorker' in navigator) {
     /* The menu is its own full-screen scrolling page on phone (not a cramped drawer).
        The brand row pins the top with an X to close, .frz-scroll fills + scrolls, the
        footer (Settings/Admin) pins the bottom. */
-    .frz-beta:not(.is-collapsed) .frz-rail {
-      display:flex; position:fixed; inset:0; width:100%; max-width:100%; z-index:95;
+    /* Both selectors: the second matches the specificity of the .frz-narrow drawer
+       rule (L15714) and, being later, wins - otherwise the rail stays a 232px drawer
+       UNDER the scrim (which is what was overlaying it / blocking taps). */
+    .frz-beta:not(.is-collapsed) .frz-rail,
+    .frz-beta.frz-narrow:not(.is-collapsed) .frz-rail {
+      display:flex; position:fixed; inset:0; width:100%; max-width:100%; z-index:95; box-shadow:none;
     }
     .frz-beta .frz-collapse { display:none; }      /* the collapse toggle is meaningless full-screen */
     .frz-beta .frz-menu-close { display:grid; }    /* ...the X closes the menu instead */
@@ -16311,6 +16315,10 @@ if ('serviceWorker' in navigator) {
     /* Beta modals → bottom sheet. */
     .frz-beta .frz-modal-bg { padding:0; align-items:flex-end; }
     .frz-beta .frz-modal { width:100%; max-width:100%; max-height:92vh; border-radius:16px 16px 0 0; }
+
+    /* New Item / edit modal: on a phone the 2- and 3-up field grids bunch up, so give
+       each field its own line (unscoped: the classic #modalBg lives outside .frz-beta). */
+    .form-grid, .form-grid-3 { grid-template-columns:1fr; }
 
     /* Reserve room for the bottom nav so content isn't covered. */
     .frz-beta .frz-content { padding-bottom:60px; }
