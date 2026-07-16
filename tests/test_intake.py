@@ -664,11 +664,21 @@ def test_status_page_shows_line_breaks(client, team, admin_headers):
 
 
 def test_status_pill_uses_configured_color(client, team, admin_headers):
-    _expose(client, admin_headers, types=["Bug"])
-    _set(client, admin_headers, "statusIsActive", {"New": True})   # default status is active
+    # A fresh portal ticket sits at the default status -> s-planned swatch, matching
+    # the logged-in badge (unique rgba so it can't collide with the page's accents).
+    _expose(client, admin_headers, types=["Bug"])   # statusIsDefault {"New": True}
     pid = _submit(client, team, title="Colored").json()["id"]
     r = client.get(f"/ticket?team={team}&id={pid}&t={server._ticket_token(team, pid)}")
-    assert "#0059A9" in r.text                     # active-status accent, matching the app
+    assert "rgba(0,89,169,0.10)" in r.text
+
+
+def test_status_pill_terminal_is_green(client, team, admin_headers):
+    # Flip the default status to terminal -> the pill turns green like the app badge.
+    _expose(client, admin_headers, types=["Bug"])
+    _set(client, admin_headers, "statusIsTerminal", {"New": True})
+    pid = _submit(client, team, title="Doneish").json()["id"]
+    r = client.get(f"/ticket?team={team}&id={pid}&t={server._ticket_token(team, pid)}")
+    assert "rgba(29,184,106,0.12)" in r.text        # s-terminal / s-released green
 
 
 def test_my_tickets_card_has_status_label(client, team, admin_headers):

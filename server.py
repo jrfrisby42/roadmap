@@ -945,7 +945,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.31.0"
+APP_VERSION = "4.31.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1442,19 +1442,42 @@ def _depts_for_email(team: str, email: str) -> list:
 
 _PRIO_LABEL = {"1": "Urgent", "2": "High", "3": "Medium", "4": "Low"}
 
-def _status_color(team, status):
-    """Status swatch matching the logged-in view (roadmap.html ~L11276): terminal =
-    green, testing = blue, active = accent blue, everything else = muted grey. Driven
-    by the team's config-driven status-flag maps (never hardcoded status names)."""
+# Status badge swatches - the EXACT (bg, fg, border) of roadmap.html's .s-* classes
+# so portal pills match the logged-in badges 1:1.
+_STATUS_SWATCH = {
+    "s-released":   ("rgba(29,184,106,0.12)",  "#1a9a59", "rgba(29,184,106,0.3)"),
+    "s-inprogress": ("rgba(0,144,212,0.10)",   "#0078b8", "rgba(0,144,212,0.25)"),
+    "s-planned":    ("rgba(0,89,169,0.10)",    "#0059A9", "rgba(0,89,169,0.25)"),
+    "s-testing":    ("rgba(212,160,0,0.12)",   "#a07800", "rgba(212,160,0,0.3)"),
+    "s-tbd":        ("rgba(170,170,204,0.15)", "#8888aa", "rgba(170,170,204,0.35)"),
+    "s-deferred":   ("rgba(232,160,0,0.12)",   "#c06000", "rgba(232,160,0,0.3)"),
+    "s-approved":   ("rgba(34,185,110,0.10)",  "#1a8a52", "rgba(34,185,110,0.25)"),
+    "s-terminal":   ("rgba(29,184,106,0.12)",  "#1a9a59", "rgba(29,184,106,0.3)"),
+}
+_STATUS_BADGE_COLORS = ["s-inprogress", "s-planned", "s-testing", "s-released", "s-tbd"]
+
+def _status_cls(team, status):
+    """Mirror roadmap.html statusCls(): semantic flags first (SAME priority order),
+    then a positional fallback over the team's `statuses` list. Config-driven, never
+    hardcoded status names - so portal pills track whatever the team has configured."""
     if not status:
-        return "#6b7280"
-    if (_cfg_val(team, "statusIsTerminal", {}) or {}).get(status):
-        return "#22b96e"
-    if (_cfg_val(team, "statusIsTesting", {}) or {}).get(status):
-        return "#0090d4"
-    if (_cfg_val(team, "statusIsActive", {}) or {}).get(status):
-        return "#0059A9"
-    return "#6b7280"
+        return "s-tbd"
+    for key, cls in (("statusIsReleased", "s-released"), ("statusIsTesting", "s-testing"),
+                     ("statusIsApproved", "s-approved"), ("statusIsDeferred", "s-deferred"),
+                     ("statusIsTerminal", "s-terminal"), ("statusIsActive", "s-inprogress"),
+                     ("statusIsDefault", "s-planned")):
+        if (_cfg_val(team, key, {}) or {}).get(status):
+            return cls
+    statuses = _cfg_val(team, "statuses", []) or []
+    try:
+        idx = statuses.index(status)
+    except ValueError:
+        return "s-tbd"
+    return _STATUS_BADGE_COLORS[idx % len(_STATUS_BADGE_COLORS)]
+
+def _status_color(team, status):
+    """(bg, fg, border) swatch matching the logged-in status badge for `status`."""
+    return _STATUS_SWATCH.get(_status_cls(team, status), _STATUS_SWATCH["s-tbd"])
 
 def _intake_email_html(item, rows, heading, intro, cta_label, cta_url, note=None, secondary=None):
     esc = html.escape
@@ -1624,6 +1647,7 @@ def _ticket_status_page(p, comments):
         + '<div style="text-align:right"><button id="replyBtn" style="background:#0059A9;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-weight:700;font-size:14px;cursor:pointer">Send reply</button></div></div>')
     myt = (f'<div style="margin-top:18px;padding-top:14px;border-top:1px solid #eef1f4"><a href="{esc(_my_tickets_url(p.get("reporterEmail")))}" style="color:#0059A9;font-size:13px;font-weight:700;text-decoration:none">← All your tickets</a></div>') if p.get("reporterEmail") else ""
     key = p.get("itemKey") or f"#{p.get('id','')}"
+    sc_bg, sc_fg, sc_bd = _status_color(p.get("_team", ""), p.get("status"))
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>{esc(key)} - Ticket status</title>
 <style>body{{margin:0;background:#f4f6f9;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2733;padding:28px 16px}}
 .card{{max-width:560px;margin:0 auto;background:#fff;border:1px solid #e3e8ee;border-radius:14px;overflow:hidden;box-shadow:0 6px 26px rgba(20,40,70,.07)}}
@@ -1633,7 +1657,7 @@ def _ticket_status_page(p, comments):
 .foot{{padding:12px 24px;border-top:1px solid #eef1f4;color:#9aa4b1;font-size:11px;text-align:center}}</style></head>
 <body><div class="card">{_flow_hd()}<div class="bd">
 <div class="k">{esc(key)}</div><h1 style="margin:4px 0 12px;font-size:19px">{esc(p.get("name") or "Ticket")}</h1>
-<div style="margin-bottom:14px">Status: <span class="badge" style="background:{_status_color(p.get('_team',''), p.get('status'))}22;color:{_status_color(p.get('_team',''), p.get('status'))};border-color:{_status_color(p.get('_team',''), p.get('status'))}55">{esc(p.get("status") or "-")}</span></div>
+<div style="margin-bottom:14px">Status: <span class="badge" style="background:{sc_bg};color:{sc_fg};border-color:{sc_bd}">{esc(p.get("status") or "-")}</span></div>
 {row_html}{desc_html}{att_html}{thread_html}{myt}
 </div><div class="foot">Reporter View - Replies go straight to the team.</div></div>{_TICKET_REPLY_JS}</body></html>"""
 
@@ -1917,7 +1941,7 @@ def _my_tickets_page(email, items, scopes=None, active=None):
             f'<span style="font-family:ui-monospace,Menlo,monospace;color:#0059A9;font-weight:700;font-size:12px">{esc(p.get("itemKey") or "#"+str(p["id"]))}</span>'
             f'<span style="display:inline-flex;align-items:center;gap:6px">'
             f'<span style="font-size:11px;color:#9aa4b1;font-weight:600;text-transform:uppercase;letter-spacing:.3px">Status</span>'
-            f'<span style="background:{_c}22;color:{_c};border:1px solid {_c}55;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700">{esc(p.get("status") or "-")}</span>'
+            f'<span style="background:{_c[0]};color:{_c[1]};border:1px solid {_c[2]};border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700">{esc(p.get("status") or "-")}</span>'
             f'</span></div>'
             f'<div style="font-size:14px;font-weight:600;color:#1f2733;margin-top:6px">{esc(p.get("name") or "Ticket")}</div>'
             f'<div style="font-size:12px;color:#6b7280;margin-top:2px">{esc(p.get("product") or "")}{" · " if p.get("product") and p.get("createdAt") else ""}{esc((p.get("createdAt") or "")[:10])}</div></a>'
