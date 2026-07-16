@@ -48,7 +48,7 @@
 
   /* ── Dark mode: global element overrides ── */
   body.dark-mode select,
-  body.dark-mode button:not(.primary):not(.btn-save):not(.btn-cancel):not(.btn-danger):not(.btn-ic):not(.rte-btn):not(.frz-newitem):not(.frz-lp-openbtn):not(.frz-bcard-open):not(#modalOpenPageBtn) {
+  body.dark-mode button:not(.primary):not(.btn-save):not(.btn-cancel):not(.btn-danger):not(.btn-ic):not(.rte-btn):not(.frz-newitem):not(.frz-lp-openbtn):not(.frz-bcard-open) {
     background: var(--surface2) !important;
     color: var(--text) !important;
     border-color: var(--border) !important;
@@ -2079,7 +2079,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.27.1';
+const APP_VERSION = '4.27.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -13852,14 +13852,10 @@ function renderItemPage(p){
         <div style="font-size:12px;color:var(--text)">${esc(stripHtml(p.deferReason||''))}${p.deferNote?' - '+esc(stripHtml(p.deferNote)):''}</div>
         ${p.deferRevisit?`<div style="font-size:11px;color:var(--muted);margin-top:3px">Revisit: ${p.deferRevisit}</div>`:''}
       </div>` : '',
-      `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 0">
-        <span style="display:flex;flex-direction:column;gap:1px">
-          <span style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">Gantt visibility</span>
-          <span style="font-size:10px;color:var(--muted);font-weight:400">"Hidden" removes it from the Gantt only (still shows in Kanban, List, Planning, Dashboard)</span>
-        </span>
-        <button onclick="ipToggleHidden(${p.id})" title="Hidden items are hidden from the Gantt only - they still show in Kanban, List, Planning and Dashboard"
+      `<div style="display:flex;align-items:center;gap:10px;padding:2px 0">
+        <button onclick="ipToggleHidden(${p.id})" title="Gantt visibility. 'Hidden' removes this item from the Gantt only - it still shows in Kanban, List, Planning and Dashboard. Click to toggle."
           style="padding:5px 12px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:12px;font-weight:700;background:${p.hidden?'var(--accent)':'var(--surface)'};color:${p.hidden?'#fff':'var(--text)'}">
-          ${p.hidden?'Hidden - click to show':'Visible - click to hide'}
+          ${p.hidden?'Hidden':'Visible'}
         </button>
       </div>`,
       ipField('Item ID', `#${p.id}`, {muted:true}),
@@ -15925,6 +15921,7 @@ if ('serviceWorker' in navigator) {
   body.dark-mode #frzBulkRelease,
   body.dark-mode #frzDeptAdd,
   body.dark-mode #frzFilterBar .frz-chip-clear,
+  body.dark-mode #modalOpenPageBtn,
   body.dark-mode #frzSettingsModal .frz-theme-seg button.is-active {
     background:#0059A9 !important; color:#fff !important; border-color:#0059A9 !important;
   }
