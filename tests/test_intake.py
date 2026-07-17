@@ -699,3 +699,34 @@ def test_portal_pages_have_favicon(client, team, admin_headers):
     assert 'href="/favicon.png"' in client.get("/report").text
     tok = server._reporter_list_token("rep@x.com")
     assert 'href="/favicon.png"' in client.get(f"/my-tickets?email=rep@x.com&t={tok}").text
+
+
+# ── H1: description is sanitized when rendered on the PUBLIC status page ────────
+# Descriptions are stored verbatim server-side (only the portal WRITE path escapes,
+# and client-side Tiptap sanitization is bypassable via a raw API PUT). The public
+# /ticket page must therefore sanitize at render, or a staff/API-planted payload
+# executes in the reporter's browser.
+def test_status_page_sanitizes_malicious_description(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    pid = _submit(client, team, title="XSS").json()["id"]
+    # A non-portal writer (admin edit / raw API) plants an event-handler payload.
+    payload = '<img src=x onerror="alert(document.cookie)"><script>steal()</script>ok'
+    assert client.put(f"/api/projects/{pid}", json={"description": payload},
+                      headers=admin_headers).status_code == 200
+    r = client.get(f"/ticket?team={team}&id={pid}&t={server._ticket_token(team, pid)}")
+    assert r.status_code == 200
+    assert "onerror" not in r.text                 # event handler stripped
+    assert "alert(document.cookie)" not in r.text  # payload not reflected
+    assert "steal()" not in r.text                 # injected <script> content dropped
+    assert "ok" in r.text                          # benign text preserved
+
+
+def test_sanitize_html_helper_keeps_safe_formatting():
+    # Safe formatting survives; dangerous constructs do not.
+    assert server._sanitize_html("<p>a <strong>b</strong></p>") == "<p>a <strong>b</strong></p>"
+    assert server._sanitize_html("line1<br>line2") == "line1<br>line2"
+    assert server._sanitize_html('<a href="javascript:x()">t</a>') == "<a>t</a>"
+    assert server._sanitize_html('<a href="https://x.com">t</a>') == '<a href="https://x.com">t</a>'
+    assert "onerror" not in server._sanitize_html('<img src=x onerror=alert(1)>')
+    # Portal-stored form (escaped text + literal <br>) round-trips as inert text.
+    assert server._sanitize_html("&lt;script&gt;x&lt;/script&gt;<br>ok") == "&lt;script&gt;x&lt;/script&gt;<br>ok"
