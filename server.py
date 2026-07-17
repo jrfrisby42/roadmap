@@ -17,6 +17,7 @@ Jira integration:
 """
 
 import json, os, re, sqlite3, base64, time, hashlib, hmac, sys, html, logging, secrets
+from html.parser import HTMLParser
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from urllib.request import urlopen, Request
@@ -945,7 +946,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.32.1"
+APP_VERSION = "4.32.2"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1479,6 +1480,69 @@ def _status_color(team, status):
     """(bg, fg, border) swatch matching the logged-in status badge for `status`."""
     return _STATUS_SWATCH.get(_status_cls(team, status), _STATUS_SWATCH["s-tbd"])
 
+# ── HTML sanitizer (render-time, for PUBLIC surfaces) ────────────────────────
+# H1: item descriptions are stored as HTML and rendered raw on the public /ticket
+# page and in emails, trusting a "stored as safe HTML" invariant that only the
+# portal intake write path enforces. Every other writer (authenticated edit, Jira
+# sync, raw API PUT) stores description verbatim with no server-side sanitization,
+# so a `<img onerror=...>` could reach an unauthenticated reporter's browser. This
+# sanitizes at RENDER (stored data untouched) with a strict allow-list: a safe
+# text-formatting subset only, all attributes dropped except a validated href,
+# scripts/styles/handlers/embeds removed.
+_SAFE_HTML_TAGS = {"p","br","strong","b","em","i","u","s","strike","code","pre","blockquote",
+                   "h1","h2","h3","ul","ol","li","hr","a","span","mark","div",
+                   "table","thead","tbody","tr","th","td","colgroup","col","details","summary"}
+_SAFE_HTML_ATTRS = {"href","title","colspan","rowspan"}
+_VOID_HTML_TAGS  = {"br","hr","col"}
+_DROP_HTML_CONTENT = {"script","style"}   # drop tag AND its text content
+
+class _HTMLSanitizer(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out = []
+        self._skip = 0            # depth inside a drop-content tag
+    def handle_starttag(self, tag, attrs):
+        if tag in _DROP_HTML_CONTENT:
+            self._skip += 1; return
+        if self._skip or tag not in _SAFE_HTML_TAGS:
+            return
+        safe = []
+        for k, v in attrs:
+            k = (k or "").lower()
+            if k not in _SAFE_HTML_ATTRS:
+                continue
+            v = v or ""
+            if k == "href" and not re.match(r"^(?:https?:|mailto:|tel:|#)", v.strip(), re.I):
+                continue
+            safe.append(f' {k}="{html.escape(v, quote=True)}"')
+        self.out.append(f"<{tag}{''.join(safe)}>")   # HTML5 void tags need no trailing slash (keeps <br> as-is)
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if not self._skip and tag in _SAFE_HTML_TAGS and tag not in _VOID_HTML_TAGS:
+            self.out.append(f"</{tag}>")
+    def handle_endtag(self, tag):
+        if tag in _DROP_HTML_CONTENT:
+            self._skip = max(0, self._skip - 1); return
+        if not self._skip and tag in _SAFE_HTML_TAGS and tag not in _VOID_HTML_TAGS:
+            self.out.append(f"</{tag}>")
+    def handle_data(self, data):
+        if self._skip:
+            return
+        self.out.append(html.escape(data, quote=False))   # convert_charrefs already decoded entities
+
+def _sanitize_html(s: str) -> str:
+    """Render-time allow-list sanitizer for stored rich text shown on PUBLIC pages
+    (portal /ticket + emails). Never mutates stored data. Falls back to full-escape
+    on any parser error so output is never less safe than plain text."""
+    if not s:
+        return ""
+    p = _HTMLSanitizer()
+    try:
+        p.feed(str(s)); p.close()
+    except Exception:
+        return html.escape(str(s))
+    return "".join(p.out)
+
 def _intake_email_html(item, rows, heading, intro, cta_label, cta_url, note=None, secondary=None):
     esc = html.escape
     sec_html = (f'<div style="text-align:center;margin:8px 0 0"><a href="{esc(secondary[1])}" '
@@ -1490,7 +1554,7 @@ def _intake_email_html(item, rows, heading, intro, cta_label, cta_url, note=None
     # `note` (a team comment) is plain text -> escape + honor its line breaks. The item
     # description is stored as safe HTML (escaped text + <br>), so render it as-is; the
     # pre-wrap container below also keeps any legacy plain-text descriptions readable.
-    block = esc(note).replace("\n", "<br>") if note is not None else (item.get("description") or "")
+    block = esc(note).replace("\n", "<br>") if note is not None else _sanitize_html(item.get("description") or "")
     lbl = ('<div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;'
            'letter-spacing:.4px;margin-bottom:5px">Message from the team</div>') if note is not None else ""
     desc_html = (f'<div style="margin-top:12px;padding-top:12px;border-top:1px solid #eef1f4;'
@@ -1619,7 +1683,7 @@ def _ticket_status_page(p, comments):
         f'<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f0f3f6;font-size:14px">'
         f'<span style="color:#6b7280">{esc(k)}</span><span style="color:#1f2733;font-weight:600">{esc(v)}</span></div>'
         for k, v in rows if v)
-    desc = p.get("description") or ""   # stored as safe HTML (escaped text + <br>); pre-wrap also covers legacy plain text
+    desc = _sanitize_html(p.get("description") or "")   # H1: sanitize at render (stored value is untrusted); pre-wrap also covers legacy plain text
     desc_html = (f'<div style="margin-top:16px"><div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Details</div>'
                  f'<div style="font-size:14px;color:#1f2733;white-space:pre-wrap;line-height:1.55">{desc}</div></div>') if desc else ""
     atts = [a for a in (p.get("attachments") or []) if isinstance(a, dict) and a.get("name")]
@@ -3101,15 +3165,39 @@ def set_config(key: str, body = Body(...), username: str = "",
         with db(team) as c:
             row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
         existing = {u["username"]: u for u in json.loads(row["value"])} if row else {}
+        # H3: the generic config route must NOT be a way around the primary-admin
+        # protection enforced in admin_change_user_password. Without these guards a
+        # regular admin could rewrite this array to set the primary admin's password,
+        # grant themselves `builtin:true`, or delete the primary admin outright.
+        caller = auth["username"]
+        caller_is_primary = bool(existing.get(caller, {}).get("builtin"))
         seen_emails = {}
         for u in body:
             uname = u.get("username","")
+            prev = existing.get(uname)
+            # The `builtin` (primary-admin) flag is server-owned and immutable via this
+            # route: inherit it from the stored record, default False for new users.
+            # (Blocks self-promotion to primary and clearing the primary's flag.)
+            u["builtin"] = bool(prev.get("builtin")) if prev else False
             pw = u.get("password","")
             if not pw:
-                if uname in existing and existing[uname].get("password"):
-                    u["password"] = existing[uname]["password"]
+                if prev and prev.get("password"):
+                    u["password"] = prev["password"]
             elif not is_hashed(pw):
                 u["password"] = hash_password(pw)
+            # Primary-admin protection (mirrors admin_change_user_password): a
+            # non-primary caller may not alter the primary admin's credentials/role/
+            # revocation, nor change any OTHER admin's password.
+            if not caller_is_primary and prev and uname != caller:
+                if prev.get("builtin"):
+                    u["password"] = prev.get("password")
+                    u["role"] = prev.get("role", "admin")
+                    if prev.get("revokedAt"):
+                        u["revokedAt"] = prev["revokedAt"]
+                    else:
+                        u.pop("revokedAt", None)
+                elif prev.get("role") == "admin" and u.get("password") != prev.get("password"):
+                    raise HTTPException(403, "Only the primary admin can change another admin's password")
             # Normalize + validate email; emails must be unique per team because
             # users can log in by email.
             email = (u.get("email") or "").strip()
@@ -3121,6 +3209,11 @@ def set_config(key: str, body = Body(...), username: str = "",
                 if key_l in seen_emails:
                     raise HTTPException(422, f"Duplicate email '{email}' - emails must be unique per team")
                 seen_emails[key_l] = uname
+        # A non-primary admin cannot remove the primary admin by omitting them.
+        if not caller_is_primary:
+            primary = next((un for un, u in existing.items() if u.get("builtin")), None)
+            if primary and primary not in {u.get("username", "") for u in body}:
+                raise HTTPException(403, "The primary admin account cannot be removed")
     with db(team) as c:
         c.execute("INSERT INTO config(key,value) VALUES(?,?) "
                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value",

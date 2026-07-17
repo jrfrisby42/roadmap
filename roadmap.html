@@ -2092,7 +2092,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.32.1';
+const APP_VERSION = '4.32.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2640,6 +2640,60 @@ function priorityDot(val){
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function stripHtml(s){ return String(s||'').replace(/<[^>]*>/g,'').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim(); }
 function escA(s){ return String(s||'').replace(/"/g,'&quot;'); }
+
+// H1: dependency-free allow-list sanitizer for rendering STORED rich text (item
+// descriptions) through innerHTML. Sanitization used to live only in the Tiptap
+// editor on SAVE, so a value written any other way (raw API PUT, Jira-synced markup,
+// legacy data) reached innerHTML unsanitized. This sanitizes at RENDER (stored data
+// is untouched, so the editor round-trip is unaffected) and mirrors the editor's
+// allow-list (_FRZ_SANI_CFG) so rich content still displays. Parsing happens inside
+// an inert <template>, so no handler fires / no image loads during sanitization.
+var _SRH_SAFE_TAGS = {P:1,BR:1,STRONG:1,B:1,EM:1,I:1,U:1,S:1,STRIKE:1,CODE:1,PRE:1,BLOCKQUOTE:1,
+  H1:1,H2:1,H3:1,UL:1,OL:1,LI:1,HR:1,A:1,IMG:1,SPAN:1,MARK:1,DIV:1,
+  TABLE:1,THEAD:1,TBODY:1,TR:1,TH:1,TD:1,COLGROUP:1,COL:1,DETAILS:1,SUMMARY:1,IFRAME:1};
+var _SRH_SAFE_ATTRS = {href:1,target:1,rel:1,title:1,alt:1,colspan:1,rowspan:1,colwidth:1,
+  'class':1,'data-att-key':1,'data-u':1,'data-title':1,'data-variant':1,'data-type':1,
+  'data-id':1,'data-label':1,width:1,height:1,
+  allow:1,allowfullscreen:1,frameborder:1,src:1};   // src is gated below: kept only on a host-allowlisted iframe (imgs stay src-less, rehydrated at render)
+var _SRH_DROP_ALL = {SCRIPT:1,STYLE:1,OBJECT:1,EMBED:1,LINK:1,META:1,BASE:1,
+  FORM:1,INPUT:1,BUTTON:1,TEXTAREA:1,SELECT:1,SVG:1,MATH:1,TEMPLATE:1};
+var _SRH_SAFE_CLASS = {'frz-panel':1,'frz-expand':1,'frz-expand-body':1,'frz-mention':1,'frz-hl':1};
+var _SRH_VIDEO_HOSTS = {'www.youtube.com':1,'youtube.com':1,'www.youtube-nocookie.com':1,
+  'youtube-nocookie.com':1,'player.vimeo.com':1,'www.loom.com':1,'loom.com':1};
+function _srhSafeURL(v){ return /^(?:https?:|mailto:|tel:|#)/i.test(String(v||'').trim()); }
+function _srhVideoHost(src){ try{ var u=new URL(String(src||''), location.href); return u.protocol==='https:' && !!_SRH_VIDEO_HOSTS[u.hostname]; }catch(e){ return false; } }
+function sanitizeRichHTML(html){
+  var tpl = document.createElement('template');
+  tpl.innerHTML = String(html==null ? '' : html);
+  (function walk(node){
+    Array.prototype.slice.call(node.childNodes).forEach(function(el){
+      if(el.nodeType === 1){
+        var tag = el.tagName;
+        if(_SRH_DROP_ALL[tag]){ el.remove(); return; }
+        // iframe: only host-allowlisted https video embeds survive (mirrors the editor's frzHostAllowed)
+        if(tag === 'IFRAME' && !_srhVideoHost(el.getAttribute('src'))){ el.remove(); return; }
+        walk(el);                                   // sanitize descendants first
+        if(!_SRH_SAFE_TAGS[tag]){                    // unknown tag -> unwrap, keep (clean) children
+          var parent = el.parentNode;
+          while(el.firstChild) parent.insertBefore(el.firstChild, el);
+          parent.removeChild(el);
+          return;
+        }
+        Array.prototype.slice.call(el.attributes).forEach(function(at){
+          var name = at.name.toLowerCase(), val = at.value;
+          if(name.indexOf('on') === 0 || !_SRH_SAFE_ATTRS[name]){ el.removeAttribute(at.name); return; }
+          if(name === 'href' && !_srhSafeURL(val)){ el.removeAttribute(at.name); return; }
+          if(name === 'src' && tag !== 'IFRAME'){ el.removeAttribute(at.name); return; }   // only the (already host-validated) iframe keeps src
+          if(name === 'class'){
+            var kept = String(val||'').split(/\s+/).filter(function(c){ return _SRH_SAFE_CLASS[c]; });
+            if(kept.length) el.setAttribute('class', kept.join(' ')); else el.removeAttribute('class');
+          }
+        });
+      } else if(el.nodeType === 8){ el.remove(); }   // strip comments
+    });
+  })(tpl.content);
+  return tpl.innerHTML;
+}
 
 // ── DEV SELECTS ──
 function populateDevSelects(){
@@ -4259,7 +4313,7 @@ function openProjectModal(id){
   document.getElementById('modalTitle').textContent = p?'Edit Item':'New Item';
   document.getElementById('fName').value     = p?.name||'';
   // Load rich text description
-  document.getElementById('fDesc').innerHTML = p?.description || '';
+  document.getElementById('fDesc').innerHTML = sanitizeRichHTML(p?.description || '');   // H1: sanitize stored HTML at render
   _featureFlags = Array.isArray(p?.featureFlags) ? [...p.featureFlags] : [];
   renderFeatureFlagList();
   populateDevSelects();
@@ -4364,19 +4418,31 @@ function openProjectModal(id){
       return !q || label.includes(q);
     });
     reqDD.innerHTML = [
-      `<div style="padding:7px 10px;cursor:pointer;font-size:13px;color:var(--muted)"
-        onmousedown="document.getElementById('fRequires').value='';document.getElementById('fRequiresInput').value='';document.getElementById('fRequiresDropdown').style.display='none';document.getElementById('fParallel').checked=true;syncMutualExclusion();">- None -</div>`,
+      `<div data-id="" style="padding:7px 10px;cursor:pointer;font-size:13px;color:var(--muted)">- None -</div>`,
       ...filtered.map(x => {
         const label = `${esc(x.name)}${x.product ? ' <span style=\\"color:var(--muted);font-size:11px\\">- ' + esc(x.product) + '</span>' : ''}`;
         const inputLabel = x.name + (x.product ? ' - ' + x.product : '');
-        return `<div style="padding:7px 10px;cursor:pointer;font-size:13px"
-          onmousedown="document.getElementById('fRequires').value='${x.id}';document.getElementById('fRequiresInput').value='${escA(inputLabel)}';document.getElementById('fRequiresDropdown').style.display='none';document.getElementById('fParent').value='';var pi=document.getElementById('fParentInput');if(pi)pi.value='';syncMutualExclusion();"
-          >${label}</div>`;
+        // H2: id/label live in data-* attributes, never interpolated into inline JS
+        // (item names are user/portal-controlled; escA doesn't escape ' → breakout).
+        return `<div data-id="${escA(esc(String(x.id)))}" data-label="${escA(esc(inputLabel))}" style="padding:7px 10px;cursor:pointer;font-size:13px">${label}</div>`;
       })
     ].join('');
     reqDD.querySelectorAll('div').forEach(d => {
       d.addEventListener('mouseover', ()=> d.style.background='var(--surface2)');
       d.addEventListener('mouseout',  ()=> d.style.background='');
+      d.addEventListener('mousedown', () => {
+        const id = d.getAttribute('data-id') || '';   // getAttribute decodes entities; .value is a property, not innerHTML
+        document.getElementById('fRequires').value = id;
+        document.getElementById('fRequiresInput').value = id ? (d.getAttribute('data-label') || '') : '';
+        reqDD.style.display = 'none';
+        if(!id){
+          document.getElementById('fParallel').checked = true;
+        } else {
+          document.getElementById('fParent').value = '';
+          const pi = document.getElementById('fParentInput'); if(pi) pi.value = '';
+        }
+        syncMutualExclusion();
+      });
     });
     reqDD.style.display = '';
   };
@@ -4409,19 +4475,28 @@ function openProjectModal(id){
         return !q || label.includes(q);
       });
       parDD.innerHTML = [
-        `<div style="padding:7px 10px;cursor:pointer;font-size:13px;color:var(--muted)"
-          onmousedown="document.getElementById('fParent').value='';document.getElementById('fParentInput').value='';document.getElementById('fParentDropdown').style.display='none';syncMutualExclusion();">- None -</div>`,
+        `<div data-id="" style="padding:7px 10px;cursor:pointer;font-size:13px;color:var(--muted)">- None -</div>`,
         ...filtered.map(x => {
           const label = `${esc(x.name)}${x.product ? ' <span style=\\"color:var(--muted);font-size:11px\\">- ' + esc(x.product) + '</span>' : ''}`;
           const inputLabel = x.name + (x.product ? ' - ' + x.product : '');
-          return `<div style="padding:7px 10px;cursor:pointer;font-size:13px"
-            onmousedown="document.getElementById('fParent').value='${x.id}';document.getElementById('fParentInput').value='${escA(inputLabel)}';document.getElementById('fParentDropdown').style.display='none';document.getElementById('fRequires').value='';document.getElementById('fRequiresInput').value='';syncMutualExclusion();"
-            >${label}</div>`;
+          // H2: id/label in data-* attributes, applied via property assignment (no inline JS).
+          return `<div data-id="${escA(esc(String(x.id)))}" data-label="${escA(esc(inputLabel))}" style="padding:7px 10px;cursor:pointer;font-size:13px">${label}</div>`;
         })
       ].join('');
       parDD.querySelectorAll('div').forEach(d => {
         d.addEventListener('mouseover', ()=> d.style.background='var(--surface2)');
         d.addEventListener('mouseout',  ()=> d.style.background='');
+        d.addEventListener('mousedown', () => {
+          const id = d.getAttribute('data-id') || '';
+          document.getElementById('fParent').value = id;
+          document.getElementById('fParentInput').value = id ? (d.getAttribute('data-label') || '') : '';
+          parDD.style.display = 'none';
+          if(id){
+            document.getElementById('fRequires').value = '';
+            document.getElementById('fRequiresInput').value = '';
+          }
+          syncMutualExclusion();
+        });
       });
       parDD.style.display = '';
     };
@@ -4696,15 +4771,24 @@ function openProjectModal(id){
       const q = edInput.value.toLowerCase();
       const filtered = parentOpts.filter(x => !q || x.name.toLowerCase().includes(q));
       edDD.innerHTML = [
-        `<div style="padding:7px 10px;cursor:pointer;font-size:13px;color:var(--muted)"
-          onmousedown="document.getElementById('fParent').value='';document.getElementById('fParentEditorInput').value='';document.getElementById('fParentEditorDropdown').style.display='none';syncMutualExclusion();">- None -</div>`,
-        ...filtered.map(x => `<div style="padding:7px 10px;cursor:pointer;font-size:13px"
-          onmousedown="document.getElementById('fParent').value='${x.id}';document.getElementById('fParentEditorInput').value='${escA(x.name)}';document.getElementById('fParentEditorDropdown').style.display='none';document.getElementById('fRequires').value='';document.getElementById('fRequiresInput').value='';syncMutualExclusion();"
-          >${esc(x.name)}</div>`)
+        `<div data-id="" style="padding:7px 10px;cursor:pointer;font-size:13px;color:var(--muted)">- None -</div>`,
+        // H2: id/name in data-* attributes, applied via property assignment (no inline JS).
+        ...filtered.map(x => `<div data-id="${escA(esc(String(x.id)))}" data-label="${escA(esc(x.name))}" style="padding:7px 10px;cursor:pointer;font-size:13px">${esc(x.name)}</div>`)
       ].join('');
       edDD.querySelectorAll('div').forEach(d => {
         d.addEventListener('mouseover', ()=> d.style.background='var(--surface)');
         d.addEventListener('mouseout',  ()=> d.style.background='');
+        d.addEventListener('mousedown', () => {
+          const id = d.getAttribute('data-id') || '';
+          document.getElementById('fParent').value = id;
+          document.getElementById('fParentEditorInput').value = id ? (d.getAttribute('data-label') || '') : '';
+          edDD.style.display = 'none';
+          if(id){
+            document.getElementById('fRequires').value = '';
+            document.getElementById('fRequiresInput').value = '';
+          }
+          syncMutualExclusion();
+        });
       });
       edDD.style.display = '';
     };
@@ -14113,7 +14197,7 @@ function _ipDescShowRead(p, canEdit){
   const sv=document.getElementById('ipNotesSaveBtn'); if(sv) sv.style.display='none';
   const cn=document.getElementById('ipNotesCancelBtn'); if(cn) cn.style.display='none';
   const hasDesc = !!(p && (p.description||'').trim());
-  if(hasDesc) notesEl.innerHTML = p.description;
+  if(hasDesc) notesEl.innerHTML = sanitizeRichHTML(p.description);   // H1: sanitize stored HTML at render
   else if(canEdit) notesEl.innerHTML = '<span style="color:var(--muted);font-size:13px">Add a description</span>';
   else notesEl.innerHTML = '<span style="color:var(--muted);font-size:12px">No description</span>';
   notesEl.classList.toggle('ip-desc-editable', !!canEdit);   // hover/cursor affordance (read only)
@@ -19844,7 +19928,7 @@ if ('serviceWorker' in navigator) {
     }).catch(function(err){
       // Import/mount failed (e.g. esm.sh blocked): restore the content and rethrow so the
       // enter-edit bridge's .catch finishes the classic-editable fallback (rte-box + toolbar).
-      notesEl.innerHTML = p.description||'';
+      notesEl.innerHTML = sanitizeRichHTML(p.description||'');   // H1: sanitize stored HTML at render
       throw err;
     });
   }
