@@ -201,6 +201,26 @@ def test_create_returns_warnings_excludes_self(client, admin_headers):
     assert not any(w["level"] == "exclusive" for w in ws)        # doesn't warn against itself
 
 
+def test_create_is_idempotent_on_repeat(client, admin_headers):
+    # Stage 1d: a repeated identical POST (same user/type/dates) returns the existing row
+    # with deduped:true and inserts nothing new - the rapid-double-Save bug.
+    r1 = _mk(client, admin_headers, type_id="pto", owner="Everest", username="sam",
+             start_date="2026-07-20", end_date="2026-07-22")
+    assert r1.status_code == 200 and not r1.json().get("deduped")
+    first_id = r1.json()["id"]
+    r2 = _mk(client, admin_headers, type_id="pto", owner="Everest", username="sam",
+             start_date="2026-07-20", end_date="2026-07-22")
+    assert r2.status_code == 200
+    assert r2.json().get("deduped") is True and r2.json()["id"] == first_id
+    # only one row exists for that user/type/span
+    lst = client.get("/api/assignments?owner=Everest&user=sam", headers=admin_headers).json()["assignments"]
+    assert sum(1 for x in lst if x["type_id"] == "pto" and x["start_date"] == "2026-07-20") == 1
+    # a different date span is NOT deduped
+    r3 = _mk(client, admin_headers, type_id="pto", owner="Everest", username="sam",
+             start_date="2026-08-01", end_date="2026-08-02")
+    assert r3.status_code == 200 and not r3.json().get("deduped") and r3.json()["id"] != first_id
+
+
 def test_check_no_overlap_no_conflict(client, admin_headers):
     _mk(client, admin_headers, type_id="pto", owner="Everest", username="sam", start_date="2026-07-20", end_date="2026-07-22")
     ws = _check(client, admin_headers, type_id="sick", start_date="2026-08-01", end_date="2026-08-03")  # disjoint
