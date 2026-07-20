@@ -998,7 +998,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.37.4"
+APP_VERSION = "4.37.5"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3662,6 +3662,23 @@ def create_assignment(body: dict = Body(...), auth: dict = Depends(require_role(
     a = _assignment_from_body(body, types_by_id)
     ts = datetime.now(timezone.utc).isoformat()
     with db(team) as c:
+        # Stage 1d idempotency guard: a repeated identical POST (same user + type + date span)
+        # returns the EXISTING row with deduped:true instead of inserting a duplicate - this is
+        # what a rapid double-Save produced before. Recurrence children (recurrence_parent not
+        # null) legitimately repeat user/type across dates, so they're excluded from the match.
+        # Only named assignments dedupe (an empty username can't be a meaningful duplicate key).
+        # No audit entry is written for a deduped request. This is the ONLY assignment-insert
+        # path (the recurrence spawner in Phase 3 is not built yet), so nothing else is affected.
+        if a["username"]:
+            dup = c.execute(
+                "SELECT * FROM assignments WHERE username=? AND type_id=? AND start_date=? "
+                "AND end_date=? AND recurrence_parent IS NULL ORDER BY id LIMIT 1",
+                (a["username"], a["type_id"], a["start_date"], a["end_date"])).fetchone()
+            if dup:
+                result = dict(dup)
+                result["deduped"] = True
+                result["warnings"] = _assignment_warnings(team, {**a, "id": dup["id"]})
+                return result
         cur = c.execute(
             "INSERT INTO assignments(type_id,owner,username,start_date,end_date,description,"
             "recurrence,notes,created_by,created_ts,updated_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?)",

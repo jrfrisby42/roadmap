@@ -2112,7 +2112,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.4';
+const APP_VERSION = '4.37.5';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16110,10 +16110,12 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-cal-newbtn { border:0; background:var(--frz-accent); color:#fff; border-radius:8px; padding:0 14px; height:32px; font-weight:700; font-size:13px; cursor:pointer; }
   .frz-beta .frz-cal-addbtn { border:1px solid var(--frz-border); background:var(--frz-bg-elevated); color:var(--frz-accent); width:26px; height:26px; border-radius:7px; font-size:18px; line-height:1; cursor:pointer; font-weight:700; display:inline-flex; align-items:center; justify-content:center; padding:0; box-sizing:border-box; }
   .frz-beta .frz-cal-addbtn:hover { background:var(--frz-bg-app); }
-  /* Team Calendar filters (2c) - pill selects in the shared top filter bar, matching .frz-chip */
-  .frz-beta .frz-cal-fsel { cursor:pointer; padding-right:8px; }
-  .frz-beta .frz-cal-fsel.is-active { border-color:var(--frz-accent); color:var(--frz-accent); font-weight:600; }
-  .frz-beta .frz-cal-fclear { cursor:pointer; color:var(--frz-text-muted); }
+  /* Team Calendar filters - real .frz-chip pills + a lightweight single-select dropdown,
+     so they match the Gantt/List chip size and click-to-open behavior exactly. */
+  .frz-beta .frz-cal-menu { position:fixed; z-index:1200; background:var(--frz-bg-surface); border:1px solid var(--frz-border-strong); border-radius:8px; box-shadow:0 8px 28px rgba(0,0,0,.16); padding:4px; max-height:340px; overflow:auto; }
+  .frz-beta .frz-cal-menu-item { padding:6px 12px; border-radius:6px; font-size:13px; color:var(--frz-text); cursor:pointer; white-space:nowrap; }
+  .frz-beta .frz-cal-menu-item:hover { background:var(--frz-accent-soft); color:var(--frz-accent); }
+  .frz-beta .frz-cal-menu-item.is-sel { color:var(--frz-accent); font-weight:600; }
   /* Week grid (2c) */
   .frz-beta .frz-cal-wk-wrap { overflow-x:auto; }
   .frz-beta .frz-cal-week { width:100%; border-collapse:collapse; table-layout:fixed; }
@@ -17871,7 +17873,24 @@ if ('serviceWorker' in navigator) {
       });
       out.push({ owner:owner, baseCap:baseCap, effToday:effToday, users:users, typeById:typeById });
     });
+    var unassigned=_calUnassignedData(win, f, typeById);   // Stage 1b: unowned assignments are never invisible
+    if(unassigned) out.push(unassigned);
     return out;
+  }
+  // Stage 1b: assignments with an empty owner render nowhere in the owner-grouped list,
+  // so an "Unassigned" pseudo-section collects them. Scoped out when filtering to a
+  // specific owner or by capacity (an unowned assignment has no pool to match either).
+  function _calUnassignedData(win, f, typeById){
+    if(f.owner || f.cap) return null;
+    var winAssigns=(_assignments||[]).filter(function(a){
+      return !a.owner && a.username && (a.start_date||'')<=win.to && (a.end_date||a.start_date||'')>=win.from && (!f.type||a.type_id===f.type);
+    });
+    var userSet={}; winAssigns.forEach(function(a){ userSet[a.username]=1; });
+    var users=Object.keys(userSet).filter(function(u){ return !f.user || u===f.user; }).sort().map(function(u){
+      return { user:u, assigns: winAssigns.filter(function(a){ return a.username===u; }), tickets:[] };
+    });
+    if(!users.length) return null;
+    return { owner:'', unassigned:true, users:users, typeById:typeById };
   }
   function _calAsgChip(a, typeById, canEdit){
     var t=typeById[a.type_id]||{}, col=/^#[0-9A-Fa-f]{6}$/.test(t.color||'')?t.color:'#4a5b6b';
@@ -17880,6 +17899,9 @@ if ('serviceWorker' in navigator) {
   }
   function _calTicketChip(p){ return '<span class="frz-cal-chip frz-cal-chip-item" data-item="'+p.id+'" title="'+escA(p.name||'')+'">'+esc(p.itemKey||p.name||('#'+p.id))+'</span>'; }
   function _calOwnerHd(o, canEdit){
+    if(o.unassigned){   // Stage 1b: no capacity label, no "+" add button
+      return '<div class="frz-cal-owner-hd"><span class="frz-cal-owner-nm">Unassigned</span></div>';
+    }
     var todayStr=_ymdLocal(new Date());
     var capTitle=capacityBreakdownText(o.owner, todayStr) || ('Base capacity: '+o.baseCap);
     return '<div class="frz-cal-owner-hd"><span class="frz-cal-owner-nm">'+esc(o.owner)+'</span>'+
@@ -17888,29 +17910,80 @@ if ('serviceWorker' in navigator) {
       (canEdit ? '<button class="frz-cal-addbtn" data-owner="'+escA(o.owner)+'" title="Add assignment for this pool">+</button>' : '')+
       '</span></div>';
   }
+  var _calFilterOpts={}, _calMenuEl=null;
+  function _calCloseFilterMenu(){
+    if(!_calMenuEl) return;
+    _calMenuEl.remove(); _calMenuEl=null;
+    document.removeEventListener('mousedown', _calMenuOutside, true);
+    document.removeEventListener('keydown', _calMenuKey, true);
+  }
+  function _calMenuOutside(e){ if(_calMenuEl && !_calMenuEl.contains(e.target) && !e.target.closest('[data-cf]')) _calCloseFilterMenu(); }
+  function _calMenuKey(e){ if(e.key==='Escape') _calCloseFilterMenu(); }
+  function _calOpenFilterMenu(anchor, key){
+    var wasOpen = _calMenuEl && _calMenuEl.getAttribute('data-for')===key;
+    _calCloseFilterMenu(); if(wasOpen) return;   // second click on the same chip toggles it shut
+    var f=_calFilterState();
+    var opts=[{v:'',t:'All'}].concat(_calFilterOpts[key]||[]);
+    var m=document.createElement('div'); m.className='frz-cal-menu'; m.setAttribute('data-for', key);
+    m.innerHTML=opts.map(function(o){
+      return '<div class="frz-cal-menu-item'+(String(f[key]||'')===String(o.v)?' is-sel':'')+'" data-v="'+escA(o.v)+'">'+esc(o.t)+'</div>';
+    }).join('');
+    root.appendChild(m);   // inside the .frz-beta shell so the scoped CSS applies; position:fixed = viewport-relative
+    var r=anchor.getBoundingClientRect();
+    m.style.top=(r.bottom+4)+'px'; m.style.left=r.left+'px'; m.style.minWidth=Math.max(r.width,150)+'px';
+    var mr=m.getBoundingClientRect();
+    if(mr.right>window.innerWidth-8) m.style.left=Math.max(8, window.innerWidth-8-mr.width)+'px';
+    m.querySelectorAll('.frz-cal-menu-item').forEach(function(it){
+      it.addEventListener('click', function(){ f[key]=it.getAttribute('data-v'); _calCloseFilterMenu(); renderCalendar(); });
+    });
+    _calMenuEl=m;
+    setTimeout(function(){ document.addEventListener('mousedown', _calMenuOutside, true); document.addEventListener('keydown', _calMenuKey, true); }, 0);
+  }
   function renderCalFilters(){
-    // Rendered into the shared top filter-bar row (#frzFilterBar) - above the
-    // Month/Week/Timeline tabs, matching where the Gantt/List views put their chips.
+    // Rendered into the shared top filter-bar row (#frzFilterBar), above the Month/Week/
+    // Timeline tabs. These are the SAME .frz-chip pills the Gantt/List views use (label +
+    // value + caret/clear), opening a lightweight single-select dropdown - so size and
+    // behavior match the other views. Driven by state.calFilter (NOT the CHIPS/URL system).
+    _calCloseFilterMenu();
     var host=document.getElementById('frzFilterBar'); if(!host) return;
     var f=_calFilterState();
     var owners=_val('developers',[])||[];
     var users=(_val('users',[])||[]).map(function(u){ return u.username; });
     var types=(_assignmentTypes||[]).slice().sort(function(a,b){ return (a.display_order||0)-(b.display_order||0); });
     var products=(_val('products',[])||[]).map(function(p){ return (p&&p.name)||p; }).filter(Boolean);
-    // Pill-shaped select (reuses the .frz-chip look). The value-'' option shows just the
-    // filter name; a chosen value shows "Name: value", so the active filter reads at a glance.
-    function pill(key,label,opts,val){
-      return '<select data-cf="'+key+'" class="frz-chip frz-cal-fsel'+(val?' is-active':'')+'"><option value="">'+esc(label)+'</option>'+
-        opts.map(function(o){ var v=(o&&o.v!=null)?o.v:o, t=(o&&o.t!=null)?o.t:o; return '<option value="'+escA(v)+'"'+(String(val)===String(v)?' selected':'')+'>'+esc(label+': '+t)+'</option>'; }).join('')+'</select>';
+    var typeName={}; types.forEach(function(t){ typeName[t.id]=t.name; });
+    _calFilterOpts = {
+      owner:   owners.map(function(o){ return {v:o,t:o}; }),
+      user:    users.map(function(u){ return {v:u,t:displayName(u)}; }),
+      type:    types.map(function(t){ return {v:t.id,t:t.name}; }),
+      project: products.map(function(p){ return {v:p,t:p}; }),
+      cap:     [{v:'reduced',t:'Reduced only'}]
+    };
+    function valText(key){
+      var v=f[key]; if(!v) return 'All';
+      if(key==='user') return displayName(v);
+      if(key==='type') return typeName[v]||v;
+      if(key==='cap')  return 'Reduced only';
+      return v;
+    }
+    function chip(key,label){
+      var active=!!f[key];
+      return '<button class="frz-chip'+(active?' is-active':'')+'" data-cf="'+key+'">'+
+        '<span class="frz-chip-label">'+esc(label)+'</span>'+
+        '<span class="frz-chip-value">'+esc(valText(key))+'</span>'+
+        (active ? '<span class="frz-chip-clear" data-cfclear="'+key+'" role="button" aria-label="Clear '+esc(label)+' filter">×</span>' : IC.caret)+
+        '</button>';
     }
     host.innerHTML =
-      pill('owner','Owner',owners,f.owner)+
-      pill('user','User',users.map(function(u){ return {v:u,t:displayName(u)}; }),f.user)+
-      pill('type','Type',types.map(function(t){ return {v:t.id,t:t.name}; }),f.type)+
-      pill('project','Project',products,f.project)+
-      pill('cap','Capacity',[{v:'reduced',t:'Reduced only'}],f.cap)+
-      ((f.owner||f.user||f.type||f.project||f.cap) ? '<button class="frz-chip frz-cal-fclear" id="frzCalFClear">Clear</button>' : '');
-    host.querySelectorAll('[data-cf]').forEach(function(s){ s.addEventListener('change', function(){ f[s.getAttribute('data-cf')]=s.value; renderCalendar(); }); });
+      chip('owner','Owner')+chip('user','User')+chip('type','Type')+chip('project','Project')+chip('cap','Capacity')+
+      ((f.owner||f.user||f.type||f.project||f.cap) ? '<button class="frz-chip frz-chip--ghost" id="frzCalFClear">Clear</button>' : '');
+    host.querySelectorAll('[data-cf]').forEach(function(btn){
+      btn.addEventListener('click', function(e){
+        var cl=e.target.closest('[data-cfclear]');
+        if(cl){ f[cl.getAttribute('data-cfclear')]=''; renderCalendar(); return; }
+        _calOpenFilterMenu(btn, btn.getAttribute('data-cf'));
+      });
+    });
     var clr=host.querySelector('#frzCalFClear'); if(clr) clr.onclick=function(){ state.calFilter={owner:'',user:'',type:'',project:'',cap:''}; renderCalendar(); };
   }
   function _calMonth(body, data, canEdit){
@@ -17997,7 +18070,7 @@ if ('serviceWorker' in navigator) {
   }
 
   // ── Assignment create/edit modal (Phase 2b) ───────────────────────────────────
-  var _asgEditId = null, _asgCheckTimer = null;
+  var _asgEditId = null, _asgCheckTimer = null, _asgOwnerTouched = false;
   function _ensureAsgModal(){
     if(document.getElementById('frzAsgModal')) return;
     var bg=document.createElement('div'); bg.className='frz-modal-bg'; bg.id='frzAsgModal'; bg.hidden=true;
@@ -18019,6 +18092,7 @@ if ('serviceWorker' in navigator) {
         '<label class="frz-asg-lbl">Description</label><input id="frzAsgDesc" class="frz-asg-inp" maxlength="200">'+
         '<label class="frz-asg-lbl">Notes</label><textarea id="frzAsgNotes" class="frz-asg-inp" rows="2" maxlength="2000"></textarea>'+
         '<div id="frzAsgWarnings" class="frz-asg-warnings"></div>'+
+        '<div id="frzAsgOwnerNote" class="frz-asg-warn-info" hidden>No capacity pool selected - this assignment will not affect any owner\'s capacity and will appear under Unassigned.</div>'+
       '</div>'+
       '<div class="frz-asg-foot">'+
         '<button id="frzAsgDelete" class="frz-asg-del" hidden>Delete</button>'+
@@ -18034,8 +18108,24 @@ if ('serviceWorker' in navigator) {
     ['frzAsgType','frzAsgUser','frzAsgOwner','frzAsgStart','frzAsgEnd'].forEach(function(id){
       bg.querySelector('#'+id).addEventListener('change', _asgScheduleCheck);
     });
+    // Stage 1a: picking a user auto-fills its pod (ownerFilter) unless the owner was
+    // manually set this session; a manual owner change marks it touched. The info note
+    // tracks whether any pool is selected.
+    bg.querySelector('#frzAsgUser').addEventListener('change', function(){ _asgDeriveOwner(); _asgUpdateOwnerNote(); });
+    bg.querySelector('#frzAsgOwner').addEventListener('change', function(){ _asgOwnerTouched=true; _asgUpdateOwnerNote(); });
     bg.querySelector('#frzAsgSave').addEventListener('click', _asgSave);
     bg.querySelector('#frzAsgDelete').addEventListener('click', _asgDelete);
+  }
+  function _asgDeriveOwner(){
+    if(_asgOwnerTouched) return;   // never overwrite a manually/pre-seeded owner
+    var uname=document.getElementById('frzAsgUser').value;
+    var u=(_val('users',[])||[]).find(function(x){ return x.username===uname; });
+    var of=u && (u.ownerFilter||'');
+    if(of) document.getElementById('frzAsgOwner').value=of;
+  }
+  function _asgUpdateOwnerNote(){
+    var note=document.getElementById('frzAsgOwnerNote'); if(!note) return;
+    note.hidden = !!document.getElementById('frzAsgOwner').value;   // shown only when no pool is chosen; never blocks save
   }
   function _asgBody(){
     return {
@@ -18052,7 +18142,11 @@ if ('serviceWorker' in navigator) {
   function _asgRenderWarnings(ws){
     var box=document.getElementById('frzAsgWarnings'); if(!box) return;
     if(!ws || !ws.length){ box.innerHTML=''; return; }
-    box.innerHTML=ws.map(function(w){
+    // Stage 1d: collapse identical banners (level + message, which already encodes the
+    // conflicting user/type/period) so N overlapping rows show one message, not N copies.
+    var seen={}, uniq=[];
+    ws.forEach(function(w){ var k=(w.level||'')+'|'+(w.message||''); if(!seen[k]){ seen[k]=1; uniq.push(w); } });
+    box.innerHTML=uniq.map(function(w){
       var cls = w.level==='capacity' ? 'frz-asg-warn-info' : 'frz-asg-warn';
       return '<div class="'+cls+'">'+esc(w.message)+'</div>';
     }).join('');
@@ -18090,6 +18184,11 @@ if ('serviceWorker' in navigator) {
     document.getElementById('frzAsgNotes').value = data.notes || '';
     document.getElementById('frzAsgTitle').textContent = _asgEditId ? 'Edit assignment' : 'New assignment';
     var del=document.getElementById('frzAsgDelete'); del.hidden = !_asgEditId;
+    // Stage 1a: a pre-seeded owner (from a section "+" or an edited row) counts as chosen,
+    // so a later user pick won't clobber it. Stage 1c: reset the Save button each open.
+    _asgOwnerTouched = !!data.owner;
+    _asgUpdateOwnerNote();
+    var sv=document.getElementById('frzAsgSave'); sv.disabled=false; sv.textContent='Save';
     _asgRenderWarnings([]);
     document.getElementById('frzAsgModal').hidden=false;
     _asgScheduleCheck();
@@ -18109,11 +18208,12 @@ if ('serviceWorker' in navigator) {
     var b=_asgBody();
     if(!b.type_id){ _asgRenderWarnings([{level:'blocking',message:'Please choose an assignment type.'}]); return; }
     if(!b.start_date){ _asgRenderWarnings([{level:'blocking',message:'Please choose a start date.'}]); return; }
-    var btn=document.getElementById('frzAsgSave'); btn.disabled=true;
+    var btn=document.getElementById('frzAsgSave');
+    if(btn.disabled) return;   // Stage 1c: in-flight guard - ignore rapid repeat clicks
+    btn.disabled=true; btn.textContent='Saving…';
     var p = _asgEditId ? API.put('/api/assignments/'+_asgEditId, b) : API.post('/api/assignments', b);
-    p.then(function(res){ _asgAfterWrite((res&&res.warnings)||[]); })
-     .catch(function(err){ _asgRenderWarnings([{level:'blocking',message:(err&&err.message)||'Save failed'}]); })
-     .then(function(){ btn.disabled=false; });
+    p.then(function(res){ _asgAfterWrite((res&&res.warnings)||[]); })   // closes + re-renders the calendar in place
+     .catch(function(err){ btn.disabled=false; btn.textContent='Save'; _asgRenderWarnings([{level:'blocking',message:(err&&err.message)||'Save failed'}]); });
   }
   function _asgDelete(){
     if(_asgEditId==null) return;
