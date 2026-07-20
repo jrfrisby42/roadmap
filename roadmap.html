@@ -2092,7 +2092,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.33.0';
+const APP_VERSION = '4.33.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2712,11 +2712,16 @@ function avatarInitialsFor(username){
   var ini = parts.slice(0, 2).map(function(s){ return s[0]; }).join('').toUpperCase();
   return ini || (u.replace(/[^A-Za-z0-9]/g,'')[0] || '?').toUpperCase();
 }
+// Curated swatches for the Appearance color picker + the username-hash fallback.
+// All are legible with white text.
 var _AVATAR_PALETTE = ['#0059A9','#2F86DE','#1a9a59','#a07800','#c0392b','#7a3ea0','#0078b8','#c06000','#1a8a52','#4a5b6b'];
+var _AVATAR_HEX_RE = /^#[0-9A-Fa-f]{6}$/;
 function avatarColorFor(username){
+  var rec = _avatarUserRec(username);
+  if(rec && rec.avatarColor && _AVATAR_HEX_RE.test(rec.avatarColor)) return rec.avatarColor;   // user-chosen
   var s = String(username || ''), h = 0;
   for(var i=0;i<s.length;i++){ h = (h * 31 + s.charCodeAt(i)) >>> 0; }
-  return _AVATAR_PALETTE[h % _AVATAR_PALETTE.length];
+  return _AVATAR_PALETTE[h % _AVATAR_PALETTE.length];                                           // stable hash fallback
 }
 // Fully inline-styled so it renders identically in the classic and Flow script scopes
 // (no CSS-class dependency). `username` is escaped; initials are already alnum-only.
@@ -2724,7 +2729,7 @@ function avatarHTML(username, size){
   size = size || 24;
   var ini = esc(avatarInitialsFor(username)), col = avatarColorFor(username), fs = Math.round(size * 0.42);
   return '<span class="frz-ava" title="' + escA(esc(String(username == null ? '' : username))) + '" '
-    + 'style="display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;'
+    + 'style="display:inline-flex;align-items:center;justify-content:center;text-align:center;box-sizing:border-box;padding:0;flex:0 0 auto;'
     + 'width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:' + col + ';'
     + 'color:#fff;font-weight:700;font-size:' + fs + 'px;line-height:1;vertical-align:middle;overflow:hidden">'
     + ini + '</span>';
@@ -15772,7 +15777,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .rte-box:focus, .frz-beta .add-dev-row input:focus { box-shadow:0 0 0 3px rgba(0,89,169,0.15); }
   .frz-beta .frz-newitem svg { width:13px; height:13px; stroke-width:2.2; }
   .frz-beta .frz-acct-wrap { position:relative; }
-  .frz-beta .frz-avatar { width:30px; height:30px; border-radius:50%; background:var(--frz-accent); color:#fff; font-size:12px; font-weight:700; display:grid; place-items:center; cursor:pointer; border:0; }
+  .frz-beta .frz-avatar { width:30px; height:30px; border-radius:50%; background:var(--frz-accent); color:#fff; font-size:12px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; text-align:center; box-sizing:border-box; padding:0; line-height:1; cursor:pointer; border:0; }
   .frz-beta .frz-acct-menu { position:absolute; top:calc(100% + 6px); right:0; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:8px; box-shadow:0 8px 28px rgba(20,40,63,.15); min-width:170px; overflow:hidden; z-index:90; }
   .frz-beta .frz-acct-menu button { display:block; width:100%; text-align:left; border:0; background:none; cursor:pointer; font:inherit; font-size:13px; color:var(--frz-text); padding:10px 14px; }
   .frz-beta .frz-acct-menu button:hover { background:var(--frz-bg-app); }
@@ -21024,11 +21029,14 @@ if ('serviceWorker' in navigator) {
               '</div>'+
             '</div>'+
             '<div class="frz-set-row">'+
-              '<div><div class="frz-set-row-title">Avatar initials</div><div class="frz-set-row-sub">Up to 3 letters for your monogram. Leave blank to use your name.</div></div>'+
-              '<div style="display:flex;align-items:center;gap:10px">'+
-                '<span id="frzAvatarPreview"></span>'+
-                '<input id="frzAvatarInput" type="text" maxlength="3" autocomplete="off" spellcheck="false" style="width:66px;text-transform:uppercase;text-align:center;padding:7px 8px;border:1px solid #cdd6e0;border-radius:8px;font-weight:700;font:inherit;background:#fff;color:#1f2733">'+
-                '<button type="button" id="frzAvatarSave" style="background:var(--frz-accent);color:#fff;border:0;border-radius:8px;padding:8px 16px;font-weight:700;font-size:13px;cursor:pointer">Save</button>'+
+              '<div><div class="frz-set-row-title">Avatar</div><div class="frz-set-row-sub">Your initials (up to 3, blank uses your name) and color.</div></div>'+
+              '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:10px">'+
+                '<div style="display:flex;align-items:center;gap:10px">'+
+                  '<span id="frzAvatarPreview"></span>'+
+                  '<input id="frzAvatarInput" type="text" maxlength="3" autocomplete="off" spellcheck="false" style="width:66px;text-transform:uppercase;text-align:center;padding:7px 8px;border:1px solid #cdd6e0;border-radius:8px;font-weight:700;font:inherit;background:#fff;color:#1f2733">'+
+                  '<button type="button" id="frzAvatarSave" style="background:var(--frz-accent);color:#fff;border:0;border-radius:8px;padding:8px 16px;font-weight:700;font-size:13px;cursor:pointer">Save</button>'+
+                '</div>'+
+                '<div id="frzAvatarSwatches" style="display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end;max-width:250px"></div>'+
               '</div>'+
             '</div>'+
           '</div>'+
@@ -21052,35 +21060,58 @@ if ('serviceWorker' in navigator) {
       seg.querySelectorAll('button').forEach(function(b){ b.addEventListener('click', function(){ _call('setTheme', b.getAttribute('data-theme')); syncThemeSeg(); }); });
       syncThemeSeg();
     }
-    // Appearance tab - avatar initials. Self-scoped save (POST /api/users/self/avatar);
-    // the color is a stable hash of the username (not user-editable). Blank = derive
-    // initials from the username.
-    var avaIn=bg.querySelector('#frzAvatarInput'), avaPrev=bg.querySelector('#frzAvatarPreview'), avaSave=bg.querySelector('#frzAvatarSave');
-    if(avaIn && avaPrev && avaSave){
+    // Appearance tab - avatar initials + color. Self-scoped save (POST
+    // /api/users/self/avatar). Blank initials -> derive from username; the "Auto"
+    // swatch clears the color -> stable username-hash color.
+    var avaIn=bg.querySelector('#frzAvatarInput'), avaPrev=bg.querySelector('#frzAvatarPreview'),
+        avaSave=bg.querySelector('#frzAvatarSave'), avaSw=bg.querySelector('#frzAvatarSwatches');
+    if(avaIn && avaPrev && avaSave && avaSw){
       var meUser=localStorage.getItem('frazil_rm_user')||'';
       var meRec=_avatarUserRec(meUser);
-      // Pure username-derived initials (ignoring any saved override) for the placeholder.
-      var pureDerived=(function(){
-        var saved=meRec?meRec.avatarInitials:undefined;
-        if(meRec) delete meRec.avatarInitials;
-        var d=avatarInitialsFor(meUser);
-        if(meRec && saved!==undefined) meRec.avatarInitials=saved;
+      // Pure derived value for a field, ignoring any saved override on the record.
+      var _pure=function(field, fn){
+        var saved=meRec?meRec[field]:undefined;
+        if(meRec) delete meRec[field];
+        var d=fn();
+        if(meRec && saved!==undefined) meRec[field]=saved;
         return d;
-      })();
+      };
+      var pureDerived=_pure('avatarInitials', function(){ return avatarInitialsFor(meUser); });
+      var hashColor  =_pure('avatarColor',    function(){ return avatarColorFor(meUser); });   // the auto color
+      var selColor=(meRec && meRec.avatarColor && _AVATAR_HEX_RE.test(meRec.avatarColor)) ? meRec.avatarColor : '';  // '' = Auto
       avaIn.placeholder=pureDerived;
       avaIn.value=(meRec && meRec.avatarInitials) ? meRec.avatarInitials : '';
+      var curColor=function(){ return selColor || hashColor; };
       var renderPrev=function(){
         var val=(avaIn.value||'').replace(/[^A-Za-z0-9]/g,'').slice(0,3).toUpperCase();
-        avaPrev.innerHTML='<span style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;'
-          +'border-radius:50%;background:'+avatarColorFor(meUser)+';color:#fff;font-weight:700;font-size:14px">'+esc(val||pureDerived)+'</span>';
+        avaPrev.innerHTML='<span style="display:inline-flex;align-items:center;justify-content:center;text-align:center;box-sizing:border-box;'
+          +'width:34px;height:34px;border-radius:50%;background:'+curColor()+';color:#fff;font-weight:700;font-size:14px;line-height:1">'
+          +esc(val||pureDerived)+'</span>';
       };
-      avaIn.addEventListener('input', renderPrev); renderPrev();
+      var renderSwatches=function(){
+        var opts=[{c:hashColor, v:'', label:'Auto'}].concat(_AVATAR_PALETTE.map(function(c){ return {c:c, v:c}; }));
+        avaSw.innerHTML=opts.map(function(o){
+          var isSel=(o.v===selColor);
+          return '<button type="button" class="frz-ava-sw" data-c="'+escA(o.v)+'" title="'+escA(o.label||o.c)+'" '
+            +'style="width:24px;height:24px;border-radius:50%;background:'+o.c+';cursor:pointer;padding:0;'
+            +'border:2px solid '+(isSel?'#1f2733':'transparent')+';box-shadow:0 0 0 1px rgba(0,0,0,.14);'
+            +'color:#fff;font-size:9px;line-height:1">'+(o.v===''?'A':'')+'</button>';
+        }).join('');
+        avaSw.querySelectorAll('.frz-ava-sw').forEach(function(b){
+          b.addEventListener('click', function(){ selColor=b.getAttribute('data-c')||''; renderSwatches(); renderPrev(); });
+        });
+      };
+      avaIn.addEventListener('input', renderPrev);
+      renderSwatches(); renderPrev();
       avaSave.addEventListener('click', function(){
         var val=(avaIn.value||'').replace(/[^A-Za-z0-9]/g,'').slice(0,3).toUpperCase();
         avaSave.disabled=true;
-        API.post('/api/users/self/avatar', {initials:val}).then(function(){
+        API.post('/api/users/self/avatar', {initials:val, color:selColor}).then(function(){
           var rec=_avatarUserRec(meUser);
-          if(rec){ if(val) rec.avatarInitials=val; else delete rec.avatarInitials; }
+          if(rec){
+            if(val) rec.avatarInitials=val; else delete rec.avatarInitials;
+            if(selColor) rec.avatarColor=selColor; else delete rec.avatarColor;
+          }
           avaIn.value=val; renderPrev(); _frzSyncAvatar();
           avaSave.textContent='Saved'; setTimeout(function(){ avaSave.textContent='Save'; }, 1400);
         }).catch(function(){ avaSave.textContent='Error'; setTimeout(function(){ avaSave.textContent='Save'; }, 1400); })

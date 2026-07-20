@@ -121,3 +121,28 @@ def test_self_avatar_survives_admin_user_save(client, team, admin_headers):
 
 def test_self_avatar_requires_auth(client, team):
     assert client.post("/api/users/self/avatar", json={"initials": "AB"}).status_code == 401
+
+
+def test_self_avatar_color_set_clear_validate(client, team):
+    h = {"Authorization": f"Bearer {server.create_token(team, 'admin', 'admin')}", "X-Team": team}
+    # Valid hex is stored + surfaced (lowercased).
+    r = client.post("/api/users/self/avatar", json={"color": "#0059A9"}, headers=h)
+    assert r.status_code == 200 and r.json()["avatarColor"] == "#0059a9"
+    got = next(u for u in client.get("/api/all", headers=h).json()["users"] if u["username"] == "admin")
+    assert got["avatarColor"] == "#0059a9"
+    # Invalid hex is rejected (treated as clear).
+    assert client.post("/api/users/self/avatar", json={"color": "red"}, headers=h).json()["avatarColor"] == ""
+    # Partial save (initials only) must NOT wipe a previously-set color.
+    client.post("/api/users/self/avatar", json={"color": "#1a9a59"}, headers=h)
+    client.post("/api/users/self/avatar", json={"initials": "AB"}, headers=h)   # no color key
+    got = next(u for u in client.get("/api/all", headers=h).json()["users"] if u["username"] == "admin")
+    assert got["avatarColor"] == "#1a9a59" and got["avatarInitials"] == "AB"
+
+
+def test_self_avatar_color_survives_admin_user_save(client, team):
+    h = {"Authorization": f"Bearer {server.create_token(team, 'admin', 'admin')}", "X-Team": team}
+    client.post("/api/users/self/avatar", json={"initials": "ZZ", "color": "#c0392b"}, headers=h)
+    pub = [{k: u.get(k) for k in ("username", "role", "builtin", "email")} for u in _raw_users(team)]
+    assert client.put("/api/config/users", json=pub, headers=h).status_code == 200
+    got = next(u for u in _raw_users(team) if u["username"] == "admin")
+    assert got.get("avatarColor") == "#c0392b" and got.get("avatarInitials") == "ZZ"

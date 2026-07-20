@@ -946,7 +946,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.33.0"
+APP_VERSION = "4.33.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2222,6 +2222,7 @@ def login(body: dict = Body(...), request: FRequest = None, response: Response =
             "role": role,
             "ownerFilter": user.get("ownerFilter", ""),
             "avatarInitials": user.get("avatarInitials", ""),
+            "avatarColor": user.get("avatarColor", ""),
             "team": team,
             "token": token,
             "mustChangePassword": user.get("mustChangePassword", False)}
@@ -2254,14 +2255,19 @@ def change_own_password(body: dict = Body(...), auth: dict = Depends(require_aut
 def _clean_initials(raw) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", str(raw or ""))[:3].upper()
 
+# Validate a user-chosen avatar color: a #RRGGBB hex string (else blank -> hash fallback).
+def _clean_avatar_color(raw) -> str:
+    s = str(raw or "").strip()
+    return s.lower() if re.match(r"^#[0-9A-Fa-f]{6}$", s) else ""
+
 @app.post("/api/users/self/avatar")
 def set_own_avatar(body: dict = Body(...), auth: dict = Depends(require_auth)):
-    """Self-scoped: set (or clear) the caller's own avatar initials. Any role. Mirrors
-    change_own_password - never touches another user, and is deliberately NOT the
-    admin-gated `PUT /api/config/users` array (H3)."""
+    """Self-scoped: set (or clear) the caller's own avatar initials + color. Any role.
+    Mirrors change_own_password - never touches another user, and is deliberately NOT
+    the admin-gated `PUT /api/config/users` array (H3). Only the fields PRESENT in the
+    body are updated, so a partial save can't wipe the other."""
     team     = auth["team"]
     username = auth["username"]
-    initials = _clean_initials(body.get("initials"))
     with db(team) as c:
         row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
         if not row:
@@ -2270,12 +2276,21 @@ def set_own_avatar(body: dict = Body(...), auth: dict = Depends(require_auth)):
         user = next((u for u in users if u["username"] == username), None)
         if not user:
             raise HTTPException(404, "User not found")
-        if initials:
-            user["avatarInitials"] = initials
-        else:
-            user.pop("avatarInitials", None)   # blank -> revert to username-derived initials
+        if "initials" in body:
+            initials = _clean_initials(body.get("initials"))
+            if initials:
+                user["avatarInitials"] = initials
+            else:
+                user.pop("avatarInitials", None)   # blank -> revert to username-derived initials
+        if "color" in body:
+            color = _clean_avatar_color(body.get("color"))
+            if color:
+                user["avatarColor"] = color
+            else:
+                user.pop("avatarColor", None)      # blank/invalid -> revert to hash color
         c.execute("UPDATE config SET value=? WHERE key='users'", (json.dumps(users),))
-    return {"ok": True, "avatarInitials": initials}
+    return {"ok": True, "avatarInitials": user.get("avatarInitials", ""),
+            "avatarColor": user.get("avatarColor", "")}
 
 @app.post("/api/users/{target_username}/password")
 def admin_change_user_password(
@@ -2527,6 +2542,7 @@ def get_all(auth: dict = Depends(require_auth)):
                    "ownerFilter": u.get("ownerFilter", ""),
                    "email": u.get("email", ""),
                    "avatarInitials": u.get("avatarInitials", ""),   # user-chosen monogram (blank = derive from username)
+                   "avatarColor": u.get("avatarColor", ""),         # user-chosen #RRGGBB (blank = username-hash color)
                    "revokedAt": u.get("revokedAt")} for u in users_raw]
     return {"projects": projects, "developers": cfg("developers"),
             "statuses": cfg("statuses"), "delayReasons": cfg("delayReasons"),
@@ -3217,11 +3233,13 @@ def set_config(key: str, body = Body(...), username: str = "",
             # route: inherit it from the stored record, default False for new users.
             # (Blocks self-promotion to primary and clearing the primary's flag.)
             u["builtin"] = bool(prev.get("builtin")) if prev else False
-            # avatarInitials is user-owned (set via /api/users/self/avatar). The admin
-            # user form doesn't include it, so inherit it here or an admin save would
-            # wipe a user's chosen monogram.
+            # avatarInitials/avatarColor are user-owned (set via /api/users/self/avatar).
+            # The admin user form doesn't include them, so inherit here or an admin save
+            # would wipe a user's chosen monogram/color.
             if prev and "avatarInitials" not in u and prev.get("avatarInitials"):
                 u["avatarInitials"] = prev["avatarInitials"]
+            if prev and "avatarColor" not in u and prev.get("avatarColor"):
+                u["avatarColor"] = prev["avatarColor"]
             pw = u.get("password","")
             if not pw:
                 if prev and prev.get("password"):
