@@ -2108,7 +2108,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.2';
+const APP_VERSION = '4.37.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16204,6 +16204,7 @@ if ('serviceWorker' in navigator) {
 
   /* ── Beta modal (board editor etc.) - scaled-up Save-filter popover pattern ── */
   .frz-beta .frz-modal-bg { position:fixed; inset:0; background:rgba(20,40,63,.32); z-index:80; display:flex; align-items:center; justify-content:center; padding:24px; }
+  .frz-beta .frz-modal-bg[hidden] { display:none; }   /* the class display:flex outranks the UA [hidden] rule - restore it so hidden-toggled modals (e.g. the assignment modal) actually close */
   .frz-beta .frz-modal { background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:14px; box-shadow:0 18px 56px rgba(20,40,63,.28); width:640px; max-width:100%; max-height:88vh; display:flex; flex-direction:column; overflow:hidden; }
   .frz-beta .frz-modal-hd { padding:16px 20px; border-bottom:1px solid var(--frz-border); font-size:16px; font-weight:800; color:var(--frz-text); display:flex; align-items:center; justify-content:space-between; }
   .frz-beta .frz-modal-bd { padding:16px 20px; overflow-y:auto; }
