@@ -998,7 +998,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.37.3"
+APP_VERSION = "4.37.4"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2593,6 +2593,8 @@ def get_all(auth: dict = Depends(require_auth)):
                    "role": u.get("role", "viewer"),
                    "ownerFilter": u.get("ownerFilter", ""),
                    "email": u.get("email", ""),
+                   "firstName": u.get("firstName", ""),             # display name (Team Calendar + labels)
+                   "lastName": u.get("lastName", ""),
                    "avatarInitials": u.get("avatarInitials", ""),   # user-chosen monogram (blank = derive from username)
                    "avatarColor": u.get("avatarColor", ""),         # user-chosen #RRGGBB (blank = username-hash color)
                    "revokedAt": u.get("revokedAt")} for u in users_raw]
