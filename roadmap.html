@@ -2092,7 +2092,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.33.2';
+const APP_VERSION = '4.34.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -7859,6 +7859,59 @@ function getCurrentOwnerFilter(){
   return me?.ownerFilter || null;
 }
 
+// ── Multi-team sessions (Option A: client-side team switcher) ─────────────────
+// Each team you sign into is remembered here as {token, username, role, ts}. The
+// ACTIVE team's token is mirrored into `frazil_token`/`frazil_rm_team` (so the rest
+// of the app - API._team()/_token(), boot() - is unchanged). Switching just swaps
+// the active entry and reloads; boot() re-inits for the new team. Tokens still
+// expire in 24h, at which point a 401 re-shows the login wall for that team.
+function _loadSessions(){ try { return JSON.parse(localStorage.getItem('frazil_sessions')||'{}') || {}; } catch(e){ return {}; } }
+function _saveSessions(m){ try { localStorage.setItem('frazil_sessions', JSON.stringify(m||{})); } catch(e){} }
+function _recordSession(team, token, username, role){
+  if(!team || !token) return;
+  var m=_loadSessions(); m[team]={ token:token, username:username||'', role:role||'viewer', ts:Date.now() }; _saveSessions(m);
+}
+function activeTeamSlug(){ try { return (localStorage.getItem(SK.team)||'').trim(); } catch(e){ return ''; } }
+function switchTeam(team){
+  var m=_loadSessions(), s=m[team];
+  if(!s || team===activeTeamSlug()) return;
+  try {
+    localStorage.setItem(SK.team, team);
+    localStorage.setItem('frazil_token', s.token||'');
+    localStorage.setItem('frazil_rm_user', s.username||'');
+    localStorage.setItem('frazil_rm_role', s.role||'viewer');
+    localStorage.setItem(SK.session, '1');
+    localStorage.setItem('frazil_rm_login_ts', String(s.ts||Date.now()));
+  } catch(e){}
+  location.href='/';   // full re-init for the new team (safest across the whole app)
+}
+// "Add a team" = sign into another team without losing the current session. The
+// login wall lists every team; picking a different one + signing in records it and
+// makes it active (attemptLogin reloads). The current session stays in the map.
+function addTeam(){
+  try { document.getElementById('loginUser').value=''; document.getElementById('loginPass').value=''; } catch(e){}
+  showLoginWall();
+}
+// Populate the account-menu team switcher: one row per remembered team (active one
+// checked) + "Add a team". Called when the account menu opens.
+function renderTeamSwitch(){
+  var host=document.getElementById('frzTeamSwitch'); if(!host) return;
+  var sessions=_loadSessions(), teams=Object.keys(sessions).sort(), active=activeTeamSlug();
+  var cap=function(s){ return s ? s.charAt(0).toUpperCase()+s.slice(1) : s; };
+  var rows=teams.map(function(t){
+    var isA=(t===active);
+    return '<button type="button" class="frz-team-opt'+(isA?' is-active':'')+'" data-team="'+escA(t)+'">'
+      + '<span>'+esc(cap(t))+'</span>'+(isA?'<span class="frz-team-check">✓</span>':'')+'</button>';
+  }).join('');
+  host.innerHTML='<div class="frz-acct-label">Teams</div>'+rows
+    + '<button type="button" class="frz-team-add" id="frzAddTeam">+ Add a team…</button>';
+  host.querySelectorAll('.frz-team-opt').forEach(function(b){
+    b.addEventListener('click', function(){ switchTeam(b.getAttribute('data-team')); });
+  });
+  var add=host.querySelector('#frzAddTeam');
+  if(add) add.addEventListener('click', function(){ addTeam(); });
+}
+
 async function showLoginWall(){
   document.getElementById('loginWall').style.display = 'flex';
 
@@ -7985,6 +8038,7 @@ async function attemptLogin(){
     // Save team and auth token before reload so API calls work
     try { localStorage.setItem(SK.team, team); } catch(e){}
     try { localStorage.setItem('frazil_token', data.token || ''); } catch(e){}
+    _recordSession(team, data.token, data.username, data.role || 'viewer');   // remember this team for the switcher
 
     // Check if password change is required on first login
     if(data.mustChangePassword){
@@ -8173,6 +8227,7 @@ document.getElementById('forcePasswordSaveBtn')?.addEventListener('click', async
     // Store new token and team FIRST so boot() uses them on reload
     try { localStorage.setItem('frazil_token', r.token || ''); } catch(e){}
     try { if(pending.team) localStorage.setItem(SK.team, pending.team); } catch(e){}
+    _recordSession(pending.team, r.token, pending.username, pending.role || 'viewer');   // remember this team for the switcher
     // Establish session so boot() doesn't redirect to login wall
     setAdminMode(true, pending.username || '', pending.role || 'viewer');
     hideLoginWall();
@@ -8245,6 +8300,8 @@ function doLogout(){
   closeHamburger();
   // Clear server-side session cookie so audit page auth is invalidated
   API.post('/api/logout', {}).catch(()=>{});
+  // Full sign-out: drop every remembered team session + the active token.
+  try { localStorage.removeItem('frazil_sessions'); localStorage.removeItem('frazil_token'); } catch(e){}
   setAdminMode(false);
   showLoginWall();
 }
@@ -15781,6 +15838,13 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-acct-menu { position:absolute; top:calc(100% + 6px); right:0; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:8px; box-shadow:0 8px 28px rgba(20,40,63,.15); min-width:170px; overflow:hidden; z-index:90; }
   .frz-beta .frz-acct-menu button { display:block; width:100%; text-align:left; border:0; background:none; cursor:pointer; font:inherit; font-size:13px; color:var(--frz-text); padding:10px 14px; }
   .frz-beta .frz-acct-menu button:hover { background:var(--frz-bg-app); }
+  /* Multi-team switcher inside the account menu */
+  .frz-beta #frzTeamSwitch { border-top:1px solid var(--frz-border); border-bottom:1px solid var(--frz-border); margin:2px 0; }
+  .frz-beta .frz-acct-label { padding:8px 14px 3px; font-size:10px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; color:var(--frz-text-muted); }
+  .frz-beta .frz-acct-menu .frz-team-opt { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .frz-beta .frz-acct-menu .frz-team-opt.is-active { color:var(--frz-accent); font-weight:700; }
+  .frz-beta .frz-team-check { color:var(--frz-accent); font-weight:700; }
+  .frz-beta .frz-acct-menu .frz-team-add { color:var(--frz-accent); font-weight:600; }
 
   /* Filter row */
   .frz-beta .frz-filterbar { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-surface); overflow-x:auto; scrollbar-width:none; flex-shrink:0; }
@@ -16697,6 +16761,7 @@ if ('serviceWorker' in navigator) {
               '<button class="frz-avatar" id="frzAvatar" aria-label="Account"></button>'+
               '<div class="frz-acct-menu" id="frzAcctMenu" hidden>'+
                 '<button id="frzActivity">Activity Center</button>'+
+                '<div id="frzTeamSwitch"></div>'+
                 '<button id="frzLogout">Log out</button>'+
               '</div>'+
             '</div>'+
@@ -18194,7 +18259,7 @@ if ('serviceWorker' in navigator) {
     document.getElementById('frzSettings').addEventListener('click', openSettings);   // Stage 4a: tabbed Settings
     document.getElementById('frzAdmin').addEventListener('click', function(){ _call('openAdminPanel','devTab'); });
     var av=document.getElementById('frzAvatar'), am=document.getElementById('frzAcctMenu');
-    av.addEventListener('click', function(e){ e.stopPropagation(); am.hidden=!am.hidden; });
+    av.addEventListener('click', function(e){ e.stopPropagation(); am.hidden=!am.hidden; if(!am.hidden){ try { renderTeamSwitch(); } catch(_e){} } });
     document.addEventListener('click', function(){ am.hidden=true; });
     // Stage 3b: notifications bell
     var bell=document.getElementById('frzBell');
