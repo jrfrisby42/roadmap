@@ -1812,6 +1812,7 @@
       <button class="admin-tab" data-tab="delayTab">Reasons</button>
       <button class="admin-tab" data-tab="deptTab">Departments</button>
       <button class="admin-tab" data-tab="usersTab">Users</button>
+      <button class="admin-tab" data-tab="assignmentsTab">Assignments</button>
       <button class="admin-tab" data-tab="dataTab">Data</button>
       <button class="admin-tab" data-tab="teamSettingsTab">⚙ Team Settings</button>
     </div>
@@ -1860,6 +1861,15 @@
       <div class="add-dev-row">
         <input type="text" id="newStatusName" placeholder="New status name…">
         <button class="btn-add-dev" id="addStatusBtn">+ Add</button>
+      </div>
+    </div>
+
+    <!-- ASSIGNMENTS TAB (Team Calendar Phase 1c) -->
+    <div class="admin-pane" id="assignmentsTab">
+      <div class="dev-list" id="assignmentTypesList"></div>
+      <div class="add-dev-row">
+        <input type="text" id="newAssignmentTypeName" placeholder="New assignment type…">
+        <button class="btn-add-dev" id="addAssignmentTypeBtn">+ Add</button>
       </div>
     </div>
 
@@ -2098,7 +2108,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.36.1';
+const APP_VERSION = '4.36.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -6593,6 +6603,11 @@ function renderAdminPanes(tabId){
   renderDeferReasonList();
   renderUserList();
   renderTypeList();
+  renderAssignmentTypesList();
+  // Assignment types load async at boot; if they weren't ready yet, fetch then re-render.
+  if(!(_assignmentTypes||[]).length && typeof loadAssignmentData==='function'){
+    loadAssignmentData().then(renderAssignmentTypesList).catch(()=>{});
+  }
   // Sync Show Hidden button state
   const adminBtn = document.getElementById('showHiddenAdminBtn');
   if(adminBtn){
@@ -6627,6 +6642,7 @@ document.querySelectorAll('.admin-tab').forEach(tab => {
     if(pane) pane.classList.add('active');
     if(tab.dataset.tab === 'teamSettingsTab') openTeamSettingsTab();
     if(tab.dataset.tab === 'deptTab') renderDepartments();
+    if(tab.dataset.tab === 'assignmentsTab') renderAssignmentTypesList();
   });
 });
 
@@ -7121,6 +7137,116 @@ document.getElementById('addStatusBtn')?.addEventListener('click', ()=>{
   saveConfig('statuses', statuses); renderStatusList(); populateStatusSelects();
 });
 document.getElementById('newStatusName')?.addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('addStatusBtn').click(); });
+
+// ── ASSIGNMENT TYPES MANAGEMENT (Team Calendar Phase 1c) ──────────────────────
+// _assignmentTypes is loaded at boot (loadAssignmentData). Editing mutates the
+// working copy then PUTs the whole array (boards-style), rebuilds the capacity
+// impact map, and re-renders so capacity surfaces reflect any impact changes.
+let dragATIdx = null;
+function _saveAssignmentTypes(){
+  _assignmentTypes.forEach((t,idx)=>{ t.display_order = idx+1; });   // order = array order (calendar stacking + conflict priority)
+  API.put('/api/assignment-types', {assignmentTypes:_assignmentTypes}).then(res=>{
+    _assignmentTypes = (res && res.assignmentTypes) || _assignmentTypes;
+    buildAssignmentImpactMap();
+    renderAssignmentTypesList();
+    if(typeof render === 'function') render();
+    if(typeof showSaveBadge === 'function') showSaveBadge();
+  }).catch(err=>{
+    if(typeof showToast === 'function') showToast((err && err.message) || 'Save failed', 'error');
+    renderAssignmentTypesList();
+  });
+}
+function toggleAT(i, field, val){ if(_assignmentTypes[i]){ _assignmentTypes[i][field] = !!val; _saveAssignmentTypes(); } }
+function setDefaultAT(i){ _assignmentTypes.forEach((t,idx)=>{ t.is_default = (idx===i); }); _saveAssignmentTypes(); }
+function setImpactAT(i, val){ if(!_assignmentTypes[i]) return; const n=parseFloat(val); _assignmentTypes[i].capacity_impact = (isNaN(n)||n<0)?0:Math.round(n*100)/100; _saveAssignmentTypes(); }
+function _wireATDrag(list){
+  list.querySelectorAll('.dev-item').forEach(item=>{
+    item.addEventListener('dragstart', e=>{ dragATIdx=+item.dataset.idx; item.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; });
+    item.addEventListener('dragend', ()=>{ list.querySelectorAll('.dev-item').forEach(el=>el.classList.remove('dragging','drag-over')); });
+    item.addEventListener('dragover', e=>{ e.preventDefault(); list.querySelectorAll('.dev-item').forEach(el=>el.classList.remove('drag-over')); item.classList.add('drag-over'); });
+    item.addEventListener('dragleave', ()=>item.classList.remove('drag-over'));
+    item.addEventListener('drop', e=>{ e.preventDefault(); const ti=+item.dataset.idx; if(dragATIdx===null||dragATIdx===ti) return; const moved=_assignmentTypes.splice(dragATIdx,1)[0]; _assignmentTypes.splice(ti,0,moved); dragATIdx=null; _saveAssignmentTypes(); });
+  });
+}
+function renderAssignmentTypesList(){
+  const list = document.getElementById('assignmentTypesList'); if(!list) return;
+  const types = _assignmentTypes || [];
+  const hint = `<div style="padding:8px 13px 10px;font-size:11px;color:var(--muted);line-height:1.5">Drag the <b>⠿</b> handle to reorder - display order controls calendar stacking and conflict priority. <b>Blocks Work</b> warns against overlapping tickets; <b>Exclusive</b> warns against another assignment overlapping. <b>Capacity Impact</b> is subtracted from the owner's effective capacity.</div>`;
+  if(!types.length){ list.innerHTML = hint + '<div class="dev-empty">No assignment types yet.</div>'; return; }
+  const header = `<div style="display:flex;align-items:center;padding:6px 13px;border-bottom:2px solid var(--border);font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;gap:8px">
+    <span style="width:20px"></span>
+    <span style="flex:1;min-width:150px">Assignment</span>
+    <span style="width:50px;text-align:center" title="Available for new assignments">Active</span>
+    <span style="width:52px;text-align:center" title="Built-in - cannot be deleted">System</span>
+    <span style="width:52px;text-align:center" title="Default type for new assignments (one only)">Default</span>
+    <span style="width:60px;text-align:center" title="Warns against overlapping ticket work">Blocks<br>Work</span>
+    <span style="width:64px;text-align:center" title="Warns against another exclusive assignment overlapping">Exclusive</span>
+    <span style="width:74px;text-align:center" title="Units subtracted from the owner's capacity">Capacity<br>Impact</span>
+    <span style="width:58px;text-align:center" title="Tickets may overlap this assignment">Allow<br>Tickets</span>
+    <span style="width:64px;text-align:center" title="Other assignments may overlap this one">Allow<br>Assign.</span>
+    <span style="width:58px;text-align:center" title="Show on the Team Calendar">On<br>Calendar</span>
+    <span style="width:54px"></span>
+  </div>`;
+  const chk = (val, fn) => `<input type="checkbox" ${val?'checked':''} onchange="${fn}" style="accent-color:var(--accent);cursor:pointer;width:15px;height:15px">`;
+  const lock = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
+  const rows = types.map((t,i)=>{
+    const color = /^#[0-9A-Fa-f]{6}$/.test(t.color||'') ? t.color : 'var(--muted)';
+    const sysCell = t.system ? `<span title="Built-in type" style="opacity:0.6">${lock}</span>` : '';
+    const del = t.system
+      ? `<span class="btn-ic" title="Built-in - cannot be deleted" style="opacity:0.4;cursor:default">${lock}</span>`
+      : `<button class="btn-ic del" onclick="deleteAssignmentType(${i})" title="Delete"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`;
+    return `<div class="dev-item" draggable="true" data-idx="${i}" style="gap:8px">
+      <span class="drag-handle" title="Drag to reorder">⠿</span>
+      <span class="dev-nm" style="flex:1;min-width:150px;display:flex;align-items:center;gap:7px"><span style="width:10px;height:10px;border-radius:50%;background:${color};flex:0 0 auto"></span><span>${esc(t.name)}</span>${t.category?`<span style="font-size:10px;color:var(--muted);font-weight:400">${esc(t.category)}</span>`:''}</span>
+      <span style="width:50px;text-align:center">${chk(t.active!==false, `toggleAT(${i},'active',this.checked)`)}</span>
+      <span style="width:52px;text-align:center">${sysCell}</span>
+      <span style="width:52px;text-align:center"><input type="radio" name="atDefault" ${t.is_default?'checked':''} onchange="setDefaultAT(${i})" style="accent-color:var(--accent);cursor:pointer;width:15px;height:15px"></span>
+      <span style="width:60px;text-align:center">${chk(!!t.blocks_work, `toggleAT(${i},'blocks_work',this.checked)`)}</span>
+      <span style="width:64px;text-align:center">${chk(!!t.exclusive, `toggleAT(${i},'exclusive',this.checked)`)}</span>
+      <span style="width:74px;text-align:center"><input type="number" min="0" step="0.05" value="${Number(t.capacity_impact)||0}" onchange="setImpactAT(${i}, this.value)" style="width:56px;text-align:center;padding:3px 4px;border:1px solid var(--border);border-radius:5px;font:inherit;font-size:12px;background:var(--surface);color:var(--text)"></span>
+      <span style="width:58px;text-align:center">${chk(t.allow_tickets!==false, `toggleAT(${i},'allow_tickets',this.checked)`)}</span>
+      <span style="width:64px;text-align:center">${chk(t.allow_assignments!==false, `toggleAT(${i},'allow_assignments',this.checked)`)}</span>
+      <span style="width:58px;text-align:center">${chk(t.show_on_calendar!==false, `toggleAT(${i},'show_on_calendar',this.checked)`)}</span>
+      <button class="btn-ic" onclick="startEditAssignmentType(${i})" title="Edit name + color"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+      ${del}
+    </div>`;
+  }).join('');
+  list.innerHTML = hint + header + rows;
+  _wireATDrag(list);
+}
+function startEditAssignmentType(i){
+  const t=_assignmentTypes[i]; if(!t) return;
+  const item=document.querySelector(`#assignmentTypesList .dev-item[data-idx="${i}"]`); if(!item) return;
+  const col = /^#[0-9A-Fa-f]{6}$/.test(t.color||'') ? t.color : '#0059A9';
+  item.innerHTML = `<input class="dev-edit-inp" id="atei_${i}" value="${escA(t.name)}" style="flex:1">
+    <input type="color" id="atec_${i}" value="${col}" title="Color" style="width:34px;height:28px;padding:0;border:1px solid var(--border);border-radius:5px;cursor:pointer">
+    <button class="btn-ic" onclick="saveEditAssignmentType(${i})" style="color:var(--accent)" title="Save"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><polyline points="20 6 9 17 4 12"/></svg></button>
+    <button class="btn-ic" onclick="renderAssignmentTypesList()" title="Cancel"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
+  document.getElementById(`atei_${i}`)?.focus();
+}
+function saveEditAssignmentType(i){
+  const t=_assignmentTypes[i]; if(!t) return;
+  const n=document.getElementById(`atei_${i}`)?.value.trim(); if(!n) return;
+  t.name=n; const c=document.getElementById(`atec_${i}`)?.value; if(c) t.color=c;
+  _saveAssignmentTypes();
+}
+function deleteAssignmentType(i){
+  const t=_assignmentTypes[i]; if(!t) return;
+  if(t.system){ alert(`"${t.name}" is a built-in type and cannot be deleted.`); return; }
+  if(!confirm(`Delete assignment type "${t.name}"?\nExisting assignments of this type remain but no longer affect capacity.`)) return;
+  _assignmentTypes.splice(i,1); _saveAssignmentTypes();
+}
+function _atSlug(name){ return (name||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || ('type-'+Date.now()); }
+document.getElementById('addAssignmentTypeBtn')?.addEventListener('click', ()=>{
+  const inp=document.getElementById('newAssignmentTypeName'); const n=(inp.value||'').trim(); if(!n) return;
+  let id=_atSlug(n); const ids=new Set((_assignmentTypes||[]).map(t=>t.id)); let base=id, k=2;
+  while(ids.has(id)) id=base+'-'+(k++);
+  _assignmentTypes.push({id, name:n, category:'Custom', icon:'', color:'#4a5b6b', active:true, system:false, is_default:false,
+    blocks_work:false, exclusive:false, capacity_impact:0, allow_tickets:true, allow_assignments:true,
+    show_on_calendar:true, display_order:(_assignmentTypes||[]).length+1});
+  inp.value=''; _saveAssignmentTypes();
+});
+document.getElementById('newAssignmentTypeName')?.addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('addAssignmentTypeBtn').click(); });
 
 // ── DELAY REASONS MANAGEMENT ──
 // ── REASONS TAB ──────────────────────────────────────────────────────────────
