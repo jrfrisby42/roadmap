@@ -113,3 +113,36 @@ def test_assignment_range_overlap_query(client, admin_headers):
     assert len(hit.json()["assignments"]) >= 1
     miss = client.get("/api/assignments?owner=Everest&date_from=2026-08-01&date_to=2026-08-05", headers=admin_headers)
     assert all(x["end_date"] >= "2026-08-01" for x in miss.json()["assignments"])
+
+
+# ── capacity integration (Phase 1b): impacts subtract from effective capacity ──
+def _eff(client, headers, owner, date):
+    return client.get(f"/api/capacity-overrides/effective?owner={owner}&date={date}", headers=headers).json()
+
+
+def test_assignment_impact_reduces_effective_capacity(client, admin_headers):
+    client.put("/api/config/ownerCapacity", json={"Everest": 3.0}, headers=admin_headers)
+    # PTO (impact 1.0) on 07-20 drops effective 3 -> 2; an unaffected day stays 3.
+    _mk(client, admin_headers, type_id="pto", owner="Everest", start_date="2026-07-20", end_date="2026-07-20")
+    assert _eff(client, admin_headers, "Everest", "2026-07-20")["capacity"] == 2.0
+    assert _eff(client, admin_headers, "Everest", "2026-07-20")["default"] == 3.0
+    assert _eff(client, admin_headers, "Everest", "2026-07-25")["capacity"] == 3.0
+    # Stacking: add Training (0.5) same day -> 3 - 1.0 - 0.5 = 1.5
+    _mk(client, admin_headers, type_id="training", owner="Everest", start_date="2026-07-20", end_date="2026-07-20")
+    assert _eff(client, admin_headers, "Everest", "2026-07-20")["capacity"] == 1.5
+    # Above-base override (+contractor => 4) then impacts: 4 - 1.5 = 2.5
+    client.post("/api/capacity-overrides", json={"owner": "Everest", "date": "2026-07-20", "capacity": 4.0}, headers=admin_headers)
+    assert _eff(client, admin_headers, "Everest", "2026-07-20")["capacity"] == 2.5
+
+
+def test_inactive_type_impact_ignored(client, admin_headers):
+    client.put("/api/config/ownerCapacity", json={"Everest": 3.0}, headers=admin_headers)
+    _mk(client, admin_headers, type_id="training", owner="Everest", start_date="2026-07-20", end_date="2026-07-20")
+    assert _eff(client, admin_headers, "Everest", "2026-07-20")["capacity"] == 2.5
+    # deactivate Training -> its impact no longer counts
+    types = client.get("/api/assignment-types", headers=admin_headers).json()["assignmentTypes"]
+    for t in types:
+        if t["id"] == "training":
+            t["active"] = False
+    client.put("/api/assignment-types", json={"assignmentTypes": types}, headers=admin_headers)
+    assert _eff(client, admin_headers, "Everest", "2026-07-20")["capacity"] == 3.0

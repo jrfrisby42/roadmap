@@ -2098,7 +2098,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.36.0';
+const APP_VERSION = '4.36.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -6022,11 +6022,67 @@ async function loadAllCapOverrides(){
   }
 }
 
-// Get effective capacity for owner on date string "YYYY-MM-DD" using cached overrides
+// ── Team Calendar (Phase 1b): assignment capacity impacts ─────────────────────
+// Impacts are absolute units that subtract from an owner's effective capacity for
+// every day an assignment covers. Precomputed into a per-owner-per-day map at boot
+// (mirrors _capOverrides) so getEffectiveCapacity - the choke point every capacity
+// surface reads - stays cheap.
+let _assignmentTypes = [];          // GET /api/assignment-types
+let _assignments = [];              // GET /api/assignments
+let _assignmentImpacts = {};        // { owner: { "YYYY-MM-DD": totalImpact } }
+let _assignmentImpactDetail = {};   // { owner: { "YYYY-MM-DD": [{name,impact,username}] } }
+function _ymdLocal(dt){ return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0'); }
+function buildAssignmentImpactMap(){
+  _assignmentImpacts = {}; _assignmentImpactDetail = {};
+  const typeById = {}; (_assignmentTypes||[]).forEach(t => { typeById[t.id] = t; });
+  (_assignments||[]).forEach(a => {
+    const owner = a.owner || ''; if(!owner) return;
+    const t = typeById[a.type_id]; if(!t || t.active === false) return;
+    const impact = parseFloat(t.capacity_impact) || 0; if(impact <= 0) return;
+    const sp = (a.start_date||'').split('-').map(Number), ep = (a.end_date||a.start_date||'').split('-').map(Number);
+    if(sp.length!==3 || ep.length!==3 || !sp[0]) return;
+    let d = new Date(sp[0], sp[1]-1, sp[2]); const end = new Date(ep[0], ep[1]-1, ep[2]);
+    let guard = 0;
+    while(d <= end && guard++ < 3660){
+      const ds = _ymdLocal(d);
+      (_assignmentImpacts[owner] = _assignmentImpacts[owner] || {});
+      _assignmentImpacts[owner][ds] = (_assignmentImpacts[owner][ds] || 0) + impact;
+      (_assignmentImpactDetail[owner] = _assignmentImpactDetail[owner] || {});
+      (_assignmentImpactDetail[owner][ds] = _assignmentImpactDetail[owner][ds] || []).push({name: t.name, impact, username: a.username});
+      d.setDate(d.getDate() + 1);
+    }
+  });
+}
+async function loadAssignmentData(){
+  try {
+    const [tr, ar] = await Promise.all([
+      API.get('/api/assignment-types').catch(()=>({assignmentTypes:[]})),
+      API.get('/api/assignments').catch(()=>({assignments:[]}))
+    ]);
+    _assignmentTypes = (tr && tr.assignmentTypes) || [];
+    _assignments = (ar && ar.assignments) || [];
+    buildAssignmentImpactMap();
+  } catch(e){ console.warn('[Assignments] load failed:', e); }
+}
+// Multi-line breakdown for a capacity cell tooltip (empty when no impacts apply).
+function capacityBreakdownText(owner, dateStr){
+  const det = _assignmentImpactDetail[owner]?.[dateStr] || [];
+  if(!det.length) return '';
+  const override = _capOverrides[owner]?.[dateStr];
+  const base = (override !== undefined) ? override : (ownerCapacity[owner] || 1);
+  const lines = ['Base capacity: ' + base];
+  det.forEach(x => lines.push('  ' + (x.username ? x.username + ' ' : '') + x.name + ': -' + x.impact));
+  lines.push('Effective: ' + getEffectiveCapacity(owner, dateStr));
+  return lines.join('\n');
+}
+
+// Get effective capacity for owner on date "YYYY-MM-DD" (Phase 1b):
+//   effective = (override ?? base) − Σ(assignment impacts), floored at 0
 function getEffectiveCapacity(owner, dateStr){
   const override = _capOverrides[owner]?.[dateStr];
-  if(override !== undefined) return override;
-  return ownerCapacity[owner] || 1;
+  const base = (override !== undefined) ? override : (ownerCapacity[owner] || 1);
+  const impact = _assignmentImpacts[owner]?.[dateStr] || 0;
+  return Math.max(0, base - impact);
 }
 
 // Get health class based on how many items are active on a day vs capacity
@@ -6133,7 +6189,8 @@ function renderCapCal(owner){
       cls += ' selected';
     }
 
-    const capLabel = isWeekend ? '' : `<span class="cap-cal-cap">${effCap}/${def}</span>`;
+    const _bd = isWeekend ? '' : capacityBreakdownText(owner, dStr);   // Phase 1b: base/impacts/effective breakdown
+    const capLabel = isWeekend ? '' : `<span class="cap-cal-cap"${_bd ? ` title="${escA(_bd)}"` : ''}>${effCap}/${def}</span>`;
     const dot = hasOverride ? `<span class="cap-cal-override-dot" title="Override set"></span>` : '';
 
     cells += `<div class="${cls}" data-date="${dStr}" data-owner="${escA(owner)}"
@@ -6297,7 +6354,7 @@ function openCapCalEditor(owner){
   } else {
     capInp.value = def;
   }
-  capInp.max = def;
+  capInp.removeAttribute('max');   // Phase 1b: overrides may now exceed base (e.g. a contractor)
   document.getElementById('capCalModalErr').style.display = 'none';
 
   // Show existing overrides in range
@@ -6330,7 +6387,7 @@ async function saveCapOverride(){
 
   errEl.style.display = 'none';
   if(isNaN(val) || val < 0){ errEl.textContent = 'Capacity must be 0 or greater'; errEl.style.display=''; return; }
-  if(val > def){ errEl.textContent = `Cannot exceed default capacity (${def})`; errEl.style.display=''; return; }
+  // Phase 1b: an override may exceed base (adding a contractor raises the pool); no ceiling.
 
   const btn = document.getElementById('capCalSaveBtn');
   if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
@@ -15379,8 +15436,9 @@ async function boot(){
     updateHamburgerMenu();
   });
 
-  // Load all capacity overrides for accurate calendar + graph on first render
-  loadAllCapOverrides().then(() => {
+  // Load all capacity overrides + assignment impacts for accurate calendar + graph
+  // on first render (assignment impacts subtract from effective capacity - Phase 1b).
+  Promise.all([loadAllCapOverrides(), loadAssignmentData()]).then(() => {
     _capUsageMap = buildCapacityUsageMap();
     render();
   }).catch(()=>{});
