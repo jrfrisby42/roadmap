@@ -2092,7 +2092,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.34.0';
+const APP_VERSION = '4.35.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -6511,7 +6511,10 @@ document.getElementById('addDevBtn')?.addEventListener('click', ()=>{
 document.getElementById('newDevName')?.addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('addDevBtn')?.click(); });
 
 // ── ADMIN PANEL ──
-function openAdminPanel(tabId){
+// Render every admin pane + activate a tab. Shared by the classic modal
+// (openAdminPanel) and the Flow full-page shell (setAdmin -> _call). Does NOT
+// show/hide any container - the caller controls presentation.
+function renderAdminPanes(tabId){
   if(!isAdmin) return;
   // Set audit log link to current team
   const auditLink = document.getElementById('auditLogLink');
@@ -6537,10 +6540,18 @@ function openAdminPanel(tabId){
   const targetTab = tabId || 'devTab';
   document.querySelectorAll('.admin-tab').forEach(t => t.classList.toggle('active', t.dataset.tab===targetTab));
   document.querySelectorAll('.admin-pane').forEach(p => p.classList.toggle('active', p.id===targetTab));
-  document.getElementById('adminModalBg').classList.add('open');
   // Tab-specific init
   if(targetTab==='teamSettingsTab') openTeamSettingsTab();
   if(targetTab==='deptTab') renderDepartments();
+}
+function openAdminPanel(tabId){
+  if(!isAdmin) return;
+  // Flow shell: Admin is a routed full page, not a modal - route there instead.
+  if(document.body.classList.contains('frz-beta-active') && window._frzNav){
+    window._frzNav('/admin'); return;
+  }
+  renderAdminPanes(tabId);
+  document.getElementById('adminModalBg').classList.add('open');
 }
 
 // Tab switching
@@ -15835,6 +15846,11 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-newitem svg { width:13px; height:13px; stroke-width:2.2; }
   .frz-beta .frz-acct-wrap { position:relative; }
   .frz-beta .frz-avatar { width:30px; height:30px; border-radius:50%; background:var(--frz-accent); color:#fff; font-size:12px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; text-align:center; box-sizing:border-box; padding:0; line-height:1; cursor:pointer; border:0; }
+  /* Phase 0: Admin rendered as a full page inside #frzContent (not a modal) */
+  .frz-beta .frz-adminpage { padding:22px 26px 48px; }
+  .frz-beta .frz-adminpage .admin-modal { width:100%; max-width:1100px; margin:0 auto; max-height:none; overflow:visible; box-shadow:none; border-radius:0; padding:0; background:transparent; }
+  .frz-beta .frz-adminpage #adminDoneBtn { display:none; }   /* nothing to close in page mode */
+  .frz-beta .frz-adminpage .admin-tabs { flex-wrap:wrap; row-gap:4px; }   /* full width - let all tabs show, don't clip */
   .frz-beta .frz-acct-menu { position:absolute; top:calc(100% + 6px); right:0; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:8px; box-shadow:0 8px 28px rgba(20,40,63,.15); min-width:170px; overflow:hidden; z-index:90; }
   .frz-beta .frz-acct-menu button { display:block; width:100%; text-align:left; border:0; background:none; cursor:pointer; font:inherit; font-size:13px; color:var(--frz-text); padding:10px 14px; }
   .frz-beta .frz-acct-menu button:hover { background:var(--frz-bg-app); }
@@ -16603,6 +16619,8 @@ if ('serviceWorker' in navigator) {
     collapse:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M6 2.5v11"/></svg>',
     plus:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>',
     back:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M9 3L4 8l5 5M4 8h9"/></svg>',
+    teamCalendar:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5 1.8v2.4M11 1.8v2.4"/><circle cx="5" cy="9" r="0.9" fill="currentColor" stroke="none"/><circle cx="8" cy="9" r="0.9" fill="currentColor" stroke="none"/><circle cx="11" cy="9" r="0.9" fill="currentColor" stroke="none"/><circle cx="5" cy="11.6" r="0.9" fill="currentColor" stroke="none"/><circle cx="8" cy="11.6" r="0.9" fill="currentColor" stroke="none"/></svg>',
+    clipboard:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="11" rx="1.5"/><rect x="5.5" y="1.8" width="5" height="2.4" rx="1"/><path d="M5.5 7.5h5M5.5 10.5h5"/></svg>',
     caret:'<svg class="frz-chip-caret" viewBox="0 0 12 12"><path d="M3 4.5l3 3 3-3"/></svg>'
   };
   var VIEW_KEYS = ['gantt','kanban','list','planning','dashboard'];
@@ -16620,7 +16638,8 @@ if ('serviceWorker' in navigator) {
     list:     { chips:['owner','assignee','type','status'], extra:[], opts:['columns','export'] },
     planning: { chips:['owner','status'],                   extra:['type','assignee'], opts:[] },
     dashboard:{ chips:['owner','range'],                    extra:[], opts:[] },
-    'my-home':{ chips:[],                                   extra:[], opts:[] }   // Stage 5: personal landing, no chips
+    'my-home':{ chips:[],                                   extra:[], opts:[] },  // Stage 5: personal landing, no chips
+    'admin':  { chips:[],                                   extra:[], opts:[] }   // Phase 0: Admin full page, no chips
   };
   var PROJ_COLORS = ['#0059A9','#65B1E3','#2E8B6F','#C0700B','#8E4FB0','#C0392B','#0E7C86'];
   // Feature B: items eligible for sprint planning (single editable list).
@@ -16816,6 +16835,14 @@ if ('serviceWorker' in navigator) {
         '</tr></thead><tbody id="frzHomeBody"></tbody></table>'+
       '</div>';
     content.appendChild(home);
+    // Phase 0: Admin as a routed full page. Relocate the classic admin-modal box into
+    // a Flow-owned page container (like the My Account relocation). The classic
+    // (?classic=1) surface never runs build(), so its modal stays intact there.
+    var adminPage = document.createElement('div');
+    adminPage.id = 'frzAdminPage'; adminPage.className = 'frz-adminpage'; adminPage.style.display = 'none';
+    content.appendChild(adminPage);
+    var _adminBox = document.querySelector('#adminModalBg .admin-modal');
+    if (_adminBox) adminPage.appendChild(_adminBox);   // move (not copy) - tab listeners are on the same nodes
     document.getElementById('frzHomeBody').addEventListener('click', function(e){
       if (e.target.closest('input,button,a')) return;
       var tr = e.target.closest('tr.list-row'); if(!tr) return;
@@ -17055,8 +17082,10 @@ if ('serviceWorker' in navigator) {
     // Boards are Kanban column-layouts - hide the whole section from viewers,
     // who can't see Kanban at all.
     var bnav = document.getElementById('frzBoardNav'); if(bnav) bnav.style.display = viewer ? 'none' : '';
-    // admin visibility
-    document.getElementById('frzAdmin').style.display = _val('isAdmin', false) ? '' : 'none';
+    // admin visibility + active state (Admin is now a routed page)
+    var _adminBtn = document.getElementById('frzAdmin');
+    _adminBtn.style.display = _val('isAdmin', false) ? '' : 'none';
+    _adminBtn.setAttribute('aria-current', String(state.view==='admin' && !state.onItem));
     var ni = document.getElementById('frzNewItem');
     ni.style.display = (_val('isAdmin',false) || _val('isEditor',false)) ? '' : 'none';
   }
@@ -17445,10 +17474,30 @@ if ('serviceWorker' in navigator) {
     _frzSyncSearchMode();   // top-bar search = global "Search items" (jump), like the item page
     renderHome();
   }
+  function setAdmin(){
+    // Flow-owned full page (like My Home). Admins only.
+    if(!_val('isAdmin', false)){ navigate('/gantt', true); return; }
+    state.onItem=false; state.itemId=null; state.view='admin';
+    root.classList.remove('on-item');
+    var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
+    var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
+    ['kanbanBoard','listView','dashboardView','planningView'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    var home=document.getElementById('frzHome'); if(home) home.style.display='none';
+    var ap=document.getElementById('frzAdminPage'); if(ap) ap.style.display='';
+    setProjectPanel();
+    applyChromeHiding();
+    document.getElementById('frzLeft').innerHTML=_titleHtml('admin','Admin');
+    document.getElementById('frzBadges').innerHTML='';
+    document.getElementById('frzFilterBar').innerHTML='';   // Admin has no chip filter bar
+    renderRail();
+    _frzSyncSearchMode();
+    _call('renderAdminPanes','devTab');
+  }
   function setView(view, opts){
     opts = opts||{};
     if(view!=='list' && state.panelId!=null) frzClosePanel({fromURL:true});   // leaving List closes the detail panel (URL handled by the navigation)
     if(view==='my-home'){ return setHome(state.homeTab); }
+    if(view==='admin'){ return setAdmin(); }
     if(view==='kanban' && _val('isViewer', false)) view='gantt';   // viewers never see Kanban (safety net; callers also redirect)
     state.onItem=false; state.itemId=null;
     root.classList.remove('on-item');
@@ -17796,7 +17845,7 @@ if ('serviceWorker' in navigator) {
     var m = path.match(/^\/item\/(\d+)/);
     if (m){ state.itemFromApp = !replace; openItem(parseInt(m[1],10), {push:!replace}); return; }
     if (/^\/my-work(\/|$)/.test(path)){ navigate('/my-home', replace); return; }   // Stage 5: My Work absorbed into My Home
-    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home)/);
+    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home|admin)/);
     var view = vm ? vm[1] : (lastView()||'gantt');
     if (view==='kanban' && _val('isViewer', false)){ navigate('/gantt', replace); return; }   // viewers can't see Kanban
     if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
@@ -17805,7 +17854,7 @@ if ('serviceWorker' in navigator) {
     setView(view);
     if (replace) history.replaceState({frzView:view},'',url); else history.pushState({frzView:view},'',url);
     lset('frazil_beta_lastview_'+uname(), view);
-    if (view!=='my-home') rerender();   // My Home renders itself; skip the production view render
+    if (view!=='my-home' && view!=='admin') rerender();   // My Home + Admin render themselves; skip the production view render
     syncURL(true); // normalize URL to current filter state
   }
   function lastView(){ return ls('frazil_beta_lastview_'+uname()); }
@@ -17827,7 +17876,7 @@ if ('serviceWorker' in navigator) {
       history.replaceState({frzView:v2},'','/'+v2); state.itemFromApp=true; openItem(parseInt(qItem,10), {push:true}); return;
     }
     if (/^\/my-work(\/|$)/.test(path)){ navigate('/my-home', true); return; }   // Stage 5: absorbed into My Home
-    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home)/);
+    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home|admin)/);
     if (!vm){ // /beta -> last used (default gantt)
       var lv = lastView()||'gantt';
       applyDefaultCollapse(lv);
@@ -17845,7 +17894,7 @@ if ('serviceWorker' in navigator) {
     applyURLToFilters(vm[1], new URLSearchParams(location.search));
     setView(vm[1]);
     lset('frazil_beta_lastview_'+uname(), vm[1]);
-    if (vm[1]!=='my-home') rerender();   // My Home renders itself
+    if (vm[1]!=='my-home' && vm[1]!=='admin') rerender();   // My Home + Admin render themselves
     _frzSeedActiveFromURL();   // Fix 1: cold load - seed the saved-filter anchor from URL-match (single, most-specific)
     _frzSyncPanelFromURL();   // List detail panel: restore BEFORE syncURL so the emit preserves ?panel= on cold load
                               // (frzOpenPanel({fromURL}) sets state.panelId without writing the URL). Was after syncURL → stripped.
@@ -17858,14 +17907,14 @@ if ('serviceWorker' in navigator) {
     if (st.frzItem){ state.itemFromApp=true; openItem(st.frzItem, {push:false}); }
     else {
       var path = location.pathname.replace(/\/+$/,'');
-      var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home)/);
+      var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home|admin)/);
       var view = vm? vm[1] : (st.frzView || state.view);
       if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
         state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }   // Stage 1b: seed before rerender (popstate doesn't syncURL, but keep symmetric + avoids a stale-expand flash)
       if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
       applyURLToFilters(view, new URLSearchParams(location.search));
       setView(view);
-      if (view!=='my-home') rerender();   // My Home renders itself
+      if (view!=='my-home' && view!=='admin') rerender();   // My Home + Admin render themselves
       _frzSeedActiveFromURL();   // Fix 1: back/forward is a cold landing - reseed the anchor from the URL
       _frzRefreshActiveSaved();  // apply the reseeded highlight/crumb (popstate doesn't run syncURL)
       _frzSyncPanelFromURL();   // List detail panel: open/close to match ?panel on back/forward (no new listener)
@@ -18257,7 +18306,8 @@ if ('serviceWorker' in navigator) {
     // Escape closes the phone search overlay.
     document.addEventListener('keydown', function(e){ if(e.key==='Escape' && root.classList.contains('frz-search-open')) root.classList.remove('frz-search-open'); });
     document.getElementById('frzSettings').addEventListener('click', openSettings);   // Stage 4a: tabbed Settings
-    document.getElementById('frzAdmin').addEventListener('click', function(){ _call('openAdminPanel','devTab'); });
+    window._frzNav = navigate;   // bridge so classic-scope code (openAdminPanel) can route into the Flow shell
+    document.getElementById('frzAdmin').addEventListener('click', function(){ navigate('/admin', false); });
     var av=document.getElementById('frzAvatar'), am=document.getElementById('frzAcctMenu');
     av.addEventListener('click', function(e){ e.stopPropagation(); am.hidden=!am.hidden; if(!am.hidden){ try { renderTeamSwitch(); } catch(_e){} } });
     document.addEventListener('click', function(){ am.hidden=true; });
