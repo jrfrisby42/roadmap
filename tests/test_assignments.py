@@ -146,3 +146,62 @@ def test_inactive_type_impact_ignored(client, admin_headers):
             t["active"] = False
     client.put("/api/assignment-types", json={"assignmentTypes": types}, headers=admin_headers)
     assert _eff(client, admin_headers, "Everest", "2026-07-20")["capacity"] == 3.0
+
+
+# ── conflict engine (Phase 1d): advisory, per-category exclusivity ────────────
+def _check(client, headers, **body):
+    b = {"start_date": "2026-07-20", "end_date": "2026-07-22", "owner": "Everest", "username": "sam"}
+    b.update(body)
+    return client.post("/api/assignments/check", json=b, headers=headers).json()["warnings"]
+
+
+def test_conflict_office_remote_exclusive(client, admin_headers):
+    _mk(client, admin_headers, type_id="office", owner="Everest", username="sam")
+    ws = _check(client, admin_headers, type_id="remote")
+    assert any(w["level"] == "exclusive" for w in ws)   # both Location -> conflict
+
+
+def test_conflict_pto_sick_exclusive(client, admin_headers):
+    _mk(client, admin_headers, type_id="pto", owner="Everest", username="sam")
+    ws = _check(client, admin_headers, type_id="sick")
+    assert any(w["level"] == "exclusive" for w in ws)   # both Availability -> conflict
+
+
+def test_remote_and_sick_do_not_conflict(client, admin_headers):
+    # THE case the user cares about: Remote (Location) + Sick (Availability) must not warn.
+    _mk(client, admin_headers, type_id="remote", owner="Everest", username="sam")
+    ws = _check(client, admin_headers, type_id="sick")
+    assert not any(w["level"] in ("exclusive", "blocking") for w in ws)
+
+
+def test_office_and_pto_do_not_conflict(client, admin_headers):
+    # Office (background location) + PTO: different axes -> no exclusive/blocking warning.
+    _mk(client, admin_headers, type_id="office", owner="Everest", username="sam")
+    ws = _check(client, admin_headers, type_id="pto")
+    assert not any(w["level"] in ("exclusive", "blocking") for w in ws)
+
+
+def test_pto_plus_work_warns(client, admin_headers):
+    # Scheduling actual work (Training) onto a PTO day should warn (blocking).
+    _mk(client, admin_headers, type_id="pto", owner="Everest", username="sam")
+    ws = _check(client, admin_headers, type_id="training")
+    assert any(w["level"] == "blocking" for w in ws)
+
+
+def test_capacity_note_present(client, admin_headers):
+    ws = _check(client, admin_headers, type_id="training")   # impact 0.5
+    assert any(w["level"] == "capacity" for w in ws)
+
+
+def test_create_returns_warnings_excludes_self(client, admin_headers):
+    r = _mk(client, admin_headers, type_id="training", owner="Everest", username="sam")
+    assert r.status_code == 200
+    ws = r.json().get("warnings", [])
+    assert any(w["level"] == "capacity" for w in ws)             # its own capacity note
+    assert not any(w["level"] == "exclusive" for w in ws)        # doesn't warn against itself
+
+
+def test_check_no_overlap_no_conflict(client, admin_headers):
+    _mk(client, admin_headers, type_id="pto", owner="Everest", username="sam", start_date="2026-07-20", end_date="2026-07-22")
+    ws = _check(client, admin_headers, type_id="sick", start_date="2026-08-01", end_date="2026-08-03")  # disjoint
+    assert not any(w["level"] in ("exclusive", "blocking") for w in ws)

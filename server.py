@@ -998,7 +998,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.36.2"
+APP_VERSION = "4.36.3"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3561,6 +3561,78 @@ def _assignment_from_body(body: dict, types_by_id: dict) -> dict:
             "description": str(body.get("description") or "")[:2000],
             "recurrence": rec, "notes": str(body.get("notes") or "")[:2000]}
 
+def _is_background_state(tp: dict) -> bool:
+    """A 'where you'd be' state, not stacked work: exclusive + zero capacity impact
+    (Office/Remote). These never trigger the no-overlapping-assignments warning, so a
+    standing location doesn't clash with PTO/Sick. Config-driven (no hardcoded names)."""
+    try:
+        return bool(tp.get("exclusive")) and float(tp.get("capacity_impact") or 0) == 0
+    except (TypeError, ValueError):
+        return bool(tp.get("exclusive"))
+
+def _assignment_warnings(team: str, proposed: dict) -> list:
+    """Advisory (NON-blocking) conflict warnings for a proposed/edited assignment.
+    Phase 1d conflict engine. `proposed` = a dict from _assignment_from_body (+ optional
+    'id' to exclude self on edit). Rules:
+      - capacity: if the type reduces capacity, note the per-day reduction (info).
+      - exclusive: warn if it overlaps another exclusive assignment IN THE SAME CATEGORY
+        for the same user (Office↔Remote, PTO↔Sick; Remote↔Sick do NOT, different class).
+      - blocking: warn if the proposed type or an overlapping one has allow_assignments=False.
+    Never blocks a save - callers surface these as warnings the user can override."""
+    out = []
+    types = {t.get("id"): t for t in _read_assignment_types(team)}
+    t = types.get(proposed.get("type_id"))
+    if not t:
+        return out
+    user = (proposed.get("username") or "").strip()
+    sd = proposed.get("start_date"); ed = proposed.get("end_date") or sd
+    skip_id = proposed.get("id")
+    try:
+        imp = float(t.get("capacity_impact") or 0)
+    except (TypeError, ValueError):
+        imp = 0.0
+    if imp > 0 and proposed.get("owner"):
+        out.append({"level": "capacity",
+                    "message": f"Reduces {proposed['owner']}'s capacity by {imp} on covered days."})
+    if not user:
+        return out
+    with db(team) as c:
+        rows = c.execute(
+            "SELECT id, type_id FROM assignments WHERE username=? AND start_date<=? AND end_date>=?",
+            (user, ed, sd)
+        ).fetchall()
+    for r in rows:
+        if skip_id is not None and r["id"] == skip_id:
+            continue
+        bt = types.get(r["type_id"])
+        if not bt:
+            continue
+        same_cat = (t.get("category") or "") == (bt.get("category") or "")
+        if t.get("exclusive") and bt.get("exclusive") and same_cat:
+            # Per-category exclusivity: Office↔Remote, PTO↔Sick↔Holiday. Different
+            # classes (e.g. Remote↔Sick) are orthogonal and do NOT conflict.
+            out.append({"level": "exclusive",
+                        "message": f"{user} already has an exclusive {bt.get('name')} assignment during this period."})
+        elif (t.get("allow_assignments") is False or bt.get("allow_assignments") is False) \
+                and not _is_background_state(t) and not _is_background_state(bt):
+            # "No overlapping assignments" - but a background LOCATION state (exclusive +
+            # zero impact, e.g. Remote) is just where you'd work, not stacked work, so it
+            # never triggers this (that's what keeps Remote+Sick from warning).
+            out.append({"level": "blocking",
+                        "message": f"Overlaps {bt.get('name')} for {user} during this period."})
+    return out
+
+@app.post("/api/assignments/check")
+def check_assignment(body: dict = Body(...), auth: dict = Depends(require_role("admin", "editor"))):
+    """Dry-run: return advisory warnings for a proposed assignment without writing it.
+    (Phase 2 UI calls this before/at submit; nothing is persisted.)"""
+    team = auth["team"]
+    types_by_id = {t.get("id"): t for t in _read_assignment_types(team)}
+    a = _assignment_from_body(body, types_by_id)
+    if body.get("id") is not None:
+        a["id"] = body.get("id")
+    return {"warnings": _assignment_warnings(team, a)}
+
 @app.get("/api/assignments")
 def list_assignments(owner: str = "", user: str = "", type_id: str = "",
                      date_from: str = "", date_to: str = "",
@@ -3597,7 +3669,9 @@ def create_assignment(body: dict = Body(...), auth: dict = Depends(require_role(
         row = c.execute("SELECT * FROM assignments WHERE id=?", (aid,)).fetchone()
     write_audit(team, "assignment:create", auth["username"],
                 changes={"type": a["type_id"], "user": a["username"], "owner": a["owner"]})
-    return dict(row)
+    result = dict(row)
+    result["warnings"] = _assignment_warnings(team, {**a, "id": aid})   # advisory, non-blocking
+    return result
 
 @app.put("/api/assignments/{aid}")
 def update_assignment(aid: int, body: dict = Body(...), auth: dict = Depends(require_role("admin", "editor"))):
@@ -3615,7 +3689,9 @@ def update_assignment(aid: int, body: dict = Body(...), auth: dict = Depends(req
                    a["description"], a["recurrence"], a["notes"], ts, aid))
         out = c.execute("SELECT * FROM assignments WHERE id=?", (aid,)).fetchone()
     write_audit(team, "assignment:update", auth["username"], changes={"id": aid})
-    return dict(out)
+    result = dict(out)
+    result["warnings"] = _assignment_warnings(team, {**a, "id": aid})   # advisory, non-blocking
+    return result
 
 @app.delete("/api/assignments/{aid}")
 def delete_assignment(aid: int, auth: dict = Depends(require_role("admin", "editor"))):
