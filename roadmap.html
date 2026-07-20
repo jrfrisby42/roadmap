@@ -2108,7 +2108,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.0';
+const APP_VERSION = '4.37.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16078,6 +16078,22 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-cal-none { color:var(--frz-text-muted); font-size:12px; }
   .frz-beta .frz-cal-empty, .frz-beta .frz-cal-soon { padding:16px; color:var(--frz-text-muted); font-size:13px; }
   .frz-beta .frz-cal-soon { text-align:center; padding:40px 16px; }
+  .frz-beta .frz-cal-newbtn { border:0; background:var(--frz-accent); color:#fff; border-radius:8px; padding:0 14px; height:32px; font-weight:700; font-size:13px; cursor:pointer; }
+  .frz-beta .frz-cal-addbtn { border:1px solid var(--frz-border); background:var(--frz-bg-elevated); color:var(--frz-accent); width:26px; height:26px; border-radius:7px; font-size:16px; line-height:1; cursor:pointer; font-weight:700; }
+  .frz-beta .frz-cal-addbtn:hover { background:var(--frz-bg-app); }
+  /* Assignment create/edit modal (Phase 2b) */
+  .frz-beta .frz-asg-modal { width:520px; max-width:94vw; }
+  .frz-beta .frz-asg-body { padding:18px 22px; display:flex; flex-direction:column; gap:4px; max-height:70vh; overflow:auto; }
+  .frz-beta .frz-asg-lbl { font-size:11px; font-weight:700; color:var(--frz-text-muted); text-transform:uppercase; letter-spacing:.4px; margin:10px 0 4px; }
+  .frz-beta .frz-asg-inp { width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid var(--frz-border); border-radius:8px; font:inherit; font-size:14px; background:var(--frz-bg-elevated); color:var(--frz-text); }
+  .frz-beta .frz-asg-row { display:flex; gap:12px; } .frz-beta .frz-asg-row > div { flex:1; }
+  .frz-beta .frz-asg-warnings { margin-top:12px; display:flex; flex-direction:column; gap:6px; }
+  .frz-beta .frz-asg-warn { font-size:12.5px; padding:8px 11px; border-radius:8px; background:rgba(232,57,74,.09); color:#c0392b; border:1px solid rgba(232,57,74,.25); }
+  .frz-beta .frz-asg-warn-info { font-size:12.5px; padding:8px 11px; border-radius:8px; background:rgba(0,89,169,.07); color:var(--frz-accent); border:1px solid rgba(0,89,169,.2); }
+  .frz-beta .frz-asg-foot { display:flex; align-items:center; gap:8px; padding:14px 22px; border-top:1px solid var(--frz-border); }
+  .frz-beta .frz-asg-save { border:0; background:var(--frz-accent); color:#fff; border-radius:8px; padding:9px 18px; font-weight:700; font-size:13px; cursor:pointer; }
+  .frz-beta .frz-asg-cancel { border:1px solid var(--frz-border); background:var(--frz-bg-elevated); color:var(--frz-text); border-radius:8px; padding:9px 16px; font-weight:600; font-size:13px; cursor:pointer; }
+  .frz-beta .frz-asg-del { border:1px solid #C0392B; background:transparent; color:#C0392B; border-radius:8px; padding:9px 14px; font-weight:700; font-size:13px; cursor:pointer; }
   .frz-beta .frz-acct-menu { position:absolute; top:calc(100% + 6px); right:0; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:8px; box-shadow:0 8px 28px rgba(20,40,63,.15); min-width:170px; overflow:hidden; z-index:90; }
   .frz-beta .frz-acct-menu button { display:block; width:100%; text-align:left; border:0; background:none; cursor:pointer; font:inherit; font-size:13px; color:var(--frz-text); padding:10px 14px; }
   .frz-beta .frz-acct-menu button:hover { background:var(--frz-bg-app); }
@@ -17771,13 +17787,16 @@ if ('serviceWorker' in navigator) {
     var y=now.getFullYear(), m=now.getMonth();
     var from=_ymdLocal(new Date(y,m,1)), to=_ymdLocal(new Date(y,m+1,0));
     var monthLabel=new Date(y,m,1).toLocaleDateString(undefined,{month:'long',year:'numeric'});
+    var canEdit=_val('isAdmin',false)||_val('isEditor',false);
     nav.innerHTML='<button class="frz-cal-navbtn" id="frzCalPrev" title="Previous month">‹</button>'+
       '<span class="frz-cal-title">'+esc(monthLabel)+'</span>'+
       '<button class="frz-cal-navbtn" id="frzCalNext" title="Next month">›</button>'+
-      '<button class="frz-cal-navbtn frz-cal-today" id="frzCalToday">Today</button>';
+      '<button class="frz-cal-navbtn frz-cal-today" id="frzCalToday">Today</button>'+
+      (canEdit ? '<span style="flex:1"></span><button class="frz-cal-newbtn" id="frzCalNew">+ New assignment</button>' : '');
     nav.querySelector('#frzCalPrev').onclick=function(){ state.calDate=new Date(y,m-1,1); renderCalendar(); };
     nav.querySelector('#frzCalNext').onclick=function(){ state.calDate=new Date(y,m+1,1); renderCalendar(); };
     nav.querySelector('#frzCalToday').onclick=function(){ state.calDate=new Date(); renderCalendar(); };
+    var _newBtn=nav.querySelector('#frzCalNew'); if(_newBtn) _newBtn.onclick=function(){ openAssignmentModal({}); };
     var owners=_val('developers',[])||[];
     var typeById={}; (_assignmentTypes||[]).forEach(function(t){ typeById[t.id]=t; });
     var projs=_val('projects',[])||[];
@@ -17793,14 +17812,17 @@ if ('serviceWorker' in navigator) {
       var baseCap=capMap[owner]||1, effToday=getEffectiveCapacity(owner, todayStr);
       var capCls=(effToday<baseCap)?' frz-cal-cap-warn':'';
       html+='<div class="frz-cal-owner"><div class="frz-cal-owner-hd"><span class="frz-cal-owner-nm">'+esc(owner)+'</span>'+
-            '<span class="frz-cal-owner-cap'+capCls+'" title="Effective capacity today (base minus assignment impacts)">Capacity today: '+effToday+' / '+baseCap+'</span></div>';
+            '<span style="display:inline-flex;align-items:center;gap:10px">'+
+            '<span class="frz-cal-owner-cap'+capCls+'" title="Effective capacity today (base minus assignment impacts)">Capacity today: '+effToday+' / '+baseCap+'</span>'+
+            (canEdit ? '<button class="frz-cal-addbtn" data-owner="'+escA(owner)+'" title="Add assignment for this pool">+</button>' : '')+
+            '</span></div>';
       if(!userList.length){ html+='<div class="frz-cal-empty">No one scheduled this month.</div>'; }
       userList.forEach(function(u){
         var chips='';
         monthAssigns.filter(function(a){ return a.owner===owner && a.username===u; }).forEach(function(a){
           var t=typeById[a.type_id]||{}, col=/^#[0-9A-Fa-f]{6}$/.test(t.color||'')?t.color:'#4a5b6b';
           var range=(a.start_date===a.end_date)?_calShortD(a.start_date):(_calShortD(a.start_date)+' – '+_calShortD(a.end_date));
-          chips+='<span class="frz-cal-chip" style="background:'+col+'1f;color:'+col+';border-color:'+col+'66" title="'+escA((t.name||a.type_id)+' · '+range)+'">'+esc(t.name||a.type_id)+'</span>';
+          chips+='<span class="frz-cal-chip'+(canEdit?' frz-cal-chip-asg':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+'style="background:'+col+'1f;color:'+col+';border-color:'+col+'66" title="'+escA((t.name||a.type_id)+' · '+range)+'">'+esc(t.name||a.type_id)+'</span>';
         });
         projs.filter(function(p){ return p.dev===owner && p.assignee===u && !isTerminalStatus(p.status); }).forEach(function(p){
           chips+='<span class="frz-cal-chip frz-cal-chip-item" data-item="'+p.id+'" title="'+escA(p.name||'')+'">'+esc(p.itemKey||p.name||('#'+p.id))+'</span>';
@@ -17812,6 +17834,137 @@ if ('serviceWorker' in navigator) {
     if(!owners.length) html='<div class="frz-cal-empty">No owners configured. Add owners in Admin → Owners.</div>';
     body.innerHTML=html;
     body.querySelectorAll('.frz-cal-chip-item').forEach(function(el){ el.addEventListener('click', function(){ var id=parseInt(el.getAttribute('data-item'),10); if(id) openItem(id); }); });
+    body.querySelectorAll('.frz-cal-chip-asg').forEach(function(el){ el.addEventListener('click', function(){
+      var aid=parseInt(el.getAttribute('data-aid'),10);
+      var a=(_assignments||[]).find(function(x){ return x.id===aid; });
+      if(a) openAssignmentModal(a);
+    }); });
+    body.querySelectorAll('.frz-cal-addbtn').forEach(function(el){ el.addEventListener('click', function(){ openAssignmentModal({ owner: el.getAttribute('data-owner') }); }); });
+  }
+
+  // ── Assignment create/edit modal (Phase 2b) ───────────────────────────────────
+  var _asgEditId = null, _asgCheckTimer = null;
+  function _ensureAsgModal(){
+    if(document.getElementById('frzAsgModal')) return;
+    var bg=document.createElement('div'); bg.className='frz-modal-bg'; bg.id='frzAsgModal'; bg.hidden=true;
+    bg.innerHTML='<div class="frz-modal frz-asg-modal">'+
+      '<div class="frz-modal-hd"><span id="frzAsgTitle">New assignment</span><button class="frz-iconbtn" id="frzAsgClose">✕</button></div>'+
+      '<div class="frz-asg-body">'+
+        '<label class="frz-asg-lbl">Type</label><select id="frzAsgType" class="frz-asg-inp"></select>'+
+        '<div class="frz-asg-row">'+
+          '<div><label class="frz-asg-lbl">User</label><select id="frzAsgUser" class="frz-asg-inp"></select></div>'+
+          '<div><label class="frz-asg-lbl">Owner (capacity pool)</label><select id="frzAsgOwner" class="frz-asg-inp"></select></div>'+
+        '</div>'+
+        '<div class="frz-asg-row">'+
+          '<div><label class="frz-asg-lbl">Start</label><input type="date" id="frzAsgStart" class="frz-asg-inp"></div>'+
+          '<div><label class="frz-asg-lbl">End</label><input type="date" id="frzAsgEnd" class="frz-asg-inp"></div>'+
+        '</div>'+
+        '<label class="frz-asg-lbl">Recurrence</label><select id="frzAsgRecur" class="frz-asg-inp">'+
+          '<option value="none">Does not repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="biweekly">Every 2 weeks</option><option value="monthly">Monthly</option>'+
+        '</select>'+
+        '<label class="frz-asg-lbl">Description</label><input id="frzAsgDesc" class="frz-asg-inp" maxlength="200">'+
+        '<label class="frz-asg-lbl">Notes</label><textarea id="frzAsgNotes" class="frz-asg-inp" rows="2" maxlength="2000"></textarea>'+
+        '<div id="frzAsgWarnings" class="frz-asg-warnings"></div>'+
+      '</div>'+
+      '<div class="frz-asg-foot">'+
+        '<button id="frzAsgDelete" class="frz-asg-del" hidden>Delete</button>'+
+        '<span style="flex:1"></span>'+
+        '<button id="frzAsgCancel" class="frz-asg-cancel">Cancel</button>'+
+        '<button id="frzAsgSave" class="frz-asg-save">Save</button>'+
+      '</div></div>';
+    root.appendChild(bg);
+    var close=function(){ bg.hidden=true; };
+    bg.querySelector('#frzAsgClose').addEventListener('click', close);
+    bg.querySelector('#frzAsgCancel').addEventListener('click', close);
+    bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
+    ['frzAsgType','frzAsgUser','frzAsgOwner','frzAsgStart','frzAsgEnd'].forEach(function(id){
+      bg.querySelector('#'+id).addEventListener('change', _asgScheduleCheck);
+    });
+    bg.querySelector('#frzAsgSave').addEventListener('click', _asgSave);
+    bg.querySelector('#frzAsgDelete').addEventListener('click', _asgDelete);
+  }
+  function _asgBody(){
+    return {
+      type_id: document.getElementById('frzAsgType').value,
+      username: document.getElementById('frzAsgUser').value,
+      owner: document.getElementById('frzAsgOwner').value,
+      start_date: document.getElementById('frzAsgStart').value,
+      end_date: document.getElementById('frzAsgEnd').value || document.getElementById('frzAsgStart').value,
+      recurrence: document.getElementById('frzAsgRecur').value,
+      description: document.getElementById('frzAsgDesc').value,
+      notes: document.getElementById('frzAsgNotes').value
+    };
+  }
+  function _asgRenderWarnings(ws){
+    var box=document.getElementById('frzAsgWarnings'); if(!box) return;
+    if(!ws || !ws.length){ box.innerHTML=''; return; }
+    box.innerHTML=ws.map(function(w){
+      var cls = w.level==='capacity' ? 'frz-asg-warn-info' : 'frz-asg-warn';
+      return '<div class="'+cls+'">'+esc(w.message)+'</div>';
+    }).join('');
+  }
+  function _asgScheduleCheck(){
+    clearTimeout(_asgCheckTimer);
+    _asgCheckTimer=setTimeout(function(){
+      var b=_asgBody(); if(!b.type_id || !b.start_date){ _asgRenderWarnings([]); return; }
+      if(_asgEditId) b.id=_asgEditId;
+      API.post('/api/assignments/check', b).then(function(r){ _asgRenderWarnings((r&&r.warnings)||[]); }).catch(function(){});
+    }, 220);
+  }
+  function openAssignmentModal(data){
+    if(!(_val('isAdmin',false)||_val('isEditor',false))) return;
+    _ensureAsgModal();
+    data=data||{};
+    _asgEditId = data.id != null ? data.id : null;
+    var typeSel=document.getElementById('frzAsgType'), userSel=document.getElementById('frzAsgUser'), ownerSel=document.getElementById('frzAsgOwner');
+    // Types: active, ordered; include the current type even if inactive (edit).
+    var types=(_assignmentTypes||[]).slice().sort(function(a,b){ return (a.display_order||0)-(b.display_order||0); });
+    typeSel.innerHTML=types.filter(function(t){ return t.active!==false || t.id===data.type_id; })
+      .map(function(t){ return '<option value="'+escA(t.id)+'">'+esc(t.name)+(t.active===false?' (inactive)':'')+'</option>'; }).join('');
+    var users=(_val('users',[])||[]).map(function(u){ return u.username; });
+    userSel.innerHTML='<option value="">- User -</option>'+users.map(function(u){ return '<option value="'+escA(u)+'">'+esc(u)+'</option>'; }).join('');
+    var owners=_val('developers',[])||[];
+    ownerSel.innerHTML='<option value="">- Owner -</option>'+owners.map(function(o){ return '<option value="'+escA(o)+'">'+esc(o)+'</option>'; }).join('');
+    var todayStr=_ymdLocal(new Date());
+    typeSel.value = data.type_id || (types.find(function(t){return t.is_default;})||types[0]||{}).id || '';
+    userSel.value = data.username || '';
+    ownerSel.value = data.owner || '';
+    document.getElementById('frzAsgStart').value = data.start_date || todayStr;
+    document.getElementById('frzAsgEnd').value = data.end_date || data.start_date || todayStr;
+    document.getElementById('frzAsgRecur').value = data.recurrence || 'none';
+    document.getElementById('frzAsgDesc').value = data.description || '';
+    document.getElementById('frzAsgNotes').value = data.notes || '';
+    document.getElementById('frzAsgTitle').textContent = _asgEditId ? 'Edit assignment' : 'New assignment';
+    var del=document.getElementById('frzAsgDelete'); del.hidden = !_asgEditId;
+    _asgRenderWarnings([]);
+    document.getElementById('frzAsgModal').hidden=false;
+    _asgScheduleCheck();
+    setTimeout(function(){ try{ userSel.focus(); }catch(e){} }, 30);
+  }
+  function _asgAfterWrite(warnings){
+    // reload assignments -> rebuild impact map + refresh calendar (via loadAssignmentData),
+    // then refresh capacity surfaces, close, and surface any warnings.
+    loadAssignmentData().then(function(){ if(typeof render==='function') render(); renderCalendar(); });
+    document.getElementById('frzAsgModal').hidden=true;
+    if(warnings && warnings.length){
+      var msg=warnings.filter(function(w){return w.level!=='capacity';}).map(function(w){return w.message;})[0];
+      if(msg && typeof showToast==='function') showToast(msg, 'warn');
+    }
+  }
+  function _asgSave(){
+    var b=_asgBody();
+    if(!b.type_id){ _asgRenderWarnings([{level:'blocking',message:'Please choose an assignment type.'}]); return; }
+    if(!b.start_date){ _asgRenderWarnings([{level:'blocking',message:'Please choose a start date.'}]); return; }
+    var btn=document.getElementById('frzAsgSave'); btn.disabled=true;
+    var p = _asgEditId ? API.put('/api/assignments/'+_asgEditId, b) : API.post('/api/assignments', b);
+    p.then(function(res){ _asgAfterWrite((res&&res.warnings)||[]); })
+     .catch(function(err){ _asgRenderWarnings([{level:'blocking',message:(err&&err.message)||'Save failed'}]); })
+     .then(function(){ btn.disabled=false; });
+  }
+  function _asgDelete(){
+    if(_asgEditId==null) return;
+    if(!confirm('Delete this assignment?')) return;
+    API.del('/api/assignments/'+_asgEditId).then(function(){ _asgAfterWrite([]); }).catch(function(err){ _asgRenderWarnings([{level:'blocking',message:(err&&err.message)||'Delete failed'}]); });
   }
   function setView(view, opts){
     opts = opts||{};
