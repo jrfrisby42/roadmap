@@ -998,7 +998,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.36.0"
+APP_VERSION = "4.36.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -5407,33 +5407,56 @@ def _get_owner_default_capacity(owner: str, team: str) -> float:
         return 1.0
 
 
-def get_effective_capacity(owner: str, date_str: str, team: str) -> float:
-    """Core capacity helper used by conflict detection and UI.
+def _assignment_impact_for(owner: str, date_str: str, team: str) -> float:
+    """Sum the capacity impacts of all ACTIVE-type assignments that cover this
+    (owner, date). Team Calendar Phase 1b: impacts are absolute units subtracted
+    from the owner's effective capacity."""
+    if not owner:
+        return 0.0
+    try:
+        types = {t.get("id"): t for t in _read_assignment_types(team)}
+        with db(team) as c:
+            rows = c.execute(
+                "SELECT type_id FROM assignments WHERE owner=? AND start_date<=? AND end_date>=?",
+                (owner, date_str, date_str)
+            ).fetchall()
+        total = 0.0
+        for r in rows:
+            t = types.get(r["type_id"])
+            if t and t.get("active", True):
+                try:
+                    total += max(0.0, float(t.get("capacity_impact") or 0))
+                except (TypeError, ValueError):
+                    pass
+        return total
+    except Exception:
+        return 0.0
 
-    Logic:
-      1. If a capacity_override exists for (owner, date) → return override.capacity
-      2. Otherwise → return ownerCapacity[owner] from config (default capacity)
+
+def get_effective_capacity(owner: str, date_str: str, team: str) -> float:
+    """Core capacity helper used by conflict detection and UI (Phase 1b redesign):
+
+        effective = (override ?? base) − Σ(active assignment impacts), floored at 0
+
+    Overrides are absolute values that may now exceed base (e.g. a contractor);
+    assignment impacts then subtract on top.
     """
     with db(team) as c:
         row = c.execute(
             "SELECT capacity FROM capacity_overrides WHERE owner=? AND date=?",
             (owner, date_str)
         ).fetchone()
-    if row is not None:
-        return float(row["capacity"])
-    return _get_owner_default_capacity(owner, team)
+    base = float(row["capacity"]) if row is not None else _get_owner_default_capacity(owner, team)
+    return max(0.0, base - _assignment_impact_for(owner, date_str, team))
 
 
 def _validate_override_capacity(owner: str, capacity: float, team: str) -> List[str]:
-    """Validate a proposed capacity override value. Returns list of error strings."""
+    """Validate a proposed capacity override value. Returns list of error strings.
+    Phase 1b: the ≤base ceiling was removed - overrides may now exceed base (adding
+    a contractor raises capacity above the pool's default); only negatives are rejected."""
     errors = []
     if capacity < 0:
         errors.append("Capacity cannot be negative")
-    default = _get_owner_default_capacity(owner, team)
-    if capacity > default:
-        errors.append(
-            f"Override capacity ({capacity}) cannot exceed the owner's default capacity ({default})"
-        )
     return errors
 
 

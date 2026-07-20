@@ -37,12 +37,17 @@ def test_override_upsert_and_effective(client, admin_headers):
     assert eff["has_override"] is True
 
 
-def test_override_cannot_exceed_default(client, admin_headers):
+def test_override_may_exceed_default(client, admin_headers):
+    # Phase 1b: the ≤base ceiling was removed - an above-base override (e.g. adding a
+    # contractor) is now allowed; effective/default are reported distinctly.
     _set_owner_capacity(client, admin_headers, {"Alice": 2.0})
     r = client.post("/api/capacity-overrides",
                     json={"owner": "Alice", "date": "2026-07-01", "capacity": 5.0},
                     headers=admin_headers)
-    assert r.status_code == 422
+    assert r.status_code == 200
+    eff = client.get("/api/capacity-overrides/effective?owner=Alice&date=2026-07-01",
+                     headers=admin_headers).json()
+    assert eff["capacity"] == 5.0 and eff["default"] == 2.0 and eff["has_override"] is True
 
 
 def test_override_rejects_negative(client, admin_headers):
@@ -79,8 +84,8 @@ def test_batch_upsert_partial_validation(client, admin_headers):
     r = client.post("/api/capacity-overrides/batch", json={
         "owner": "Alice",
         "overrides": [
-            {"date": "2026-07-01", "capacity": 1.0},   # ok
-            {"date": "2026-07-02", "capacity": 9.0},   # exceeds default -> error
+            {"date": "2026-07-01", "capacity": 1.0},    # ok
+            {"date": "2026-07-02", "capacity": -3.0},   # negative -> error (above-base is now allowed)
         ],
     }, headers=admin_headers)
     assert r.status_code == 200
