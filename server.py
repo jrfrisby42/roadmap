@@ -529,6 +529,33 @@ def _get_init_password(team: str) -> str:
         return pw
     return "frazil123"  # default initial password - admin must change on first login
 
+# ── Team Calendar: default assignment types (Phase 1) ─────────────────────────
+# Config-backed collection (key 'assignmentTypes'), seeded per the feature spec.
+# capacity_impact is an ABSOLUTE number subtracted from the owner's effective
+# capacity for each day the assignment covers.
+def _at(id, name, cat, color, order, *, system=False, default=False, blocks=False,
+        excl=False, impact=0.0, tickets=True, assigns=True, show=True, active=True):
+    return {"id": id, "name": name, "category": cat, "icon": "", "color": color,
+            "active": active, "system": system, "is_default": default,
+            "blocks_work": blocks, "exclusive": excl, "capacity_impact": impact,
+            "allow_tickets": tickets, "allow_assignments": assigns,
+            "show_on_calendar": show, "display_order": order}
+
+_DEFAULT_ASSIGNMENT_TYPES = [
+    _at("pto",               "PTO",               "Availability",     "#c0392b", 1,  system=True, blocks=True, excl=True, impact=1.0,  tickets=False, assigns=False),
+    _at("sick",              "Sick",              "Availability",     "#a0508f", 2,  system=True, blocks=True, excl=True, impact=1.0,  tickets=False, assigns=False),
+    _at("holiday",           "Holiday",           "Availability",     "#2e8b6f", 3,  system=True, blocks=True, excl=True, impact=1.0,  tickets=False, assigns=False),
+    _at("training",          "Training",          "Reduced Capacity", "#a07800", 4,  impact=0.5),
+    _at("travel",            "Travel",            "Reduced Capacity", "#c06000", 5,  impact=0.25),
+    _at("office",            "Office",            "Location",         "#0059A9", 6,  system=True, default=True, excl=True, impact=0.0),
+    _at("remote",            "Remote",            "Location",         "#0078b8", 7,  system=True, excl=True, impact=0.0),
+    _at("oncall",            "On Call",           "Operational",      "#7a3ea0", 8,  impact=0.0),
+    _at("primary-support",   "Primary Support",   "Operational",      "#1a8a52", 9,  impact=0.25),
+    _at("secondary-support", "Secondary Support", "Operational",      "#4a5b6b", 10, impact=0.10),
+    _at("release-manager",   "Release Manager",   "Operational",      "#2F86DE", 11, impact=0.20),
+    _at("qa-lead",           "QA Lead",           "Operational",      "#1a9a59", 12, impact=0.20),
+]
+
 def init_team_db(team: str):
     if team in _initialized_teams:
         return
@@ -636,6 +663,26 @@ def init_team_db(team: str):
             PRIMARY KEY(username, item_id)
         );
         CREATE INDEX IF NOT EXISTS idx_recent_user ON recent_views(username, viewed_ts);
+        -- Team Calendar (Phase 1): non-ticket work (PTO/Training/On Call/...). The
+        -- type_id references an `assignmentTypes` config entry (config-backed, like
+        -- boards). Capacity impacts reduce the OWNER's effective capacity per day.
+        CREATE TABLE IF NOT EXISTS assignments (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            type_id            TEXT    NOT NULL,             -- assignmentTypes[].id
+            owner              TEXT    NOT NULL DEFAULT '',  -- capacity pool this counts against
+            username           TEXT    NOT NULL DEFAULT '',  -- the person (users[].username)
+            start_date         TEXT    NOT NULL,             -- YYYY-MM-DD
+            end_date           TEXT    NOT NULL,             -- YYYY-MM-DD (inclusive)
+            description         TEXT    NOT NULL DEFAULT '',
+            recurrence         TEXT    NOT NULL DEFAULT 'none',
+            notes              TEXT    NOT NULL DEFAULT '',
+            recurrence_parent  INTEGER,
+            created_by         TEXT    NOT NULL DEFAULT '',
+            created_ts         TEXT    NOT NULL DEFAULT '',
+            updated_ts         TEXT    NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_assign_owner ON assignments(owner, start_date, end_date);
+        CREATE INDEX IF NOT EXISTS idx_assign_user  ON assignments(username, start_date, end_date);
         """)
         # ── Live migrations: add new columns if they don't exist yet ─────────────
         for _col, _defn in [
@@ -726,6 +773,9 @@ def init_team_db(team: str):
             "intakeProjectEmails": {},  # optional per-project notify override {product: email}; falls back to intakeNotifyEmail
             "intakeDomains": [],   # allowed reporter email domains (empty = allow any)
             "departmentMeta": {},  # per-department {name: {color, emails}} - pill color + notify list
+            # Team Calendar (Phase 1): assignment types (config-backed collection, like
+            # boards - edited via /api/assignment-types, NOT the generic config route).
+            "assignmentTypes": _DEFAULT_ASSIGNMENT_TYPES,
         }
         for k, v in defaults.items():
             c.execute("INSERT OR IGNORE INTO config(key,value) VALUES(?,?)",
@@ -798,10 +848,12 @@ def _migrate_config_keys(team: str):
         "intakeProjectEmails": {},
         "intakeDomains": [],
         "departmentMeta": {},
+        "assignmentTypes": _DEFAULT_ASSIGNMENT_TYPES,
     }
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
-    # never overwrite an existing value even if it's falsy
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta"}
+    # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
+    # an admin who deletes all types isn't re-seeded on next boot.)
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta", "assignmentTypes"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -946,7 +998,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.35.2"
+APP_VERSION = "4.36.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3412,6 +3464,168 @@ def put_releases(body = Body(...), auth: dict = Depends(require_auth)):
                   (json.dumps(releases),))
     write_audit(team, "beta:releases", auth["username"], changes={"count": len(releases)})
     return {"releases": releases}
+
+# ── Team Calendar: assignment types + assignments (Phase 1) ───────────────────
+# assignmentTypes = config-backed collection (like boards): edited as a whole array
+# via GET/PUT, NOT the generic /api/config route. assignments = a relational table
+# (like capacity_overrides): per-row CRUD + range query.
+_ASSIGNMENT_TYPE_FIELDS = ("id", "name", "category", "icon", "color", "active", "system",
+    "is_default", "blocks_work", "exclusive", "capacity_impact", "allow_tickets",
+    "allow_assignments", "show_on_calendar", "display_order")
+_RECUR_VALUES = {"none", "daily", "weekly", "biweekly", "monthly"}
+
+def _read_assignment_types(team: str):
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='assignmentTypes'").fetchone()
+    try:
+        v = json.loads(row["value"]) if row else None
+    except Exception:
+        v = None
+    return v if isinstance(v, list) else list(_DEFAULT_ASSIGNMENT_TYPES)
+
+@app.get("/api/assignment-types")
+def get_assignment_types(auth: dict = Depends(require_auth)):
+    return {"assignmentTypes": _read_assignment_types(auth["team"])}
+
+@app.put("/api/assignment-types")
+def put_assignment_types(body = Body(...), auth: dict = Depends(require_role("admin"))):
+    team = auth["team"]
+    types = body.get("assignmentTypes") if isinstance(body, dict) else body
+    if not isinstance(types, list):
+        raise HTTPException(422, "assignmentTypes must be a list")
+    prev = {t.get("id"): t for t in _read_assignment_types(team) if isinstance(t, dict)}
+    seen_ids, default_count, clean = set(), 0, []
+    for t in types:
+        if not isinstance(t, dict):
+            raise HTTPException(422, "each assignment type must be an object")
+        tid = str(t.get("id") or "").strip()
+        name = str(t.get("name") or "").strip()
+        if not tid or not name:
+            raise HTTPException(422, "each assignment type needs an id and a name")
+        if tid in seen_ids:
+            raise HTTPException(422, f"duplicate assignment type id {tid!r}")
+        seen_ids.add(tid)
+        try:
+            impact = round(max(0.0, float(t.get("capacity_impact") or 0)), 4)
+        except (TypeError, ValueError):
+            raise HTTPException(422, f"capacity_impact must be a number for {name!r}")
+        rec = {
+            "id": tid, "name": name,
+            "category": str(t.get("category") or "Custom"),
+            "icon": str(t.get("icon") or ""), "color": str(t.get("color") or ""),
+            "active": bool(t.get("active", True)),
+            # `system` is server-owned: inherit from the stored record; new types are never system.
+            "system": bool(prev.get(tid, {}).get("system", False)),
+            "is_default": bool(t.get("is_default", False)),
+            "blocks_work": bool(t.get("blocks_work", False)),
+            "exclusive": bool(t.get("exclusive", False)),
+            "capacity_impact": impact,
+            "allow_tickets": bool(t.get("allow_tickets", True)),
+            "allow_assignments": bool(t.get("allow_assignments", True)),
+            "show_on_calendar": bool(t.get("show_on_calendar", True)),
+            "display_order": int(t.get("display_order") or 0),
+        }
+        if rec["is_default"]:
+            default_count += 1
+        clean.append(rec)
+    # A system type present today may not be deleted (dropped from the array).
+    for pid, pv in prev.items():
+        if pv.get("system") and pid not in seen_ids:
+            raise HTTPException(422, f"the built-in type {pv.get('name', pid)!r} cannot be deleted")
+    if default_count > 1:
+        raise HTTPException(422, "only one assignment type may be the default")
+    with db(team) as c:
+        c.execute("INSERT INTO config(key,value) VALUES('assignmentTypes',?) "
+                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(clean),))
+    write_audit(team, "assignment-types", auth["username"], changes={"count": len(clean)})
+    return {"assignmentTypes": clean}
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+def _assignment_from_body(body: dict, types_by_id: dict) -> dict:
+    tid = str(body.get("type_id") or "").strip()
+    if tid not in types_by_id:
+        raise HTTPException(422, "unknown assignment type_id")
+    sd = str(body.get("start_date") or "").strip()
+    ed = str(body.get("end_date") or sd).strip()
+    if not _DATE_RE.match(sd) or not _DATE_RE.match(ed):
+        raise HTTPException(422, "start_date/end_date must be YYYY-MM-DD")
+    if ed < sd:
+        raise HTTPException(422, "end_date cannot be before start_date")
+    rec = str(body.get("recurrence") or "none").strip()
+    if rec not in _RECUR_VALUES:
+        rec = "none"
+    return {"type_id": tid, "owner": str(body.get("owner") or "").strip(),
+            "username": str(body.get("username") or "").strip(),
+            "start_date": sd, "end_date": ed,
+            "description": str(body.get("description") or "")[:2000],
+            "recurrence": rec, "notes": str(body.get("notes") or "")[:2000]}
+
+@app.get("/api/assignments")
+def list_assignments(owner: str = "", user: str = "", type_id: str = "",
+                     date_from: str = "", date_to: str = "",
+                     auth: dict = Depends(require_auth)):
+    team = auth["team"]
+    where, params = [], []
+    if owner:   where.append("owner=?");     params.append(owner)
+    if user:    where.append("username=?");  params.append(user)
+    if type_id: where.append("type_id=?");   params.append(type_id)
+    # Overlap with [date_from, date_to]: start <= to AND end >= from
+    if date_to:   where.append("start_date<=?"); params.append(date_to)
+    if date_from: where.append("end_date>=?");   params.append(date_from)
+    sql = "SELECT * FROM assignments"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY start_date, id"
+    with db(team) as c:
+        rows = c.execute(sql, params).fetchall()
+    return {"assignments": [dict(r) for r in rows]}
+
+@app.post("/api/assignments")
+def create_assignment(body: dict = Body(...), auth: dict = Depends(require_role("admin", "editor"))):
+    team = auth["team"]
+    types_by_id = {t.get("id"): t for t in _read_assignment_types(team)}
+    a = _assignment_from_body(body, types_by_id)
+    ts = datetime.now(timezone.utc).isoformat()
+    with db(team) as c:
+        cur = c.execute(
+            "INSERT INTO assignments(type_id,owner,username,start_date,end_date,description,"
+            "recurrence,notes,created_by,created_ts,updated_ts) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (a["type_id"], a["owner"], a["username"], a["start_date"], a["end_date"],
+             a["description"], a["recurrence"], a["notes"], auth["username"], ts, ts))
+        aid = cur.lastrowid
+        row = c.execute("SELECT * FROM assignments WHERE id=?", (aid,)).fetchone()
+    write_audit(team, "assignment:create", auth["username"],
+                changes={"type": a["type_id"], "user": a["username"], "owner": a["owner"]})
+    return dict(row)
+
+@app.put("/api/assignments/{aid}")
+def update_assignment(aid: int, body: dict = Body(...), auth: dict = Depends(require_role("admin", "editor"))):
+    team = auth["team"]
+    types_by_id = {t.get("id"): t for t in _read_assignment_types(team)}
+    a = _assignment_from_body(body, types_by_id)
+    ts = datetime.now(timezone.utc).isoformat()
+    with db(team) as c:
+        row = c.execute("SELECT id FROM assignments WHERE id=?", (aid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Assignment not found")
+        c.execute("UPDATE assignments SET type_id=?,owner=?,username=?,start_date=?,end_date=?,"
+                  "description=?,recurrence=?,notes=?,updated_ts=? WHERE id=?",
+                  (a["type_id"], a["owner"], a["username"], a["start_date"], a["end_date"],
+                   a["description"], a["recurrence"], a["notes"], ts, aid))
+        out = c.execute("SELECT * FROM assignments WHERE id=?", (aid,)).fetchone()
+    write_audit(team, "assignment:update", auth["username"], changes={"id": aid})
+    return dict(out)
+
+@app.delete("/api/assignments/{aid}")
+def delete_assignment(aid: int, auth: dict = Depends(require_role("admin", "editor"))):
+    team = auth["team"]
+    with db(team) as c:
+        cur = c.execute("DELETE FROM assignments WHERE id=?", (aid,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Assignment not found")
+    write_audit(team, "assignment:delete", auth["username"], changes={"id": aid})
+    return {"ok": True}
 
 # ── Attachments (S3, /beta - Stage 2a) ────────────────────────────────────────
 # Files live in a private S3 bucket. The browser uploads DIRECTLY to S3 with a
