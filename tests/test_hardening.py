@@ -87,3 +87,48 @@ def test_migrate_config_keys_runs_once(team):
     server._migrate_config_keys(team)
     with server.db(team) as c:
         assert c.execute("SELECT value FROM config WHERE key='statusIsReleased'").fetchone() is not None
+
+
+# ── Security batch (post-review MEDIUM fixes) ──────────────────────────────────
+# Fixtures `client`, `team`, `admin_headers`, `editor_headers`, `viewer_headers`
+# come from conftest.py.
+
+def test_verify_password_endpoint_removed(client, viewer_headers):
+    # M3: the password-oracle endpoint is gone (was: any authed user could test any
+    # user's password). FastAPI returns 404/405 for an undefined route.
+    r = client.post("/api/verify-password",
+                    json={"username": "admin", "password": "frazil123"}, headers=viewer_headers)
+    assert r.status_code in (404, 405)
+
+
+def test_hash_password_requires_admin(client, team, editor_headers):
+    # M4: was unauthenticated (bcrypt DoS oracle). Now admin-only.
+    assert client.post("/api/hash-password", json={"password": "secret1"}).status_code == 401
+    assert client.post("/api/hash-password", json={"password": "secret1"},
+                       headers=editor_headers).status_code == 403
+    admin = {"Authorization": f"Bearer {server.create_token(team, 'admin', 'admin')}", "X-Team": team}
+    ok = client.post("/api/hash-password", json={"password": "secret1"}, headers=admin)
+    assert ok.status_code == 200 and server.is_hashed(ok.json()["hashed"])
+
+
+def test_update_project_cannot_forge_server_owned_fields(client, team, admin_headers, editor_headers):
+    # M1: reporter identity / source / sync-gate fields are server-owned. A client PUT
+    # must not be able to rewrite them (e.g. redirect reporter emails via reporterEmail).
+    created = client.post("/api/projects",
+                          json={"name": "Owned", "reporter": "Pat", "reporterEmail": "real@x.com",
+                                "source": "portal", "dueWeeks": 4, "testWeeks": 1},
+                          headers=admin_headers)
+    assert created.status_code == 200, created.text
+    pid = created.json()["id"]
+    r = client.put(f"/api/projects/{pid}",
+                   json={"name": "Owned edited", "reporterEmail": "attacker@evil.com",
+                         "source": "internal", "sprintHistory": [{"x": 1}],
+                         "jiraSyncSkipped": {"FRAZ-1": "Done"}},
+                   headers=editor_headers)
+    assert r.status_code == 200, r.text
+    it = next(p for p in client.get("/api/all", headers=admin_headers).json()["projects"] if p["id"] == pid)
+    assert it["name"] == "Owned edited"              # editable field applied
+    assert it["reporterEmail"] == "real@x.com"       # server-owned field preserved
+    assert it["source"] == "portal"
+    assert it.get("sprintHistory") in (None, [])     # not forgeable
+    assert not it.get("jiraSyncSkipped")
