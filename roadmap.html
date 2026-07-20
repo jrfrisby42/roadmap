@@ -2108,7 +2108,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.1';
+const APP_VERSION = '4.37.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16081,6 +16081,32 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-cal-newbtn { border:0; background:var(--frz-accent); color:#fff; border-radius:8px; padding:0 14px; height:32px; font-weight:700; font-size:13px; cursor:pointer; }
   .frz-beta .frz-cal-addbtn { border:1px solid var(--frz-border); background:var(--frz-bg-elevated); color:var(--frz-accent); width:26px; height:26px; border-radius:7px; font-size:16px; line-height:1; cursor:pointer; font-weight:700; }
   .frz-beta .frz-cal-addbtn:hover { background:var(--frz-bg-app); }
+  /* Team Calendar filters (2c) */
+  .frz-beta .frz-cal-filters { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin:0 0 16px; }
+  .frz-beta .frz-cal-flabel { display:flex; flex-direction:column; gap:3px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); }
+  .frz-beta .frz-cal-fsel { padding:6px 9px; border:1px solid var(--frz-border); border-radius:7px; font:inherit; font-size:13px; background:var(--frz-bg-elevated); color:var(--frz-text); min-width:120px; }
+  .frz-beta .frz-cal-fclear { align-self:flex-end; border:1px solid var(--frz-border); background:var(--frz-bg-elevated); color:var(--frz-text-muted); border-radius:7px; padding:7px 12px; font-size:12px; font-weight:600; cursor:pointer; }
+  /* Week grid (2c) */
+  .frz-beta .frz-cal-wk-wrap { overflow-x:auto; }
+  .frz-beta .frz-cal-week { width:100%; border-collapse:collapse; table-layout:fixed; }
+  .frz-beta .frz-cal-week th { font-size:11px; font-weight:700; color:var(--frz-text-muted); padding:7px 4px; text-align:center; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-cal-week th.frz-cal-wk-user { width:150px; text-align:left; }
+  .frz-beta .frz-cal-week td { border-bottom:1px solid var(--frz-border); border-left:1px solid var(--frz-border); padding:6px; vertical-align:top; }
+  .frz-beta .frz-cal-week td.frz-cal-wk-user { border-left:0; white-space:nowrap; }
+  .frz-beta .frz-cal-wk-user { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--frz-text); }
+  .frz-beta .frz-cal-wk-cell { min-width:80px; }
+  .frz-beta .frz-cal-wk-cell .frz-cal-chip { display:block; margin-bottom:4px; text-align:center; }
+  .frz-beta .frz-cal-week .frz-cal-wk-today { background:rgba(0,89,169,.05); }
+  /* Timeline (2c) */
+  .frz-beta .frz-cal-tl-row { display:flex; align-items:center; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-cal-tl-head { border-bottom:2px solid var(--frz-border); }
+  .frz-beta .frz-cal-tl-name { flex:0 0 150px; display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--frz-text); padding:7px 8px; }
+  .frz-beta .frz-cal-tl-track { position:relative; flex:1; height:28px; display:flex; }
+  .frz-beta .frz-cal-tl-head .frz-cal-tl-track { height:auto; }
+  .frz-beta .frz-cal-tl-day { flex:1; text-align:center; font-size:9px; color:var(--frz-text-muted); border-left:1px solid var(--frz-border); padding:3px 0; }
+  .frz-beta .frz-cal-tl-day.frz-cal-tl-today { color:var(--frz-accent); font-weight:800; background:rgba(0,89,169,.06); }
+  .frz-beta .frz-cal-tl-bar { position:absolute; top:5px; height:18px; border-radius:5px; color:#fff; font-size:10px; font-weight:700; line-height:18px; padding:0 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; box-sizing:border-box; }
+  .frz-beta .frz-cal-tl-bar.frz-cal-chip-asg { cursor:pointer; }
   /* Assignment create/edit modal (Phase 2b) */
   .frz-beta .frz-asg-modal { width:520px; max-width:94vw; }
   .frz-beta .frz-asg-body { padding:18px 22px; display:flex; flex-direction:column; gap:4px; max-height:70vh; overflow:auto; }
@@ -17096,7 +17122,7 @@ if ('serviceWorker' in navigator) {
         '<button class="frz-plan-tab" type="button" data-caltab="week">Week</button>'+
         '<button class="frz-plan-tab" type="button" data-caltab="timeline">Timeline</button>'+
       '</div>'+
-      '<div class="frz-cal-wrap"><div class="frz-cal-nav" id="frzCalNav"></div><div id="frzCalBody"></div></div>';
+      '<div class="frz-cal-wrap"><div class="frz-cal-nav" id="frzCalNav"></div><div class="frz-cal-filters" id="frzCalFilters"></div><div id="frzCalBody"></div></div>';
     content.appendChild(cal);
     cal.querySelector('#frzCalTabs').addEventListener('click', function(e){
       var b = e.target.closest('[data-caltab]'); if(!b) return;
@@ -17779,60 +17805,155 @@ if ('serviceWorker' in navigator) {
   }
   // ── Team Calendar render (Phase 2a: Month view - Owner -> Users -> chips) ──────
   function _calShortD(ymd){ if(!ymd) return ''; var p=String(ymd).split('-'); if(p.length!==3) return ymd; return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString(undefined,{month:'short',day:'numeric'}); }
-  function renderCalendar(){
-    var body=document.getElementById('frzCalBody'), nav=document.getElementById('frzCalNav'); if(!body) return;
-    var tabs=document.getElementById('frzCalTabs'); if(tabs) tabs.querySelectorAll('[data-caltab]').forEach(function(b){ b.classList.toggle('is-active', b.getAttribute('data-caltab')===state.calTab); });
-    if(state.calTab!=='month'){ if(nav) nav.innerHTML=''; body.innerHTML='<div class="frz-cal-soon">'+(state.calTab==='week'?'Week':'Timeline')+' view is coming soon.</div>'; return; }
+  function _calFilterState(){ return (state.calFilter = state.calFilter || {owner:'',user:'',type:'',project:'',cap:''}); }
+  function _calWindow(){
     var now=state.calDate||new Date(); state.calDate=now;
+    if(state.calTab==='week'){
+      var dow=(now.getDay()+6)%7;   // Monday-start
+      var mon=new Date(now.getFullYear(),now.getMonth(),now.getDate()-dow);
+      var sun=new Date(mon.getFullYear(),mon.getMonth(),mon.getDate()+6);
+      return {from:_ymdLocal(mon), to:_ymdLocal(sun), start:mon, mode:'week',
+        label:_calShortD(_ymdLocal(mon))+' – '+_calShortD(_ymdLocal(sun)),
+        prev:function(){ return new Date(mon.getFullYear(),mon.getMonth(),mon.getDate()-7); },
+        next:function(){ return new Date(mon.getFullYear(),mon.getMonth(),mon.getDate()+7); }};
+    }
     var y=now.getFullYear(), m=now.getMonth();
-    var from=_ymdLocal(new Date(y,m,1)), to=_ymdLocal(new Date(y,m+1,0));
-    var monthLabel=new Date(y,m,1).toLocaleDateString(undefined,{month:'long',year:'numeric'});
-    var canEdit=_val('isAdmin',false)||_val('isEditor',false);
-    nav.innerHTML='<button class="frz-cal-navbtn" id="frzCalPrev" title="Previous month">‹</button>'+
-      '<span class="frz-cal-title">'+esc(monthLabel)+'</span>'+
-      '<button class="frz-cal-navbtn" id="frzCalNext" title="Next month">›</button>'+
-      '<button class="frz-cal-navbtn frz-cal-today" id="frzCalToday">Today</button>'+
-      (canEdit ? '<span style="flex:1"></span><button class="frz-cal-newbtn" id="frzCalNew">+ New assignment</button>' : '');
-    nav.querySelector('#frzCalPrev').onclick=function(){ state.calDate=new Date(y,m-1,1); renderCalendar(); };
-    nav.querySelector('#frzCalNext').onclick=function(){ state.calDate=new Date(y,m+1,1); renderCalendar(); };
-    nav.querySelector('#frzCalToday').onclick=function(){ state.calDate=new Date(); renderCalendar(); };
-    var _newBtn=nav.querySelector('#frzCalNew'); if(_newBtn) _newBtn.onclick=function(){ openAssignmentModal({}); };
-    var owners=_val('developers',[])||[];
+    return {from:_ymdLocal(new Date(y,m,1)), to:_ymdLocal(new Date(y,m+1,0)), start:new Date(y,m,1), mode:state.calTab,
+      label:new Date(y,m,1).toLocaleDateString(undefined,{month:'long',year:'numeric'}),
+      prev:function(){ return new Date(y,m-1,1); }, next:function(){ return new Date(y,m+1,1); }};
+  }
+  function _calData(win){
+    var f=_calFilterState();
     var typeById={}; (_assignmentTypes||[]).forEach(function(t){ typeById[t.id]=t; });
-    var projs=_val('projects',[])||[];
-    var capMap=_val('ownerCapacity',{})||{};
-    var monthAssigns=(_assignments||[]).filter(function(a){ return (a.start_date||'')<=to && (a.end_date||a.start_date||'')>=from; });
-    var todayStr=_ymdLocal(new Date());
-    var html='';
+    var projs=_val('projects',[])||[], capMap=_val('ownerCapacity',{})||{}, todayStr=_ymdLocal(new Date());
+    var winAssigns=(_assignments||[]).filter(function(a){ return (a.start_date||'')<=win.to && (a.end_date||a.start_date||'')>=win.from; });
+    var owners=(_val('developers',[])||[]).filter(function(o){ return !f.owner || o===f.owner; });
+    var out=[];
     owners.forEach(function(owner){
-      var users={};
-      monthAssigns.forEach(function(a){ if(a.owner===owner && a.username) users[a.username]=1; });
-      projs.forEach(function(p){ if(p.dev===owner && p.assignee && !isTerminalStatus(p.status)) users[p.assignee]=1; });
-      var userList=Object.keys(users).sort();
       var baseCap=capMap[owner]||1, effToday=getEffectiveCapacity(owner, todayStr);
-      var capCls=(effToday<baseCap)?' frz-cal-cap-warn':'';
-      html+='<div class="frz-cal-owner"><div class="frz-cal-owner-hd"><span class="frz-cal-owner-nm">'+esc(owner)+'</span>'+
-            '<span style="display:inline-flex;align-items:center;gap:10px">'+
-            '<span class="frz-cal-owner-cap'+capCls+'" title="Effective capacity today (base minus assignment impacts)">Capacity today: '+effToday+' / '+baseCap+'</span>'+
-            (canEdit ? '<button class="frz-cal-addbtn" data-owner="'+escA(owner)+'" title="Add assignment for this pool">+</button>' : '')+
-            '</span></div>';
-      if(!userList.length){ html+='<div class="frz-cal-empty">No one scheduled this month.</div>'; }
-      userList.forEach(function(u){
-        var chips='';
-        monthAssigns.filter(function(a){ return a.owner===owner && a.username===u; }).forEach(function(a){
-          var t=typeById[a.type_id]||{}, col=/^#[0-9A-Fa-f]{6}$/.test(t.color||'')?t.color:'#4a5b6b';
-          var range=(a.start_date===a.end_date)?_calShortD(a.start_date):(_calShortD(a.start_date)+' – '+_calShortD(a.end_date));
-          chips+='<span class="frz-cal-chip'+(canEdit?' frz-cal-chip-asg':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+'style="background:'+col+'1f;color:'+col+';border-color:'+col+'66" title="'+escA((t.name||a.type_id)+' · '+range)+'">'+esc(t.name||a.type_id)+'</span>';
-        });
-        projs.filter(function(p){ return p.dev===owner && p.assignee===u && !isTerminalStatus(p.status); }).forEach(function(p){
-          chips+='<span class="frz-cal-chip frz-cal-chip-item" data-item="'+p.id+'" title="'+escA(p.name||'')+'">'+esc(p.itemKey||p.name||('#'+p.id))+'</span>';
-        });
-        html+='<div class="frz-cal-user"><span class="frz-cal-user-nm">'+avatarHTML(u,20)+'<span>'+esc(u)+'</span></span><span class="frz-cal-chips">'+(chips||'<span class="frz-cal-none">—</span>')+'</span></div>';
+      if(f.cap==='reduced' && !(effToday<baseCap)) return;
+      var userSet={};
+      winAssigns.forEach(function(a){ if(a.owner===owner && a.username && (!f.type||a.type_id===f.type)) userSet[a.username]=1; });
+      if(!f.type) projs.forEach(function(p){ if(p.dev===owner && p.assignee && !isTerminalStatus(p.status) && (!f.project||p.product===f.project)) userSet[p.assignee]=1; });
+      var users=Object.keys(userSet).filter(function(u){ return !f.user || u===f.user; }).sort().map(function(u){
+        return { user:u,
+          assigns: winAssigns.filter(function(a){ return a.owner===owner && a.username===u && (!f.type||a.type_id===f.type); }),
+          tickets: f.type ? [] : projs.filter(function(p){ return p.dev===owner && p.assignee===u && !isTerminalStatus(p.status) && (!f.project||p.product===f.project); }) };
+      });
+      out.push({ owner:owner, baseCap:baseCap, effToday:effToday, users:users, typeById:typeById });
+    });
+    return out;
+  }
+  function _calAsgChip(a, typeById, canEdit){
+    var t=typeById[a.type_id]||{}, col=/^#[0-9A-Fa-f]{6}$/.test(t.color||'')?t.color:'#4a5b6b';
+    var range=(a.start_date===a.end_date)?_calShortD(a.start_date):(_calShortD(a.start_date)+' – '+_calShortD(a.end_date));
+    return '<span class="frz-cal-chip'+(canEdit?' frz-cal-chip-asg':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+'style="background:'+col+'1f;color:'+col+';border-color:'+col+'66" title="'+escA((t.name||a.type_id)+' · '+range)+'">'+esc(t.name||a.type_id)+'</span>';
+  }
+  function _calTicketChip(p){ return '<span class="frz-cal-chip frz-cal-chip-item" data-item="'+p.id+'" title="'+escA(p.name||'')+'">'+esc(p.itemKey||p.name||('#'+p.id))+'</span>'; }
+  function _calOwnerHd(o, canEdit){
+    var todayStr=_ymdLocal(new Date());
+    var capTitle=capacityBreakdownText(o.owner, todayStr) || ('Base capacity: '+o.baseCap);
+    return '<div class="frz-cal-owner-hd"><span class="frz-cal-owner-nm">'+esc(o.owner)+'</span>'+
+      '<span style="display:inline-flex;align-items:center;gap:10px">'+
+      '<span class="frz-cal-owner-cap'+((o.effToday<o.baseCap)?' frz-cal-cap-warn':'')+'" title="'+escA(capTitle)+'">Capacity today: '+o.effToday+' / '+o.baseCap+'</span>'+
+      (canEdit ? '<button class="frz-cal-addbtn" data-owner="'+escA(o.owner)+'" title="Add assignment for this pool">+</button>' : '')+
+      '</span></div>';
+  }
+  function renderCalFilters(){
+    var host=document.getElementById('frzCalFilters'); if(!host) return;
+    var f=_calFilterState();
+    var owners=_val('developers',[])||[];
+    var users=(_val('users',[])||[]).map(function(u){ return u.username; });
+    var types=(_assignmentTypes||[]).slice().sort(function(a,b){ return (a.display_order||0)-(b.display_order||0); });
+    var products=(_val('products',[])||[]).map(function(p){ return (p&&p.name)||p; }).filter(Boolean);
+    function sel(key,label,opts,val){
+      return '<label class="frz-cal-flabel">'+label+'<select data-cf="'+key+'" class="frz-cal-fsel"><option value="">All</option>'+
+        opts.map(function(o){ var v=(o&&o.v!=null)?o.v:o, t=(o&&o.t!=null)?o.t:o; return '<option value="'+escA(v)+'"'+(String(val)===String(v)?' selected':'')+'>'+esc(t)+'</option>'; }).join('')+'</select></label>';
+    }
+    host.innerHTML =
+      sel('owner','Owner',owners,f.owner)+
+      sel('user','User',users,f.user)+
+      sel('type','Type',types.map(function(t){ return {v:t.id,t:t.name}; }),f.type)+
+      sel('project','Project',products,f.project)+
+      sel('cap','Capacity',[{v:'reduced',t:'Reduced only'}],f.cap)+
+      ((f.owner||f.user||f.type||f.project||f.cap) ? '<button class="frz-cal-fclear" id="frzCalFClear">Clear</button>' : '');
+    host.querySelectorAll('[data-cf]').forEach(function(s){ s.addEventListener('change', function(){ f[s.getAttribute('data-cf')]=s.value; renderCalendar(); }); });
+    var clr=host.querySelector('#frzCalFClear'); if(clr) clr.onclick=function(){ state.calFilter={owner:'',user:'',type:'',project:'',cap:''}; renderCalendar(); };
+  }
+  function _calMonth(body, data, canEdit){
+    var html='';
+    data.forEach(function(o){
+      html+='<div class="frz-cal-owner">'+_calOwnerHd(o, canEdit);
+      if(!o.users.length) html+='<div class="frz-cal-empty">No one scheduled.</div>';
+      o.users.forEach(function(u){
+        var chips=u.assigns.map(function(a){ return _calAsgChip(a,o.typeById,canEdit); }).join('')+u.tickets.map(_calTicketChip).join('');
+        html+='<div class="frz-cal-user"><span class="frz-cal-user-nm">'+avatarHTML(u.user,20)+'<span>'+esc(u.user)+'</span></span><span class="frz-cal-chips">'+(chips||'<span class="frz-cal-none">—</span>')+'</span></div>';
       });
       html+='</div>';
     });
-    if(!owners.length) html='<div class="frz-cal-empty">No owners configured. Add owners in Admin → Owners.</div>';
-    body.innerHTML=html;
+    body.innerHTML = data.length ? html : '<div class="frz-cal-empty">No owners match. Add owners in Admin → Owners, or clear filters.</div>';
+  }
+  function _calWeek(body, data, win, canEdit){
+    var days=[]; for(var i=0;i<7;i++) days.push(new Date(win.start.getFullYear(),win.start.getMonth(),win.start.getDate()+i));
+    var dayStrs=days.map(_ymdLocal), todayStr=_ymdLocal(new Date());
+    var head='<tr><th class="frz-cal-wk-user"></th>'+days.map(function(d,i){ return '<th class="'+(dayStrs[i]===todayStr?'frz-cal-wk-today':'')+'">'+d.toLocaleDateString(undefined,{weekday:'short'})+'<br>'+d.getDate()+'</th>'; }).join('')+'</tr>';
+    var html='';
+    data.forEach(function(o){
+      html+='<div class="frz-cal-owner">'+_calOwnerHd(o, canEdit)+'<div class="frz-cal-wk-wrap"><table class="frz-cal-week"><thead>'+head+'</thead><tbody>';
+      if(!o.users.length) html+='<tr><td colspan="8" class="frz-cal-empty">No one scheduled.</td></tr>';
+      o.users.forEach(function(u){
+        html+='<tr><td class="frz-cal-wk-user">'+avatarHTML(u.user,18)+'<span>'+esc(u.user)+'</span></td>';
+        dayStrs.forEach(function(ds){
+          var cell=u.assigns.filter(function(a){ return (a.start_date||'')<=ds && (a.end_date||a.start_date||'')>=ds; }).map(function(a){ return _calAsgChip(a,o.typeById,canEdit); }).join('');
+          html+='<td class="frz-cal-wk-cell'+(ds===todayStr?' frz-cal-wk-today':'')+'">'+cell+'</td>';
+        });
+        html+='</tr>';
+      });
+      html+='</tbody></table></div></div>';
+    });
+    body.innerHTML = data.length ? html : '<div class="frz-cal-empty">No owners match.</div>';
+  }
+  function _calTimeline(body, data, win, canEdit){
+    var y=win.start.getFullYear(), m=win.start.getMonth(), daysInMonth=new Date(y,m+1,0).getDate(), todayStr=_ymdLocal(new Date());
+    var axis=''; for(var i=1;i<=daysInMonth;i++){ axis+='<span class="frz-cal-tl-day'+(_ymdLocal(new Date(y,m,i))===todayStr?' frz-cal-tl-today':'')+'">'+i+'</span>'; }
+    var html='';
+    data.forEach(function(o){
+      html+='<div class="frz-cal-owner">'+_calOwnerHd(o, canEdit)+'<div class="frz-cal-tl"><div class="frz-cal-tl-row frz-cal-tl-head"><span class="frz-cal-tl-name"></span><span class="frz-cal-tl-track">'+axis+'</span></div>';
+      if(!o.users.length) html+='<div class="frz-cal-empty">No one scheduled.</div>';
+      o.users.forEach(function(u){
+        var bars='';
+        u.assigns.forEach(function(a){
+          var t=o.typeById[a.type_id]||{}, col=/^#[0-9A-Fa-f]{6}$/.test(t.color||'')?t.color:'#4a5b6b';
+          var sD=(a.start_date<win.from)?win.from:a.start_date, eD=((a.end_date||a.start_date)>win.to)?win.to:(a.end_date||a.start_date);
+          var sDay=parseInt(sD.split('-')[2],10), eDay=parseInt(eD.split('-')[2],10);
+          var left=((sDay-1)/daysInMonth*100), width=((eDay-sDay+1)/daysInMonth*100);
+          bars+='<span class="frz-cal-tl-bar'+(canEdit?' frz-cal-chip-asg':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+'style="left:'+left+'%;width:'+width+'%;background:'+col+'" title="'+escA((t.name||a.type_id)+' · '+_calShortD(a.start_date)+' – '+_calShortD(a.end_date||a.start_date))+'">'+esc(t.name||a.type_id)+'</span>';
+        });
+        html+='<div class="frz-cal-tl-row"><span class="frz-cal-tl-name">'+avatarHTML(u.user,18)+'<span>'+esc(u.user)+'</span></span><span class="frz-cal-tl-track">'+bars+'</span></div>';
+      });
+      html+='</div></div>';
+    });
+    body.innerHTML = data.length ? html : '<div class="frz-cal-empty">No owners match.</div>';
+  }
+  function renderCalendar(){
+    var body=document.getElementById('frzCalBody'), nav=document.getElementById('frzCalNav'); if(!body) return;
+    var tabs=document.getElementById('frzCalTabs'); if(tabs) tabs.querySelectorAll('[data-caltab]').forEach(function(b){ b.classList.toggle('is-active', b.getAttribute('data-caltab')===state.calTab); });
+    var canEdit=_val('isAdmin',false)||_val('isEditor',false);
+    var win=_calWindow();
+    nav.innerHTML='<button class="frz-cal-navbtn" id="frzCalPrev" title="Previous">‹</button>'+
+      '<span class="frz-cal-title">'+esc(win.label)+'</span>'+
+      '<button class="frz-cal-navbtn" id="frzCalNext" title="Next">›</button>'+
+      '<button class="frz-cal-navbtn frz-cal-today" id="frzCalToday">Today</button>'+
+      (canEdit ? '<span style="flex:1"></span><button class="frz-cal-newbtn" id="frzCalNew">+ New assignment</button>' : '');
+    nav.querySelector('#frzCalPrev').onclick=function(){ state.calDate=win.prev(); renderCalendar(); };
+    nav.querySelector('#frzCalNext').onclick=function(){ state.calDate=win.next(); renderCalendar(); };
+    nav.querySelector('#frzCalToday').onclick=function(){ state.calDate=new Date(); renderCalendar(); };
+    var _newBtn=nav.querySelector('#frzCalNew'); if(_newBtn) _newBtn.onclick=function(){ openAssignmentModal({}); };
+    renderCalFilters();
+    var data=_calData(win);
+    if(state.calTab==='week') _calWeek(body, data, win, canEdit);
+    else if(state.calTab==='timeline') _calTimeline(body, data, win, canEdit);
+    else _calMonth(body, data, canEdit);
     body.querySelectorAll('.frz-cal-chip-item').forEach(function(el){ el.addEventListener('click', function(){ var id=parseInt(el.getAttribute('data-item'),10); if(id) openItem(id); }); });
     body.querySelectorAll('.frz-cal-chip-asg').forEach(function(el){ el.addEventListener('click', function(){
       var aid=parseInt(el.getAttribute('data-aid'),10);
