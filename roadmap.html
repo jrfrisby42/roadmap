@@ -2108,7 +2108,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.36.3';
+const APP_VERSION = '4.37.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -6072,6 +6072,7 @@ async function loadAssignmentData(){
     _assignmentTypes = (tr && tr.assignmentTypes) || [];
     _assignments = (ar && ar.assignments) || [];
     buildAssignmentImpactMap();
+    if(typeof window._frzRefreshCalendar === 'function') window._frzRefreshCalendar();   // refresh Team Calendar once data is in
   } catch(e){ console.warn('[Assignments] load failed:', e); }
 }
 // Multi-line breakdown for a capacity cell tooltip (empty when no impacts apply).
@@ -16055,6 +16056,28 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-adminpage #adminDoneBtn { display:none; }   /* Close (X) in the header replaces Done in page mode */
   .frz-beta .frz-adminpage .admin-tabs { flex-wrap:wrap; row-gap:4px; }   /* full width - let all tabs show, don't clip */
   .frz-beta .frz-adminpage #adminCloseBtn:hover { background:var(--frz-bg-app); color:var(--frz-text); }
+  /* ── Team Calendar (Phase 2) ── */
+  .frz-beta .frz-cal-wrap { padding:16px 24px 48px; }
+  .frz-beta .frz-cal-nav { display:flex; align-items:center; gap:8px; margin-bottom:16px; }
+  .frz-beta .frz-cal-title { font-size:15px; font-weight:800; color:var(--frz-text); min-width:150px; }
+  .frz-beta .frz-cal-navbtn { border:1px solid var(--frz-border); background:var(--frz-bg-elevated); color:var(--frz-text); border-radius:7px; width:30px; height:30px; cursor:pointer; font-size:16px; line-height:1; }
+  .frz-beta .frz-cal-navbtn.frz-cal-today { width:auto; padding:0 12px; font-size:12px; font-weight:700; }
+  .frz-beta .frz-cal-navbtn:hover { background:var(--frz-bg-app); }
+  .frz-beta .frz-cal-owner { border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-elevated); margin-bottom:12px; overflow:hidden; }
+  .frz-beta .frz-cal-owner-hd { display:flex; align-items:center; justify-content:space-between; padding:11px 16px; background:var(--frz-bg-app); border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-cal-owner-nm { font-size:14px; font-weight:800; color:var(--frz-text); }
+  .frz-beta .frz-cal-owner-cap { font-size:12px; font-weight:700; color:var(--frz-text-muted); }
+  .frz-beta .frz-cal-owner-cap.frz-cal-cap-warn { color:#c0392b; }
+  .frz-beta .frz-cal-user { display:flex; align-items:flex-start; gap:12px; padding:9px 16px; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-cal-user:last-child { border-bottom:0; }
+  .frz-beta .frz-cal-user-nm { display:inline-flex; align-items:center; gap:7px; min-width:150px; font-size:13px; font-weight:600; color:var(--frz-text); flex:0 0 auto; }
+  .frz-beta .frz-cal-chips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .frz-beta .frz-cal-chip { font-size:11px; font-weight:700; padding:2px 9px; border-radius:999px; border:1px solid transparent; white-space:nowrap; }
+  .frz-beta .frz-cal-chip-item { background:var(--frz-bg-app); color:var(--frz-accent); border-color:var(--frz-border); cursor:pointer; font-family:ui-monospace,Menlo,monospace; }
+  .frz-beta .frz-cal-chip-item:hover { border-color:var(--frz-accent); }
+  .frz-beta .frz-cal-none { color:var(--frz-text-muted); font-size:12px; }
+  .frz-beta .frz-cal-empty, .frz-beta .frz-cal-soon { padding:16px; color:var(--frz-text-muted); font-size:13px; }
+  .frz-beta .frz-cal-soon { text-align:center; padding:40px 16px; }
   .frz-beta .frz-acct-menu { position:absolute; top:calc(100% + 6px); right:0; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:8px; box-shadow:0 8px 28px rgba(20,40,63,.15); min-width:170px; overflow:hidden; z-index:90; }
   .frz-beta .frz-acct-menu button { display:block; width:100%; text-align:left; border:0; background:none; cursor:pointer; font:inherit; font-size:13px; color:var(--frz-text); padding:10px 14px; }
   .frz-beta .frz-acct-menu button:hover { background:var(--frz-bg-app); }
@@ -16843,7 +16866,8 @@ if ('serviceWorker' in navigator) {
     planning: { chips:['owner','status'],                   extra:['type','assignee'], opts:[] },
     dashboard:{ chips:['owner','range'],                    extra:[], opts:[] },
     'my-home':{ chips:[],                                   extra:[], opts:[] },  // Stage 5: personal landing, no chips
-    'admin':  { chips:[],                                   extra:[], opts:[] }   // Phase 0: Admin full page, no chips
+    'admin':  { chips:[],                                   extra:[], opts:[] },  // Phase 0: Admin full page, no chips
+    'team-calendar':{ chips:[],                             extra:[], opts:[] }   // Phase 2: Team Calendar (custom filters in 2c)
   };
   var PROJ_COLORS = ['#0059A9','#65B1E3','#2E8B6F','#C0700B','#8E4FB0','#C0392B','#0E7C86'];
   // Feature B: items eligible for sprint planning (single editable list).
@@ -17047,6 +17071,22 @@ if ('serviceWorker' in navigator) {
     content.appendChild(adminPage);
     var _adminBox = document.querySelector('#adminModalBg .admin-modal');
     if (_adminBox) adminPage.appendChild(_adminBox);   // move (not copy) - tab listeners are on the same nodes
+    // Team Calendar (Phase 2): Flow-owned view, Month/Week/Timeline sub-tabs.
+    var cal = document.createElement('div');
+    cal.id = 'frzCalendar'; cal.style.display = 'none';
+    cal.innerHTML =
+      '<div class="frz-plan-tabs" id="frzCalTabs" role="tablist" aria-label="Team Calendar">'+
+        '<button class="frz-plan-tab" type="button" data-caltab="month">Month</button>'+
+        '<button class="frz-plan-tab" type="button" data-caltab="week">Week</button>'+
+        '<button class="frz-plan-tab" type="button" data-caltab="timeline">Timeline</button>'+
+      '</div>'+
+      '<div class="frz-cal-wrap"><div class="frz-cal-nav" id="frzCalNav"></div><div id="frzCalBody"></div></div>';
+    content.appendChild(cal);
+    cal.querySelector('#frzCalTabs').addEventListener('click', function(e){
+      var b = e.target.closest('[data-caltab]'); if(!b) return;
+      var t = b.getAttribute('data-caltab');
+      navigate('/team-calendar' + (t==='month' ? '' : '/'+t), false);
+    });
     document.getElementById('frzHomeBody').addEventListener('click', function(e){
       if (e.target.closest('input,button,a')) return;
       var tr = e.target.closest('tr.list-row'); if(!tr) return;
@@ -17253,6 +17293,13 @@ if ('serviceWorker' in navigator) {
     hb.title='My Home';
     hb.innerHTML = IC.home + '<span>My Home</span>' + (mwCount>0 ? '<span class="frz-count">'+mwCount+'</span>' : '');
     nav.appendChild(hb);
+    // Team Calendar - Flow-owned view (pinned, like My Home). Phase 2.
+    var cb = document.createElement('button');
+    cb.className='frz-item'; cb.setAttribute('data-nav','view:team-calendar');
+    cb.setAttribute('aria-current', String(state.view==='team-calendar' && !state.onItem));
+    cb.title='Team Calendar';
+    cb.innerHTML = IC.teamCalendar + '<span>Team Calendar</span>';
+    nav.appendChild(cb);
     // Viewers can't see Kanban (CLAUDE.md role rule); Planning is admin-only.
     VIEW_KEYS.filter(function(v){ return (v!=='planning' || admin) && (v!=='kanban' || !viewer); }).forEach(function(v){
       var b = document.createElement('button');
@@ -17667,7 +17714,7 @@ if ('serviceWorker' in navigator) {
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     // hide every production view container (initViewSelect won't run for my-home)
     var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
-    ['kanbanBoard','listView','dashboardView','planningView','frzAdminPage'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    ['kanbanBoard','listView','dashboardView','planningView','frzAdminPage','frzCalendar'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
     var home=document.getElementById('frzHome'); if(home) home.style.display='';
     setProjectPanel();
     applyChromeHiding();
@@ -17685,7 +17732,7 @@ if ('serviceWorker' in navigator) {
     root.classList.remove('on-item');
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
-    ['kanbanBoard','listView','dashboardView','planningView'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    ['kanbanBoard','listView','dashboardView','planningView','frzCalendar'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
     var home=document.getElementById('frzHome'); if(home) home.style.display='none';
     var ap=document.getElementById('frzAdminPage'); if(ap) ap.style.display='';
     setProjectPanel();
@@ -17697,11 +17744,81 @@ if ('serviceWorker' in navigator) {
     _frzSyncSearchMode();
     _call('renderAdminPanes','devTab');
   }
+  function setCalendar(tab){
+    // Flow-owned Team Calendar view (like My Home). Any logged-in role.
+    state.onItem=false; state.itemId=null; state.view='team-calendar'; state.calTab=tab||state.calTab||'month';
+    root.classList.remove('on-item');
+    var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
+    var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
+    ['kanbanBoard','listView','dashboardView','planningView','frzHome','frzAdminPage'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    var c=document.getElementById('frzCalendar'); if(c) c.style.display='';
+    setProjectPanel();
+    applyChromeHiding();
+    document.getElementById('frzLeft').innerHTML=_titleHtml('teamCalendar','Team Calendar');
+    document.getElementById('frzBadges').innerHTML='';
+    document.getElementById('frzFilterBar').innerHTML='';   // 2c adds filters
+    renderRail();
+    _frzSyncSearchMode();
+    renderCalendar();
+  }
+  // ── Team Calendar render (Phase 2a: Month view - Owner -> Users -> chips) ──────
+  function _calShortD(ymd){ if(!ymd) return ''; var p=String(ymd).split('-'); if(p.length!==3) return ymd; return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString(undefined,{month:'short',day:'numeric'}); }
+  function renderCalendar(){
+    var body=document.getElementById('frzCalBody'), nav=document.getElementById('frzCalNav'); if(!body) return;
+    var tabs=document.getElementById('frzCalTabs'); if(tabs) tabs.querySelectorAll('[data-caltab]').forEach(function(b){ b.classList.toggle('is-active', b.getAttribute('data-caltab')===state.calTab); });
+    if(state.calTab!=='month'){ if(nav) nav.innerHTML=''; body.innerHTML='<div class="frz-cal-soon">'+(state.calTab==='week'?'Week':'Timeline')+' view is coming soon.</div>'; return; }
+    var now=state.calDate||new Date(); state.calDate=now;
+    var y=now.getFullYear(), m=now.getMonth();
+    var from=_ymdLocal(new Date(y,m,1)), to=_ymdLocal(new Date(y,m+1,0));
+    var monthLabel=new Date(y,m,1).toLocaleDateString(undefined,{month:'long',year:'numeric'});
+    nav.innerHTML='<button class="frz-cal-navbtn" id="frzCalPrev" title="Previous month">‹</button>'+
+      '<span class="frz-cal-title">'+esc(monthLabel)+'</span>'+
+      '<button class="frz-cal-navbtn" id="frzCalNext" title="Next month">›</button>'+
+      '<button class="frz-cal-navbtn frz-cal-today" id="frzCalToday">Today</button>';
+    nav.querySelector('#frzCalPrev').onclick=function(){ state.calDate=new Date(y,m-1,1); renderCalendar(); };
+    nav.querySelector('#frzCalNext').onclick=function(){ state.calDate=new Date(y,m+1,1); renderCalendar(); };
+    nav.querySelector('#frzCalToday').onclick=function(){ state.calDate=new Date(); renderCalendar(); };
+    var owners=_val('developers',[])||[];
+    var typeById={}; (_assignmentTypes||[]).forEach(function(t){ typeById[t.id]=t; });
+    var projs=_val('projects',[])||[];
+    var capMap=_val('ownerCapacity',{})||{};
+    var monthAssigns=(_assignments||[]).filter(function(a){ return (a.start_date||'')<=to && (a.end_date||a.start_date||'')>=from; });
+    var todayStr=_ymdLocal(new Date());
+    var html='';
+    owners.forEach(function(owner){
+      var users={};
+      monthAssigns.forEach(function(a){ if(a.owner===owner && a.username) users[a.username]=1; });
+      projs.forEach(function(p){ if(p.dev===owner && p.assignee && !isTerminalStatus(p.status)) users[p.assignee]=1; });
+      var userList=Object.keys(users).sort();
+      var baseCap=capMap[owner]||1, effToday=getEffectiveCapacity(owner, todayStr);
+      var capCls=(effToday<baseCap)?' frz-cal-cap-warn':'';
+      html+='<div class="frz-cal-owner"><div class="frz-cal-owner-hd"><span class="frz-cal-owner-nm">'+esc(owner)+'</span>'+
+            '<span class="frz-cal-owner-cap'+capCls+'" title="Effective capacity today (base minus assignment impacts)">Capacity today: '+effToday+' / '+baseCap+'</span></div>';
+      if(!userList.length){ html+='<div class="frz-cal-empty">No one scheduled this month.</div>'; }
+      userList.forEach(function(u){
+        var chips='';
+        monthAssigns.filter(function(a){ return a.owner===owner && a.username===u; }).forEach(function(a){
+          var t=typeById[a.type_id]||{}, col=/^#[0-9A-Fa-f]{6}$/.test(t.color||'')?t.color:'#4a5b6b';
+          var range=(a.start_date===a.end_date)?_calShortD(a.start_date):(_calShortD(a.start_date)+' – '+_calShortD(a.end_date));
+          chips+='<span class="frz-cal-chip" style="background:'+col+'1f;color:'+col+';border-color:'+col+'66" title="'+escA((t.name||a.type_id)+' · '+range)+'">'+esc(t.name||a.type_id)+'</span>';
+        });
+        projs.filter(function(p){ return p.dev===owner && p.assignee===u && !isTerminalStatus(p.status); }).forEach(function(p){
+          chips+='<span class="frz-cal-chip frz-cal-chip-item" data-item="'+p.id+'" title="'+escA(p.name||'')+'">'+esc(p.itemKey||p.name||('#'+p.id))+'</span>';
+        });
+        html+='<div class="frz-cal-user"><span class="frz-cal-user-nm">'+avatarHTML(u,20)+'<span>'+esc(u)+'</span></span><span class="frz-cal-chips">'+(chips||'<span class="frz-cal-none">—</span>')+'</span></div>';
+      });
+      html+='</div>';
+    });
+    if(!owners.length) html='<div class="frz-cal-empty">No owners configured. Add owners in Admin → Owners.</div>';
+    body.innerHTML=html;
+    body.querySelectorAll('.frz-cal-chip-item').forEach(function(el){ el.addEventListener('click', function(){ var id=parseInt(el.getAttribute('data-item'),10); if(id) openItem(id); }); });
+  }
   function setView(view, opts){
     opts = opts||{};
     if(view!=='list' && state.panelId!=null) frzClosePanel({fromURL:true});   // leaving List closes the detail panel (URL handled by the navigation)
     if(view==='my-home'){ return setHome(state.homeTab); }
     if(view==='admin'){ return setAdmin(); }
+    if(view==='team-calendar'){ return setCalendar(state.calTab); }
     if(view==='kanban' && _val('isViewer', false)) view='gantt';   // viewers never see Kanban (safety net; callers also redirect)
     state.onItem=false; state.itemId=null;
     root.classList.remove('on-item');
@@ -18050,16 +18167,17 @@ if ('serviceWorker' in navigator) {
     var m = path.match(/^\/item\/(\d+)/);
     if (m){ state.itemFromApp = !replace; openItem(parseInt(m[1],10), {push:!replace}); return; }
     if (/^\/my-work(\/|$)/.test(path)){ navigate('/my-home', replace); return; }   // Stage 5: My Work absorbed into My Home
-    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home|admin)/);
+    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home|admin|team-calendar)/);
     var view = vm ? vm[1] : (lastView()||'gantt');
     if (view==='kanban' && _val('isViewer', false)){ navigate('/gantt', replace); return; }   // viewers can't see Kanban
     if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
     if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
+    if (view==='team-calendar'){ var cm=path.match(/^\/team-calendar\/(week|timeline)/); state.calTab = cm ? cm[1] : 'month'; }
     applyURLToFilters(view, u.searchParams);
     setView(view);
     if (replace) history.replaceState({frzView:view},'',url); else history.pushState({frzView:view},'',url);
     lset('frazil_beta_lastview_'+uname(), view);
-    if (view!=='my-home' && view!=='admin') rerender();   // My Home + Admin render themselves; skip the production view render
+    if (view!=='my-home' && view!=='admin' && view!=='team-calendar') rerender();   // My Home + Admin + Team Calendar render themselves; skip the production view render
     syncURL(true); // normalize URL to current filter state
   }
   function lastView(){ return ls('frazil_beta_lastview_'+uname()); }
@@ -18081,7 +18199,7 @@ if ('serviceWorker' in navigator) {
       history.replaceState({frzView:v2},'','/'+v2); state.itemFromApp=true; openItem(parseInt(qItem,10), {push:true}); return;
     }
     if (/^\/my-work(\/|$)/.test(path)){ navigate('/my-home', true); return; }   // Stage 5: absorbed into My Home
-    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home|admin)/);
+    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home|admin|team-calendar)/);
     if (!vm){ // /beta -> last used (default gantt)
       var lv = lastView()||'gantt';
       applyDefaultCollapse(lv);
@@ -18095,11 +18213,12 @@ if ('serviceWorker' in navigator) {
       // reads it. With it set, syncURL preserves ?release= and renderReleasesTab auto-expands the row.
       state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }
     if (vm[1]==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
+    if (vm[1]==='team-calendar'){ var cm=path.match(/^\/team-calendar\/(week|timeline)/); state.calTab = cm ? cm[1] : 'month'; }
     applyDefaultCollapse(vm[1]);
     applyURLToFilters(vm[1], new URLSearchParams(location.search));
     setView(vm[1]);
     lset('frazil_beta_lastview_'+uname(), vm[1]);
-    if (vm[1]!=='my-home' && vm[1]!=='admin') rerender();   // My Home + Admin render themselves
+    if (vm[1]!=='my-home' && vm[1]!=='admin' && vm[1]!=='team-calendar') rerender();   // My Home + Admin + Team Calendar render themselves
     _frzSeedActiveFromURL();   // Fix 1: cold load - seed the saved-filter anchor from URL-match (single, most-specific)
     _frzSyncPanelFromURL();   // List detail panel: restore BEFORE syncURL so the emit preserves ?panel= on cold load
                               // (frzOpenPanel({fromURL}) sets state.panelId without writing the URL). Was after syncURL → stripped.
@@ -18112,11 +18231,12 @@ if ('serviceWorker' in navigator) {
     if (st.frzItem){ state.itemFromApp=true; openItem(st.frzItem, {push:false}); }
     else {
       var path = location.pathname.replace(/\/+$/,'');
-      var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home|admin)/);
+      var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home|admin|team-calendar)/);
       var view = vm? vm[1] : (st.frzView || state.view);
       if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
         state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }   // Stage 1b: seed before rerender (popstate doesn't syncURL, but keep symmetric + avoids a stale-expand flash)
       if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
+    if (view==='team-calendar'){ var cm=path.match(/^\/team-calendar\/(week|timeline)/); state.calTab = cm ? cm[1] : 'month'; }
       applyURLToFilters(view, new URLSearchParams(location.search));
       setView(view);
       if (view!=='my-home' && view!=='admin') rerender();   // My Home + Admin render themselves
@@ -18512,6 +18632,7 @@ if ('serviceWorker' in navigator) {
     document.addEventListener('keydown', function(e){ if(e.key==='Escape' && root.classList.contains('frz-search-open')) root.classList.remove('frz-search-open'); });
     document.getElementById('frzSettings').addEventListener('click', openSettings);   // Stage 4a: tabbed Settings
     window._frzNav = navigate;   // bridge so classic-scope code (openAdminPanel) can route into the Flow shell
+    window._frzRefreshCalendar = function(){ try { if(state.view==='team-calendar') renderCalendar(); } catch(e){} };   // re-render after async assignment data loads
     document.getElementById('frzAdmin').addEventListener('click', function(){ navigate('/admin', false); });
     var av=document.getElementById('frzAvatar'), am=document.getElementById('frzAcctMenu');
     av.addEventListener('click', function(e){ e.stopPropagation(); am.hidden=!am.hidden; if(!am.hidden){ try { renderTeamSwitch(); } catch(_e){} } });
