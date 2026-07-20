@@ -2092,7 +2092,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.32.2';
+const APP_VERSION = '4.33.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2693,6 +2693,50 @@ function sanitizeRichHTML(html){
     });
   })(tpl.content);
   return tpl.innerHTML;
+}
+
+// ── Initials avatars ──────────────────────────────────────────────────────────
+// A colored monogram for a user. Initials come from the user's chosen `avatarInitials`
+// (set in Appearance settings) and fall back to first-letter-of-first + first-letter-
+// of-last derived from the username. Color is a stable hash of the username (so the
+// same person is always the same color, everywhere, with no stored/config value).
+function _avatarUserRec(username){
+  try { return (users || []).find(function(u){ return u.username === username; }) || null; }
+  catch(e){ return null; }
+}
+function avatarInitialsFor(username){
+  var rec = _avatarUserRec(username);
+  if(rec && rec.avatarInitials) return String(rec.avatarInitials).slice(0,3);
+  var u = String(username == null ? '?' : username);
+  var parts = u.replace(/[^A-Za-z0-9 ]/g, ' ').split(/[ ._-]+/).filter(Boolean);
+  var ini = parts.slice(0, 2).map(function(s){ return s[0]; }).join('').toUpperCase();
+  return ini || (u.replace(/[^A-Za-z0-9]/g,'')[0] || '?').toUpperCase();
+}
+var _AVATAR_PALETTE = ['#0059A9','#2F86DE','#1a9a59','#a07800','#c0392b','#7a3ea0','#0078b8','#c06000','#1a8a52','#4a5b6b'];
+function avatarColorFor(username){
+  var s = String(username || ''), h = 0;
+  for(var i=0;i<s.length;i++){ h = (h * 31 + s.charCodeAt(i)) >>> 0; }
+  return _AVATAR_PALETTE[h % _AVATAR_PALETTE.length];
+}
+// Fully inline-styled so it renders identically in the classic and Flow script scopes
+// (no CSS-class dependency). `username` is escaped; initials are already alnum-only.
+function avatarHTML(username, size){
+  size = size || 24;
+  var ini = esc(avatarInitialsFor(username)), col = avatarColorFor(username), fs = Math.round(size * 0.42);
+  return '<span class="frz-ava" title="' + escA(esc(String(username == null ? '' : username))) + '" '
+    + 'style="display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;'
+    + 'width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:' + col + ';'
+    + 'color:#fff;font-weight:700;font-size:' + fs + 'px;line-height:1;vertical-align:middle;overflow:hidden">'
+    + ini + '</span>';
+}
+// Refresh the Flow top-bar avatar button for the current user (initials + color).
+function _frzSyncAvatar(){
+  try {
+    var el = document.getElementById('frzAvatar'); if(!el) return;
+    var u = localStorage.getItem('frazil_rm_user') || '';
+    el.textContent = avatarInitialsFor(u);
+    el.style.background = avatarColorFor(u);
+  } catch(e){}
 }
 
 // ── DEV SELECTS ──
@@ -6658,6 +6702,7 @@ function renderUserList(){
     const linkBtn = (isAdmin && u.email) ? `<button class="btn-ic" onclick="sendUserLink(${i})" title="Email a password setup/reset link"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg></button>` : '';
 
     return `<div class="dev-item" data-idx="${i}">
+      ${avatarHTML(u.username, 24)}
       <span class="dev-nm">${esc(u.username)}${selfBadge}${noPwBadge}</span>
       ${emailTxt}
       ${rolePill}${ownerPill}
@@ -16726,9 +16771,8 @@ if ('serviceWorker' in navigator) {
     var tb = document.querySelector('.topbar'); if (tb) tb.style.display = 'none';
     var lg = document.getElementById('ganttLegend'); if (lg) lg.style.display = 'none';
 
-    // Avatar initials
-    var u = uname(); var ini = (u||'?').replace(/[^A-Za-z0-9 ]/g,'').split(/[ ._-]+/).filter(Boolean).slice(0,2).map(function(s){return s[0];}).join('').toUpperCase() || (u[0]||'?').toUpperCase();
-    document.getElementById('frzAvatar').textContent = ini;
+    // Avatar initials (user-chosen or username-derived) + stable per-user color
+    _frzSyncAvatar();
 
     // state restore
     state.saved = loadSaved();
@@ -20531,7 +20575,7 @@ if ('serviceWorker' in navigator) {
         if(!data.length){ h.innerHTML='<div class="frz-lp-empty">No comments yet</div>'; return; }
         var rows=data.slice().sort(function(a,b){ return (b.id||0)-(a.id||0); });   // newest-first
         h.innerHTML=rows.map(function(c){
-          return '<div class="frz-lp-cmt"><div class="frz-lp-cmt-hd"><span class="frz-lp-cmt-author">'+esc(c.author)+'</span>'
+          return '<div class="frz-lp-cmt"><div class="frz-lp-cmt-hd"><span style="display:inline-flex;align-items:center;gap:7px">'+avatarHTML(c.author,20)+'<span class="frz-lp-cmt-author">'+esc(c.author)+'</span></span>'
             + '<span class="frz-lp-cmt-ts">'+esc((c.created_ts||'').slice(0,16))+'</span></div>'
             + '<div class="frz-lp-cmt-body">'+(_call('_renderCommentBody', c.body)||'')+'</div></div>';
         }).join('');
@@ -20625,7 +20669,7 @@ if ('serviceWorker' in navigator) {
     var del=(c.author===me||isAdmin)
       ? '<button class="frz-cmt-del" title="Delete" onclick="deleteItemPageComment('+c.id+')">✕</button>' : '';
     return '<div class="frz-cmt'+(isReply?' frz-cmt-reply':'')+'">'
-      + '<div class="frz-cmt-hd"><span class="frz-cmt-author">'+esc(c.author)+'</span>'
+      + '<div class="frz-cmt-hd"><span style="display:inline-flex;align-items:center;gap:7px">'+avatarHTML(c.author,22)+'<span class="frz-cmt-author">'+esc(c.author)+'</span></span>'
       + '<span class="frz-cmt-meta"><span class="frz-cmt-ts">'+esc((c.created_ts||'').slice(0,16))+'</span>'+del+'</span></div>'
       + '<div class="frz-cmt-body">'+_call('_renderCommentBody', c.body)+'</div></div>';
   }
@@ -20910,7 +20954,7 @@ if ('serviceWorker' in navigator) {
     if(!list.length) return;
     var m=document.createElement('div'); m.className='frz-mention-menu';
     m.style.left=Math.round(left)+'px'; m.style.top=Math.round(top)+'px';
-    m.innerHTML=list.map(function(u,i){ return '<button class="frz-mm-opt'+(i===0?' is-active':'')+'" data-u="'+escA(u)+'">@'+esc(u)+'</button>'; }).join('');
+    m.innerHTML=list.map(function(u,i){ return '<button class="frz-mm-opt'+(i===0?' is-active':'')+'" data-u="'+escA(u)+'" style="display:flex;align-items:center;gap:8px">'+avatarHTML(u,18)+'<span>@'+esc(u)+'</span></button>'; }).join('');
     document.body.appendChild(m);   // body-level so it floats above the shell
     m.querySelectorAll('[data-u]').forEach(function(b){ b.addEventListener('mousedown', function(e){ e.preventDefault(); onPick(b.getAttribute('data-u')); }); });
     m._onPick=onPick; _mentionMenu=m;
@@ -20979,6 +21023,14 @@ if ('serviceWorker' in navigator) {
                 '<button type="button" data-theme="dark">Dark</button>'+
               '</div>'+
             '</div>'+
+            '<div class="frz-set-row">'+
+              '<div><div class="frz-set-row-title">Avatar initials</div><div class="frz-set-row-sub">Up to 3 letters for your monogram. Leave blank to use your name.</div></div>'+
+              '<div style="display:flex;align-items:center;gap:10px">'+
+                '<span id="frzAvatarPreview"></span>'+
+                '<input id="frzAvatarInput" type="text" maxlength="3" autocomplete="off" spellcheck="false" style="width:66px;text-transform:uppercase;text-align:center;padding:7px 8px;border:1px solid #cdd6e0;border-radius:8px;font-weight:700;font:inherit;background:#fff;color:#1f2733">'+
+                '<button type="button" id="frzAvatarSave" style="background:var(--frz-accent);color:#fff;border:0;border-radius:8px;padding:8px 16px;font-weight:700;font-size:13px;cursor:pointer">Save</button>'+
+              '</div>'+
+            '</div>'+
           '</div>'+
           '<div class="frz-set-panel" id="frzSetPanel_notifs"><div class="frz-set-stub">Notification preferences are coming soon. For now, notifications show in the bell menu in the top bar.</div></div>'+
         '</div>'+
@@ -20999,6 +21051,41 @@ if ('serviceWorker' in navigator) {
       var syncThemeSeg=function(){ var dark=document.body.classList.contains('dark-mode'); seg.querySelectorAll('button').forEach(function(b){ b.classList.toggle('is-active', b.getAttribute('data-theme')===(dark?'dark':'light')); }); };
       seg.querySelectorAll('button').forEach(function(b){ b.addEventListener('click', function(){ _call('setTheme', b.getAttribute('data-theme')); syncThemeSeg(); }); });
       syncThemeSeg();
+    }
+    // Appearance tab - avatar initials. Self-scoped save (POST /api/users/self/avatar);
+    // the color is a stable hash of the username (not user-editable). Blank = derive
+    // initials from the username.
+    var avaIn=bg.querySelector('#frzAvatarInput'), avaPrev=bg.querySelector('#frzAvatarPreview'), avaSave=bg.querySelector('#frzAvatarSave');
+    if(avaIn && avaPrev && avaSave){
+      var meUser=localStorage.getItem('frazil_rm_user')||'';
+      var meRec=_avatarUserRec(meUser);
+      // Pure username-derived initials (ignoring any saved override) for the placeholder.
+      var pureDerived=(function(){
+        var saved=meRec?meRec.avatarInitials:undefined;
+        if(meRec) delete meRec.avatarInitials;
+        var d=avatarInitialsFor(meUser);
+        if(meRec && saved!==undefined) meRec.avatarInitials=saved;
+        return d;
+      })();
+      avaIn.placeholder=pureDerived;
+      avaIn.value=(meRec && meRec.avatarInitials) ? meRec.avatarInitials : '';
+      var renderPrev=function(){
+        var val=(avaIn.value||'').replace(/[^A-Za-z0-9]/g,'').slice(0,3).toUpperCase();
+        avaPrev.innerHTML='<span style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;'
+          +'border-radius:50%;background:'+avatarColorFor(meUser)+';color:#fff;font-weight:700;font-size:14px">'+esc(val||pureDerived)+'</span>';
+      };
+      avaIn.addEventListener('input', renderPrev); renderPrev();
+      avaSave.addEventListener('click', function(){
+        var val=(avaIn.value||'').replace(/[^A-Za-z0-9]/g,'').slice(0,3).toUpperCase();
+        avaSave.disabled=true;
+        API.post('/api/users/self/avatar', {initials:val}).then(function(){
+          var rec=_avatarUserRec(meUser);
+          if(rec){ if(val) rec.avatarInitials=val; else delete rec.avatarInitials; }
+          avaIn.value=val; renderPrev(); _frzSyncAvatar();
+          avaSave.textContent='Saved'; setTimeout(function(){ avaSave.textContent='Save'; }, 1400);
+        }).catch(function(){ avaSave.textContent='Error'; setTimeout(function(){ avaSave.textContent='Save'; }, 1400); })
+          .then(function(){ avaSave.disabled=false; });
+      });
     }
     var cancel=document.getElementById('myAccountCancelBtn'); if(cancel) cancel.addEventListener('click', closeSettings);   // relocated Cancel closes the panel
   }

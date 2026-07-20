@@ -946,7 +946,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.32.2"
+APP_VERSION = "4.33.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2221,6 +2221,7 @@ def login(body: dict = Body(...), request: FRequest = None, response: Response =
     return {"username": user["username"], "builtin": user.get("builtin", False),
             "role": role,
             "ownerFilter": user.get("ownerFilter", ""),
+            "avatarInitials": user.get("avatarInitials", ""),
             "team": team,
             "token": token,
             "mustChangePassword": user.get("mustChangePassword", False)}
@@ -2246,6 +2247,35 @@ def change_own_password(body: dict = Body(...), auth: dict = Depends(require_aut
         c.execute("UPDATE config SET value=? WHERE key='users'", (json.dumps(users),))
     write_audit(team, "password:change", username)
     return {"ok": True}
+
+
+# Sanitize a user-chosen avatar monogram: letters/digits only, 1-3 chars, uppercased.
+# Blank clears it (the client then derives initials from the username).
+def _clean_initials(raw) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "", str(raw or ""))[:3].upper()
+
+@app.post("/api/users/self/avatar")
+def set_own_avatar(body: dict = Body(...), auth: dict = Depends(require_auth)):
+    """Self-scoped: set (or clear) the caller's own avatar initials. Any role. Mirrors
+    change_own_password - never touches another user, and is deliberately NOT the
+    admin-gated `PUT /api/config/users` array (H3)."""
+    team     = auth["team"]
+    username = auth["username"]
+    initials = _clean_initials(body.get("initials"))
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+        if not row:
+            raise HTTPException(404, "User store not found")
+        users = json.loads(row["value"])
+        user = next((u for u in users if u["username"] == username), None)
+        if not user:
+            raise HTTPException(404, "User not found")
+        if initials:
+            user["avatarInitials"] = initials
+        else:
+            user.pop("avatarInitials", None)   # blank -> revert to username-derived initials
+        c.execute("UPDATE config SET value=? WHERE key='users'", (json.dumps(users),))
+    return {"ok": True, "avatarInitials": initials}
 
 @app.post("/api/users/{target_username}/password")
 def admin_change_user_password(
@@ -2392,26 +2422,18 @@ def logout(response: Response):
     response.delete_cookie(key="frazil_session", httponly=True, secure=True, samesite="lax")
     return {"ok": True}
 
-@app.post("/api/verify-password")
-def verify_pw_endpoint(body: dict = Body(...), request: FRequest = None,
-                       auth: dict = Depends(require_auth)):
-    ip = (request.client.host if request else "unknown")
-    _check_rate_limit(ip)
-    team = auth["team"]
-    username = body.get("username","")
-    password = body.get("password","")
-    with db(team) as c:
-        row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
-    users = json.loads(row["value"]) if row else []
-    user = next((u for u in users if u["username"] == username), None)
-    if not user: raise HTTPException(401, "Invalid")
-    pw = user.get("password","")
-    ok = verify_password(password, pw) if is_hashed(pw) else False
-    if not ok: raise HTTPException(401, "Invalid current password")
-    return {"ok": True}
+# (Removed POST /api/verify-password: M3 — it was an authenticated password oracle
+# that verified a body-supplied `username` against ANY user in the team, so a viewer
+# could brute-force admins. It had no caller in the frontend; deleted rather than
+# re-scoped. Self "confirm current password" would use /api/users/self/password.)
 
 @app.post("/api/hash-password")
-def hash_pw_endpoint(body: dict = Body(...)):
+def hash_pw_endpoint(body: dict = Body(...), request: FRequest = None,
+                     auth: dict = Depends(require_role("admin"))):
+    # M4: was unauthenticated -> an anonymous bcrypt (cost 12) DoS/hashing oracle.
+    # Only the admin user-management flow uses it (client-side hashing before a
+    # PUT /api/config/users), so require admin + rate-limit it.
+    _check_rate_limit("hashpw:" + (request.client.host if request else "unknown"))
     plain = body.get("password", "")
     if not plain or len(plain) < 6:
         raise HTTPException(400, "Password must be at least 6 characters")
@@ -2504,6 +2526,7 @@ def get_all(auth: dict = Depends(require_auth)):
                    "role": u.get("role", "viewer"),
                    "ownerFilter": u.get("ownerFilter", ""),
                    "email": u.get("email", ""),
+                   "avatarInitials": u.get("avatarInitials", ""),   # user-chosen monogram (blank = derive from username)
                    "revokedAt": u.get("revokedAt")} for u in users_raw]
     return {"projects": projects, "developers": cfg("developers"),
             "statuses": cfg("statuses"), "delayReasons": cfg("delayReasons"),
@@ -2875,6 +2898,21 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
             merged["itemKey"] = old["itemKey"]
         else:
             merged.pop("itemKey", None)   # no old key → let backfill assign one; never persist a client blank
+        # M1: server-owned fields are not editable through a client PUT. These are set
+        # only by the portal (reporter identity/source/createdAt), by planning/sync
+        # (sprintHistory, the Jira sync-gate dicts + FF cache), or by server routines
+        # (recurrence back-ref, import dedup key). The merge above would otherwise let
+        # any editor forge them (e.g. redirect reporter emails by rewriting reporterEmail).
+        # Force each back from the stored blob regardless of what the client sent.
+        # (Manually-editable fields - jiraTickets, featureFlags, release, sprintId,
+        # assignee, archived, deferred, storyPoints, rank, parent/requires - are NOT here.)
+        for _srv in ("reporter", "reporterEmail", "source", "createdAt", "sprintHistory",
+                     "jiraLastKnownStatus", "jiraSyncSkipped", "jiraFeatureFlags",
+                     "recurrence_parent", "hubspotId"):
+            if _srv in old:
+                merged[_srv] = old[_srv]
+            else:
+                merged.pop(_srv, None)
         if "departments" in body:
             merged["departments"] = _normalize_departments(body.get("departments"))
         # Blocked binding: leaving the Blocked status clears the stashed pre-block
@@ -3179,6 +3217,11 @@ def set_config(key: str, body = Body(...), username: str = "",
             # route: inherit it from the stored record, default False for new users.
             # (Blocks self-promotion to primary and clearing the primary's flag.)
             u["builtin"] = bool(prev.get("builtin")) if prev else False
+            # avatarInitials is user-owned (set via /api/users/self/avatar). The admin
+            # user form doesn't include it, so inherit it here or an admin save would
+            # wipe a user's chosen monogram.
+            if prev and "avatarInitials" not in u and prev.get("avatarInitials"):
+                u["avatarInitials"] = prev["avatarInitials"]
             pw = u.get("password","")
             if not pw:
                 if prev and prev.get("password"):

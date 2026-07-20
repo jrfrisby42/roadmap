@@ -94,3 +94,30 @@ def test_config_users_primary_can_still_manage(client, team, admin_headers):
     server._rate.clear()
     assert client.post("/api/login",
                        json={"team": team, "username": "admin2", "password": "reset-by-primary"}).status_code == 200
+
+
+# ── Avatar initials: self-scoped, admin-save-safe ─────────────────────────────
+def test_self_avatar_set_clear_and_projection(client, team, admin_headers):
+    h = {"Authorization": f"Bearer {server.create_token(team, 'admin', 'admin')}", "X-Team": team}
+    # Set (sanitized: alnum, <=3, uppercased).
+    r = client.post("/api/users/self/avatar", json={"initials": "j.r frisby"}, headers=h)
+    assert r.status_code == 200 and r.json()["avatarInitials"] == "JRF"
+    got = next(u for u in client.get("/api/all", headers=h).json()["users"] if u["username"] == "admin")
+    assert got["avatarInitials"] == "JRF"          # surfaced in the sanitized projection
+    # Clear (blank reverts to username-derived on the client).
+    assert client.post("/api/users/self/avatar", json={"initials": ""}, headers=h).json()["avatarInitials"] == ""
+    got = next(u for u in client.get("/api/all", headers=h).json()["users"] if u["username"] == "admin")
+    assert got.get("avatarInitials", "") == ""
+
+
+def test_self_avatar_survives_admin_user_save(client, team, admin_headers):
+    h = {"Authorization": f"Bearer {server.create_token(team, 'admin', 'admin')}", "X-Team": team}
+    client.post("/api/users/self/avatar", json={"initials": "ZZ"}, headers=h)
+    # An admin user-form save (which omits avatarInitials) must not wipe it.
+    pub = [{k: u.get(k) for k in ("username", "role", "builtin", "email")} for u in _raw_users(team)]
+    assert client.put("/api/config/users", json=pub, headers=h).status_code == 200
+    assert next(u for u in _raw_users(team) if u["username"] == "admin").get("avatarInitials") == "ZZ"
+
+
+def test_self_avatar_requires_auth(client, team):
+    assert client.post("/api/users/self/avatar", json={"initials": "AB"}).status_code == 401
