@@ -1791,8 +1791,8 @@
 <!-- ADMIN PANEL MODAL -->
 <div class="modal-bg" id="adminModalBg">
   <div class="modal admin-modal">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <h2 style="margin:0"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M2 12h2m16 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg> Admin Settings</h2>
+    <div id="adminPanelHeader" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <h2 id="adminPanelTitle" style="margin:0"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M2 12h2m16 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg> Admin Settings</h2>
       <div style="display:flex;align-items:center;gap:10px">
       <a id="auditLogLink" href="/audit" target="_blank"
          style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--accent);text-decoration:none;background:rgba(0,89,169,0.07);padding:6px 12px;border-radius:7px;border:1px solid rgba(0,89,169,0.2)">
@@ -2098,7 +2098,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.35.1';
+const APP_VERSION = '4.35.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -15859,7 +15859,11 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-acct-wrap { position:relative; }
   .frz-beta .frz-avatar { width:30px; height:30px; border-radius:50%; background:var(--frz-accent); color:#fff; font-size:12px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; text-align:center; box-sizing:border-box; padding:0; line-height:1; cursor:pointer; border:0; }
   /* Phase 0: Admin rendered as a full page inside #frzContent (not a modal) */
-  .frz-beta .frz-adminpage { padding:28px 32px 56px; }
+  .frz-beta .frz-adminpage { padding:16px 32px 56px; }
+  /* Top bar already reads "Admin" - drop the redundant in-card title, keep Audit Log + X right-aligned.
+     (margin-left:auto pushes the button group right without fighting the element's inline justify-content.) */
+  .frz-beta .frz-adminpage #adminPanelTitle { display:none; }
+  .frz-beta .frz-adminpage #adminPanelHeader > div { margin-left:auto; }
   /* A proper full-width settings card (not a transparent modal husk): breathing room + Flow tokens */
   .frz-beta .frz-adminpage .admin-modal { width:100%; max-width:1180px; margin:0 auto; max-height:none; overflow:visible;
     background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:14px;
