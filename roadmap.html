@@ -1923,6 +1923,10 @@
     <div class="admin-pane" id="usersTab">
       <div class="dev-list" id="userList"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+        <input type="text" id="newUserFirst" placeholder="First name (optional)…" class="dev-edit-inp" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-family:'Lato',sans-serif;outline:none">
+        <input type="text" id="newUserLast" placeholder="Last name (optional)…" class="dev-edit-inp" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-family:'Lato',sans-serif;outline:none">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
         <input type="text" id="newUserName" placeholder="Username…" class="dev-edit-inp" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-family:'Lato',sans-serif;outline:none">
         <input type="email" id="newUserEmail" placeholder="Email (for reset/notifications)…" class="dev-edit-inp" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-family:'Lato',sans-serif;outline:none">
       </div>
@@ -2108,7 +2112,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.3';
+const APP_VERSION = '4.37.4';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2720,9 +2724,20 @@ function _avatarUserRec(username){
   try { return (users || []).find(function(u){ return u.username === username; }) || null; }
   catch(e){ return null; }
 }
+// Display name: "First Last" when set on the user record, else the username.
+function displayName(username){
+  var rec = _avatarUserRec(username);
+  if(rec){ var full = ((rec.firstName||'').trim() + ' ' + (rec.lastName||'').trim()).trim(); if(full) return full; }
+  return username || '';
+}
 function avatarInitialsFor(username){
   var rec = _avatarUserRec(username);
   if(rec && rec.avatarInitials) return String(rec.avatarInitials).slice(0,3);
+  // Prefer first-letter-of-first + first-letter-of-last from the name, if set.
+  if(rec){
+    var fn=(rec.firstName||'').trim(), ln=(rec.lastName||'').trim();
+    if(fn || ln){ var ni=((fn[0]||'')+(ln[0]||'')).toUpperCase(); if(ni) return ni; }
+  }
   var u = String(username == null ? '?' : username);
   var parts = u.replace(/[^A-Za-z0-9 ]/g, ' ').split(/[ ._-]+/).filter(Boolean);
   var ini = parts.slice(0, 2).map(function(s){ return s[0]; }).join('').toUpperCase();
@@ -6803,9 +6818,11 @@ function renderUserList(){
     const noPwBadge = (!u.password) ? ` <span style="font-size:10px;background:rgba(240,165,0,0.15);color:#b06f00;padding:1px 6px;border-radius:8px;font-weight:700" title="No password set - pending setup link">pending</span>` : '';
     const linkBtn = (isAdmin && u.email) ? `<button class="btn-ic" onclick="sendUserLink(${i})" title="Email a password setup/reset link"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg></button>` : '';
 
+    const dName = displayName(u.username);
+    const uHint = (dName !== u.username) ? ` <span style="font-size:11px;color:var(--muted);font-weight:400">@${esc(u.username)}</span>` : '';
     return `<div class="dev-item" data-idx="${i}">
       ${avatarHTML(u.username, 24)}
-      <span class="dev-nm">${esc(u.username)}${selfBadge}${noPwBadge}</span>
+      <span class="dev-nm">${esc(dName)}${uHint}${selfBadge}${noPwBadge}</span>
       ${emailTxt}
       ${rolePill}${ownerPill}
       ${editBtn}${linkBtn}${logoutBtn}${deleteBtn}
@@ -6850,6 +6867,10 @@ function startEditUser(i){
       ${isBuiltin
         ? `<div style="font-size:12px;font-weight:700;padding:5px 0;color:var(--text)">${esc(u.username)} <span style="font-size:10px;color:var(--muted);font-weight:400">(built-in - name locked)</span></div>`
         : `<input class="dev-edit-inp" id="uei_name_${i}" value="${escA(u.username)}" placeholder="Username">`}
+      <div style="display:flex;gap:6px">
+        <input class="dev-edit-inp" id="uei_first_${i}" value="${escA(u.firstName||'')}" placeholder="First name" style="flex:1">
+        <input class="dev-edit-inp" id="uei_last_${i}" value="${escA(u.lastName||'')}" placeholder="Last name" style="flex:1">
+      </div>
       <input class="dev-edit-inp" type="email" id="uei_email_${i}" value="${escA(u.email||'')}" placeholder="Email (for reset/notifications)">
       ${canChangePw
         ? `<input class="dev-edit-inp" type="password" id="uei_pass_${i}" value="" placeholder="New password (leave blank to keep)">`
@@ -6897,6 +6918,9 @@ async function saveEditUser(i){
   users[i].ownerFilter = newRole === 'editor' ? newOwner : '';
   const emailEl = document.getElementById(`uei_email_${i}`);
   if(emailEl) users[i].email = emailEl.value.trim();
+  const firstEl = document.getElementById(`uei_first_${i}`), lastEl = document.getElementById(`uei_last_${i}`);
+  if(firstEl) users[i].firstName = firstEl.value.trim();
+  if(lastEl)  users[i].lastName  = lastEl.value.trim();
   // Only update password if allowed and a new one was actually typed
   if(newPass && canChangePwNow){
     if(newPass.length < 6){ alert('Password must be at least 6 characters.'); return; }
@@ -6964,8 +6988,12 @@ document.getElementById('addUserBtn')?.addEventListener('click', async ()=>{
   const passInp  = document.getElementById('newUserPass');
   const roleInp  = document.getElementById('newUserRole');
   const modeInp  = document.getElementById('newUserPwMode');
+  const firstInp = document.getElementById('newUserFirst');
+  const lastInp  = document.getElementById('newUserLast');
   const errEl    = document.getElementById('userError');
   const uname  = nameInp.value.trim();
+  const ufirst = (firstInp&&firstInp.value.trim())||'';
+  const ulast  = (lastInp&&lastInp.value.trim())||'';
   const uemail = emailInp.value.trim();
   const upass  = passInp.value.trim();
   const urole  = roleInp.value || 'viewer';
@@ -6984,15 +7012,16 @@ document.getElementById('addUserBtn')?.addEventListener('click', async ()=>{
   try {
     if(mode === 'invite'){
       // Create as a pending user (no password), then email the setup link.
-      users.push({ username: uname, email: uemail, builtin: false, role: urole });
+      users.push({ username: uname, firstName: ufirst, lastName: ulast, email: uemail, builtin: false, role: urole });
       await saveConfig('users', users);
       await API.post('/api/users/' + encodeURIComponent(uname) + '/send-invite', {});
       fail(`Setup link sent to ${uemail}.`, true);
     } else {
       const r = await API.post('/api/hash-password', { password: upass });
-      users.push({ username: uname, email: uemail, password: r.hashed, builtin: false, role: urole });
+      users.push({ username: uname, firstName: ufirst, lastName: ulast, email: uemail, password: r.hashed, builtin: false, role: urole });
       await saveConfig('users', users);
     }
+    if(firstInp) firstInp.value=''; if(lastInp) lastInp.value='';
     nameInp.value=''; emailInp.value=''; passInp.value=''; roleInp.value='viewer';
     modeInp.value='password'; _toggleNewUserPwMode();
     renderUserList();
@@ -16079,13 +16108,12 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-cal-empty, .frz-beta .frz-cal-soon { padding:16px; color:var(--frz-text-muted); font-size:13px; }
   .frz-beta .frz-cal-soon { text-align:center; padding:40px 16px; }
   .frz-beta .frz-cal-newbtn { border:0; background:var(--frz-accent); color:#fff; border-radius:8px; padding:0 14px; height:32px; font-weight:700; font-size:13px; cursor:pointer; }
-  .frz-beta .frz-cal-addbtn { border:1px solid var(--frz-border); background:var(--frz-bg-elevated); color:var(--frz-accent); width:26px; height:26px; border-radius:7px; font-size:16px; line-height:1; cursor:pointer; font-weight:700; }
+  .frz-beta .frz-cal-addbtn { border:1px solid var(--frz-border); background:var(--frz-bg-elevated); color:var(--frz-accent); width:26px; height:26px; border-radius:7px; font-size:18px; line-height:1; cursor:pointer; font-weight:700; display:inline-flex; align-items:center; justify-content:center; padding:0; box-sizing:border-box; }
   .frz-beta .frz-cal-addbtn:hover { background:var(--frz-bg-app); }
-  /* Team Calendar filters (2c) */
-  .frz-beta .frz-cal-filters { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin:0 0 16px; }
-  .frz-beta .frz-cal-flabel { display:flex; flex-direction:column; gap:3px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); }
-  .frz-beta .frz-cal-fsel { padding:6px 9px; border:1px solid var(--frz-border); border-radius:7px; font:inherit; font-size:13px; background:var(--frz-bg-elevated); color:var(--frz-text); min-width:120px; }
-  .frz-beta .frz-cal-fclear { align-self:flex-end; border:1px solid var(--frz-border); background:var(--frz-bg-elevated); color:var(--frz-text-muted); border-radius:7px; padding:7px 12px; font-size:12px; font-weight:600; cursor:pointer; }
+  /* Team Calendar filters (2c) - pill selects in the shared top filter bar, matching .frz-chip */
+  .frz-beta .frz-cal-fsel { cursor:pointer; padding-right:8px; }
+  .frz-beta .frz-cal-fsel.is-active { border-color:var(--frz-accent); color:var(--frz-accent); font-weight:600; }
+  .frz-beta .frz-cal-fclear { cursor:pointer; color:var(--frz-text-muted); }
   /* Week grid (2c) */
   .frz-beta .frz-cal-wk-wrap { overflow-x:auto; }
   .frz-beta .frz-cal-week { width:100%; border-collapse:collapse; table-layout:fixed; }
@@ -17123,7 +17151,7 @@ if ('serviceWorker' in navigator) {
         '<button class="frz-plan-tab" type="button" data-caltab="week">Week</button>'+
         '<button class="frz-plan-tab" type="button" data-caltab="timeline">Timeline</button>'+
       '</div>'+
-      '<div class="frz-cal-wrap"><div class="frz-cal-nav" id="frzCalNav"></div><div class="frz-cal-filters" id="frzCalFilters"></div><div id="frzCalBody"></div></div>';
+      '<div class="frz-cal-wrap"><div class="frz-cal-nav" id="frzCalNav"></div><div id="frzCalBody"></div></div>';
     content.appendChild(cal);
     cal.querySelector('#frzCalTabs').addEventListener('click', function(e){
       var b = e.target.closest('[data-caltab]'); if(!b) return;
@@ -17861,23 +17889,27 @@ if ('serviceWorker' in navigator) {
       '</span></div>';
   }
   function renderCalFilters(){
-    var host=document.getElementById('frzCalFilters'); if(!host) return;
+    // Rendered into the shared top filter-bar row (#frzFilterBar) - above the
+    // Month/Week/Timeline tabs, matching where the Gantt/List views put their chips.
+    var host=document.getElementById('frzFilterBar'); if(!host) return;
     var f=_calFilterState();
     var owners=_val('developers',[])||[];
     var users=(_val('users',[])||[]).map(function(u){ return u.username; });
     var types=(_assignmentTypes||[]).slice().sort(function(a,b){ return (a.display_order||0)-(b.display_order||0); });
     var products=(_val('products',[])||[]).map(function(p){ return (p&&p.name)||p; }).filter(Boolean);
-    function sel(key,label,opts,val){
-      return '<label class="frz-cal-flabel">'+label+'<select data-cf="'+key+'" class="frz-cal-fsel"><option value="">All</option>'+
-        opts.map(function(o){ var v=(o&&o.v!=null)?o.v:o, t=(o&&o.t!=null)?o.t:o; return '<option value="'+escA(v)+'"'+(String(val)===String(v)?' selected':'')+'>'+esc(t)+'</option>'; }).join('')+'</select></label>';
+    // Pill-shaped select (reuses the .frz-chip look). The value-'' option shows just the
+    // filter name; a chosen value shows "Name: value", so the active filter reads at a glance.
+    function pill(key,label,opts,val){
+      return '<select data-cf="'+key+'" class="frz-chip frz-cal-fsel'+(val?' is-active':'')+'"><option value="">'+esc(label)+'</option>'+
+        opts.map(function(o){ var v=(o&&o.v!=null)?o.v:o, t=(o&&o.t!=null)?o.t:o; return '<option value="'+escA(v)+'"'+(String(val)===String(v)?' selected':'')+'>'+esc(label+': '+t)+'</option>'; }).join('')+'</select>';
     }
     host.innerHTML =
-      sel('owner','Owner',owners,f.owner)+
-      sel('user','User',users,f.user)+
-      sel('type','Type',types.map(function(t){ return {v:t.id,t:t.name}; }),f.type)+
-      sel('project','Project',products,f.project)+
-      sel('cap','Capacity',[{v:'reduced',t:'Reduced only'}],f.cap)+
-      ((f.owner||f.user||f.type||f.project||f.cap) ? '<button class="frz-cal-fclear" id="frzCalFClear">Clear</button>' : '');
+      pill('owner','Owner',owners,f.owner)+
+      pill('user','User',users.map(function(u){ return {v:u,t:displayName(u)}; }),f.user)+
+      pill('type','Type',types.map(function(t){ return {v:t.id,t:t.name}; }),f.type)+
+      pill('project','Project',products,f.project)+
+      pill('cap','Capacity',[{v:'reduced',t:'Reduced only'}],f.cap)+
+      ((f.owner||f.user||f.type||f.project||f.cap) ? '<button class="frz-chip frz-cal-fclear" id="frzCalFClear">Clear</button>' : '');
     host.querySelectorAll('[data-cf]').forEach(function(s){ s.addEventListener('change', function(){ f[s.getAttribute('data-cf')]=s.value; renderCalendar(); }); });
     var clr=host.querySelector('#frzCalFClear'); if(clr) clr.onclick=function(){ state.calFilter={owner:'',user:'',type:'',project:'',cap:''}; renderCalendar(); };
   }
@@ -17888,7 +17920,7 @@ if ('serviceWorker' in navigator) {
       if(!o.users.length) html+='<div class="frz-cal-empty">No one scheduled.</div>';
       o.users.forEach(function(u){
         var chips=u.assigns.map(function(a){ return _calAsgChip(a,o.typeById,canEdit); }).join('')+u.tickets.map(_calTicketChip).join('');
-        html+='<div class="frz-cal-user"><span class="frz-cal-user-nm">'+avatarHTML(u.user,20)+'<span>'+esc(u.user)+'</span></span><span class="frz-cal-chips">'+(chips||'<span class="frz-cal-none">—</span>')+'</span></div>';
+        html+='<div class="frz-cal-user"><span class="frz-cal-user-nm">'+avatarHTML(u.user,20)+'<span>'+esc(displayName(u.user))+'</span></span><span class="frz-cal-chips">'+(chips||'<span class="frz-cal-none">—</span>')+'</span></div>';
       });
       html+='</div>';
     });
@@ -17903,7 +17935,7 @@ if ('serviceWorker' in navigator) {
       html+='<div class="frz-cal-owner">'+_calOwnerHd(o, canEdit)+'<div class="frz-cal-wk-wrap"><table class="frz-cal-week"><thead>'+head+'</thead><tbody>';
       if(!o.users.length) html+='<tr><td colspan="8" class="frz-cal-empty">No one scheduled.</td></tr>';
       o.users.forEach(function(u){
-        html+='<tr><td class="frz-cal-wk-user">'+avatarHTML(u.user,18)+'<span>'+esc(u.user)+'</span></td>';
+        html+='<tr><td class="frz-cal-wk-user">'+avatarHTML(u.user,18)+'<span>'+esc(displayName(u.user))+'</span></td>';
         dayStrs.forEach(function(ds){
           var cell=u.assigns.filter(function(a){ return (a.start_date||'')<=ds && (a.end_date||a.start_date||'')>=ds; }).map(function(a){ return _calAsgChip(a,o.typeById,canEdit); }).join('');
           html+='<td class="frz-cal-wk-cell'+(ds===todayStr?' frz-cal-wk-today':'')+'">'+cell+'</td>';
@@ -17930,7 +17962,7 @@ if ('serviceWorker' in navigator) {
           var left=((sDay-1)/daysInMonth*100), width=((eDay-sDay+1)/daysInMonth*100);
           bars+='<span class="frz-cal-tl-bar'+(canEdit?' frz-cal-chip-asg':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+'style="left:'+left+'%;width:'+width+'%;background:'+col+'" title="'+escA((t.name||a.type_id)+' · '+_calShortD(a.start_date)+' – '+_calShortD(a.end_date||a.start_date))+'">'+esc(t.name||a.type_id)+'</span>';
         });
-        html+='<div class="frz-cal-tl-row"><span class="frz-cal-tl-name">'+avatarHTML(u.user,18)+'<span>'+esc(u.user)+'</span></span><span class="frz-cal-tl-track">'+bars+'</span></div>';
+        html+='<div class="frz-cal-tl-row"><span class="frz-cal-tl-name">'+avatarHTML(u.user,18)+'<span>'+esc(displayName(u.user))+'</span></span><span class="frz-cal-tl-track">'+bars+'</span></div>';
       });
       html+='</div></div>';
     });
@@ -18044,7 +18076,7 @@ if ('serviceWorker' in navigator) {
     typeSel.innerHTML=types.filter(function(t){ return t.active!==false || t.id===data.type_id; })
       .map(function(t){ return '<option value="'+escA(t.id)+'">'+esc(t.name)+(t.active===false?' (inactive)':'')+'</option>'; }).join('');
     var users=(_val('users',[])||[]).map(function(u){ return u.username; });
-    userSel.innerHTML='<option value="">- User -</option>'+users.map(function(u){ return '<option value="'+escA(u)+'">'+esc(u)+'</option>'; }).join('');
+    userSel.innerHTML='<option value="">- User -</option>'+users.map(function(u){ return '<option value="'+escA(u)+'">'+esc(displayName(u))+'</option>'; }).join('');
     var owners=_val('developers',[])||[];
     ownerSel.innerHTML='<option value="">- Owner -</option>'+owners.map(function(o){ return '<option value="'+escA(o)+'">'+esc(o)+'</option>'; }).join('');
     var todayStr=_ymdLocal(new Date());
