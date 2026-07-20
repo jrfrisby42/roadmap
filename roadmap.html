@@ -48,7 +48,7 @@
 
   /* ── Dark mode: global element overrides ── */
   body.dark-mode select,
-  body.dark-mode button:not(.primary):not(.btn-save):not(.btn-cancel):not(.btn-danger):not(.btn-ic):not(.rte-btn):not(.frz-newitem):not(.frz-lp-openbtn):not(.frz-bcard-open) {
+  body.dark-mode button:not(.primary):not(.btn-save):not(.btn-cancel):not(.btn-danger):not(.btn-ic):not(.rte-btn):not(.frz-newitem):not(.frz-lp-openbtn):not(.frz-bcard-open):not(.frz-avatar):not(.frz-ava-sw) {
     background: var(--surface2) !important;
     color: var(--text) !important;
     border-color: var(--border) !important;
@@ -2092,7 +2092,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.33.1';
+const APP_VERSION = '4.33.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16697,7 +16697,6 @@ if ('serviceWorker' in navigator) {
               '<button class="frz-avatar" id="frzAvatar" aria-label="Account"></button>'+
               '<div class="frz-acct-menu" id="frzAcctMenu" hidden>'+
                 '<button id="frzActivity">Activity Center</button>'+
-                '<button id="frzClassic">Switch to classic UI</button>'+
                 '<button id="frzLogout">Log out</button>'+
               '</div>'+
             '</div>'+
@@ -18205,7 +18204,8 @@ if ('serviceWorker' in navigator) {
       if(p && !p.hidden && !(e.target.closest && e.target.closest('.frz-bell-wrap'))) p.hidden=true;
     });
     document.getElementById('frzActivity').addEventListener('click', function(){ _call('openActivityCenter'); });
-    document.getElementById('frzClassic').addEventListener('click', function(){ location.href='/?classic=1'; });   // B1: classic is now opt-in via ?classic=1
+    // (Removed the "Switch to classic UI" menu entry - Flow is the standard UI now.
+    // Classic remains reachable via ?classic=1 as an undiscoverable support fallback.)
     document.getElementById('frzLogout').addEventListener('click', function(){ _call('doLogout'); });
     // Stage 1: top-bar GLOBAL search - find any item from any view and jump to it.
     var si=document.getElementById('frzSearch'), sb=document.getElementById('frzSearchResults');
