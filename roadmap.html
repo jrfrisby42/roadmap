@@ -2116,7 +2116,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.39.0';
+const APP_VERSION = '4.39.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16359,7 +16359,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-plan-tab.is-active { color:var(--frz-accent); border-bottom-color:var(--frz-accent); }
   .frz-beta .frz-plan-body { flex:1; min-height:0; display:flex; gap:14px; padding:12px 14px; overflow:hidden; }
   .frz-beta .frz-plan-stub { margin:auto; color:var(--frz-text-muted); font-size:13px; }
-  .frz-beta .frz-plan-pane { display:flex; flex-direction:column; min-height:0; border:1px solid var(--frz-border); border-radius:10px; background:var(--frz-bg-surface); overflow:hidden; }
+  .frz-beta .frz-plan-pane { display:flex; flex-direction:column; min-height:0; min-width:0; border:1px solid var(--frz-border); border-radius:10px; background:var(--frz-bg-surface); overflow:hidden; }
   .frz-beta .frz-plan-backlog { flex:0 0 55%; }
   .frz-beta .frz-plan-sprint { flex:1; }
   .frz-beta .frz-plan-sprint.frz-drop { outline:2px dashed var(--frz-accent); outline-offset:-4px; }
@@ -16406,6 +16406,14 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-sprint-act { display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; padding:0; border:none; border-radius:6px; background:transparent; color:var(--frz-text-muted); cursor:pointer; }
   .frz-beta .frz-sprint-act:hover { background:var(--frz-bg-surface); color:var(--frz-text); }
   .frz-beta .frz-snap-hint { font-size:11px; color:var(--frz-text-muted); font-style:italic; padding:2px 0 8px; }
+  .frz-beta .frz-tbl-name { min-width:0; }   /* let the name/goal cell shrink so the subtitle can ellipsis (grid min-width:auto fix) */
+  .frz-beta .frz-tbl-sub { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+  .frz-beta .frz-sprint-goal { font-size:12px; color:var(--frz-text-muted); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+  .frz-beta .frz-sprint-nudge { margin:0 0 12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .frz-beta .frz-nudge-acts { display:inline-flex; gap:10px; }
+  .frz-beta .frz-nudge-acts button { background:none; border:none; padding:0; font:inherit; font-size:12px; font-weight:700; color:inherit; text-decoration:underline; cursor:pointer; }
+  .frz-beta .frz-nudge-acts button:hover { opacity:.75; }
+  .frz-beta .frz-sprint-modal-warn { margin-top:12px; }
   /* Releases tab (Feature C) */
   .frz-beta .frz-rel-wrap { display:flex; flex-direction:column; gap:10px; }
   .frz-beta .frz-rel-top { display:flex; justify-content:flex-end; }
@@ -17040,6 +17048,16 @@ if ('serviceWorker' in navigator) {
   var PLANNABLE_TYPES = ['Feature','Enhancement','Bug Fix','Task'];
   // Sprint-state badge tints - deliberately NOT the item-status palette.
   var SPRINT_BADGE = { Planned:'background:#EEF2F6;color:#4A6178', Active:'background:var(--frz-accent-soft);color:var(--frz-accent)', Completed:'background:#E4F3EA;color:#1E7B46', Discarded:'background:#F3F1F5;color:#6B5B73' };
+  // Sprint lifecycle icons (shared by the Sprints-tab row + the Plan-tab pane header)
+  var _SPRINT_PEN='<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+  var _SPRINT_TRASH='<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
+  // Stale-sprint test (Planning Stage 1.1): a sprint whose end date is before today (MT via todayStr).
+  function _sprintStale(sp){ return !!(sp && sp.endDate && sp.endDate < todayStr()); }
+  // Sprints (non-discarded, excluding `id`) whose [start,end] overlaps [s,e] -> names for the edit-modal warning.
+  function _sprintOverlaps(id, s, e){
+    if(!s || !e) return [];
+    return _sprints.filter(function(x){ return x.id!==id && x.state!=='Discarded' && x.startDate && x.endDate && x.startDate<=e && x.endDate>=s; }).map(function(x){ return x.name; });
+  }
   // Release-state badge tints - distinct from item-status AND sprint-state.
   var RELEASE_BADGE = { Unreleased:'background:#FBF0E1;color:#9A6206', Released:'background:#E4F3EA;color:#1E7B46' };
   // ── Stage 1a: canonical status ranking + terminal flag - SINGLE SOURCE OF TRUTH.
@@ -19981,10 +19999,26 @@ if ('serviceWorker' in navigator) {
     var actions = '';
     if(sprint.state==='Planned') actions = '<button class="frz-newitem" id="frzStartSprint">Start sprint</button>';
     else if(sprint.state==='Active') actions = '<button class="frz-viewopt" id="frzCompleteSprint">Complete sprint</button>';
+    // 1.1b: pane-header Edit (Planned + Active) - same modal as the Sprints-tab row.
+    var editBtn = (sprint.state==='Planned' || sprint.state==='Active')
+      ? '<button class="frz-sprint-act" id="frzPaneEdit" title="Edit sprint">'+_SPRINT_PEN+'</button>' : '';
+    // 1.1a: stale-sprint nudge (dates fully in the past) with inline actions.
+    var nudge = '';
+    if(_sprintStale(sprint)){
+      if(sprint.state==='Planned'){
+        nudge = '<div class="frz-asg-warn frz-sprint-nudge">This sprint\'s dates have passed.'+
+          '<span class="frz-nudge-acts"><button type="button" id="frzNudgeEdit">Edit dates</button><button type="button" id="frzNudgeStart">Start anyway</button><button type="button" id="frzNudgeDiscard">Discard</button></span></div>';
+      } else if(sprint.state==='Active'){
+        nudge = '<div class="frz-asg-warn frz-sprint-nudge">Sprint ended '+fmtD(sprint.endDate)+'.'+
+          '<span class="frz-nudge-acts"><button type="button" id="frzNudgeComplete">Complete sprint</button></span></div>';
+      }
+    }
     var cards = items.length ? items.map(sprintCard).join('') : '<div class="frz-plan-empty">Drag items here, or use “Add →” in the backlog.</div>';
-    return '<div class="frz-plan-pane-hd">'+esc(sprint.name)+' '+badge+'<span class="frz-spacer"></span>'+actions+'</div>'+
-      '<div class="frz-sprint-meta">'+(sprint.startDate?fmtD(sprint.startDate):'-')+' → '+(sprint.endDate?fmtD(sprint.endDate):'-')+(sprint.goal?(' · '+esc(sprint.goal)):'')+
+    return '<div class="frz-plan-pane-hd">'+esc(sprint.name)+' '+badge+'<span class="frz-spacer"></span>'+editBtn+actions+'</div>'+
+      '<div class="frz-sprint-meta">'+(sprint.startDate?fmtD(sprint.startDate):'-')+' → '+(sprint.endDate?fmtD(sprint.endDate):'-')+
+        (sprint.goal?'<div class="frz-sprint-goal" title="'+escA(sprint.goal)+'">'+esc(sprint.goal)+'</div>':'')+
         '<div class="frz-sprint-cap">'+items.length+' items · '+pts+' pts · '+est+'w · '+done+'/'+items.length+' done</div></div>'+
+      nudge+
       '<div class="frz-plan-list" id="frzSprintList">'+cards+'</div>';
   }
   function sprintCard(p){
@@ -20004,6 +20038,12 @@ if ('serviceWorker' in navigator) {
     var ps=document.getElementById('frzPlanSprint'); if(ps) ps.addEventListener('click', openCreateSprint);
     var ss=document.getElementById('frzStartSprint'); if(ss) ss.addEventListener('click', startSprint);
     var cs=document.getElementById('frzCompleteSprint'); if(cs) cs.addEventListener('click', completeSprint);
+    // 1.1b pane-header Edit + 1.1a stale-nudge inline actions (all reuse the existing flows)
+    var pe=document.getElementById('frzPaneEdit'); if(pe && sprint) pe.addEventListener('click', function(){ editSprint(sprint.id); });
+    var ne=document.getElementById('frzNudgeEdit'); if(ne && sprint) ne.addEventListener('click', function(){ editSprint(sprint.id); });
+    var na=document.getElementById('frzNudgeStart'); if(na) na.addEventListener('click', startSprint);
+    var nd=document.getElementById('frzNudgeDiscard'); if(nd && sprint) nd.addEventListener('click', function(){ discardSprint(sprint.id); });
+    var ncp=document.getElementById('frzNudgeComplete'); if(ncp) ncp.addEventListener('click', completeSprint);
     var dragId=null;
     host.querySelectorAll('.frz-bl-row').forEach(function(row){
       row.addEventListener('dragstart', function(e){ dragId=+row.dataset.id; e.dataTransfer.effectAllowed='move'; try{ e.dataTransfer.setData('text/plain', String(dragId)); }catch(_){} row.style.opacity='0.4'; });
@@ -20136,6 +20176,7 @@ if ('serviceWorker' in navigator) {
         '<div style="margin-bottom:12px"><label class="frz-lbl">Name</label><input class="frz-fld" id="frzEsName" value="'+escA(sp.name||'')+'"></div>'+
         '<div style="display:flex;gap:12px;margin-bottom:12px"><div style="flex:1"><label class="frz-lbl">Start</label><input type="date" class="frz-fld" id="frzEsStart" value="'+escA(sp.startDate||'')+'"></div><div style="flex:1"><label class="frz-lbl">End</label><input type="date" class="frz-fld" id="frzEsEnd" value="'+escA(sp.endDate||'')+'"></div></div>'+
         '<div><label class="frz-lbl">Goal (optional)</label><input class="frz-fld" id="frzEsGoal" value="'+escA(sp.goal||'')+'" placeholder="Sprint goal…"></div>'+
+        '<div class="frz-asg-warn frz-sprint-modal-warn" id="frzEsWarn" hidden></div>'+
         (isActive?'<div class="frz-snap-hint" style="margin-top:12px">This sprint is Active - changing its dates moves the goal posts mid-flight. The change is logged.</div>':'')+
       '</div>'+
       '<div class="frz-modal-ft"><span class="frz-modal-err" id="frzEsErr"></span><button class="frz-viewopt" id="frzEsCancel">Cancel</button><button class="frz-newitem" id="frzEsSave">Save</button></div>'+
@@ -20145,11 +20186,21 @@ if ('serviceWorker' in navigator) {
     bg.querySelector('#frzEsClose').addEventListener('click', close);
     bg.querySelector('#frzEsCancel').addEventListener('click', close);
     bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
+    // 1.1d: non-blocking overlap warning, live on date change (never prevents save).
+    function refreshWarn(){
+      var ov=_sprintOverlaps(sp.id, bg.querySelector('#frzEsStart').value, bg.querySelector('#frzEsEnd').value);
+      var w=bg.querySelector('#frzEsWarn');
+      if(ov.length){ w.hidden=false; w.textContent='Dates overlap another sprint: '+ov.join(', ')+'. You can still save.'; }
+      else { w.hidden=true; w.textContent=''; }
+    }
+    bg.querySelector('#frzEsStart').addEventListener('change', refreshWarn);
+    bg.querySelector('#frzEsEnd').addEventListener('change', refreshWarn);
+    refreshWarn();
     bg.querySelector('#frzEsSave').addEventListener('click', function(){
       var err=bg.querySelector('#frzEsErr'); err.textContent='';
       var name=bg.querySelector('#frzEsName').value.trim(); if(!name){ err.textContent='Name is required.'; return; }
       var s=bg.querySelector('#frzEsStart').value, e=bg.querySelector('#frzEsEnd').value;
-      if(s && e && e<s){ err.textContent='End date cannot be before the start date.'; return; }
+      if(s && e && e<=s){ err.textContent='End date must be after the start date.'; return; }   // 1.1d: block end <= start
       var goal=bg.querySelector('#frzEsGoal').value.trim();
       var before={name:sp.name,goal:sp.goal,startDate:sp.startDate,endDate:sp.endDate};
       var chg=[]; if(before.name!==name)chg.push('name'); if(before.goal!==goal)chg.push('goal'); if((before.startDate||'')!==s)chg.push('start'); if((before.endDate||'')!==e)chg.push('end');
@@ -20309,16 +20360,14 @@ if ('serviceWorker' in navigator) {
   function renderSprintsTab(host){
     var sprints=_sprints.slice().sort(function(a,b){ return (b.startDate||'').localeCompare(a.startDate||'') || (b.id||'').localeCompare(a.id||''); });
     if(!sprints.length){ host.innerHTML='<div class="frz-plan-stub">No sprints yet - plan one from the Plan tab.</div>'; return; }
-    var _pen='<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
-    var _trash='<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
     var rows=sprints.map(function(sp){
       var st=sprintStats(sp);
       var badge='<span class="frz-sprint-badge" style="'+(SPRINT_BADGE[sp.state]||'')+'">'+esc(sp.state)+'</span>';
       var acts='';
-      if(sp.state==='Planned' || sp.state==='Active') acts+='<button class="frz-sprint-act" type="button" data-editsprint="'+escA(sp.id)+'" title="Edit sprint">'+_pen+'</button>';
-      if(sp.state==='Planned') acts+='<button class="frz-sprint-act" type="button" data-discardsprint="'+escA(sp.id)+'" title="Discard sprint">'+_trash+'</button>';
+      if(sp.state==='Planned' || sp.state==='Active') acts+='<button class="frz-sprint-act" type="button" data-editsprint="'+escA(sp.id)+'" title="Edit sprint">'+_SPRINT_PEN+'</button>';
+      if(sp.state==='Planned') acts+='<button class="frz-sprint-act" type="button" data-discardsprint="'+escA(sp.id)+'" title="Discard sprint">'+_SPRINT_TRASH+'</button>';
       return '<div class="frz-tbl-row'+(sp.state==='Active'?' is-active':'')+'" data-sprintrow="'+escA(sp.id)+'">'+
-        '<div class="frz-tbl-c frz-tbl-name"><div class="frz-sprint-namewrap"><div style="min-width:0"><div class="frz-tbl-title">'+esc(sp.name)+'</div>'+(sp.goal?'<div class="frz-tbl-sub">'+esc(sp.goal)+'</div>':'')+'</div>'+(acts?'<div class="frz-sprint-actions">'+acts+'</div>':'')+'</div></div>'+
+        '<div class="frz-tbl-c frz-tbl-name"><div class="frz-sprint-namewrap"><div style="min-width:0"><div class="frz-tbl-title">'+esc(sp.name)+'</div>'+(sp.goal?'<div class="frz-tbl-sub" title="'+escA(sp.goal)+'">'+esc(sp.goal)+'</div>':'')+'</div>'+(acts?'<div class="frz-sprint-actions">'+acts+'</div>':'')+'</div></div>'+
         '<div class="frz-tbl-c">'+(sp.startDate?fmtD(sp.startDate):'-')+' → '+(sp.endDate?fmtD(sp.endDate):'-')+'</div>'+
         '<div class="frz-tbl-c">'+badge+'</div>'+
         '<div class="frz-tbl-c">'+st.done+'/'+st.total+'</div>'+
