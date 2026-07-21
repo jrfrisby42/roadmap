@@ -2112,7 +2112,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.8';
+const APP_VERSION = '4.37.9';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -17179,7 +17179,7 @@ if ('serviceWorker' in navigator) {
     var cal = document.createElement('div');
     cal.id = 'frzCalendar'; cal.style.display = 'none';
     cal.innerHTML =
-      '<div class="frz-plan-tabs" id="frzCalTabs" role="tablist" aria-label="Team Calendar">'+
+      '<div class="frz-plan-tabs" id="frzCalTabs" role="tablist" aria-label="Calendar">'+
         '<button class="frz-plan-tab" type="button" data-caltab="month">Month</button>'+
         '<button class="frz-plan-tab" type="button" data-caltab="week">Week</button>'+
         '<button class="frz-plan-tab" type="button" data-caltab="timeline">Timeline</button>'+
@@ -17397,13 +17397,12 @@ if ('serviceWorker' in navigator) {
     hb.title='My Home';
     hb.innerHTML = IC.home + '<span>My Home</span>' + (mwCount>0 ? '<span class="frz-count">'+mwCount+'</span>' : '');
     nav.appendChild(hb);
-    // Team Calendar - Flow-owned view (pinned, like My Home). Phase 2.
+    // Calendar - Flow-owned view. Sits below List and above Planning (appended in the loop).
     var cb = document.createElement('button');
     cb.className='frz-item'; cb.setAttribute('data-nav','view:team-calendar');
     cb.setAttribute('aria-current', String(state.view==='team-calendar' && !state.onItem));
-    cb.title='Team Calendar';
-    cb.innerHTML = IC.teamCalendar + '<span>Team Calendar</span>';
-    nav.appendChild(cb);
+    cb.title='Calendar';
+    cb.innerHTML = IC.teamCalendar + '<span>Calendar</span>';
     // Viewers can't see Kanban (CLAUDE.md role rule); Planning is admin-only.
     VIEW_KEYS.filter(function(v){ return (v!=='planning' || admin) && (v!=='kanban' || !viewer); }).forEach(function(v){
       var b = document.createElement('button');
@@ -17413,6 +17412,7 @@ if ('serviceWorker' in navigator) {
       var c = viewCount(v);
       b.innerHTML = IC[v] + '<span>'+VIEW_LABEL[v]+'</span>' + (c!=null ? '<span class="frz-count">'+c+'</span>' : '');
       nav.appendChild(b);
+      if(v==='list') nav.appendChild(cb);   // Calendar directly after List (above Planning)
     });
     // projects
     var pn = document.getElementById('frzProjNav');
@@ -17864,7 +17864,7 @@ if ('serviceWorker' in navigator) {
     var c=document.getElementById('frzCalendar'); if(c) c.style.display='';
     setProjectPanel();
     applyChromeHiding();
-    document.getElementById('frzLeft').innerHTML=_titleHtml('teamCalendar','Team Calendar');
+    document.getElementById('frzLeft').innerHTML=_titleHtml('teamCalendar','Calendar');
     document.getElementById('frzBadges').innerHTML='';
     document.getElementById('frzFilterBar').innerHTML='';   // 2c adds filters
     renderRail();
