@@ -2116,7 +2116,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.40.0';
+const APP_VERSION = '4.40.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -19981,6 +19981,25 @@ if ('serviceWorker' in navigator) {
   // ── Stage 2: backlog ergonomics state + helpers ─────────────────────────────
   var _blSearch = '';            // ephemeral backlog search (not URL-persisted, cleared on reload)
   var _blSel = new Set();         // multi-select backlog item ids
+  var _blDelegated = false;
+  // Delegate the backlog-search events to `document` (attached once). This survives any
+  // re-render that recreates #frzBlSearch without re-attaching a per-node handler (the
+  // wire-once-then-rerender defect that left search inert on prod), and it re-renders via
+  // renderPlanTab() directly - never the guarded refreshPlan() - so filtering always applies.
+  function _blEnsureDelegation(){
+    if(_blDelegated) return; _blDelegated = true;
+    document.addEventListener('input', function(e){
+      var t=e.target; if(!t || t.id!=='frzBlSearch') return;
+      _blSearch = t.value; var caret = t.selectionStart;
+      var host=document.getElementById('frzPlanBody'); if(host) renderPlanTab(host);
+      var s2=document.getElementById('frzBlSearch'); if(s2){ s2.focus(); try{ s2.setSelectionRange(caret,caret); }catch(_){} }
+    });
+    document.addEventListener('click', function(e){
+      var t=e.target; if(!t || (t.id!=='frzBlSearchClear' && !(t.closest && t.closest('#frzBlSearchClear')))) return;
+      _blSearch=''; var host=document.getElementById('frzPlanBody'); if(host) renderPlanTab(host);
+      var s2=document.getElementById('frzBlSearch'); if(s2) s2.focus();
+    });
+  }
   function _blSearchMatch(p){ if(!_blSearch) return true; var q=_blSearch.toLowerCase(); return (((p.itemKey||'')+' '+(p.name||'')).toLowerCase().indexOf(q) >= 0); }
   function _blUnprioritized(p){ return !(p.priority && PRIO_LBL[p.priority]); }   // no visible priority label
   function _blCanEdit(){ return !!(_val('isAdmin',false) || _val('isEditor',false)); }
@@ -20147,10 +20166,9 @@ if ('serviceWorker' in navigator) {
     var host = document.getElementById('frzPlanBody'); if(!host) return;
     host.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(e){ if(e.target.closest('[data-add],[data-remove],[data-ptsedit]')) return; navigate('/item/'+el.getAttribute('data-open'), false); }); });
     host.querySelectorAll('[data-add]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); addToSprint(+b.getAttribute('data-add')); }); });
-    // 2a backlog search (ephemeral; preserves focus/caret across the re-render)
-    var srch=document.getElementById('frzBlSearch');
-    if(srch){ srch.addEventListener('input', function(){ _blSearch=srch.value; var caret=srch.selectionStart; refreshPlan(); var s2=document.getElementById('frzBlSearch'); if(s2){ s2.focus(); try{ s2.setSelectionRange(caret,caret); }catch(e){} } }); }
-    var srchX=document.getElementById('frzBlSearchClear'); if(srchX) srchX.addEventListener('click', function(){ _blSearch=''; refreshPlan(); var s2=document.getElementById('frzBlSearch'); if(s2) s2.focus(); });
+    // 2a backlog search: delegated to document (attached once), not per-node - survives a
+    // re-render that recreates the input without re-wiring, and re-renders unconditionally.
+    _blEnsureDelegation();
     // 2d multi-select checkboxes
     host.querySelectorAll('[data-blcb]').forEach(function(cb){ cb.addEventListener('click', function(e){ e.stopPropagation(); }); cb.addEventListener('change', function(){ var id=+cb.getAttribute('data-blcb'); if(cb.checked) _blSel.add(id); else _blSel.delete(id); _blUpdateBulk(sprint); }); });
     // 2c inline points edit
