@@ -2112,7 +2112,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.10';
+const APP_VERSION = '4.37.11';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16089,8 +16089,18 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-adminpage .admin-tabs { flex-wrap:wrap; row-gap:4px; }   /* full width - let all tabs show, don't clip */
   .frz-beta .frz-adminpage #adminCloseBtn:hover { background:var(--frz-bg-app); color:var(--frz-text); }
   /* ── Team Calendar (Phase 2) ── */
-  .frz-beta .frz-cal-wrap { padding:16px 24px 48px; }
-  .frz-beta .frz-cal-nav { display:flex; align-items:center; gap:8px; margin-bottom:16px; }
+  /* Stage 3.5: fill-height chain (calendar view only) + tightened chrome */
+  .frz-beta #frzCalendar { flex-direction:column; min-height:100%; box-sizing:border-box; }   /* display:flex set inline by setCalendar */
+  .frz-beta .frz-cal-wrap { padding:8px 24px 16px; flex:1; display:flex; flex-direction:column; min-height:0; }
+  .frz-beta .frz-cal-nav { display:flex; align-items:center; gap:8px; margin-bottom:8px; position:relative; flex-shrink:0; }
+  .frz-beta .frz-cal-tabs { position:absolute; left:50%; transform:translateX(-50%); display:flex; gap:4px; }   /* centered in the nav row, stable when the right cluster hides */
+  /* Month grid fills the remaining viewport height; week rows share it with a 104px floor */
+  .frz-beta .frz-cal-body--month { flex:1; display:flex; flex-direction:column; min-height:0; }
+  .frz-beta .frz-cal-body--month .frz-cal-mo { flex:1; display:flex; flex-direction:column; min-height:0; }
+  .frz-beta .frz-cal-body--month .frz-cal-mo-grid { flex:1; grid-auto-rows:minmax(104px,1fr); }
+  /* Week/Timeline gutter: long names truncate instead of overflowing the 150px column */
+  .frz-beta .frz-cal-wk-user, .frz-beta .frz-cal-tl-name { overflow:hidden; }
+  .frz-beta .frz-cal-wk-user > span:not(.frz-ava), .frz-beta .frz-cal-tl-name > span:not(.frz-ava) { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .frz-beta .frz-cal-title { font-size:15px; font-weight:800; color:var(--frz-text); min-width:150px; }
   .frz-beta .frz-cal-navbtn { border:1px solid var(--frz-border); background:var(--frz-bg-elevated); color:var(--frz-text); border-radius:7px; width:30px; height:30px; cursor:pointer; font-size:16px; line-height:1; }
   .frz-beta .frz-cal-navbtn.frz-cal-today { width:auto; padding:0 12px; font-size:12px; font-weight:700; }
@@ -16151,7 +16161,7 @@ if ('serviceWorker' in navigator) {
   /* Month grid (Stage 2): one shared Mon-start 7-col grid */
   .frz-beta .frz-cal-mo { border:1px solid var(--frz-border); border-top:0; border-radius:0 0 10px 10px; overflow:hidden; }
   .frz-beta .frz-cal-mo-hd { display:grid; grid-template-columns:repeat(7,1fr); background:var(--frz-bg-surface); border-bottom:1px solid var(--frz-border); }
-  .frz-beta .frz-cal-mo-hd span { padding:8px 6px; text-align:center; font-size:11px; font-weight:700; color:var(--frz-text-muted); text-transform:uppercase; letter-spacing:.4px; }
+  .frz-beta .frz-cal-mo-hd span { padding:4px 6px; text-align:center; font-size:11px; font-weight:700; color:var(--frz-text-muted); text-transform:uppercase; letter-spacing:.4px; }
   .frz-beta .frz-cal-mo-grid { display:grid; grid-template-columns:repeat(7,1fr); }
   .frz-beta .frz-cal-mo-cell { min-height:104px; border-right:1px solid var(--frz-border); border-bottom:1px solid var(--frz-border); padding:4px 5px 6px; display:flex; flex-direction:column; gap:3px; background:var(--frz-bg-elevated); }
   .frz-beta .frz-cal-mo-cell:nth-child(7n) { border-right:0; }
@@ -16202,6 +16212,7 @@ if ('serviceWorker' in navigator) {
 
   /* Filter row */
   .frz-beta .frz-filterbar { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-surface); overflow-x:auto; scrollbar-width:none; flex-shrink:0; }
+  .frz-beta.frz-cal-active .frz-filterbar { padding:6px 14px; }   /* Stage 3.5: calendar-only trim (other views keep 10px) */
   .frz-beta .frz-filterbar::-webkit-scrollbar { display:none; }
   .frz-beta .frz-spacer { flex:1; }
   .frz-beta .frz-chip { border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); font:inherit; font-size:13px; color:var(--frz-text-secondary); display:inline-flex; align-items:center; gap:6px; padding:4px 10px 4px 12px; border-radius:var(--frz-radius-chip); cursor:pointer; white-space:nowrap; }
@@ -17186,15 +17197,12 @@ if ('serviceWorker' in navigator) {
     // Team Calendar (Phase 2): Flow-owned view, Month/Week/Timeline sub-tabs.
     var cal = document.createElement('div');
     cal.id = 'frzCalendar'; cal.style.display = 'none';
+    // Stage 3.5: the Month/Week/Timeline tabs now live INSIDE the nav row (rendered by
+    // renderCalendar), so the standalone tab row is gone. Tab clicks are delegated here.
     cal.innerHTML =
-      '<div class="frz-plan-tabs" id="frzCalTabs" role="tablist" aria-label="Calendar">'+
-        '<button class="frz-plan-tab" type="button" data-caltab="month">Month</button>'+
-        '<button class="frz-plan-tab" type="button" data-caltab="week">Week</button>'+
-        '<button class="frz-plan-tab" type="button" data-caltab="timeline">Timeline</button>'+
-      '</div>'+
       '<div class="frz-cal-wrap"><div class="frz-cal-nav" id="frzCalNav"></div><div id="frzCalBody"></div></div>';
     content.appendChild(cal);
-    cal.querySelector('#frzCalTabs').addEventListener('click', function(e){
+    cal.addEventListener('click', function(e){
       var b = e.target.closest('[data-caltab]'); if(!b) return;
       var t = b.getAttribute('data-caltab');
       navigate('/team-calendar' + (t==='month' ? '' : '/'+t) + location.search, false);   // Stage 2c: carry ?d= (period) + ?project= across tab switches
@@ -17828,7 +17836,7 @@ if ('serviceWorker' in navigator) {
   }
   function setHome(tab){
     state.onItem=false; state.itemId=null; state.view='my-home'; state.homeTab=tab||state.homeTab||'assigned';
-    root.classList.remove('on-item');
+    root.classList.remove('on-item'); root.classList.remove('frz-cal-active');
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     // hide every production view container (initViewSelect won't run for my-home)
     var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
@@ -17847,7 +17855,7 @@ if ('serviceWorker' in navigator) {
     // Flow-owned full page (like My Home). Admins only.
     if(!_val('isAdmin', false)){ navigate('/gantt', true); return; }
     state.onItem=false; state.itemId=null; state.view='admin';
-    root.classList.remove('on-item');
+    root.classList.remove('on-item'); root.classList.remove('frz-cal-active');
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
     ['kanbanBoard','listView','dashboardView','planningView','frzCalendar'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
@@ -17869,7 +17877,8 @@ if ('serviceWorker' in navigator) {
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
     ['kanbanBoard','listView','dashboardView','planningView','frzHome','frzAdminPage'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
-    var c=document.getElementById('frzCalendar'); if(c) c.style.display='';
+    var c=document.getElementById('frzCalendar'); if(c) c.style.display='flex';   // Stage 3.5: flex column for the fill-height month grid
+    root.classList.add('frz-cal-active');   // Stage 3.5: scopes the filter-row padding trim to the calendar view only
     setProjectPanel();
     applyChromeHiding();
     document.getElementById('frzLeft').innerHTML=_titleHtml('teamCalendar','Calendar');
@@ -18247,7 +18256,7 @@ if ('serviceWorker' in navigator) {
   }
   function renderCalendar(){
     var body=document.getElementById('frzCalBody'), nav=document.getElementById('frzCalNav'); if(!body) return;
-    var tabs=document.getElementById('frzCalTabs'); if(tabs) tabs.querySelectorAll('[data-caltab]').forEach(function(b){ b.classList.toggle('is-active', b.getAttribute('data-caltab')===state.calTab); });
+    body.classList.toggle('frz-cal-body--month', state.calTab==='month');   // Stage 3.5: month body fills height
     var canEdit=_val('isAdmin',false)||_val('isEditor',false);
     var win=_calWindow();
     var _wd=_calWorkDaysOn();
@@ -18258,10 +18267,18 @@ if ('serviceWorker' in navigator) {
         '</div>'
       : '';
     var _newBtnHtml = canEdit ? '<button class="frz-cal-newbtn" id="frzCalNew">+ New assignment</button>' : '';
+    // Stage 3.5: Month/Week/Timeline tabs live in the nav row, absolutely centered (stable
+    // regardless of whether the day-toggle/right cluster is shown). Same .frz-plan-tab
+    // buttons + the delegated [data-caltab] handler on #frzCalendar (build()).
+    var _tabs='<div class="frz-cal-tabs" role="tablist" aria-label="Calendar">'+
+      [['month','Month'],['week','Week'],['timeline','Timeline']].map(function(t){
+        return '<button class="frz-plan-tab'+(state.calTab===t[0]?' is-active':'')+'" type="button" role="tab" data-caltab="'+t[0]+'">'+t[1]+'</button>';
+      }).join('')+'</div>';
     nav.innerHTML='<button class="frz-cal-navbtn" id="frzCalPrev" title="Previous">‹</button>'+
       '<span class="frz-cal-title">'+esc(win.label)+'</span>'+
       '<button class="frz-cal-navbtn" id="frzCalNext" title="Next">›</button>'+
       '<button class="frz-cal-navbtn frz-cal-today" id="frzCalToday">Today</button>'+
+      _tabs+
       ((_dayToggle||_newBtnHtml) ? ('<span style="flex:1"></span>'+_dayToggle+_newBtnHtml) : '');
     nav.querySelector('#frzCalPrev').onclick=function(){ state.calDate=win.prev(); renderCalendar(); syncURL(true); };
     nav.querySelector('#frzCalNext').onclick=function(){ state.calDate=win.next(); renderCalendar(); syncURL(true); };
@@ -18447,6 +18464,8 @@ if ('serviceWorker' in navigator) {
     root.classList.remove('on-item');
     var _mw=document.getElementById('frzHome'); if(_mw) _mw.style.display='none';
     var _ap=document.getElementById('frzAdminPage'); if(_ap) _ap.style.display='none';   // hide the Admin page when switching to a production view
+    var _cal=document.getElementById('frzCalendar'); if(_cal) _cal.style.display='none';   // Stage 3.5: setView never hid the calendar (only setHome/setAdmin did) - a pre-existing lingering that the fill-height min-height:100% turned into a full-height ghost below production views
+    root.classList.remove('frz-cal-active');
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     state.view = view;
     setProjectPanel();
