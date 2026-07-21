@@ -2112,7 +2112,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.17';
+const APP_VERSION = '4.37.18';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16191,7 +16191,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-cal-mo-pop-row:hover { background:var(--frz-bg-app); }
   /* Month work-days / all-days toggle (segmented) + 5-col grid override */
   .frz-beta .frz-cal-daytoggle { display:inline-flex; border:1px solid var(--frz-border); border-radius:7px; overflow:hidden; }
-  .frz-beta .frz-cal-daytoggle button { border:0; background:var(--frz-bg-elevated); color:var(--frz-text-muted); font:inherit; font-size:12px; font-weight:700; padding:0 12px; height:30px; cursor:pointer; }
+  .frz-beta .frz-cal-daytoggle button { border:0; border-radius:0; background:var(--frz-bg-elevated); color:var(--frz-text-muted); font:inherit; font-size:12px; font-weight:700; padding:0 12px; height:30px; cursor:pointer; }   /* square the buttons; the container's overflow:hidden rounds only the outer corners */
   .frz-beta .frz-cal-daytoggle button + button { border-left:1px solid var(--frz-border); }
   .frz-beta .frz-cal-daytoggle button.is-active { background:var(--frz-accent-soft); color:var(--frz-accent); }
   .frz-beta .frz-cal-mo--wd .frz-cal-mo-hd, .frz-beta .frz-cal-mo--wd .frz-cal-mo-grid { grid-template-columns:repeat(5,1fr); }
