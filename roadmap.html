@@ -2112,7 +2112,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.7';
+const APP_VERSION = '4.37.8';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16160,6 +16160,14 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-cal-mo-pop-hd { font-size:11px; font-weight:800; color:var(--frz-text-muted); text-transform:uppercase; letter-spacing:.4px; padding:4px 10px 6px; }
   .frz-beta .frz-cal-mo-pop-row { display:flex; align-items:center; gap:8px; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:12.5px; color:var(--frz-text); border:0; background:none; width:100%; text-align:left; }
   .frz-beta .frz-cal-mo-pop-row:hover { background:var(--frz-bg-app); }
+  /* Month work-days / all-days toggle (segmented) + 5-col grid override */
+  .frz-beta .frz-cal-daytoggle { display:inline-flex; border:1px solid var(--frz-border); border-radius:7px; overflow:hidden; }
+  .frz-beta .frz-cal-daytoggle button { border:0; background:var(--frz-bg-elevated); color:var(--frz-text-muted); font:inherit; font-size:12px; font-weight:700; padding:0 12px; height:30px; cursor:pointer; }
+  .frz-beta .frz-cal-daytoggle button + button { border-left:1px solid var(--frz-border); }
+  .frz-beta .frz-cal-daytoggle button.is-active { background:var(--frz-accent-soft); color:var(--frz-accent); }
+  .frz-beta .frz-cal-mo--wd .frz-cal-mo-hd, .frz-beta .frz-cal-mo--wd .frz-cal-mo-grid { grid-template-columns:repeat(5,1fr); }
+  .frz-beta .frz-cal-mo--wd .frz-cal-mo-cell:nth-child(7n) { border-right:1px solid var(--frz-border); }
+  .frz-beta .frz-cal-mo--wd .frz-cal-mo-cell:nth-child(5n) { border-right:0; }
   /* Assignment create/edit modal (Phase 2b) */
   .frz-beta .frz-asg-modal { width:520px; max-width:94vw; }
   .frz-beta .frz-asg-body { padding:18px 22px; display:flex; flex-direction:column; gap:4px; max-height:70vh; overflow:auto; }
@@ -17881,6 +17889,10 @@ if ('serviceWorker' in navigator) {
     var qt=sp && sp.get('tab');
     return (qt==='week'||qt==='timeline') ? qt : 'month';
   }
+  // Month "work days vs all days" preference (per-user localStorage; defaults to work days).
+  function _calDaysKey(){ return 'frazil_beta_calworkdays_'+uname(); }
+  function _calWorkDaysOn(){ var v=ls(_calDaysKey()); return v===null ? true : v==='1'; }
+  function _calSetWorkDays(on){ lset(_calDaysKey(), on?'1':'0'); }
   function _calWindow(){
     var now=state.calDate||todayMT(); state.calDate=now;
     if(state.calTab==='week'){
@@ -18071,11 +18083,13 @@ if ('serviceWorker' in navigator) {
       var s=a.start_date||'', e=a.end_date||a.start_date||'';
       return s<=toStr && e>=fromStr;
     });
-    var DOW=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-    var html='<div class="frz-cal-mo'+(canEdit?' frz-cal-mo--edit':'')+'"><div class="frz-cal-mo-hd">'+
+    var workDays=_calWorkDaysOn();   // per-user preference; default work days (Mon-Fri)
+    var DOW=workDays?['Mon','Tue','Wed','Thu','Fri']:['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    var html='<div class="frz-cal-mo'+(canEdit?' frz-cal-mo--edit':'')+(workDays?' frz-cal-mo--wd':'')+'"><div class="frz-cal-mo-hd">'+
       DOW.map(function(d){ return '<span>'+d+'</span>'; }).join('')+'</div><div class="frz-cal-mo-grid">';
     var d=new Date(gridStart);
     while(_ymdLocal(d)<=toStr){
+      if(workDays && (d.getDay()===0 || d.getDay()===6)){ d=addDays(d,1); continue; }   // skip Sat/Sun in work-days mode
       var ds=_ymdLocal(d);
       var items=visible.filter(function(a){ var s=a.start_date||'', e=a.end_date||a.start_date||''; return s<=ds && e>=ds; });
       var cls='frz-cal-mo-cell'+(d.getMonth()!==mm?' is-other':'')+(ds===todayStr?' is-today':'');
@@ -18163,14 +18177,23 @@ if ('serviceWorker' in navigator) {
     var tabs=document.getElementById('frzCalTabs'); if(tabs) tabs.querySelectorAll('[data-caltab]').forEach(function(b){ b.classList.toggle('is-active', b.getAttribute('data-caltab')===state.calTab); });
     var canEdit=_val('isAdmin',false)||_val('isEditor',false);
     var win=_calWindow();
+    var _wd=_calWorkDaysOn();
+    var _dayToggle = (state.calTab==='month')
+      ? '<div class="frz-cal-daytoggle" role="group" aria-label="Days shown">'+
+          '<button class="frz-cal-dbtn'+(_wd?' is-active':'')+'" data-days="work">Work days</button>'+
+          '<button class="frz-cal-dbtn'+(_wd?'':' is-active')+'" data-days="all">All days</button>'+
+        '</div>'
+      : '';
+    var _newBtnHtml = canEdit ? '<button class="frz-cal-newbtn" id="frzCalNew">+ New assignment</button>' : '';
     nav.innerHTML='<button class="frz-cal-navbtn" id="frzCalPrev" title="Previous">‹</button>'+
       '<span class="frz-cal-title">'+esc(win.label)+'</span>'+
       '<button class="frz-cal-navbtn" id="frzCalNext" title="Next">›</button>'+
       '<button class="frz-cal-navbtn frz-cal-today" id="frzCalToday">Today</button>'+
-      (canEdit ? '<span style="flex:1"></span><button class="frz-cal-newbtn" id="frzCalNew">+ New assignment</button>' : '');
+      ((_dayToggle||_newBtnHtml) ? ('<span style="flex:1"></span>'+_dayToggle+_newBtnHtml) : '');
     nav.querySelector('#frzCalPrev').onclick=function(){ state.calDate=win.prev(); renderCalendar(); syncURL(true); };
     nav.querySelector('#frzCalNext').onclick=function(){ state.calDate=win.next(); renderCalendar(); syncURL(true); };
     nav.querySelector('#frzCalToday').onclick=function(){ state.calDate=todayMT(); renderCalendar(); syncURL(true); };
+    nav.querySelectorAll('.frz-cal-dbtn').forEach(function(b){ b.onclick=function(){ _calSetWorkDays(b.getAttribute('data-days')==='work'); renderCalendar(); }; });   // per-user pref, not URL state
     var _newBtn=nav.querySelector('#frzCalNew'); if(_newBtn) _newBtn.onclick=function(){ openAssignmentModal({}); };
     renderCalFilters();
     if(state.calTab==='week' || state.calTab==='timeline'){
