@@ -1866,6 +1866,11 @@
 
     <!-- ASSIGNMENTS TAB (Team Calendar Phase 1c) -->
     <div class="admin-pane" id="assignmentsTab">
+      <div id="maintDutyTypeRow" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px">
+        <label for="maintDutyTypeSel" style="font-size:12px;font-weight:700;color:var(--text)">Maintenance Duty type</label>
+        <select id="maintDutyTypeSel" style="padding:6px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:12px;color:var(--text);outline:none"><option value="">Auto-detect by name</option></select>
+        <span style="font-size:11px;color:var(--muted)">Used by the sprint Maintenance-duty rotation. "Auto-detect" matches a type named "Maintenance Duty".</span>
+      </div>
       <div class="dev-list" id="assignmentTypesList"></div>
       <div class="add-dev-row">
         <input type="text" id="newAssignmentTypeName" placeholder="New assignment type…">
@@ -2116,7 +2121,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.41.0';
+const APP_VERSION = '4.42.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2315,6 +2320,7 @@ let statusIsBlocked  = {}; // { [statusName]: bool } - optional, at most ONE tru
 let typeIgnoreConflicts = {};   // { [typeName]: bool }
 let typeScheduled = {};         // { [typeName]: bool } - scheduled types appear on the Gantt + consume capacity; missing = scheduled (fail-safe)
 let richTextEditor = true;      // /beta Tiptap editor master switch (config). Default ON; admin can flip false to revert Description+Comments to the classic editor with no redeploy. Classic root ignores this.
+let maintenanceDutyTypeId = ''; // M1: assignment type the Maintenance Duty rotation uses ('' = auto-detect by name "maintenance duty")
 let intakeEnabled = false;      // public /report portal: is this team exposed? (config)
 let intakeProjects = [];        // which Projects (products) the portal offers (empty = all). (config)
 let intakeNotifyEmail = '';     // team inbox that gets a copy of each portal ticket. (config)
@@ -6760,6 +6766,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       if(data.typeIgnoreConflicts)   typeIgnoreConflicts   = data.typeIgnoreConflicts;
       if(data.typeScheduled)         typeScheduled         = data.typeScheduled;
       if(data.richTextEditor !== undefined) richTextEditor  = data.richTextEditor !== false;
+      if(data.maintenanceDutyTypeId !== undefined) maintenanceDutyTypeId = data.maintenanceDutyTypeId || '';
       intakeEnabled = data.intakeEnabled === true;
       intakeProjects = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];
       intakeNotifyEmail = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : '';
@@ -7225,8 +7232,16 @@ function _wireATDrag(list){
     item.addEventListener('drop', e=>{ e.preventDefault(); const ti=+item.dataset.idx; if(dragATIdx===null||dragATIdx===ti) return; const moved=_assignmentTypes.splice(dragATIdx,1)[0]; _assignmentTypes.splice(ti,0,moved); dragATIdx=null; _saveAssignmentTypes(); });
   });
 }
+function _syncMaintDutyTypeSel(){
+  const sel = document.getElementById('maintDutyTypeSel'); if(!sel) return;
+  const types = _assignmentTypes || [];
+  sel.innerHTML = '<option value="">Auto-detect by name</option>' +
+    types.map(t => `<option value="${escA(t.id)}" ${maintenanceDutyTypeId===t.id?'selected':''}>${esc(t.name||t.id)}</option>`).join('');
+  if(!sel._wired){ sel._wired = true; sel.addEventListener('change', ()=>{ maintenanceDutyTypeId = sel.value || ''; API.putConfig('maintenanceDutyTypeId', maintenanceDutyTypeId).catch(()=>{}); }); }
+}
 function renderAssignmentTypesList(){
   const list = document.getElementById('assignmentTypesList'); if(!list) return;
+  _syncMaintDutyTypeSel();
   const types = _assignmentTypes || [];
   const hint = `<div style="padding:8px 13px 10px;font-size:11px;color:var(--muted);line-height:1.5">Drag the <b>⠿</b> handle to reorder - display order controls calendar stacking and conflict priority. <b>Blocks Work</b> warns against overlapping tickets; <b>Exclusive</b> warns against another assignment overlapping. <b>Capacity Impact</b> is subtracted from the owner's effective capacity.</div>`;
   if(!types.length){ list.innerHTML = hint + '<div class="dev-empty">No assignment types yet.</div>'; return; }
@@ -15507,6 +15522,7 @@ async function boot(){
     typeIgnoreConflicts   = data.typeIgnoreConflicts   || {};
     typeScheduled         = data.typeScheduled         || {};
     richTextEditor        = data.richTextEditor !== false;   // default ON; only an explicit false reverts to the classic editor
+    maintenanceDutyTypeId = data.maintenanceDutyTypeId || '';   // M1: Maintenance Duty assignment-type mapping
     intakeEnabled         = data.intakeEnabled === true;                                              // public /report portal exposed?
     intakeProjects        = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];            // offered Projects (empty = all)
     intakeTypes           = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];                  // offered Types (empty = all)
@@ -16433,6 +16449,8 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-tbl-name { min-width:0; }   /* let the name/goal cell shrink so the subtitle can ellipsis (grid min-width:auto fix) */
   .frz-beta .frz-tbl-sub { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
   .frz-beta .frz-sprint-goal { font-size:12px; color:var(--frz-text-muted); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+  .frz-beta .frz-sprint-duty { font-size:12px; color:var(--frz-text-muted); margin-top:3px; }
+  .frz-beta .frz-bl-parent { display:block; font-size:11px; color:var(--frz-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; margin-top:1px; }
   .frz-beta .frz-sprint-nudge { margin:0 0 12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .frz-beta .frz-nudge-acts { display:inline-flex; gap:10px; }
   .frz-beta .frz-nudge-acts button { background:none; border:none; padding:0; font:inherit; font-size:12px; font-weight:700; color:inherit; text-decoration:underline; cursor:pointer; }
@@ -17094,6 +17112,60 @@ if ('serviceWorker' in navigator) {
   function _sprintScopable(sp){ return !!(sp && (sp.state==='Planned' || sp.state==='Active')); }   // eligible for "View on board"
   // Stage 3b: jump to a sprint-scoped Kanban, preserving the rail's project scope (default board).
   function _viewSprintOnBoard(id){ var u=new URLSearchParams(_frzCarryQS(false).replace(/^\?/,'')); u.set('sprint', id); navigate('/kanban?'+u.toString(), false); }
+  // ── M1: Maintenance Duty rotation ───────────────────────────────────────────
+  // Resolve the duty assignment type: explicit maintenanceDutyTypeId config first, else a
+  // type whose name/id matches "maintenance duty" case-insensitively. Read from config only.
+  function _dutyType(){
+    var types=_val('_assignmentTypes',[])||[];
+    var cfgId=_val('maintenanceDutyTypeId','');
+    if(cfgId){ var byId=types.filter(function(t){return t.id===cfgId;})[0]; if(byId) return byId; }
+    return types.filter(function(t){ return /maintenance\s*duty/i.test((t.name||'')) || /maintenance-?duty/i.test((t.id||'')); })[0] || null;
+  }
+  function _dutyAssignment(sp){ if(!sp||!sp.dutyAssignmentId) return null; return (_val('_assignments',[])||[]).filter(function(a){ return a.id===sp.dutyAssignmentId; })[0] || null; }
+  function _reloadAssignments(){ try{ var r=_call('loadAssignmentData'); if(r&&r.then) return r; }catch(e){} return Promise.resolve(); }
+  function _ownerList(){ return (_val('developers',[])||[]); }
+  function _dutySelectHtml(id, cur){
+    var opts='<option value="">None</option>'+_ownerList().map(function(o){ return '<option value="'+escA(o)+'"'+((cur||'')===o?' selected':'')+'>'+esc(o)+'</option>'; }).join('');
+    return '<div style="margin-bottom:12px"><label class="frz-lbl">Maintenance duty <span style="font-weight:400;text-transform:none;color:var(--frz-text-muted)">(owner pod on call this sprint)</span></label>'+
+      '<select class="frz-fld" id="'+id+'">'+opts+'</select><div class="frz-snap-hint" id="'+id+'Warn" hidden></div></div>';
+  }
+  function _dutyWarnCheck(selId){
+    var sel=document.getElementById(selId), warn=document.getElementById(selId+'Warn'); if(!sel||!warn) return;
+    if(sel.value && !_dutyType()){ warn.hidden=false; warn.textContent='No Maintenance Duty assignment type configured - the field saves, but starting the sprint creates no calendar reservation.'; }
+    else warn.hidden=true;
+  }
+  // Create/update/remove the sprint's duty assignment to match maintenanceDutyPod + dates.
+  // Owner-pool-scoped (no username). Returns a promise of an audit-note string. NEVER creates
+  // a second assignment (updates the linked one); a missing linked assignment no-ops.
+  function _applyDutyForSprint(sp){
+    var pod=sp.maintenanceDutyPod||'';
+    var existing=_dutyAssignment(sp);
+    if(!pod){
+      if(sp.dutyAssignmentId && existing){ var oldId=sp.dutyAssignmentId; sp.dutyAssignmentId=''; return API.del('/api/assignments/'+oldId).then(function(){ return _reloadAssignments().then(function(){ return 'duty: removed assignment #'+oldId+' (pod cleared)'; }); }).catch(function(){ return 'duty: remove failed'; }); }
+      if(sp.dutyAssignmentId){ sp.dutyAssignmentId=''; return Promise.resolve('duty: linked assignment already gone - cleared ref'); }
+      return Promise.resolve('');
+    }
+    var t=_dutyType();
+    if(!t) return Promise.resolve('duty: no Maintenance Duty type configured - no reservation created');
+    if(sp.dutyAssignmentId && existing){
+      var ub={ type_id:existing.type_id, owner:pod, username:existing.username||'', start_date:sp.startDate, end_date:sp.endDate||sp.startDate, recurrence:existing.recurrence||'none', description:existing.description||('Maintenance duty: '+sp.name), notes:existing.notes||'' };
+      return API.put('/api/assignments/'+existing.id, ub).then(function(){ return _reloadAssignments().then(function(){ return 'duty: assignment #'+existing.id+' updated'; }); }).catch(function(e){ return 'duty: update failed ('+(e&&e.message||'')+')'; });
+    }
+    if(sp.dutyAssignmentId && !existing) return Promise.resolve('duty: linked assignment #'+sp.dutyAssignmentId+' not found (deleted?) - skipped');
+    var cb={ type_id:t.id, owner:pod, username:'', start_date:sp.startDate, end_date:sp.endDate||sp.startDate, recurrence:'none', description:'Maintenance duty: '+sp.name, notes:'' };
+    return API.post('/api/assignments', cb).then(function(created){ if(created&&created.id){ sp.dutyAssignmentId=created.id; return _reloadAssignments().then(function(){ return 'duty: created assignment #'+created.id+' for '+pod; }); } return 'duty: create returned no id'; }).catch(function(e){ return 'duty: create failed ('+(e&&e.message||'')+')'; });
+  }
+  // COMPLETE-early: trim the duty assignment's end to today so freed capacity is released.
+  function _trimDutyOnComplete(sp){
+    if(!sp.dutyAssignmentId) return Promise.resolve('');
+    var a=_dutyAssignment(sp); if(!a) return Promise.resolve('duty: linked assignment not found - skipped');
+    var today=todayStr();
+    if(sp.endDate && today < sp.endDate && (a.end_date||'') > today){
+      var ub={ type_id:a.type_id, owner:a.owner, username:a.username||'', start_date:a.start_date, end_date:today, recurrence:a.recurrence||'none', description:a.description||'', notes:a.notes||'' };
+      return API.put('/api/assignments/'+a.id, ub).then(function(){ return _reloadAssignments().then(function(){ return 'duty: assignment #'+a.id+' end trimmed to '+today; }); }).catch(function(){ return 'duty: trim failed'; });
+    }
+    return Promise.resolve('');
+  }
   // Shared date validation + overlap warning (used by BOTH the edit and create modals).
   function _sprintDateError(s, e){ return (s && e && e<=s) ? 'End date must be after the start date.' : ''; }
   function _sprintOverlapWarn(warnEl, id, sEl, eEl){
@@ -17609,7 +17681,7 @@ if ('serviceWorker' in navigator) {
   function currentSprint(){ return activeSprint() || plannedSprint(); }
   function sprintItems(sid){ return (_val('projects',[])||[]).filter(function(p){ return !p.archived && p.sprintId===sid; }); }
   function inNonCompletedSprint(p){ var s=sprintById(p.sprintId); return !!(s && s.state!=='Completed'); }
-  function isPlannable(p){ return PLANNABLE_TYPES.indexOf(p.type)>=0 && !p.parent && (p.recurrence||'none')==='none'; }
+  function isPlannable(p){ return PLANNABLE_TYPES.indexOf(p.type)>=0 && (p.recurrence||'none')==='none'; }   // M1 1c: parent gate REMOVED - parented items are plannable; sub-issue noise is excluded via `hidden` in backlogItems
   function isTerm(s){ return isTermStatus(s); }   // Stage 1a: terminal/done from STATUS_META - drives backlog, sprint stats/completion, release progress
   function nextSprintName(){ return 'Sprint '+(_sprints.length+1); }
 
@@ -20076,11 +20148,19 @@ if ('serviceWorker' in navigator) {
   }
   function _blSearchMatch(p){ if(!_blSearch) return true; var q=_blSearch.toLowerCase(); return (((p.itemKey||'')+' '+(p.name||'')).toLowerCase().indexOf(q) >= 0); }
   function _blUnprioritized(p){ return !(p.priority && PRIO_LBL[p.priority]); }   // no visible priority label
+  // M1 1c: muted parent crumb for a parented backlog item (truncated, title tooltip).
+  function _parentCrumb(p){
+    if(!p.parent) return '';
+    var par=(_val('projects',[])||[]).filter(function(x){return x.id===p.parent;})[0];
+    var nm=par ? (par.name||par.itemKey||('#'+p.parent)) : ('#'+p.parent);
+    return '<span class="frz-bl-parent" title="'+escA('Parent: '+nm)+'">↳ '+esc(nm)+'</span>';
+  }
   function _blCanEdit(){ return !!(_val('isAdmin',false) || _val('isEditor',false)); }
   function backlogItems(){
     var fDev=getSelectedDevs(), fType=getSelectedTypes(), fSt=getSelectedStatuses();
     return (_val('projects',[])||[]).filter(function(p){
       if(p.archived) return false;
+      if(p.hidden) return false;   // M1 1c: sub-issue noise (hidden Jira-spawned children) stays excluded here now that the parent gate is gone
       if(!inScope(p)) return false;
       if(!isPlannable(p)) return false;
       if(isTerm(p.status)) return false;
@@ -20157,6 +20237,7 @@ if ('serviceWorker' in navigator) {
       cb+
       '<div class="frz-bl-main" data-open="'+p.id+'">'+
         '<div class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></span> ':'')+esc(p.name||'')+legacy+'</div>'+
+        _parentCrumb(p)+   // M1 1c: parent context for parented items (flat list, no tree)
         '<div class="frz-bl-meta">'+metaBits.join(' · ')+'</div>'+
       '</div>'+
       '<button class="frz-bl-add" data-add="'+p.id+'" title="Add to sprint">Add →</button>'+
@@ -20226,6 +20307,7 @@ if ('serviceWorker' in navigator) {
     return '<div class="frz-plan-pane-hd">'+esc(sprint.name)+' '+badge+'<span class="frz-spacer"></span>'+boardBtn+editBtn+actions+'</div>'+
       '<div class="frz-sprint-meta">'+(sprint.startDate?fmtD(sprint.startDate):'-')+' → '+(sprint.endDate?fmtD(sprint.endDate):'-')+
         (sprint.goal?'<div class="frz-sprint-goal" title="'+escA(sprint.goal)+'">'+esc(sprint.goal)+'</div>':'')+
+        (sprint.maintenanceDutyPod?'<div class="frz-sprint-duty">Maintenance: '+esc(sprint.maintenanceDutyPod)+'</div>':'')+
         '<div class="frz-sprint-cap">'+items.length+' items · '+pts+' pts · '+est+'w · '+done+'/'+items.length+' done</div></div>'+
       nudge+
       '<div class="frz-plan-list" id="frzSprintList">'+cards+'</div>';
@@ -20426,6 +20508,7 @@ if ('serviceWorker' in navigator) {
         '<div style="margin-bottom:12px"><label class="frz-lbl">Name</label><input class="frz-fld" id="frzCsName" value="'+escA(nextSprintName())+'"></div>'+
         '<div style="display:flex;gap:12px;margin-bottom:12px"><div style="flex:1"><label class="frz-lbl">Start</label><input type="date" class="frz-fld" id="frzCsStart" value="'+start+'"></div><div style="flex:1"><label class="frz-lbl">End</label><input type="date" class="frz-fld" id="frzCsEnd" value="'+end+'"></div></div>'+
         '<div><label class="frz-lbl">Goal (optional)</label><input class="frz-fld" id="frzCsGoal" placeholder="Sprint goal…"></div>'+
+        _dutySelectHtml('frzCsDuty','')+
         '<div class="frz-asg-warn frz-sprint-modal-warn" id="frzCsWarn" hidden></div>'+
       '</div>'+
       '<div class="frz-modal-ft"><span class="frz-modal-err" id="frzCsErr"></span><button class="frz-viewopt" id="frzCsCancel">Cancel</button><button class="frz-newitem" id="frzCsSave">Create sprint</button></div>'+
@@ -20435,6 +20518,7 @@ if ('serviceWorker' in navigator) {
     bg.querySelector('#frzCsClose').addEventListener('click', close);
     bg.querySelector('#frzCsCancel').addEventListener('click', close);
     bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
+    bg.querySelector('#frzCsDuty').addEventListener('change', function(){ _dutyWarnCheck('frzCsDuty'); }); _dutyWarnCheck('frzCsDuty');
     // Stage 2e: shared date validation + live overlap warning (id=null -> compares vs all non-discarded sprints).
     function refreshCsWarn(){ _sprintOverlapWarn(bg.querySelector('#frzCsWarn'), null, bg.querySelector('#frzCsStart'), bg.querySelector('#frzCsEnd')); }
     bg.querySelector('#frzCsStart').addEventListener('change', function(){ bg.querySelector('#frzCsEnd').value = addDaysStr(this.value,14); refreshCsWarn(); });
@@ -20446,7 +20530,7 @@ if ('serviceWorker' in navigator) {
       var s=bg.querySelector('#frzCsStart').value, e=bg.querySelector('#frzCsEnd').value;
       if(!s||!e){ err.textContent='Start and end dates are required.'; return; }
       var de=_sprintDateError(s, e); if(de){ err.textContent=de; return; }   // shared: block end <= start
-      var sp={ id:'sp'+Date.now(), name:name, goal:bg.querySelector('#frzCsGoal').value.trim(), startDate:s, endDate:e, state:'Planned', scope:'global', carryOver:0 };
+      var sp={ id:'sp'+Date.now(), name:name, goal:bg.querySelector('#frzCsGoal').value.trim(), startDate:s, endDate:e, state:'Planned', scope:'global', carryOver:0, maintenanceDutyPod:(bg.querySelector('#frzCsDuty').value||''), dutyAssignmentId:'' };
       _sprints.push(sp);
       var btn=bg.querySelector('#frzCsSave'); btn.disabled=true;
       saveSprints(function(){ close(); refreshPlan(); }).catch(function(){ btn.disabled=false; err.textContent='Save failed.'; });
@@ -20466,6 +20550,7 @@ if ('serviceWorker' in navigator) {
         '<div style="margin-bottom:12px"><label class="frz-lbl">Name</label><input class="frz-fld" id="frzEsName" value="'+escA(sp.name||'')+'"></div>'+
         '<div style="display:flex;gap:12px;margin-bottom:12px"><div style="flex:1"><label class="frz-lbl">Start</label><input type="date" class="frz-fld" id="frzEsStart" value="'+escA(sp.startDate||'')+'"></div><div style="flex:1"><label class="frz-lbl">End</label><input type="date" class="frz-fld" id="frzEsEnd" value="'+escA(sp.endDate||'')+'"></div></div>'+
         '<div><label class="frz-lbl">Goal (optional)</label><input class="frz-fld" id="frzEsGoal" value="'+escA(sp.goal||'')+'" placeholder="Sprint goal…"></div>'+
+        _dutySelectHtml('frzEsDuty', sp.maintenanceDutyPod)+
         '<div class="frz-asg-warn frz-sprint-modal-warn" id="frzEsWarn" hidden></div>'+
         (isActive?'<div class="frz-snap-hint" style="margin-top:12px">This sprint is Active - changing its dates moves the goal posts mid-flight. The change is logged.</div>':'')+
       '</div>'+
@@ -20481,20 +20566,27 @@ if ('serviceWorker' in navigator) {
     bg.querySelector('#frzEsStart').addEventListener('change', refreshWarn);
     bg.querySelector('#frzEsEnd').addEventListener('change', refreshWarn);
     refreshWarn();
+    bg.querySelector('#frzEsDuty').addEventListener('change', function(){ _dutyWarnCheck('frzEsDuty'); }); _dutyWarnCheck('frzEsDuty');
     bg.querySelector('#frzEsSave').addEventListener('click', function(){
       var err=bg.querySelector('#frzEsErr'); err.textContent='';
       var name=bg.querySelector('#frzEsName').value.trim(); if(!name){ err.textContent='Name is required.'; return; }
       var s=bg.querySelector('#frzEsStart').value, e=bg.querySelector('#frzEsEnd').value;
       var de=_sprintDateError(s, e); if(de){ err.textContent=de; return; }   // shared: block end <= start
       var goal=bg.querySelector('#frzEsGoal').value.trim();
-      var before={name:sp.name,goal:sp.goal,startDate:sp.startDate,endDate:sp.endDate};
-      var chg=[]; if(before.name!==name)chg.push('name'); if(before.goal!==goal)chg.push('goal'); if((before.startDate||'')!==s)chg.push('start'); if((before.endDate||'')!==e)chg.push('end');
+      var duty=bg.querySelector('#frzEsDuty').value||'';
+      var before={name:sp.name,goal:sp.goal,startDate:sp.startDate,endDate:sp.endDate,maintenanceDutyPod:sp.maintenanceDutyPod||''};
+      var chg=[]; if(before.name!==name)chg.push('name'); if(before.goal!==goal)chg.push('goal'); if((before.startDate||'')!==s)chg.push('start'); if((before.endDate||'')!==e)chg.push('end'); if(before.maintenanceDutyPod!==duty)chg.push('maintenance duty');
       if(!chg.length){ close(); return; }
-      sp.name=name; sp.goal=goal; sp.startDate=s; sp.endDate=e;
+      sp.name=name; sp.goal=goal; sp.startDate=s; sp.endDate=e; sp.maintenanceDutyPod=duty;
       var btn=bg.querySelector('#frzEsSave'); btn.disabled=true;
-      var detail='Edited "'+name+'" ('+chg.join(', ')+')'+(isActive?' [ACTIVE sprint]':'');
-      saveSprints(function(){ close(); refreshPlan(); _call('showToast','Sprint updated'); }, {reason:'sprint-edit', detail:detail})
-        .catch(function(){ sp.name=before.name; sp.goal=before.goal; sp.startDate=before.startDate; sp.endDate=before.endDate; btn.disabled=false; err.textContent='Save failed.'; });
+      // M1: on an Active sprint, sync the linked duty assignment (dates/owner/create/remove).
+      // Planned sprints just save the field - the assignment is created at start.
+      var dutyP = isActive ? _applyDutyForSprint(sp) : Promise.resolve('');
+      dutyP.then(function(dnote){
+        var detail='Edited "'+name+'" ('+chg.join(', ')+')'+(isActive?' [ACTIVE sprint]':'')+(dnote?(' · '+dnote):'');
+        saveSprints(function(){ close(); refreshPlan(); _call('showToast','Sprint updated'); }, {reason:'sprint-edit', detail:detail})
+          .catch(function(){ sp.name=before.name; sp.goal=before.goal; sp.startDate=before.startDate; sp.endDate=before.endDate; sp.maintenanceDutyPod=before.maintenanceDutyPod; btn.disabled=false; err.textContent='Save failed.'; });
+      });
     });
     setTimeout(function(){ bg.querySelector('#frzEsName').focus(); },0);
   }
@@ -20543,7 +20635,12 @@ if ('serviceWorker' in navigator) {
     if(activeSprint()){ _call('showToast','Another sprint is already Active - complete it first.','error'); return; }
     if(sprintItems(sp.id).length<1){ _call('showToast','Add at least one item before starting.','error'); return; }
     sp.state='Active';
-    saveSprints(function(){ refreshPlan(); _call('showToast','Sprint started'); }).catch(function(){ sp.state='Planned'; });
+    // M1 1b: create the Maintenance Duty assignment (idempotent - _applyDutyForSprint updates,
+    // never duplicates, when dutyAssignmentId is already set). Note goes into the sprint audit.
+    _applyDutyForSprint(sp).then(function(dnote){
+      saveSprints(function(){ refreshPlan(); _call('showToast','Sprint started'); }, {reason:'sprint-start', detail:'Started "'+sp.name+'"'+(dnote?(' · '+dnote):'')})
+        .catch(function(){ sp.state='Planned'; });
+    });
   }
   function completeSprint(){
     var sp=currentSprint(); if(!sp || sp.state!=='Active') return;
@@ -20580,7 +20677,10 @@ if ('serviceWorker' in navigator) {
     function finalize(){
       sp.carryOver = unfinished.length; sp.state='Completed';
       sp.snapshot = { takenAt: todayStr(), items: snapItems };   // durable history - survives later item churn
-      saveSprints(function(){ refreshPlan(); _call('showToast','Sprint completed'+(unfinished.length?(' · '+unfinished.length+' carried over'):'')); }).catch(function(){ sp.state='Active'; delete sp.snapshot; });
+      // M1 1b: complete-early trims the duty assignment's end to today so freed capacity releases.
+      _trimDutyOnComplete(sp).then(function(dnote){
+        saveSprints(function(){ refreshPlan(); _call('showToast','Sprint completed'+(unfinished.length?(' · '+unfinished.length+' carried over'):'')); }, (dnote?{reason:'sprint-complete', detail:dnote}:null)).catch(function(){ sp.state='Active'; delete sp.snapshot; });
+      });
     }
     var targetId='', targetName='';
     if(unfinished.length && choice==='next'){
@@ -20653,7 +20753,7 @@ if ('serviceWorker' in navigator) {
       if(sp.state==='Planned' || sp.state==='Active') acts+='<button class="frz-sprint-act" type="button" data-editsprint="'+escA(sp.id)+'" title="Edit sprint">'+_SPRINT_PEN+'</button>';
       if(sp.state==='Planned') acts+='<button class="frz-sprint-act" type="button" data-discardsprint="'+escA(sp.id)+'" title="Discard sprint">'+_SPRINT_TRASH+'</button>';
       return '<div class="frz-tbl-row'+(sp.state==='Active'?' is-active':'')+'" data-sprintrow="'+escA(sp.id)+'">'+
-        '<div class="frz-tbl-c frz-tbl-name"><div class="frz-sprint-namewrap"><div style="min-width:0"><div class="frz-tbl-title">'+esc(sp.name)+'</div>'+(sp.goal?'<div class="frz-tbl-sub" title="'+escA(sp.goal)+'">'+esc(sp.goal)+'</div>':'')+'</div>'+(acts?'<div class="frz-sprint-actions">'+acts+'</div>':'')+'</div></div>'+
+        '<div class="frz-tbl-c frz-tbl-name"><div class="frz-sprint-namewrap"><div style="min-width:0"><div class="frz-tbl-title">'+esc(sp.name)+'</div>'+(sp.goal?'<div class="frz-tbl-sub" title="'+escA(sp.goal)+'">'+esc(sp.goal)+'</div>':'')+(sp.maintenanceDutyPod?'<div class="frz-tbl-sub frz-sprint-duty">Maintenance: '+esc(sp.maintenanceDutyPod)+'</div>':'')+'</div>'+(acts?'<div class="frz-sprint-actions">'+acts+'</div>':'')+'</div></div>'+
         '<div class="frz-tbl-c">'+(sp.startDate?fmtD(sp.startDate):'-')+' → '+(sp.endDate?fmtD(sp.endDate):'-')+'</div>'+
         '<div class="frz-tbl-c">'+badge+'</div>'+
         '<div class="frz-tbl-c">'+st.done+'/'+st.total+'</div>'+

@@ -764,6 +764,9 @@ def init_team_db(team: str):
             # surface; flipping to False reverts Description+Comments to the classic
             # lightweight editor with no redeploy. Classic root never reads this.
             "richTextEditor": True,
+            # M1: which assignment type the Maintenance Duty rotation uses (empty = auto-detect
+            # a type whose name matches "maintenance duty" case-insensitively). Admin-settable.
+            "maintenanceDutyTypeId": "",
             # Public intake portal (/report): whether this team is exposed in the
             # external ticket-creation page, and which item Types it offers there.
             "intakeEnabled": False,
@@ -851,11 +854,12 @@ def _migrate_config_keys(team: str):
         "intakeDomains": [],
         "departmentMeta": {},
         "assignmentTypes": _DEFAULT_ASSIGNMENT_TYPES,
+        "maintenanceDutyTypeId": "",
     }
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
     # an admin who deletes all types isn't re-seeded on next boot.)
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta", "assignmentTypes"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -1138,7 +1142,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.41.0"
+APP_VERSION = "4.42.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2771,7 +2775,8 @@ def get_all(auth: dict = Depends(require_auth)):
             "intakeNotifyEmail": cfg_map.get("intakeNotifyEmail", ""),
             "intakeProjectEmails": cfg_map.get("intakeProjectEmails", {}),
             "intakeDomains": cfg_map.get("intakeDomains", []),
-            "departmentMeta": cfg_map.get("departmentMeta", {})}
+            "departmentMeta": cfg_map.get("departmentMeta", {}),
+            "maintenanceDutyTypeId": cfg_map.get("maintenanceDutyTypeId", "")}
 
 
 # ── Force-seed config keys (idempotent, for migration/repair) ─────────────────
@@ -3480,7 +3485,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "changeReasons","deferReasons","departments",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
-              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains","departmentMeta"}
+              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains","departmentMeta","maintenanceDutyTypeId"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",
