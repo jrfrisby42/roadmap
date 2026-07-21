@@ -2112,7 +2112,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.14';
+const APP_VERSION = '4.37.15';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16148,6 +16148,11 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-cal-wcell { border-left:1px solid var(--frz-border); border-bottom:1px solid var(--frz-border); padding:5px 6px; background:var(--frz-bg-elevated); min-width:0; }
   .frz-beta .frz-cal-wcell .frz-cal-chip { display:block; margin-bottom:4px; text-align:center; }
   .frz-beta .frz-cal-wcell .frz-cal-mo-more { display:block; padding:1px 0; }
+  /* Stage 4: per-day capacity row/strip. .cap-health-* (global palette) provides bg+color;
+     .frz-cal-capcell sets no bg so it wins; the today stripe (is-today) still overrides. */
+  .frz-beta .frz-cal-caplabel { font-size:10px; font-weight:700; color:var(--frz-text-muted); text-transform:uppercase; letter-spacing:.3px; }
+  .frz-beta .frz-cal-capcell { border-left:1px solid var(--frz-border); border-bottom:1px solid var(--frz-border); padding:3px 4px; text-align:center; font-size:11px; font-weight:700; white-space:nowrap; overflow:hidden; }
+  .frz-beta .frz-cal-tg .frz-cal-capcell { font-size:9px; padding:2px 0; }
   /* Timeline track spans the day columns; gridlines + today stripe painted via inline
      background (same fractional source as the header day cells); bars absolute over it. */
   .frz-beta .frz-cal-track { grid-column:2 / -1; position:relative; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-elevated); }
@@ -18016,18 +18021,49 @@ if ('serviceWorker' in navigator) {
     });
   }
   // Stage 3.5.2: owner section = one slim full-width band (grid-column:1/-1), reusing the
-  // .frz-cal-owner-hd styling. No per-section date header (there is now one shared header).
+  // .frz-cal-owner-hd styling. Stage 4e: the "Capacity today: N / N" label is gone (real
+  // per-day capacity now renders in a dedicated row/strip below the band); band keeps the
+  // owner name + the "+" add button.
   function _calBand(o, canEdit){
-    if(o.unassigned){   // Stage 1b: no capacity label, no "+" add button
+    if(o.unassigned){   // Stage 1b: no capacity, no "+" add button
       return '<div class="frz-cal-owner-hd frz-cal-band"><span class="frz-cal-owner-nm">Unassigned</span></div>';
     }
-    var todayStr=todayStrMT();
-    var capTitle=capacityBreakdownText(o.owner, todayStr) || ('Base capacity: '+o.baseCap);
     return '<div class="frz-cal-owner-hd frz-cal-band"><span class="frz-cal-owner-nm">'+esc(o.owner)+'</span>'+
-      '<span style="display:inline-flex;align-items:center;gap:10px">'+
-      '<span class="frz-cal-owner-cap'+((o.effToday<o.baseCap)?' frz-cal-cap-warn':'')+'" title="'+escA(capTitle)+'">Capacity today: '+o.effToday+' / '+o.baseCap+'</span>'+
       (canEdit ? '<button class="frz-cal-addbtn" data-owner="'+escA(o.owner)+'" title="Add assignment for this pool">+</button>' : '')+
-      '</span></div>';
+      '</div>';
+  }
+  // Stage 4: per-day effective capacity, reusing the ONE shared computation
+  // (getEffectiveCapacity = (override ?? base) - Sigma active-assignment impacts, floored at
+  // 0) per displayed day. Health class reuses the Gantt palette (.cap-health-*): at/over base
+  // = healthy (green), reduced = warning (yellow), 0 = critical (red). Fractional as stored.
+  function _calFmt(n){ return String(Math.round((+n||0)*100)/100); }
+  function _calOwnerBase(owner){ var oc=_val('ownerCapacity',{})||{}; return oc[owner]!=null ? oc[owner] : null; }
+  function _calCapHealth(owner, ds, base){
+    var eff=getEffectiveCapacity(owner, ds);
+    if(eff<=0) return 'cap-health-over';          // 0 -> critical (red)
+    if(eff < base-0.001) return 'cap-health-ok';  // reduced below base -> warning (yellow)
+    return 'cap-health-warn';                      // at/over base -> healthy (green)
+  }
+  // Multi-line native-title breakdown for a capacity cell (own copy so the Owner Capacity
+  // Calendar's capacityBreakdownText stays untouched): base, override, each impact, effective.
+  function _calCapBreakdown(owner, ds){
+    var base=_calOwnerBase(owner); if(base==null) base=1;
+    var ov=(_val('_capOverrides',{})[owner]||{})[ds];
+    var det=(_val('_assignmentImpactDetail',{})[owner]||{})[ds]||[];
+    var lines=['Base capacity: '+_calFmt(base)];
+    if(ov!==undefined) lines.push('Manual override: '+_calFmt(ov));
+    det.forEach(function(x){ lines.push((x.username?x.username+' ':'')+x.name+': -'+_calFmt(x.impact)); });
+    lines.push('Effective: '+_calFmt(getEffectiveCapacity(owner, ds)));
+    return lines.join('\n');
+  }
+  // Capacity row (band's owner only): gutter "Capacity" label + one cell per displayed day.
+  function _calCapRow(owner, dayStrs, todayStr){
+    var base=_calOwnerBase(owner); if(base==null) return '';   // no configured base -> no row
+    return '<div class="frz-cal-gut frz-cal-caplabel">Capacity</div>'+dayStrs.map(function(ds){
+      var eff=getEffectiveCapacity(owner, ds);
+      return '<div class="frz-cal-capcell '+_calCapHealth(owner,ds,base)+(ds===todayStr?' frz-cal-is-today':'')+
+        '" title="'+escA(_calCapBreakdown(owner,ds))+'">'+_calFmt(eff)+'/'+_calFmt(base)+'</div>';
+    }).join('');
   }
   var _calFilterOpts={}, _calMenuEl=null;
   function _calCloseFilterMenu(){
@@ -18208,6 +18244,7 @@ if ('serviceWorker' in navigator) {
       days.map(function(d,i){ return '<div class="frz-cal-hcell'+(dayStrs[i]===todayStr?' frz-cal-is-today':'')+'">'+d.toLocaleDateString(undefined,{weekday:'short'})+'<br>'+d.getDate()+'</div>'; }).join('');
     data.forEach(function(o){
       html+=_calBand(o, canEdit);
+      if(!o.unassigned) html+=_calCapRow(o.owner, dayStrs, todayStr);   // Stage 4b: per-day capacity row (no-op if owner has no configured base)
       if(!o.users.length){ html+='<div class="frz-cal-emptyrow">No one scheduled.</div>'; return; }
       o.users.forEach(function(u){
         html+='<div class="frz-cal-gut">'+avatarHTML(u.user,18)+'<span title="'+escA(displayName(u.user))+'">'+esc(displayName(u.user))+'</span></div>';
@@ -18240,6 +18277,7 @@ if ('serviceWorker' in navigator) {
     var LANE=22, PAD=4;
     var firstStr=_ymdLocal(new Date(y,m,1));
     var todayCol=(todayStr.slice(0,7)===firstStr.slice(0,7))?parseInt(todayStr.slice(8,10),10):0;
+    var tlDayStrs=[]; for(var _di=1;_di<=daysInMonth;_di++) tlDayStrs.push(_ymdLocal(new Date(y,m,_di)));   // Stage 4c: per-day capacity strip
     var per='calc(100% / '+daysInMonth+')';
     var gridBg='repeating-linear-gradient(90deg, var(--frz-border) 0, var(--frz-border) 1px, transparent 1px, transparent '+per+')';
     var trackBg=gridBg;
@@ -18251,6 +18289,7 @@ if ('serviceWorker' in navigator) {
       var typeById=o.typeById;
       var users=o.users.filter(function(u){ return u.assigns.some(function(a){ return _calMoTypeVisible(typeById[a.type_id]); }); });   // rows only for users with visible assignments
       html+=_calBand(o, canEdit);
+      if(!o.unassigned) html+=_calCapRow(o.owner, tlDayStrs, todayStr);   // Stage 4c: per-day capacity strip (no-op if no configured base)
       if(!users.length){ html+='<div class="frz-cal-emptyrow">No one scheduled.</div>'; return; }
       users.forEach(function(u){
         var asgs=u.assigns.filter(function(a){ return _calMoTypeVisible(typeById[a.type_id]); }).slice()
