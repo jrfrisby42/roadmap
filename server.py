@@ -1037,7 +1037,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.37.18"
+APP_VERSION = "4.38.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2889,6 +2889,59 @@ def _union_departments(team, item_depts):
             c.execute("INSERT INTO config(key,value) VALUES('departments',?) "
                       "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(cur),))
 
+# ── Owner bucketing ───────────────────────────────────────────────────────────
+# An item's/assignment's owner (its capacity pool) can be derived from its assignee:
+# each login user may carry an ownerFilter (the owner pod they belong to). When work
+# is assigned to a user but no owner is set, bucket it under that user's pod. This
+# never blocks a save and never blanks an owner.
+def _pod_for_user(c, username: str) -> str:
+    """The owner pod (a user's ownerFilter) for a login username, or '' if none/unset."""
+    username = (username or "").strip()
+    if not username:
+        return ""
+    row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+    if not row:
+        return ""
+    try:
+        cfg_users = json.loads(row["value"]) or []
+    except Exception:
+        return ""
+    for u in cfg_users:
+        if u.get("username") == username:
+            return (u.get("ownerFilter") or "").strip()
+    return ""
+
+def _bucket_item_owner(c, item: dict, old: dict = None, client_owner_explicit: bool = False) -> bool:
+    """Bucket an item (field 'dev' = owner pool) under its assignee's owner pod.
+      - Fill a blank owner from the assignee's pod (create + update).
+      - When the assignee CHANGES on an update, follow it: set the owner to the new
+        assignee's pod if that differs - unless the client explicitly set the owner in
+        the same save (an explicit pick wins over the follow).
+    No-op when the assignee has no pod configured. Never blanks an owner.
+    Returns True if item['dev'] was changed."""
+    asg = (item.get("assignee") or "").strip()
+    if not asg:
+        return False
+    pod = _pod_for_user(c, asg)
+    if not pod:
+        return False
+    before = (item.get("dev") or "").strip()
+    if not before:
+        item["dev"] = pod
+        return True
+    if (old is not None and (old.get("assignee") or "").strip() != asg
+            and before != pod and not client_owner_explicit):
+        item["dev"] = pod
+        return True
+    return False
+
+def _bucket_assignment_owner(c, a: dict) -> None:
+    """Fill a blank assignment owner from the assignee's pod (create + update)."""
+    if not a.get("owner") and a.get("username"):
+        pod = _pod_for_user(c, a["username"])
+        if pod:
+            a["owner"] = pod
+
 @app.post("/api/projects")
 def create_project(body: dict, auth: dict = Depends(require_role("admin", "editor"))):
     team = auth["team"]
@@ -2911,6 +2964,7 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     if "departments" in body:
         body["departments"] = _normalize_departments(body.get("departments"))
     with db(team) as c:
+        _bucket_item_owner(c, body)   # owner bucketing: fill a blank owner from the assignee's pod
         _assign_item_key(c, body)
         body["id"] = _insert_project(c, body)
     write_audit(team, "create", username, body["id"], body.get("name",""))
@@ -3028,6 +3082,11 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
         # status; the open Blocked flag is auto-cleared post-commit below.
         if blocked_status and merged.get("status", "") != blocked_status:
             merged.pop("preBlockStatus", None)
+        # Owner bucketing: fill a blank owner from the assignee's pod, and follow an
+        # assignee change to the new pod (an explicit owner in this same save wins).
+        _client_owner_explicit = "dev" in body and bool((body.get("dev") or "").strip())
+        if _bucket_item_owner(c, merged, old, _client_owner_explicit):
+            changes["dev"] = {"from": old.get("dev"), "to": merged.get("dev")}
         now_ts = datetime.now(timezone.utc).isoformat()
         _save_project(c, pid, merged, now_ts)
         # Return the fresh token so the client's cached copy is current for its NEXT
@@ -3673,6 +3732,8 @@ def check_assignment(body: dict = Body(...), auth: dict = Depends(require_role("
     team = auth["team"]
     types_by_id = {t.get("id"): t for t in _read_assignment_types(team)}
     a = _assignment_from_body(body, types_by_id)
+    with db(team) as c:
+        _bucket_assignment_owner(c, a)   # match the owner the save would derive
     if body.get("id") is not None:
         a["id"] = body.get("id")
     return {"warnings": _assignment_warnings(team, a)}
@@ -3704,6 +3765,7 @@ def create_assignment(body: dict = Body(...), auth: dict = Depends(require_role(
     a = _assignment_from_body(body, types_by_id)
     ts = datetime.now(timezone.utc).isoformat()
     with db(team) as c:
+        _bucket_assignment_owner(c, a)   # fill a blank owner from the assignee's pod
         # Stage 1d idempotency guard: a repeated identical POST (same user + type + date span)
         # returns the EXISTING row with deduped:true instead of inserting a duplicate - this is
         # what a rapid double-Save produced before. Recurrence children (recurrence_parent not
@@ -3744,6 +3806,7 @@ def update_assignment(aid: int, body: dict = Body(...), auth: dict = Depends(req
         row = c.execute("SELECT id FROM assignments WHERE id=?", (aid,)).fetchone()
         if not row:
             raise HTTPException(404, "Assignment not found")
+        _bucket_assignment_owner(c, a)   # fill a blank owner from the assignee's pod
         c.execute("UPDATE assignments SET type_id=?,owner=?,username=?,start_date=?,end_date=?,"
                   "description=?,recurrence=?,notes=?,updated_ts=? WHERE id=?",
                   (a["type_id"], a["owner"], a["username"], a["start_date"], a["end_date"],
