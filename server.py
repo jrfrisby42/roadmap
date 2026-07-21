@@ -783,6 +783,7 @@ def init_team_db(team: str):
     _migrate_passwords(team)
     _migrate_config_keys(team)
     _migrate_avatar_colors(team)   # Stage 6a: every user gets an avatarColor
+    _migrate_sprint_snapshots(team)  # Planning Stage 1: durable snapshot for completed sprints
     # Backfill indexed columns in its OWN transaction (after the schema migration
     # has committed the new columns). Keeping it separate means a rollback in the
     # schema block - or a concurrent worker boot - can't lose the backfill. It is
@@ -962,6 +963,106 @@ def _migrate_avatar_colors(team: str):
         if changed:
             c.execute("UPDATE config SET value=? WHERE key='users'", (json.dumps(users),))
 
+# ── Sprint snapshots (Planning Stage 1) ───────────────────────────────────────
+# A completed sprint's Items/Points must be a durable snapshot, not re-derived from
+# live membership (carried-over items have moved off, so a finished sprint reads 0/0).
+# Going forward the client writes sp.snapshot at completion. This one-time, idempotent
+# migration BACKFILLS a snapshot for existing Completed sprints by replaying the FULL
+# activity log (not the 500-row client window). Reconstructed points are current (not
+# historical) and the snapshot is flagged reconstructed=True. Never overwrites a snapshot.
+_SP_DONE_RE   = re.compile(r"^Sprint planning: (.+?) completed → (moved to (.+)|returned to backlog)$")
+_SP_REASSIGN_RE = re.compile(r"^Sprint planning: Sprint (.+) → (.+)$")
+_SP_REMOVED_MSG = "Sprint planning: removed from sprint (returned to backlog)"
+
+def _reconstruct_sprint_history(acts, by_name, name_of):
+    """Port of the client _parseSprintActivities: replay an item's ordered
+    'Sprint planning: …' messages into [{sprintId, addedAt, outcome}]. `acts` are
+    dicts {message, created_ts} oldest-first; by_name maps sprint name→id, name_of id→name."""
+    hist = []
+    def name_to_id(n): return by_name.get(n, n)
+    def sh_name(sid):  return name_of.get(sid, sid)
+    def open_for(name):
+        for k in range(len(hist) - 1, -1, -1):
+            if sh_name(hist[k]["sprintId"]) == name and not hist[k]["outcome"]:
+                return hist[k]
+        return None
+    for a in acts:
+        m = a.get("message") or ""
+        ts = (a.get("created_ts") or "")[:10]
+        mc = _SP_DONE_RE.match(m)
+        if mc:
+            from_name, carried = mc.group(1), bool(mc.group(3))
+            e = open_for(from_name)
+            if e: e["outcome"] = "carried-over" if carried else "returned-to-backlog"
+            else: hist.append({"sprintId": name_to_id(from_name), "addedAt": "",
+                               "outcome": "carried-over" if carried else "returned-to-backlog"})
+            if carried:
+                hist.append({"sprintId": name_to_id(mc.group(3)), "addedAt": ts, "outcome": ""})
+            continue
+        if m == _SP_REMOVED_MSG:
+            for k in range(len(hist) - 1, -1, -1):
+                if not hist[k]["outcome"]:
+                    hist[k]["outcome"] = "returned-to-backlog"; break
+            continue
+        ma = _SP_REASSIGN_RE.match(m)
+        if ma:
+            new_name = ma.group(2)
+            for h in hist:
+                if not h["outcome"] and sh_name(h["sprintId"]) != new_name:
+                    h["outcome"] = "returned-to-backlog"
+            if not open_for(new_name):
+                hist.append({"sprintId": name_to_id(new_name), "addedAt": ts, "outcome": ""})
+    return hist
+
+def _migrate_sprint_snapshots(team: str):
+    with db(team) as c:
+        srow = c.execute("SELECT value FROM config WHERE key='sprints'").fetchone()
+        if not srow:
+            return
+        try:
+            sprints = json.loads(srow["value"]) or []
+        except Exception:
+            return
+        pending = [s for s in sprints if isinstance(s, dict)
+                   and s.get("state") == "Completed" and not s.get("snapshot")]
+        if not pending:
+            return
+        items = {}
+        for r in c.execute("SELECT id, data FROM projects").fetchall():
+            try:
+                p = json.loads(r["data"]); p["id"] = r["id"]; items[r["id"]] = p
+            except Exception:
+                continue
+        acts_by_item = {}
+        for r in c.execute("SELECT item_id, message, created_ts FROM activities "
+                           "WHERE message LIKE 'Sprint planning:%' ORDER BY created_ts").fetchall():
+            acts_by_item.setdefault(r["item_id"], []).append(
+                {"message": r["message"], "created_ts": r["created_ts"] or ""})
+        by_name = {(s.get("name") or ""): s.get("id") for s in sprints if isinstance(s, dict)}
+        name_of = {s.get("id"): (s.get("name") or "") for s in sprints if isinstance(s, dict)}
+        hist_by_item = {pid: _reconstruct_sprint_history(acts, by_name, name_of)
+                        for pid, acts in acts_by_item.items()}
+
+        def snap_item(pid, outcome):
+            p = items.get(pid, {})
+            return {"id": pid, "key": p.get("itemKey") or "", "name": p.get("name") or "",
+                    "points": p.get("storyPoints"), "outcome": outcome or "completed"}
+
+        for s in pending:
+            sid = s.get("id"); rows = []; seen = set()
+            # (1) reconstructed memberships that reference this sprint (carried / backlog)
+            for pid, hist in hist_by_item.items():
+                for h in hist:
+                    if h.get("sprintId") == sid:
+                        rows.append(snap_item(pid, h.get("outcome"))); seen.add(pid); break
+            # (2) current members still tagged to this sprint (finished items that stayed)
+            for pid, p in items.items():
+                if pid not in seen and p.get("sprintId") == sid:
+                    rows.append(snap_item(pid, "completed")); seen.add(pid)
+            s["snapshot"] = {"takenAt": s.get("endDate") or "", "reconstructed": True, "items": rows}
+        c.execute("UPDATE config SET value=? WHERE key='sprints'", (json.dumps(sprints),))
+    print(f"[Migration] {team}: backfilled {len(pending)} sprint snapshot(s)")
+
 # ── Boot: ensure 'development' team exists, migrate legacy DB if needed ────────
 def boot():
     os.makedirs(TENANTS_DIR, exist_ok=True)
@@ -1037,7 +1138,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.38.1"
+APP_VERSION = "4.39.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3516,7 +3617,7 @@ def put_boards(body = Body(...), auth: dict = Depends(require_auth)):
 # Additive, /beta-only. Sprints are stored in the config table under key 'sprints'.
 # Items reference a sprint via their existing sprintId field. Any logged-in user
 # may manage sprints for now (require_auth). Production is untouched.
-_SPRINT_STATES = {"Planned", "Active", "Completed"}
+_SPRINT_STATES = {"Planned", "Active", "Completed", "Discarded"}
 
 def _read_sprints(team: str):
     with db(team) as c:
@@ -3550,7 +3651,16 @@ def put_sprints(body = Body(...), auth: dict = Depends(require_auth)):
         c.execute("INSERT INTO config(key,value) VALUES('sprints',?) "
                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                   (json.dumps(sprints),))
-    write_audit(team, "beta:sprints", auth["username"], changes={"count": len(sprints)})
+    # Enhanced audit (Planning Stage 1): callers may pass an optional {reason, detail}
+    # so a sprint edit / discard is attributable and prominent (e.g. an Active-sprint
+    # date change). Falls back to the coarse count for a plain save.
+    changes = {"count": len(sprints)}
+    if isinstance(body, dict):
+        reason = (body.get("reason") or "").strip()
+        detail = (body.get("detail") or "").strip()
+        if reason: changes["reason"] = reason[:200]
+        if detail: changes["detail"] = detail[:500]
+    write_audit(team, "beta:sprints", auth["username"], changes=changes)
     return {"sprints": sprints}
 
 # ── Beta: Releases (shared, global per team) ──────────────────────────────────
