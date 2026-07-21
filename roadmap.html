@@ -2116,7 +2116,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.40.1';
+const APP_VERSION = '4.41.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16438,6 +16438,9 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-nudge-acts button { background:none; border:none; padding:0; font:inherit; font-size:12px; font-weight:700; color:inherit; text-decoration:underline; cursor:pointer; }
   .frz-beta .frz-nudge-acts button:hover { opacity:.75; }
   .frz-beta .frz-sprint-modal-warn { margin-top:12px; }
+  .frz-beta .frz-pane-board { font-size:12px; padding:4px 10px; }
+  .frz-beta .frz-sprint-closed { padding:44px 24px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:14px; }
+  .frz-beta .frz-sprint-closed-msg { font-size:13px; color:var(--frz-text-muted); max-width:440px; line-height:1.5; }
   /* Releases tab (Feature C) */
   .frz-beta .frz-rel-wrap { display:flex; flex-direction:column; gap:10px; }
   .frz-beta .frz-rel-top { display:flex; justify-content:flex-end; }
@@ -17059,7 +17062,7 @@ if ('serviceWorker' in navigator) {
   };
   var CFG = {
     gantt:    { chips:['owner','assignee','type','status'], extra:[], opts:['groupby','legend','capacity'] },   // Stage 2: +Assignee (List's chip order)
-    kanban:   { chips:['owner','assignee','type','status'], extra:[], opts:['hideEmpty'] },                    // Stage 2: +Assignee +Status
+    kanban:   { chips:['owner','assignee','type','status'], extra:['sprint'], opts:['hideEmpty'] },             // Stage 2: +Assignee +Status · Stage 3: +Sprint (optional, via + Filter)
     list:     { chips:['owner','assignee','type','status'], extra:[], opts:['columns','export'] },
     planning: { chips:['owner','status'],                   extra:['type','assignee'], opts:[] },
     dashboard:{ chips:['owner','range'],                    extra:[], opts:[] },
@@ -17075,6 +17078,7 @@ if ('serviceWorker' in navigator) {
   // Sprint lifecycle icons (shared by the Sprints-tab row + the Plan-tab pane header)
   var _SPRINT_PEN='<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
   var _SPRINT_TRASH='<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
+  var _SPRINT_BOARD='<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="10" rx="1"/><rect x="17" y="4" width="4" height="13" rx="1"/></svg>';
   // Stale-sprint test (Planning Stage 1.1): a sprint whose end date is before today (MT via todayStr).
   function _sprintStale(sp){ return !!(sp && sp.endDate && sp.endDate < todayStr()); }
   // Sprints (non-discarded, excluding `id`) whose [start,end] overlaps [s,e] -> names for the modal warning.
@@ -17082,6 +17086,14 @@ if ('serviceWorker' in navigator) {
     if(!s || !e) return [];
     return _sprints.filter(function(x){ return x.id!==id && x.state!=='Discarded' && x.startDate && x.endDate && x.startDate<=e && x.endDate>=s; }).map(function(x){ return x.name; });
   }
+  // Stage 3: the Kanban sprint scope. Only Planned/Active sprints scope a board; a
+  // completed/discarded/unknown id is "active but invalid" -> the board shows a notice.
+  function _sprintFilterObj(){ return state.sprintFilter ? sprintById(state.sprintFilter) : null; }
+  function _sprintFilterActive(){ return !!state.sprintFilter; }
+  function _sprintFilterValid(){ var s=_sprintFilterObj(); return !!(s && (s.state==='Planned' || s.state==='Active')); }
+  function _sprintScopable(sp){ return !!(sp && (sp.state==='Planned' || sp.state==='Active')); }   // eligible for "View on board"
+  // Stage 3b: jump to a sprint-scoped Kanban, preserving the rail's project scope (default board).
+  function _viewSprintOnBoard(id){ var u=new URLSearchParams(_frzCarryQS(false).replace(/^\?/,'')); u.set('sprint', id); navigate('/kanban?'+u.toString(), false); }
   // Shared date validation + overlap warning (used by BOTH the edit and create modals).
   function _sprintDateError(s, e){ return (s && e && e<=s) ? 'End date must be after the start date.' : ''; }
   function _sprintOverlapWarn(warnEl, id, sEl, eEl){
@@ -17144,6 +17156,7 @@ if ('serviceWorker' in navigator) {
   var _boards = [], _betaHideEmpty = false, _sprints = [], _releases = [], _origRenderPlanning = null;
   var state = {
     view:'gantt', collapsed:false, project:'__all__', board:'__all__', planTab:'plan',
+    sprintFilter:'',   // Stage 3: Kanban sprint scope (URL ?sprint=), rides the shared filter machinery
     saved:[], onItem:false, itemId:null, pop:null, itemFromApp:false,
     panelId:null,  // List detail panel: open item id (URL ?panel=), List view only
     activeSavedId:null   // Fix 1: the saved filter the user CLICKED (highlight anchors here, not URL-match)
@@ -17665,17 +17678,23 @@ if ('serviceWorker' in navigator) {
     var fmt = function(d){ if(!d) return '…'; var x=new Date(d+'T00:00:00'); return x.toLocaleDateString('en-US',{month:'short',day:'numeric'}); };
     return { active:true, value: fmt(f)+' – '+fmt(t) };
   }
+  function sprintState(){
+    if(!state.sprintFilter) return { active:false, value:'All' };
+    var s=_sprintFilterObj();
+    return { active:true, value: s ? s.name : 'unknown' };
+  }
   function chipHTML(key){
-    var st = (key==='range') ? rangeState() : chipState(key);
-    var label = (key==='range') ? 'Range' : CHIPS[key].label;
+    var st = (key==='range') ? rangeState() : (key==='sprint') ? sprintState() : chipState(key);
+    var label = (key==='range') ? 'Range' : (key==='sprint') ? 'Sprint' : CHIPS[key].label;
     return '<button class="frz-chip '+(st.active?'is-active':'')+'" data-chip="'+key+'">'+
       '<span class="frz-chip-label">'+label+'</span><span class="frz-chip-value">'+esc(st.value)+'</span>'+
       (st.active ? '<span class="frz-chip-clear" data-clear="'+key+'" role="button" aria-label="Clear '+label+' filter">×</span>'
                  : IC.caret) + '</button>';
   }
   function anyActive(view){
+    if(view==='kanban' && sprintState().active) return true;   // Stage 3: sprint scope counts even when active only via URL (not added via + Filter)
     return CFG[view].chips.concat(_extraActive(view)).some(function(k){
-      return (k==='range'? rangeState().active : chipState(k).active);
+      return (k==='range'? rangeState().active : k==='sprint'? sprintState().active : chipState(k).active);
     });
   }
   var _added = {}; // view -> [extra chip keys added via + Filter]
@@ -17699,6 +17718,9 @@ if ('serviceWorker' in navigator) {
     if (state.onItem) { bar.innerHTML=''; return; }
     var view = state.view, cfg = CFG[view];
     var keys = cfg.chips.concat(_added[view]||[]);
+    // Stage 3: the sprint filter is an optional (+ Filter) chip, but it must also appear when
+    // active from a cold-loaded ?sprint= URL even if the user never clicked + Filter.
+    if (view==='kanban' && state.sprintFilter && keys.indexOf('sprint')<0) keys.push('sprint');
     var html = _frzTopViewControl() + keys.map(chipHTML).join('');   // Stage 3: segmented view switcher (shared views only)
     html += '<button class="frz-chip frz-chip--ghost" data-addfilter="1"><svg viewBox="0 0 12 12"><path d="M6 2v8M2 6h8"/></svg> Filter</button>';
     if (anyActive(view)){
@@ -17717,8 +17739,10 @@ if ('serviceWorker' in navigator) {
     var view=state.view;
     CFG[view].chips.concat(_added[view]||[]).forEach(function(k){
       if(k==='range'){ var ff=document.getElementById('filterFrom'), ft=document.getElementById('filterTo'); if(ff){ff.value='';} if(ft){ft.value='';} }
+      else if(k==='sprint'){ state.sprintFilter=''; }
       else if(CHIPS[k]) applyPanel(CHIPS[k].panel, null);
     });
+    if(view==='kanban') state.sprintFilter='';   // Stage 3: clear the sprint scope even when it was active only via URL (not in _added)
     rerender(); renderBar(); renderRail(); syncURL(true);
   }
   function optHTML(o){
@@ -17792,6 +17816,15 @@ if ('serviceWorker' in navigator) {
     if (state.project==='__all__') applyPanel('productDropPanel', null);
     else applyPanel('productDropPanel', [state.project]);
   }
+  // Stage 3c: the view title incl. board + sprint suffixes. Refreshed on every syncURL so a
+  // LIVE sprint chip change (picker/clear, which don't call setView) updates the title too.
+  function _frzViewTitle(){
+    var view=state.view, t=VIEW_LABEL[view]||view;
+    if(view==='kanban' && state.board && state.board!=='__all__'){ var b=activeBoard(); if(b) t+=' · '+b.name; }
+    if(view==='kanban' && state.sprintFilter){ var s=_sprintFilterObj(); if(s) t+=' · '+s.name; }
+    return t;
+  }
+  function _frzRefreshTitle(){ var left=document.getElementById('frzLeft'); if(!left||state.onItem) return; var t=left.querySelector('.frz-title'); if(t) t.textContent=_frzViewTitle(); }
   function syncURL(replace){
     if (state.onItem) return;
     var params = new URLSearchParams();
@@ -17802,10 +17835,12 @@ if ('serviceWorker' in navigator) {
         if(f) params.set('from',f); if(t) params.set('to',t);
         return;
       }
+      if (k==='sprint'){ if(state.sprintFilter) params.set('sprint', state.sprintFilter); return; }   // Stage 3
       var sel = CHIPS[k].get();
       if (sel && sel.length) params.set(CHIPS[k].param, sel.join(','));
     });
     if (view==='kanban' && state.board && state.board!=='__all__') params.set('board', state.board);  // board is URL state
+    if (view==='kanban' && state.sprintFilter) params.set('sprint', state.sprintFilter);  // Stage 3: sprint scope (self-serializes even when not added via + Filter, e.g. cold load)
     if (view==='list' && state.panelId!=null) params.set('panel', state.panelId);   // List detail panel is URL state
     if (view==='planning' && state.planTab==='releases' && state.releaseId) params.set('release', state.releaseId);  // Stage 1b: expanded release is URL state (ids are strings)
     // Stage 1 (+ all-projects fix): project is global URL state, emitted ALWAYS incl
@@ -17823,8 +17858,9 @@ if ('serviceWorker' in navigator) {
     if (_FRZ_SHARED_VIEWS[view]){
       var _cur=new URLSearchParams(location.search);
       var _exposed=CFG[view].chips.concat(_added[view]||[]);
-      ['owner','type','status','assignee'].forEach(function(pk){
+      ['owner','type','status','assignee','sprint'].forEach(function(pk){   // Stage 3: sprint carries across shared views too (List extension later is free)
         if(params.has(pk) || _exposed.indexOf(pk)>=0) return;   // exposed chip → self-serializes; cleared stays cleared
+        if(pk==='sprint' && view==='kanban') return;   // kanban self-serializes sprint (explicit emit); never resurrect a just-cleared one
         var cv=_cur.get(pk); if(cv) params.set(pk, cv);
       });
     }
@@ -17839,6 +17875,7 @@ if ('serviceWorker' in navigator) {
     var st = { frzView:view };
     if (replace) history.replaceState(st,'',url); else history.pushState(st,'',url);
     _frzRefreshActiveSaved();   // Stage 3: single chokepoint - re-derive saved highlight + crumb + top-control from the just-written URL (match-and-drop)
+    _frzRefreshTitle();         // Stage 3c: keep the board/sprint title suffix in sync on live filter changes
   }
   function applyURLToFilters(view, qp){
     // Stage 1 (+ all-projects fix): a PRESENT project param is authoritative (incl
@@ -17848,6 +17885,9 @@ if ('serviceWorker' in navigator) {
     state.project = qp.has('project') ? (qp.get('project') || '__all__') : (ls(projKey()) || '__all__');
     // board is URL state for the kanban view (navigation scope, not a chip)
     if (view==='kanban') state.board = qp.get('board') || _defaultBoard();   // Stage 4: fall back to the user's default board
+    // Stage 3: sprint scope (seed BEFORE syncURL so a cold-loaded ?sprint= isn't stripped).
+    // Seed on any view so it survives a round-trip; only Kanban applies + emits it today.
+    state.sprintFilter = qp.get('sprint') || '';
     // Stage 1: apply ONLY the shared chips this view EXPOSES; an un-exposed shared param
     // rides along in the URL (no chip shown, no filter) until Stage 2 adds its chip+renderer.
     // (The prior auto-add-extra-chip is intentionally gated here for Stage 1.)
@@ -18651,9 +18691,8 @@ if ('serviceWorker' in navigator) {
     var vsel = document.getElementById('viewSelect'); if (vsel) vsel.value = view;
     _call('initViewSelect');        // sets viewMode + mounts/renders the production view
     applyChromeHiding();            // re-hide chrome that applyViewMode may reveal
-    // top bar - Kanban title shows the active board name
-    var titleTxt = VIEW_LABEL[view];
-    if (view==='kanban' && state.board && state.board!=='__all__'){ var _b=activeBoard(); if(_b) titleTxt += ' · '+_b.name; }
+    // top bar - Kanban title shows the active board name (+ sprint suffix, Stage 3c)
+    var titleTxt = _frzViewTitle();
     document.getElementById('frzLeft').innerHTML =
       _titleHtml(view, titleTxt)+
       '<span class="frz-crumbs">'+esc(_frzCrumbText())+'</span>';   // Stage 3: project + active saved-filter name
@@ -19135,7 +19174,7 @@ if ('serviceWorker' in navigator) {
   function _frzFilterQS(){
     var allow={ project:1, cowner:1, cuser:1, ctype:1, ccap:1 };   // Stage 1 project scope + Stage 5a calendar filter chips (captured only when present in the URL, i.e. on the calendar)
     Object.keys(CHIPS).forEach(function(k){ allow[CHIPS[k].param]=1; });
-    allow.from=1; allow.to=1; allow.board=1;
+    allow.from=1; allow.to=1; allow.board=1; allow.sprint=1;   // Stage 3: sprint scope captured by saved filters
     var src=new URLSearchParams(location.search), out=new URLSearchParams();
     Object.keys(allow).forEach(function(k){ var v=src.get(k); if(v!=null && v!=='') out.set(k, v); });
     var s=out.toString(); return s ? ('?'+s) : '';
@@ -19146,7 +19185,7 @@ if ('serviceWorker' in navigator) {
   // → project only (for non-shared targets like Planning/Dashboard, where chips don't travel).
   var _FRZ_SHARED_VIEWS={ list:1, kanban:1, gantt:1 };
   function _frzCarryQS(includeChips){
-    var keys = includeChips ? ['project','owner','type','status','assignee'] : ['project'];
+    var keys = includeChips ? ['project','owner','type','status','assignee','sprint'] : ['project'];   // Stage 3: carry sprint across shared views
     var src=new URLSearchParams(location.search), out=new URLSearchParams();
     keys.forEach(function(k){ var v=src.get(k); if(v!=null && v!=='') out.set(k, v); });
     var s=out.toString(); return s ? ('?'+s) : '';
@@ -19252,6 +19291,7 @@ if ('serviceWorker' in navigator) {
   }
   function chipMenu(key, anchor){
     if (key==='range') return rangeMenu(anchor);
+    if (key==='sprint') return sprintMenu(anchor);
     var def = CHIPS[key];
     var panel = document.getElementById(def.panel);
     if (!panel) return;
@@ -19283,12 +19323,27 @@ if ('serviceWorker' in navigator) {
       row.appendChild(a); row.appendChild(b); pop.appendChild(row);
     });
   }
+  // Stage 3: sprint picker - None + the Planned/Active sprints (Completed/Discarded never scope).
+  function sprintMenu(anchor){
+    openPop(anchor, function(pop){
+      function opt(label, id){
+        var b=document.createElement('button'); b.className='frz-pop-opt'; b.textContent=label;
+        if((state.sprintFilter||'')===id) b.style.fontWeight='800';
+        b.addEventListener('click', function(){ closePop(); state.sprintFilter=id; rerender(); renderBar(); renderRail(); syncURL(true); });
+        return b;
+      }
+      pop.appendChild(opt('None (all items)', ''));
+      var list=_sprints.filter(function(s){ return s.state==='Planned' || s.state==='Active'; });
+      if(!list.length){ var d=document.createElement('div'); d.className='frz-pop-opt'; d.style.color='var(--frz-text-muted)'; d.textContent='No Planned or Active sprints'; pop.appendChild(d); }
+      list.forEach(function(s){ pop.appendChild(opt(s.name+(s.state==='Active'?' · Active':''), s.id)); });
+    });
+  }
   function addFilterMenu(anchor){
     var view=state.view; var avail = CFG[view].extra.filter(function(k){ return (CFG[view].chips.concat(_added[view]||[])).indexOf(k)<0; });
     openPop(anchor, function(pop){
       if (!avail.length){ var d=document.createElement('div'); d.className='frz-pop-opt'; d.textContent='No more filters for this view'; pop.appendChild(d); return; }
       avail.forEach(function(k){
-        var b=document.createElement('button'); b.className='frz-pop-opt'; b.textContent=CHIPS[k]?CHIPS[k].label:k;
+        var b=document.createElement('button'); b.className='frz-pop-opt'; b.textContent=CHIPS[k]?CHIPS[k].label:(k==='sprint'?'Sprint':k);
         b.addEventListener('click', function(){ _added[view]=_added[view]||[]; _added[view].push(k); closePop(); renderBar(); });
         pop.appendChild(b);
       });
@@ -19332,6 +19387,10 @@ if ('serviceWorker' in navigator) {
   function _frzSyncSearchMode(){
     var fs=document.getElementById('frzSearch'), sb=document.getElementById('frzSearchResults'); if(!fs) return;
     if(sb) sb.hidden=true;
+    // Fix: the top-bar box is inert on Planning (the Plan-tab backlog has its own in-pane
+    // "Search backlog…"; Sprints/Releases don't use it). Hide the whole slot there rather
+    // than show a control that does nothing.
+    var slot=document.getElementById('frzSearchSlot'); if(slot) slot.style.display = (state.view==='planning') ? 'none' : '';
     if(_searchGlobal()){ fs.placeholder='Search items…'; fs.value=''; }
     else { fs.placeholder='Filter items…'; var prod=document.getElementById('itemSearch'); fs.value=(prod&&prod.value)||''; }
   }
@@ -19392,7 +19451,7 @@ if ('serviceWorker' in navigator) {
         var _bcs=_bcu.toString(); navigate('/kanban'+(_bcs?('?'+_bcs):''), false); return;
       }
       var clr = e.target.closest && e.target.closest('[data-clear]');
-      if (clr){ e.stopPropagation(); var k=clr.getAttribute('data-clear'); if(k==='range'){ var ff=document.getElementById('filterFrom'),ft=document.getElementById('filterTo'); if(ff){ff.value='';ff.dispatchEvent(new Event('change'));} if(ft){ft.value='';ft.dispatchEvent(new Event('change'));} } else applyPanel(CHIPS[k].panel,null); rerender(); renderBar(); renderRail(); syncURL(true); return; }
+      if (clr){ e.stopPropagation(); var k=clr.getAttribute('data-clear'); if(k==='range'){ var ff=document.getElementById('filterFrom'),ft=document.getElementById('filterTo'); if(ff){ff.value='';ff.dispatchEvent(new Event('change'));} if(ft){ft.value='';ft.dispatchEvent(new Event('change'));} } else if(k==='sprint'){ state.sprintFilter=''; } else applyPanel(CHIPS[k].panel,null); rerender(); renderBar(); renderRail(); syncURL(true); return; }
       var chip = e.target.closest && e.target.closest('[data-chip]');
       if (chip){ chipMenu(chip.getAttribute('data-chip'), chip); return; }
       if (e.target.closest && e.target.closest('[data-addfilter]')){ addFilterMenu(e.target.closest('[data-addfilter]')); return; }
@@ -19691,7 +19750,9 @@ if ('serviceWorker' in navigator) {
     var fDev=getSelectedDevs(), fProd=getSelectedProducts(), fType=getSelectedTypes(), fSt=getSelectedStatuses(), fAsg=getSelectedAssignees();
     var ownerScope=_call('getCurrentOwnerFilter');
     var searchQ=((document.getElementById('itemSearch')||{}).value||'').trim().toLowerCase();
+    var sprintScope=(state.view==='kanban' && _sprintFilterValid()) ? state.sprintFilter : '';   // Stage 3: only a valid (Planned/Active) sprint narrows; closed/unknown -> notice, not empty board
     return (_val('projects',[])||[]).filter(function(p){
+      if(sprintScope && (p.sprintId||'')!==sprintScope) return false;
       if(p.hidden && _isRolledUpChild(p)) return false;   // hidden children roll up; hidden top-level shows on the board
       if(fDev && fDev.indexOf(p.dev||'')<0) return false;
       if(fProd && fProd.indexOf(p.product||'')<0) return false;
@@ -19745,6 +19806,19 @@ if ('serviceWorker' in navigator) {
   }
   function renderBetaKanban(){
     var inner=document.getElementById('kanbanInner'); if(!inner) return;
+    // Stage 3: a ?sprint= pointing at a Completed/Discarded/unknown sprint shows a notice
+    // with a clear action rather than silently rendering an empty board.
+    if(state.sprintFilter && !_sprintFilterValid()){
+      var _so=_sprintFilterObj();
+      var _msg=_so ? ('Sprint "'+esc(_so.name)+'" is '+esc((_so.state||'').toLowerCase())+' - it no longer scopes a board.')
+                   : 'That sprint is unknown (it may have been deleted).';
+      inner.innerHTML='<div class="frz-sprint-closed"><div class="frz-sprint-closed-msg">'+_msg+
+        (_so && _so.state==='Completed' ? ' Its final contents live on the Sprints tab.' : '')+'</div>'+
+        '<button class="frz-newitem" id="frzSprintClearScope">Show all items</button></div>';
+      var cb=document.getElementById('frzSprintClearScope');
+      if(cb) cb.addEventListener('click', function(){ state.sprintFilter=''; rerender(); renderBar(); renderRail(); syncURL(true); });
+      return;
+    }
     var items=_kanbanFilteredItems();
     var board=activeBoard();
     if(!board){
@@ -20134,6 +20208,9 @@ if ('serviceWorker' in navigator) {
     // 1.1b: pane-header Edit (Planned + Active) - same modal as the Sprints-tab row.
     var editBtn = (sprint.state==='Planned' || sprint.state==='Active')
       ? '<button class="frz-sprint-act" id="frzPaneEdit" title="Edit sprint">'+_SPRINT_PEN+'</button>' : '';
+    // Stage 3b: "View on board" (Planned + Active) - jump to a sprint-scoped Kanban.
+    var boardBtn = (sprint.state==='Planned' || sprint.state==='Active')
+      ? '<button class="frz-viewopt frz-pane-board" id="frzPaneBoard">View on board</button>' : '';
     // 1.1a: stale-sprint nudge (dates fully in the past) with inline actions.
     var nudge = '';
     if(_sprintStale(sprint)){
@@ -20146,7 +20223,7 @@ if ('serviceWorker' in navigator) {
       }
     }
     var cards = items.length ? items.map(sprintCard).join('') : '<div class="frz-plan-empty">Drag items here, or use “Add →” in the backlog.</div>';
-    return '<div class="frz-plan-pane-hd">'+esc(sprint.name)+' '+badge+'<span class="frz-spacer"></span>'+editBtn+actions+'</div>'+
+    return '<div class="frz-plan-pane-hd">'+esc(sprint.name)+' '+badge+'<span class="frz-spacer"></span>'+boardBtn+editBtn+actions+'</div>'+
       '<div class="frz-sprint-meta">'+(sprint.startDate?fmtD(sprint.startDate):'-')+' → '+(sprint.endDate?fmtD(sprint.endDate):'-')+
         (sprint.goal?'<div class="frz-sprint-goal" title="'+escA(sprint.goal)+'">'+esc(sprint.goal)+'</div>':'')+
         '<div class="frz-sprint-cap">'+items.length+' items · '+pts+' pts · '+est+'w · '+done+'/'+items.length+' done</div></div>'+
@@ -20179,6 +20256,7 @@ if ('serviceWorker' in navigator) {
     var cs=document.getElementById('frzCompleteSprint'); if(cs) cs.addEventListener('click', completeSprint);
     // 1.1b pane-header Edit + 1.1a stale-nudge inline actions (all reuse the existing flows)
     var pe=document.getElementById('frzPaneEdit'); if(pe && sprint) pe.addEventListener('click', function(){ editSprint(sprint.id); });
+    var pbd=document.getElementById('frzPaneBoard'); if(pbd && sprint) pbd.addEventListener('click', function(){ _viewSprintOnBoard(sprint.id); });
     var ne=document.getElementById('frzNudgeEdit'); if(ne && sprint) ne.addEventListener('click', function(){ editSprint(sprint.id); });
     var na=document.getElementById('frzNudgeStart'); if(na) na.addEventListener('click', startSprint);
     var nd=document.getElementById('frzNudgeDiscard'); if(nd && sprint) nd.addEventListener('click', function(){ discardSprint(sprint.id); });
@@ -20571,6 +20649,7 @@ if ('serviceWorker' in navigator) {
       var st=sprintStats(sp);
       var badge='<span class="frz-sprint-badge" style="'+(SPRINT_BADGE[sp.state]||'')+'">'+esc(sp.state)+'</span>';
       var acts='';
+      if(sp.state==='Planned' || sp.state==='Active') acts+='<button class="frz-sprint-act" type="button" data-boardsprint="'+escA(sp.id)+'" title="View on board">'+_SPRINT_BOARD+'</button>';
       if(sp.state==='Planned' || sp.state==='Active') acts+='<button class="frz-sprint-act" type="button" data-editsprint="'+escA(sp.id)+'" title="Edit sprint">'+_SPRINT_PEN+'</button>';
       if(sp.state==='Planned') acts+='<button class="frz-sprint-act" type="button" data-discardsprint="'+escA(sp.id)+'" title="Discard sprint">'+_SPRINT_TRASH+'</button>';
       return '<div class="frz-tbl-row'+(sp.state==='Active'?' is-active':'')+'" data-sprintrow="'+escA(sp.id)+'">'+
@@ -20601,6 +20680,7 @@ if ('serviceWorker' in navigator) {
     });
     host.querySelectorAll('[data-editsprint]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); editSprint(b.getAttribute('data-editsprint')); }); });
     host.querySelectorAll('[data-discardsprint]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); discardSprint(b.getAttribute('data-discardsprint')); }); });
+    host.querySelectorAll('[data-boardsprint]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); _viewSprintOnBoard(b.getAttribute('data-boardsprint')); }); });
   }
 
   // ════════ Releases tab (Feature C) ════════
