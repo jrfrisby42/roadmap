@@ -1037,7 +1037,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.38.0"
+APP_VERSION = "4.38.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2935,12 +2935,33 @@ def _bucket_item_owner(c, item: dict, old: dict = None, client_owner_explicit: b
         return True
     return False
 
-def _bucket_assignment_owner(c, a: dict) -> None:
-    """Fill a blank assignment owner from the assignee's pod (create + update)."""
-    if not a.get("owner") and a.get("username"):
-        pod = _pod_for_user(c, a["username"])
-        if pod:
-            a["owner"] = pod
+def _bucket_assignment_owner(c, a: dict, old: dict = None) -> None:
+    """Bucket an assignment's owner from the assignee's pod (config: user.ownerFilter).
+      - Fill a blank owner from the assignee's pod (create + update).
+      - When the assignee CHANGES on an update, FOLLOW it: move the owner to the new
+        assignee's pod - but only when the owner was still tracking the PREVIOUS
+        assignee's pod (i.e. it was auto-derived, not deliberately set to something
+        else). A hand-picked owner that differs from the old assignee's pod is left
+        alone. (Items follow more eagerly, but the assignment editor always sends an
+        owner, so this pod-match test is the assignment-appropriate 'wasn't explicitly
+        chosen' signal.)
+    No-op when the assignee has no pod. Never blanks an owner."""
+    user = (a.get("username") or "").strip()
+    if not user:
+        return
+    pod = _pod_for_user(c, user)
+    if not pod:
+        return
+    cur = (a.get("owner") or "").strip()
+    if not cur:
+        a["owner"] = pod
+        return
+    if old is not None:
+        old_user = (old.get("username") or "").strip()
+        if old_user and old_user != user:
+            old_pod = _pod_for_user(c, old_user)
+            if old_pod and cur == old_pod and cur != pod:
+                a["owner"] = pod
 
 @app.post("/api/projects")
 def create_project(body: dict, auth: dict = Depends(require_role("admin", "editor"))):
@@ -3733,7 +3754,12 @@ def check_assignment(body: dict = Body(...), auth: dict = Depends(require_role("
     types_by_id = {t.get("id"): t for t in _read_assignment_types(team)}
     a = _assignment_from_body(body, types_by_id)
     with db(team) as c:
-        _bucket_assignment_owner(c, a)   # match the owner the save would derive
+        _old = None
+        if body.get("id") is not None:
+            r = c.execute("SELECT username, owner FROM assignments WHERE id=?", (body["id"],)).fetchone()
+            if r:
+                _old = {"username": r["username"], "owner": r["owner"]}
+        _bucket_assignment_owner(c, a, _old)   # match the owner the save would derive
     if body.get("id") is not None:
         a["id"] = body.get("id")
     return {"warnings": _assignment_warnings(team, a)}
@@ -3803,10 +3829,11 @@ def update_assignment(aid: int, body: dict = Body(...), auth: dict = Depends(req
     a = _assignment_from_body(body, types_by_id)
     ts = datetime.now(timezone.utc).isoformat()
     with db(team) as c:
-        row = c.execute("SELECT id FROM assignments WHERE id=?", (aid,)).fetchone()
+        row = c.execute("SELECT username, owner FROM assignments WHERE id=?", (aid,)).fetchone()
         if not row:
             raise HTTPException(404, "Assignment not found")
-        _bucket_assignment_owner(c, a)   # fill a blank owner from the assignee's pod
+        # fill a blank owner from the assignee's pod, and follow a reassignment
+        _bucket_assignment_owner(c, a, {"username": row["username"], "owner": row["owner"]})
         c.execute("UPDATE assignments SET type_id=?,owner=?,username=?,start_date=?,end_date=?,"
                   "description=?,recurrence=?,notes=?,updated_ts=? WHERE id=?",
                   (a["type_id"], a["owner"], a["username"], a["start_date"], a["end_date"],
