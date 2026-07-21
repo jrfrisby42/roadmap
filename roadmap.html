@@ -2112,7 +2112,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.5';
+const APP_VERSION = '4.37.6';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -7911,7 +7911,7 @@ function populateAssigneeDrop(){
   const prevChecked = [...panel.querySelectorAll('input[type=checkbox]:not([value="all"])')].filter(c=>c.checked).map(c=>c.value);
   const names = users.map(u=>u.username);
   panel.innerHTML = `<label class="ms-opt" data-val="all"><input type="checkbox" value="all" ${prevChecked.length===0?'checked':''}> All</label>` +
-    names.map(n=>`<label class="ms-opt" data-val="${escA(n)}"><input type="checkbox" value="${escA(n)}"${prevChecked.includes(n)?' checked':''}> ${esc(n)}</label>`).join('') +
+    names.map(n=>`<label class="ms-opt" data-val="${escA(n)}"><input type="checkbox" value="${escA(n)}"${prevChecked.includes(n)?' checked':''}> ${esc(displayName(n))}</label>`).join('') +
     `<label class="ms-opt" data-val=""><input type="checkbox" value=""${prevChecked.includes('')?' checked':''}> <em style="color:var(--muted)">Unassigned</em></label>`;
   wireAssigneeDropdown();
 }
@@ -7925,7 +7925,7 @@ function wireAssigneeDropdown(){
     if(!btn) return;
     const chosen = itemCks().filter(c=>c.checked);
     if(!chosen.length || allCk()?.checked){ btn.textContent = 'All ▾'; btn.classList.remove('filtered'); }
-    else if(chosen.length === 1){ btn.textContent = (chosen[0].value || 'Unassigned') + ' ▾'; btn.classList.add('filtered'); }
+    else if(chosen.length === 1){ btn.textContent = (chosen[0].value ? displayName(chosen[0].value) : 'Unassigned') + ' ▾'; btn.classList.add('filtered'); }
     else { btn.textContent = chosen.length + ' selected ▾'; btn.classList.add('filtered'); }
   }
   if(!panel._wired){
@@ -17507,7 +17507,11 @@ if ('serviceWorker' in navigator) {
     var def = CHIPS[key]; if(!def) return { active:false, value:'All' };
     var sel = def.get();           // null = all
     if (!sel || !sel.length) return { active:false, value:'All' };
-    if (sel.length===1) return { active:true, value: (sel[0]===''?'Unassigned':sel[0]) };
+    if (sel.length===1){
+      var v1 = sel[0]==='' ? 'Unassigned' : sel[0];
+      if (key==='assignee' && sel[0]!=='') v1 = displayName(sel[0]);   // show First Last if set, else username
+      return { active:true, value: v1 };
+    }
     return { active:true, value: sel.length+' selected' };
   }
   function rangeState(){
