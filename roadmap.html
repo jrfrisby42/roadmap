@@ -2112,7 +2112,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.15';
+const APP_VERSION = '4.37.16';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16098,26 +16098,16 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-cal-body--month { flex:1; display:flex; flex-direction:column; min-height:0; }
   .frz-beta .frz-cal-body--month .frz-cal-mo { flex:1; display:flex; flex-direction:column; min-height:0; }
   .frz-beta .frz-cal-body--month .frz-cal-mo-grid { flex:1; grid-auto-rows:minmax(104px,1fr); }
-  /* Week/Timeline gutter: long names truncate instead of overflowing the 150px column */
-  .frz-beta .frz-cal-wk-user, .frz-beta .frz-cal-tl-name { overflow:hidden; }
-  .frz-beta .frz-cal-wk-user > span:not(.frz-ava), .frz-beta .frz-cal-tl-name > span:not(.frz-ava) { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .frz-beta .frz-cal-title { font-size:15px; font-weight:800; color:var(--frz-text); min-width:150px; }
   .frz-beta .frz-cal-navbtn { border:1px solid var(--frz-border); background:var(--frz-bg-elevated); color:var(--frz-text); border-radius:7px; width:30px; height:30px; cursor:pointer; font-size:16px; line-height:1; }
   .frz-beta .frz-cal-navbtn.frz-cal-today { width:auto; padding:0 12px; font-size:12px; font-weight:700; }
   .frz-beta .frz-cal-navbtn:hover { background:var(--frz-bg-app); }
-  .frz-beta .frz-cal-owner { border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-elevated); margin-bottom:12px; overflow:hidden; }
+  /* Stage 5d: band header (still used by _calBand); the old card/agenda styles are removed */
   .frz-beta .frz-cal-owner-hd { display:flex; align-items:center; justify-content:space-between; padding:11px 16px; background:var(--frz-bg-app); border-bottom:1px solid var(--frz-border); }
   .frz-beta .frz-cal-owner-nm { font-size:14px; font-weight:800; color:var(--frz-text); }
-  .frz-beta .frz-cal-owner-cap { font-size:12px; font-weight:700; color:var(--frz-text-muted); }
-  .frz-beta .frz-cal-owner-cap.frz-cal-cap-warn { color:#c0392b; }
-  .frz-beta .frz-cal-user { display:flex; align-items:flex-start; gap:12px; padding:9px 16px; border-bottom:1px solid var(--frz-border); }
-  .frz-beta .frz-cal-user:last-child { border-bottom:0; }
-  .frz-beta .frz-cal-user-nm { display:inline-flex; align-items:center; gap:7px; min-width:150px; font-size:13px; font-weight:600; color:var(--frz-text); flex:0 0 auto; }
-  .frz-beta .frz-cal-chips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
   .frz-beta .frz-cal-chip { font-size:11px; font-weight:700; padding:2px 9px; border-radius:999px; border:1px solid transparent; white-space:nowrap; }
   .frz-beta .frz-cal-chip-item { background:var(--frz-bg-app); color:var(--frz-accent); border-color:var(--frz-border); cursor:pointer; font-family:ui-monospace,Menlo,monospace; }
   .frz-beta .frz-cal-chip-item:hover { border-color:var(--frz-accent); }
-  .frz-beta .frz-cal-none { color:var(--frz-text-muted); font-size:12px; }
   .frz-beta .frz-cal-empty, .frz-beta .frz-cal-soon { padding:16px; color:var(--frz-text-muted); font-size:13px; }
   .frz-beta .frz-cal-soon { text-align:center; padding:40px 16px; }
   .frz-beta .frz-cal-newbtn { border:0; background:var(--frz-accent); color:#fff; border-radius:8px; padding:0 14px; height:32px; font-weight:700; font-size:13px; cursor:pointer; }
@@ -17744,6 +17734,7 @@ if ('serviceWorker' in navigator) {
       });
     }
     if (view==='team-calendar' && state.calDate) params.set('d', _ymdLocal(state.calDate));  // Stage 2c: displayed period
+    if (view==='team-calendar'){ var _cf=state.calFilter||{}; Object.keys(_CAL_FILTER_PARAMS).forEach(function(k){ if(_cf[k]) params.set(_CAL_FILTER_PARAMS[k], _cf[k]); }); }  // Stage 5a: filter chips in the URL
     var qs = params.toString();
     var base = '/'+view;
     if (view==='planning' && state.planTab && state.planTab!=='plan') base = '/planning/'+state.planTab;  // planning sub-tab is URL state
@@ -17902,7 +17893,16 @@ if ('serviceWorker' in navigator) {
   }
   // ── Team Calendar render (Phase 2a: Month view - Owner -> Users -> chips) ──────
   function _calShortD(ymd){ if(!ymd) return ''; var p=String(ymd).split('-'); if(p.length!==3) return ymd; return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString(undefined,{month:'short',day:'numeric'}); }
-  function _calFilterState(){ return (state.calFilter = state.calFilter || {owner:'',user:'',type:'',project:'',cap:''}); }
+  function _calFilterState(){ return (state.calFilter = state.calFilter || {owner:'',user:'',type:'',cap:''}); }   // Stage 5b: project chip removed (rail is the sole project scope)
+  // Stage 5a: calendar filter chips <-> URL. Calendar-scoped param names (c-prefixed) so they
+  // never collide with the shared-view chip params owner/type/status/assignee that _frzCarryQS
+  // carries into gantt/list/kanban - a bare `owner` here would leak into the Gantt owner chip.
+  var _CAL_FILTER_PARAMS={ owner:'cowner', user:'cuser', type:'ctype', cap:'ccap' };
+  function _calSeedFiltersFromURL(qp){
+    if(!qp) return;
+    var f=(state.calFilter=state.calFilter||{owner:'',user:'',type:'',cap:''});
+    Object.keys(_CAL_FILTER_PARAMS).forEach(function(k){ f[k]=qp.get(_CAL_FILTER_PARAMS[k])||''; });
+  }
   // Stage 2c: seed the displayed period from ?d= (YYYY-MM-DD or YYYY-MM). MUST run before
   // any syncURL emit on the team-calendar route, or the param gets stripped on cold load.
   function _calSeedDateFromURL(qp){
@@ -17953,13 +17953,13 @@ if ('serviceWorker' in navigator) {
       // Stage 3a: a ticket only makes its assignee appear (and only renders) when the item's
       // date range OVERLAPS the displayed window - otherwise every open item showed a user in
       // every period (empty-week rows). Overlap = start <= win.to && (revised||due||start) >= win.from.
-      // Stage 3.5.1: tickets honor BOTH the rail's active project scope (inScope, the shared
-      // state.project helper the other views use) AND the Project filter chip (f.project).
-      if(!f.type) projs.forEach(function(p){ if(p.dev===owner && p.assignee && !isTerminalStatus(p.status) && inScope(p) && (!f.project||p.product===f.project) && _calTicketOverlapsWin(p, win)) userSet[p.assignee]=1; });
+      // Stage 5b: tickets honor the rail's active project scope only (inScope, the shared
+      // state.project helper the other views use); the redundant Project chip is gone.
+      if(!f.type) projs.forEach(function(p){ if(p.dev===owner && p.assignee && !isTerminalStatus(p.status) && inScope(p) && _calTicketOverlapsWin(p, win)) userSet[p.assignee]=1; });
       var users=Object.keys(userSet).filter(function(u){ return !f.user || u===f.user; }).sort().map(function(u){
         return { user:u,
           assigns: winAssigns.filter(function(a){ return a.owner===owner && a.username===u && (!f.type||a.type_id===f.type); }),
-          tickets: f.type ? [] : projs.filter(function(p){ return p.dev===owner && p.assignee===u && !isTerminalStatus(p.status) && inScope(p) && (!f.project||p.product===f.project) && _calTicketOverlapsWin(p, win); }) };
+          tickets: f.type ? [] : projs.filter(function(p){ return p.dev===owner && p.assignee===u && !isTerminalStatus(p.status) && inScope(p) && _calTicketOverlapsWin(p, win); }) };
       });
       out.push({ owner:owner, baseCap:baseCap, effToday:effToday, users:users, typeById:typeById });
     });
@@ -18049,19 +18049,22 @@ if ('serviceWorker' in navigator) {
   function _calCapBreakdown(owner, ds){
     var base=_calOwnerBase(owner); if(base==null) base=1;
     var ov=(_val('_capOverrides',{})[owner]||{})[ds];
+    var note=(_val('_capOverrideNotes',{})[owner]||{})[ds];   // Stage 5c.1: shared note map (populated by loadAllCapOverrides / the admin editor)
     var det=(_val('_assignmentImpactDetail',{})[owner]||{})[ds]||[];
     var lines=['Base capacity: '+_calFmt(base)];
-    if(ov!==undefined) lines.push('Manual override: '+_calFmt(ov));
+    if(ov!==undefined) lines.push('Manual override: '+_calFmt(ov)+(note?' ('+note+')':''));
     det.forEach(function(x){ lines.push((x.username?x.username+' ':'')+x.name+': -'+_calFmt(x.impact)); });
     lines.push('Effective: '+_calFmt(getEffectiveCapacity(owner, ds)));
     return lines.join('\n');
   }
   // Capacity row (band's owner only): gutter "Capacity" label + one cell per displayed day.
+  // Stage 5e: capacity cells show the HEALTH tint even on today (a 0-capacity today reads red),
+  // so they deliberately omit the today stripe; every other cell type keeps the stripe.
   function _calCapRow(owner, dayStrs, todayStr){
     var base=_calOwnerBase(owner); if(base==null) return '';   // no configured base -> no row
     return '<div class="frz-cal-gut frz-cal-caplabel">Capacity</div>'+dayStrs.map(function(ds){
       var eff=getEffectiveCapacity(owner, ds);
-      return '<div class="frz-cal-capcell '+_calCapHealth(owner,ds,base)+(ds===todayStr?' frz-cal-is-today':'')+
+      return '<div class="frz-cal-capcell '+_calCapHealth(owner,ds,base)+
         '" title="'+escA(_calCapBreakdown(owner,ds))+'">'+_calFmt(eff)+'/'+_calFmt(base)+'</div>';
     }).join('');
   }
@@ -18095,7 +18098,7 @@ if ('serviceWorker' in navigator) {
     var mr=m.getBoundingClientRect();
     if(mr.right>window.innerWidth-8) m.style.left=Math.max(8, window.innerWidth-8-mr.width)+'px';
     m.querySelectorAll('.frz-cal-menu-item').forEach(function(it){
-      it.addEventListener('click', function(){ f[key]=it.getAttribute('data-v'); _calCloseFilterMenu(); renderCalendar(); });
+      it.addEventListener('click', function(){ f[key]=it.getAttribute('data-v'); _calCloseFilterMenu(); renderCalendar(); syncURL(true); });   // Stage 5a: filter -> URL
     });
     _calMenuEl=m;
     setTimeout(function(){ document.addEventListener('mousedown', _calMenuOutside, true); document.addEventListener('keydown', _calMenuKey, true); }, 0);
@@ -18111,13 +18114,11 @@ if ('serviceWorker' in navigator) {
     var owners=_val('developers',[])||[];
     var users=(_val('users',[])||[]).map(function(u){ return u.username; });
     var types=(_assignmentTypes||[]).slice().sort(function(a,b){ return (a.display_order||0)-(b.display_order||0); });
-    var products=(_val('products',[])||[]).map(function(p){ return (p&&p.name)||p; }).filter(Boolean);
     var typeName={}; types.forEach(function(t){ typeName[t.id]=t.name; });
-    _calFilterOpts = {
+    _calFilterOpts = {   // Stage 5b: no project chip - the rail is the sole project scope (Week tickets via inScope)
       owner:   owners.map(function(o){ return {v:o,t:o}; }),
       user:    users.map(function(u){ return {v:u,t:displayName(u)}; }),
       type:    types.map(function(t){ return {v:t.id,t:t.name}; }),
-      project: products.map(function(p){ return {v:p,t:p}; }),
       cap:     [{v:'reduced',t:'Reduced only'}]
     };
     function valText(key){
@@ -18136,17 +18137,17 @@ if ('serviceWorker' in navigator) {
         '</button>';
     }
     host.innerHTML =
-      chip('owner','Owner')+chip('user','User')+chip('type','Type')+chip('project','Project')+chip('cap','Capacity')+
-      ((f.owner||f.user||f.type||f.project||f.cap) ? '<button class="frz-chip frz-chip--ghost" id="frzCalFClear">Clear</button>' : '');
+      chip('owner','Owner')+chip('user','User')+chip('type','Type')+chip('cap','Capacity')+
+      ((f.owner||f.user||f.type||f.cap) ? '<button class="frz-chip frz-chip--ghost" id="frzCalFClear">Clear</button>' : '');
     host.querySelectorAll('[data-cf]').forEach(function(btn){
       btn.addEventListener('click', function(e){
         e.stopPropagation();   // 2d: keep the global "click outside .ms-wrap -> closeAllDropdowns" (L8530) from closing this menu on the same click that opens it
         var cl=e.target.closest('[data-cfclear]');
-        if(cl){ f[cl.getAttribute('data-cfclear')]=''; renderCalendar(); return; }
+        if(cl){ f[cl.getAttribute('data-cfclear')]=''; renderCalendar(); syncURL(true); return; }   // Stage 5a: filter -> URL
         _calOpenFilterMenu(btn, btn.getAttribute('data-cf'));
       });
     });
-    var clr=host.querySelector('#frzCalFClear'); if(clr) clr.onclick=function(){ state.calFilter={owner:'',user:'',type:'',project:'',cap:''}; renderCalendar(); };
+    var clr=host.querySelector('#frzCalFClear'); if(clr) clr.onclick=function(){ state.calFilter={owner:'',user:'',type:'',cap:''}; renderCalendar(); syncURL(true); };
   }
   // Stage 2: one shared Mon-start month grid. Shows ASSIGNMENTS only (types with
   // show_on_calendar), user-centric (owner grouping + capacity are gone on Month; those are
@@ -18876,7 +18877,7 @@ if ('serviceWorker' in navigator) {
     if (view==='kanban' && _val('isViewer', false)){ navigate('/gantt', replace); return; }   // viewers can't see Kanban
     if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
     if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
-    if (view==='team-calendar'){ state.calTab = _calTabFromURL(path, u.searchParams); _calSeedDateFromURL(u.searchParams); }   // Stage 2c: tab + period before render/syncURL
+    if (view==='team-calendar'){ state.calTab = _calTabFromURL(path, u.searchParams); _calSeedDateFromURL(u.searchParams); _calSeedFiltersFromURL(u.searchParams); }   // Stage 2c/5a: tab + period + filters before render/syncURL
     applyURLToFilters(view, u.searchParams);
     setView(view);
     if (replace) history.replaceState({frzView:view},'',url); else history.pushState({frzView:view},'',url);
@@ -18917,7 +18918,7 @@ if ('serviceWorker' in navigator) {
       // reads it. With it set, syncURL preserves ?release= and renderReleasesTab auto-expands the row.
       state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }
     if (vm[1]==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
-    if (vm[1]==='team-calendar'){ var _csp=new URLSearchParams(location.search); state.calTab = _calTabFromURL(path, _csp); _calSeedDateFromURL(_csp); }   // Stage 2c: seed tab + period BEFORE the syncURL below (or ?d= gets stripped on cold load)
+    if (vm[1]==='team-calendar'){ var _csp=new URLSearchParams(location.search); state.calTab = _calTabFromURL(path, _csp); _calSeedDateFromURL(_csp); _calSeedFiltersFromURL(_csp); }   // Stage 2c/5a: seed tab + period + filters BEFORE the syncURL below (or the params get stripped on cold load)
     applyDefaultCollapse(vm[1]);
     applyURLToFilters(vm[1], new URLSearchParams(location.search));
     setView(vm[1]);
@@ -18940,7 +18941,7 @@ if ('serviceWorker' in navigator) {
       if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
         state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }   // Stage 1b: seed before rerender (popstate doesn't syncURL, but keep symmetric + avoids a stale-expand flash)
       if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
-    if (view==='team-calendar'){ var _psp=new URLSearchParams(location.search); state.calTab = _calTabFromURL(path, _psp); _calSeedDateFromURL(_psp); }   // Stage 2c: tab + period on back/forward
+    if (view==='team-calendar'){ var _psp=new URLSearchParams(location.search); state.calTab = _calTabFromURL(path, _psp); _calSeedDateFromURL(_psp); _calSeedFiltersFromURL(_psp); }   // Stage 2c/5a: tab + period + filters on back/forward
       applyURLToFilters(view, new URLSearchParams(location.search));
       setView(view);
       if (view!=='my-home' && view!=='admin') rerender();   // My Home + Admin render themselves
@@ -19019,7 +19020,7 @@ if ('serviceWorker' in navigator) {
   // param like ?highlight/?sort) is excluded by construction, not by blacklist; and an
   // absent key (e.g. board on a List filter) simply isn't emitted.
   function _frzFilterQS(){
-    var allow={ project:1 };   // Stage 1: a saved filter also captures its project scope
+    var allow={ project:1, cowner:1, cuser:1, ctype:1, ccap:1 };   // Stage 1 project scope + Stage 5a calendar filter chips (captured only when present in the URL, i.e. on the calendar)
     Object.keys(CHIPS).forEach(function(k){ allow[CHIPS[k].param]=1; });
     allow.from=1; allow.to=1; allow.board=1;
     var src=new URLSearchParams(location.search), out=new URLSearchParams();
