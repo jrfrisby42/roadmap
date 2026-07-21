@@ -2112,7 +2112,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.12';
+const APP_VERSION = '4.37.13';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16129,35 +16129,38 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-cal-menu-item { padding:6px 12px; border-radius:6px; font-size:13px; color:var(--frz-text); cursor:pointer; white-space:nowrap; }
   .frz-beta .frz-cal-menu-item:hover { background:var(--frz-accent-soft); color:var(--frz-accent); }
   .frz-beta .frz-cal-menu-item.is-sel { color:var(--frz-accent); font-weight:600; }
-  /* Week grid (2c) */
-  .frz-beta .frz-cal-wk-wrap { overflow-x:auto; }
-  .frz-beta .frz-cal-week { width:100%; border-collapse:collapse; table-layout:fixed; }
-  .frz-beta .frz-cal-week th { font-size:11px; font-weight:700; color:var(--frz-text-muted); padding:7px 4px; text-align:center; border-bottom:1px solid var(--frz-border); }
-  .frz-beta .frz-cal-week th.frz-cal-wk-user { width:150px; text-align:left; }
-  .frz-beta .frz-cal-week td { border-bottom:1px solid var(--frz-border); border-left:1px solid var(--frz-border); padding:6px; vertical-align:top; }
-  .frz-beta .frz-cal-week td.frz-cal-wk-user { border-left:0; white-space:nowrap; }
-  .frz-beta .frz-cal-wk-user { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--frz-text); }
-  .frz-beta .frz-cal-wk-cell { min-width:80px; }
-  .frz-beta .frz-cal-wk-cell .frz-cal-chip { display:block; margin-bottom:4px; text-align:center; }
-  .frz-beta .frz-cal-week .frz-cal-wk-today { background:rgba(0,89,169,.05); }
-  /* Timeline (2c) */
-  .frz-beta .frz-cal-tl-row { display:flex; align-items:center; border-bottom:1px solid var(--frz-border); }
-  .frz-beta .frz-cal-tl-head { border-bottom:2px solid var(--frz-border); }
-  .frz-beta .frz-cal-tl-name { flex:0 0 150px; display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--frz-text); padding:7px 8px; }
-  .frz-beta .frz-cal-tl-track { position:relative; flex:1; height:28px; display:flex; }
-  .frz-beta .frz-cal-tl-head .frz-cal-tl-track { height:auto; }
-  .frz-beta .frz-cal-tl-day { flex:1; text-align:center; font-size:9px; color:var(--frz-text-muted); border-left:1px solid var(--frz-border); padding:3px 0; }
-  .frz-beta .frz-cal-tl-day.frz-cal-tl-today { color:var(--frz-accent); font-weight:800; background:rgba(0,89,169,.06); }
+  /* Stage 3.5.2: Week + Timeline each render as ONE grid. The SINGLE column-width source
+     is grid-template-columns on .frz-cal-wg / .frz-cal-tg - shared by the sticky date
+     header, every owner band, and every user row. Horizontal row borders run continuously
+     across the gutter/day boundary (same grid row = same height); the today column is one
+     aligned highlighted stripe. */
+  .frz-beta .frz-cal-wg, .frz-beta .frz-cal-tg { display:grid; border-top:1px solid var(--frz-border); --cal-gutter:170px; }
+  .frz-beta .frz-cal-wg { grid-template-columns:var(--cal-gutter) repeat(7, minmax(0,1fr)); }
+  .frz-beta .frz-cal-tg { grid-template-columns:var(--cal-gutter) repeat(var(--cal-days,31), minmax(0,1fr)); }
+  .frz-beta .frz-cal-hcell { position:sticky; top:0; z-index:3; background:var(--frz-bg-surface); border-bottom:2px solid var(--frz-border); border-left:1px solid var(--frz-border); }
+  .frz-beta .frz-cal-hcell.frz-cal-gut-hd { border-left:0; }
+  .frz-beta .frz-cal-wg .frz-cal-hcell { font-size:11px; font-weight:700; color:var(--frz-text-muted); text-align:center; padding:6px 4px; }
+  .frz-beta .frz-cal-tg .frz-cal-hcell { font-size:9px; color:var(--frz-text-muted); text-align:center; padding:4px 0; }
+  .frz-beta .frz-cal-band { grid-column:1 / -1; }   /* owner section = slim full-width band (reuses .frz-cal-owner-hd) */
+  .frz-beta .frz-cal-emptyrow { grid-column:1 / -1; padding:11px 16px; color:var(--frz-text-muted); font-size:13px; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-elevated); }
+  .frz-beta .frz-cal-gut { display:flex; align-items:center; gap:7px; padding:8px 12px; font-size:13px; font-weight:600; color:var(--frz-text); background:var(--frz-bg-elevated); border-bottom:1px solid var(--frz-border); overflow:hidden; }
+  .frz-beta .frz-cal-gut > span:not(.frz-ava) { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .frz-beta .frz-cal-wcell { border-left:1px solid var(--frz-border); border-bottom:1px solid var(--frz-border); padding:5px 6px; background:var(--frz-bg-elevated); min-width:0; }
+  .frz-beta .frz-cal-wcell .frz-cal-chip { display:block; margin-bottom:4px; text-align:center; }
+  .frz-beta .frz-cal-wcell .frz-cal-mo-more { display:block; padding:1px 0; }
+  /* Timeline track spans the day columns; gridlines + today stripe painted via inline
+     background (same fractional source as the header day cells); bars absolute over it. */
+  .frz-beta .frz-cal-track { grid-column:2 / -1; position:relative; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-elevated); }
+  .frz-beta .frz-cal-tg .frz-cal-gut { align-items:flex-start; }
   .frz-beta .frz-cal-tl-bar { position:absolute; top:5px; height:18px; border-radius:5px; font-size:10px; font-weight:700; line-height:16px; padding:0 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; box-sizing:border-box; border:1px solid transparent; }
   .frz-beta .frz-cal-tl-bar.frz-cal-chip-asg { cursor:pointer; }
-  /* Stage 3: clipped-at-month-edge continuation cues (flatten the corner + chevron) */
   .frz-beta .frz-cal-tl-bar.is-clipL { border-top-left-radius:0; border-bottom-left-radius:0; padding-left:11px; }
   .frz-beta .frz-cal-tl-bar.is-clipR { border-top-right-radius:0; border-bottom-right-radius:0; padding-right:11px; }
   .frz-beta .frz-cal-tl-bar.is-clipL::before { content:'‹'; position:absolute; left:2px; top:0; font-weight:900; opacity:.85; }
   .frz-beta .frz-cal-tl-bar.is-clipR::after { content:'›'; position:absolute; right:2px; top:0; font-weight:900; opacity:.85; }
-  .frz-beta .frz-cal-tl-track-multi { align-items:flex-start; }
-  /* Stage 3: Week cell "+N more" stacks like the chips */
-  .frz-beta .frz-cal-wk-cell .frz-cal-mo-more { display:block; padding:1px 0; }
+  /* today highlight LAST so it wins the background on header + day cells (aligned column) */
+  .frz-beta .frz-cal-is-today { background:var(--frz-accent-soft); }
+  .frz-beta .frz-cal-hcell.frz-cal-is-today { color:var(--frz-accent); font-weight:800; }
   /* Month grid (Stage 2): one shared Mon-start 7-col grid */
   .frz-beta .frz-cal-mo { border:1px solid var(--frz-border); border-top:0; border-radius:0 0 10px 10px; overflow:hidden; }
   .frz-beta .frz-cal-mo-hd { display:grid; grid-template-columns:repeat(7,1fr); background:var(--frz-bg-surface); border-bottom:1px solid var(--frz-border); }
@@ -18008,13 +18011,15 @@ if ('serviceWorker' in navigator) {
       });
     });
   }
-  function _calOwnerHd(o, canEdit){
+  // Stage 3.5.2: owner section = one slim full-width band (grid-column:1/-1), reusing the
+  // .frz-cal-owner-hd styling. No per-section date header (there is now one shared header).
+  function _calBand(o, canEdit){
     if(o.unassigned){   // Stage 1b: no capacity label, no "+" add button
-      return '<div class="frz-cal-owner-hd"><span class="frz-cal-owner-nm">Unassigned</span></div>';
+      return '<div class="frz-cal-owner-hd frz-cal-band"><span class="frz-cal-owner-nm">Unassigned</span></div>';
     }
-    var todayStr=_ymdLocal(new Date());
+    var todayStr=todayStrMT();
     var capTitle=capacityBreakdownText(o.owner, todayStr) || ('Base capacity: '+o.baseCap);
-    return '<div class="frz-cal-owner-hd"><span class="frz-cal-owner-nm">'+esc(o.owner)+'</span>'+
+    return '<div class="frz-cal-owner-hd frz-cal-band"><span class="frz-cal-owner-nm">'+esc(o.owner)+'</span>'+
       '<span style="display:inline-flex;align-items:center;gap:10px">'+
       '<span class="frz-cal-owner-cap'+((o.effToday<o.baseCap)?' frz-cal-cap-warn':'')+'" title="'+escA(capTitle)+'">Capacity today: '+o.effToday+' / '+o.baseCap+'</span>'+
       (canEdit ? '<button class="frz-cal-addbtn" data-owner="'+escA(o.owner)+'" title="Add assignment for this pool">+</button>' : '')+
@@ -18188,17 +18193,20 @@ if ('serviceWorker' in navigator) {
   // (type-color tint, no initials) AND ticket chips (neutral KEY badge) active that day,
   // capped at 2 + a "+N more" popover. Same table/header/gutter as before - only cells fill.
   var _CAL_WK_MAX=2;
+  // Stage 3.5.2: Week is ONE grid (.frz-cal-wg) - a single sticky Mon-Sun header, then owner
+  // bands + user rows, all sharing the grid's column definition. Cell content (assignment +
+  // ticket chips, cap 2 + "+N more") is unchanged from Stage 3.
   function _calWeek(body, data, win, canEdit){
     var days=[]; for(var i=0;i<7;i++) days.push(new Date(win.start.getFullYear(),win.start.getMonth(),win.start.getDate()+i));
     var dayStrs=days.map(_ymdLocal), todayStr=todayStrMT();
-    var head='<tr><th class="frz-cal-wk-user"></th>'+days.map(function(d,i){ return '<th class="'+(dayStrs[i]===todayStr?'frz-cal-wk-today':'')+'">'+d.toLocaleDateString(undefined,{weekday:'short'})+'<br>'+d.getDate()+'</th>'; }).join('')+'</tr>';
     var moreReg={}, mi=0;
-    var html='';
+    var html='<div class="frz-cal-wg"><div class="frz-cal-hcell frz-cal-gut-hd"></div>'+
+      days.map(function(d,i){ return '<div class="frz-cal-hcell'+(dayStrs[i]===todayStr?' frz-cal-is-today':'')+'">'+d.toLocaleDateString(undefined,{weekday:'short'})+'<br>'+d.getDate()+'</div>'; }).join('');
     data.forEach(function(o){
-      html+='<div class="frz-cal-owner">'+_calOwnerHd(o, canEdit)+'<div class="frz-cal-wk-wrap"><table class="frz-cal-week"><thead>'+head+'</thead><tbody>';
-      if(!o.users.length) html+='<tr><td colspan="8" class="frz-cal-empty">No one scheduled.</td></tr>';
+      html+=_calBand(o, canEdit);
+      if(!o.users.length){ html+='<div class="frz-cal-emptyrow">No one scheduled.</div>'; return; }
       o.users.forEach(function(u){
-        html+='<tr><td class="frz-cal-wk-user">'+avatarHTML(u.user,18)+'<span title="'+escA(displayName(u.user))+'">'+esc(displayName(u.user))+'</span></td>';
+        html+='<div class="frz-cal-gut">'+avatarHTML(u.user,18)+'<span title="'+escA(displayName(u.user))+'">'+esc(displayName(u.user))+'</span></div>';
         dayStrs.forEach(function(ds){
           var asgs=u.assigns.filter(function(a){ return _calMoTypeVisible(o.typeById[a.type_id]) && (a.start_date||'')<=ds && (a.end_date||a.start_date||'')>=ds; });
           var tkts=(u.tickets||[]).filter(function(p){ return _calTicketCoversDay(p, ds); });
@@ -18206,32 +18214,40 @@ if ('serviceWorker' in navigator) {
           var cell='';
           entries.slice(0,_CAL_WK_MAX).forEach(function(e){ cell += e.k==='a' ? _calAsgChip(e.a,o.typeById,canEdit) : _calTicketChip(e.p); });
           if(entries.length>_CAL_WK_MAX){ var id='wk'+(mi++); moreReg[id]={ds:ds, entries:entries, typeById:o.typeById}; cell+='<button class="frz-cal-mo-more frz-cal-wk-more" data-wkmore="'+id+'">+'+(entries.length-_CAL_WK_MAX)+' more</button>'; }
-          html+='<td class="frz-cal-wk-cell'+(ds===todayStr?' frz-cal-wk-today':'')+'">'+cell+'</td>';
+          html+='<div class="frz-cal-wcell'+(ds===todayStr?' frz-cal-is-today':'')+'">'+cell+'</div>';
         });
-        html+='</tr>';
       });
-      html+='</tbody></table></div></div>';
     });
+    html+='</div>';
     body.innerHTML = data.length ? html : '<div class="frz-cal-empty">No owners match.</div>';
     body.querySelectorAll('.frz-cal-wk-more').forEach(function(btn){
       btn.addEventListener('click', function(e){ e.stopPropagation(); var r=moreReg[btn.getAttribute('data-wkmore')]; if(r) _calEntriesPop(btn, r.ds, r.entries, r.typeById, canEdit); });
     });
   }
-  // Stage 3b: Timeline = the availability view. Assignment SPAN BARS across the month, one
-  // bar per assignment, lane-stacked when a user's assignments overlap. NO tickets, ever.
-  // Day columns are fractional (flex:1 header + % bars = 100%/daysInMonth, one width source),
-  // so the whole month fits the container at any width. Bars clip at the month edge with a
-  // chevron cue when the assignment continues beyond the visible month.
+  // Stage 3b/3.5.2: Timeline = the availability view, now ONE grid (.frz-cal-tg): a single
+  // sticky day-number header, then owner bands + user rows. Each row = gutter cell + a track
+  // spanning the day columns (grid-column:2/-1); assignment SPAN BARS are absolute over the
+  // track (% of the same day-column width the header uses - one source). Vertical gridlines +
+  // today stripe are painted on the track via inline background (same fractional geometry as
+  // the header cells), so both read continuously down the view. Lane-stacked on overlap; NO
+  // tickets, ever; month-edge clipping keeps its chevron cue.
   function _calTimeline(body, data, win, canEdit){
     var y=win.start.getFullYear(), m=win.start.getMonth(), daysInMonth=new Date(y,m+1,0).getDate(), todayStr=todayStrMT();
-    var axis=''; for(var i=1;i<=daysInMonth;i++){ axis+='<span class="frz-cal-tl-day'+(_ymdLocal(new Date(y,m,i))===todayStr?' frz-cal-tl-today':'')+'">'+i+'</span>'; }
     var LANE=22, PAD=4;
-    var html='';
+    var firstStr=_ymdLocal(new Date(y,m,1));
+    var todayCol=(todayStr.slice(0,7)===firstStr.slice(0,7))?parseInt(todayStr.slice(8,10),10):0;
+    var per='calc(100% / '+daysInMonth+')';
+    var gridBg='repeating-linear-gradient(90deg, var(--frz-border) 0, var(--frz-border) 1px, transparent 1px, transparent '+per+')';
+    var trackBg=gridBg;
+    if(todayCol){ var a='calc('+per+' * '+(todayCol-1)+')', b='calc('+per+' * '+todayCol+')';
+      trackBg='linear-gradient(90deg, transparent '+a+', var(--frz-accent-soft) '+a+', var(--frz-accent-soft) '+b+', transparent '+b+'), '+gridBg; }
+    var html='<div class="frz-cal-tg" style="--cal-days:'+daysInMonth+'"><div class="frz-cal-hcell frz-cal-gut-hd"></div>';
+    for(var i=1;i<=daysInMonth;i++){ html+='<div class="frz-cal-hcell'+(i===todayCol?' frz-cal-is-today':'')+'">'+i+'</div>'; }
     data.forEach(function(o){
       var typeById=o.typeById;
       var users=o.users.filter(function(u){ return u.assigns.some(function(a){ return _calMoTypeVisible(typeById[a.type_id]); }); });   // rows only for users with visible assignments
-      html+='<div class="frz-cal-owner">'+_calOwnerHd(o, canEdit)+'<div class="frz-cal-tl"><div class="frz-cal-tl-row frz-cal-tl-head"><span class="frz-cal-tl-name"></span><span class="frz-cal-tl-track">'+axis+'</span></div>';
-      if(!users.length) html+='<div class="frz-cal-empty">No one scheduled.</div>';
+      html+=_calBand(o, canEdit);
+      if(!users.length){ html+='<div class="frz-cal-emptyrow">No one scheduled.</div>'; return; }
       users.forEach(function(u){
         var asgs=u.assigns.filter(function(a){ return _calMoTypeVisible(typeById[a.type_id]); }).slice()
           .sort(function(a,b){ return (a.start_date||'').localeCompare(b.start_date||'') || (a.end_date||a.start_date||'').localeCompare(b.end_date||b.start_date||''); });
@@ -18249,11 +18265,12 @@ if ('serviceWorker' in navigator) {
           bars+='<span class="frz-cal-tl-bar'+(canEdit?' frz-cal-chip-asg':'')+(clipL?' is-clipL':'')+(clipR?' is-clipR':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+
             'style="left:'+left+'%;width:'+width+'%;top:'+top+'px;background:'+col+'22;color:'+col+';border-color:'+col+'66;border-left:3px solid '+col+'" title="'+escA(ttl)+'">'+esc(t.name||a.type_id)+'</span>';
         });
-        var h=PAD+Math.max(1,lanes.length)*LANE, multi=lanes.length>1?' frz-cal-tl-track-multi':'';
-        html+='<div class="frz-cal-tl-row'+multi+'"><span class="frz-cal-tl-name">'+avatarHTML(u.user,18)+'<span>'+esc(displayName(u.user))+'</span></span><span class="frz-cal-tl-track" style="height:'+h+'px">'+bars+'</span></div>';
+        var h=PAD+Math.max(1,lanes.length)*LANE;
+        html+='<div class="frz-cal-gut">'+avatarHTML(u.user,18)+'<span title="'+escA(displayName(u.user))+'">'+esc(displayName(u.user))+'</span></div>'+
+          '<div class="frz-cal-track" style="min-height:'+h+'px;background:'+trackBg+'">'+bars+'</div>';
       });
-      html+='</div></div>';
     });
+    html+='</div>';
     body.innerHTML = data.length ? html : '<div class="frz-cal-empty">No owners match.</div>';
   }
   function renderCalendar(){
