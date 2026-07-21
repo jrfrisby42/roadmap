@@ -123,3 +123,33 @@ def test_assignment_update_fills_blank_owner(client, admin_headers):
                    headers=admin_headers)
     assert u.status_code == 200
     assert u.json()["owner"] == "Everest"       # blank owner refilled from the assignee's pod
+
+
+def test_assignment_update_follows_reassignment(client, admin_headers):
+    _seed_users(client, admin_headers)
+    aid = client.post("/api/assignments",
+                      json={"type_id": "pto", "username": "sam",   # -> owner Everest (auto)
+                            "start_date": "2026-07-20", "end_date": "2026-07-22"},
+                      headers=admin_headers).json()["id"]
+    # reassign to amir; owner still carries the old (auto-derived) Everest pod -> follows
+    u = client.put(f"/api/assignments/{aid}",
+                   json={"type_id": "pto", "username": "amir", "owner": "Everest",
+                         "start_date": "2026-07-20", "end_date": "2026-07-22"},
+                   headers=admin_headers)
+    assert u.status_code == 200
+    assert u.json()["owner"] == "Kilimanjaro"   # followed the new assignee's pod
+
+
+def test_assignment_update_reassignment_keeps_manual_owner(client, admin_headers):
+    _seed_users(client, admin_headers)
+    aid = client.post("/api/assignments",
+                      json={"type_id": "pto", "username": "sam", "owner": "Denali",  # manual, != sam's pod
+                            "start_date": "2026-07-20", "end_date": "2026-07-22"},
+                      headers=admin_headers).json()["id"]
+    # reassign to amir; owner was NOT tracking sam's pod (it's a hand-picked Denali) -> left alone
+    u = client.put(f"/api/assignments/{aid}",
+                   json={"type_id": "pto", "username": "amir", "owner": "Denali",
+                         "start_date": "2026-07-20", "end_date": "2026-07-22"},
+                   headers=admin_headers)
+    assert u.status_code == 200
+    assert u.json()["owner"] == "Denali"        # deliberate owner respected, no follow
