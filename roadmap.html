@@ -2112,7 +2112,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.6';
+const APP_VERSION = '4.37.7';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2570,6 +2570,9 @@ function closeAllDropdowns(){
   // Also close the planning view status filter panel
   const planningPanel = document.getElementById('planningStatusPanel');
   if(planningPanel) planningPanel.style.display = 'none';
+  // Team Calendar filter-chip menu (Flow shell) - registered here so any managed dropdown
+  // opening dismisses it too (2d). Defined in the beta module, exposed on window.
+  try { if(window._frzCloseCalFilterMenu) window._frzCloseCalFilterMenu(); } catch(e){}
   // DO NOT dismiss the Flow RTE toolbar popovers (#frzRtePop / #frzEmojiPop) from here.
   // The L7764 global "click outside .ms-wrap → closeAllDropdowns()" handler fires on the SAME
   // click that opens an RTE menu, so removing the pop here tears it down before it shows
@@ -16137,6 +16140,26 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-cal-tl-day.frz-cal-tl-today { color:var(--frz-accent); font-weight:800; background:rgba(0,89,169,.06); }
   .frz-beta .frz-cal-tl-bar { position:absolute; top:5px; height:18px; border-radius:5px; color:#fff; font-size:10px; font-weight:700; line-height:18px; padding:0 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; box-sizing:border-box; }
   .frz-beta .frz-cal-tl-bar.frz-cal-chip-asg { cursor:pointer; }
+  /* Month grid (Stage 2): one shared Mon-start 7-col grid */
+  .frz-beta .frz-cal-mo { border:1px solid var(--frz-border); border-top:0; border-radius:0 0 10px 10px; overflow:hidden; }
+  .frz-beta .frz-cal-mo-hd { display:grid; grid-template-columns:repeat(7,1fr); background:var(--frz-bg-surface); border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-cal-mo-hd span { padding:8px 6px; text-align:center; font-size:11px; font-weight:700; color:var(--frz-text-muted); text-transform:uppercase; letter-spacing:.4px; }
+  .frz-beta .frz-cal-mo-grid { display:grid; grid-template-columns:repeat(7,1fr); }
+  .frz-beta .frz-cal-mo-cell { min-height:104px; border-right:1px solid var(--frz-border); border-bottom:1px solid var(--frz-border); padding:4px 5px 6px; display:flex; flex-direction:column; gap:3px; background:var(--frz-bg-elevated); }
+  .frz-beta .frz-cal-mo-cell:nth-child(7n) { border-right:0; }
+  .frz-beta .frz-cal-mo--edit .frz-cal-mo-cell { cursor:pointer; }
+  .frz-beta .frz-cal-mo-cell.is-other { background:var(--frz-bg-app); }
+  .frz-beta .frz-cal-mo-cell.is-other .frz-cal-mo-daynum { color:var(--frz-text-muted); }
+  .frz-beta .frz-cal-mo-cell.is-today { background:var(--frz-accent-soft); }
+  .frz-beta .frz-cal-mo-daynum { font-size:12px; font-weight:700; color:var(--frz-text); align-self:flex-end; line-height:1.2; }
+  .frz-beta .frz-cal-mo-chips { display:flex; flex-direction:column; gap:3px; }
+  .frz-beta .frz-cal-mo-chip { font-size:10.5px; font-weight:700; padding:1px 6px; border-radius:5px; border:1px solid transparent; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .frz-beta .frz-cal-mo-chip.is-clk { cursor:pointer; }
+  .frz-beta .frz-cal-mo-more { border:0; background:none; text-align:left; font-size:10.5px; font-weight:700; color:var(--frz-text-muted); cursor:pointer; padding:1px 6px; }
+  .frz-beta .frz-cal-mo-more:hover { color:var(--frz-accent); }
+  .frz-beta .frz-cal-mo-pop-hd { font-size:11px; font-weight:800; color:var(--frz-text-muted); text-transform:uppercase; letter-spacing:.4px; padding:4px 10px 6px; }
+  .frz-beta .frz-cal-mo-pop-row { display:flex; align-items:center; gap:8px; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:12.5px; color:var(--frz-text); border:0; background:none; width:100%; text-align:left; }
+  .frz-beta .frz-cal-mo-pop-row:hover { background:var(--frz-bg-app); }
   /* Assignment create/edit modal (Phase 2b) */
   .frz-beta .frz-asg-modal { width:520px; max-width:94vw; }
   .frz-beta .frz-asg-body { padding:18px 22px; display:flex; flex-direction:column; gap:4px; max-height:70vh; overflow:auto; }
@@ -17158,7 +17181,7 @@ if ('serviceWorker' in navigator) {
     cal.querySelector('#frzCalTabs').addEventListener('click', function(e){
       var b = e.target.closest('[data-caltab]'); if(!b) return;
       var t = b.getAttribute('data-caltab');
-      navigate('/team-calendar' + (t==='month' ? '' : '/'+t), false);
+      navigate('/team-calendar' + (t==='month' ? '' : '/'+t) + location.search, false);   // Stage 2c: carry ?d= (period) + ?project= across tab switches
     });
     document.getElementById('frzHomeBody').addEventListener('click', function(e){
       if (e.target.closest('input,button,a')) return;
@@ -17684,10 +17707,12 @@ if ('serviceWorker' in navigator) {
         var cv=_cur.get(pk); if(cv) params.set(pk, cv);
       });
     }
+    if (view==='team-calendar' && state.calDate) params.set('d', _ymdLocal(state.calDate));  // Stage 2c: displayed period
     var qs = params.toString();
     var base = '/'+view;
     if (view==='planning' && state.planTab && state.planTab!=='plan') base = '/planning/'+state.planTab;  // planning sub-tab is URL state
     if (view==='my-home' && state.homeTab && state.homeTab!=='assigned') base = '/my-home/'+state.homeTab;  // home sub-tab is URL state
+    if (view==='team-calendar' && state.calTab && state.calTab!=='month') base = '/team-calendar/'+state.calTab;  // Stage 2c: tab is path state
     var url = base + (qs?('?'+qs):'');
     var st = { frzView:view };
     if (replace) history.replaceState(st,'',url); else history.pushState(st,'',url);
@@ -17841,8 +17866,23 @@ if ('serviceWorker' in navigator) {
   // ── Team Calendar render (Phase 2a: Month view - Owner -> Users -> chips) ──────
   function _calShortD(ymd){ if(!ymd) return ''; var p=String(ymd).split('-'); if(p.length!==3) return ymd; return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString(undefined,{month:'short',day:'numeric'}); }
   function _calFilterState(){ return (state.calFilter = state.calFilter || {owner:'',user:'',type:'',project:'',cap:''}); }
+  // Stage 2c: seed the displayed period from ?d= (YYYY-MM-DD or YYYY-MM). MUST run before
+  // any syncURL emit on the team-calendar route, or the param gets stripped on cold load.
+  function _calSeedDateFromURL(qp){
+    var s=qp && qp.get('d'); if(!s) return;
+    var m=/^(\d{4})-(\d{2})(?:-(\d{2}))?$/.exec(s);
+    if(m) state.calDate=new Date(+m[1], +m[2]-1, m[3]?+m[3]:1);
+  }
+  // Tab from the path (/team-calendar/week); ?tab= is accepted as a cold-load fallback so a
+  // hand-typed ?tab=month&d=... link works. syncURL canonicalizes back to the path form.
+  function _calTabFromURL(path, sp){
+    var cm=path.match(/^\/team-calendar\/(week|timeline)/);
+    if(cm) return cm[1];
+    var qt=sp && sp.get('tab');
+    return (qt==='week'||qt==='timeline') ? qt : 'month';
+  }
   function _calWindow(){
-    var now=state.calDate||new Date(); state.calDate=now;
+    var now=state.calDate||todayMT(); state.calDate=now;
     if(state.calTab==='week'){
       var dow=(now.getDay()+6)%7;   // Monday-start
       var mon=new Date(now.getFullYear(),now.getMonth(),now.getDate()-dow);
@@ -17923,9 +17963,15 @@ if ('serviceWorker' in navigator) {
   }
   function _calMenuOutside(e){ if(_calMenuEl && !_calMenuEl.contains(e.target) && !e.target.closest('[data-cf]')) _calCloseFilterMenu(); }
   function _calMenuKey(e){ if(e.key==='Escape') _calCloseFilterMenu(); }
+  window._frzCloseCalFilterMenu = _calCloseFilterMenu;   // 2d: let the app's closeAllDropdowns dismiss this menu
   function _calOpenFilterMenu(anchor, key){
     var wasOpen = _calMenuEl && _calMenuEl.getAttribute('data-for')===key;
     _calCloseFilterMenu(); if(wasOpen) return;   // second click on the same chip toggles it shut
+    // 2d: opening the cal filter menu closes every other managed dropdown (classic filter
+    // panels via closeAllDropdowns; the notification bell + account menu, which self-manage).
+    try { if(typeof closeAllDropdowns==='function') closeAllDropdowns(); } catch(e){}
+    var _n=document.getElementById('frzNotif'); if(_n) _n.hidden=true;
+    var _am=document.getElementById('frzAcctMenu'); if(_am) _am.hidden=true;
     var f=_calFilterState();
     var opts=[{v:'',t:'All'}].concat(_calFilterOpts[key]||[]);
     var m=document.createElement('div'); m.className='frz-cal-menu'; m.setAttribute('data-for', key);
@@ -17983,6 +18029,7 @@ if ('serviceWorker' in navigator) {
       ((f.owner||f.user||f.type||f.project||f.cap) ? '<button class="frz-chip frz-chip--ghost" id="frzCalFClear">Clear</button>' : '');
     host.querySelectorAll('[data-cf]').forEach(function(btn){
       btn.addEventListener('click', function(e){
+        e.stopPropagation();   // 2d: keep the global "click outside .ms-wrap -> closeAllDropdowns" (L8530) from closing this menu on the same click that opens it
         var cl=e.target.closest('[data-cfclear]');
         if(cl){ f[cl.getAttribute('data-cfclear')]=''; renderCalendar(); return; }
         _calOpenFilterMenu(btn, btn.getAttribute('data-cf'));
@@ -17990,18 +18037,84 @@ if ('serviceWorker' in navigator) {
     });
     var clr=host.querySelector('#frzCalFClear'); if(clr) clr.onclick=function(){ state.calFilter={owner:'',user:'',type:'',project:'',cap:''}; renderCalendar(); };
   }
-  function _calMonth(body, data, canEdit){
-    var html='';
-    data.forEach(function(o){
-      html+='<div class="frz-cal-owner">'+_calOwnerHd(o, canEdit);
-      if(!o.users.length) html+='<div class="frz-cal-empty">No one scheduled.</div>';
-      o.users.forEach(function(u){
-        var chips=u.assigns.map(function(a){ return _calAsgChip(a,o.typeById,canEdit); }).join('')+u.tickets.map(_calTicketChip).join('');
-        html+='<div class="frz-cal-user"><span class="frz-cal-user-nm">'+avatarHTML(u.user,20)+'<span>'+esc(displayName(u.user))+'</span></span><span class="frz-cal-chips">'+(chips||'<span class="frz-cal-none">—</span>')+'</span></div>';
-      });
-      html+='</div>';
+  // Stage 2: one shared Mon-start month grid. Shows ASSIGNMENTS only (types with
+  // show_on_calendar), user-centric (owner grouping + capacity are gone on Month; those are
+  // Stage 4). Owner filter set to a specific pool hides unowned entries; user/type filters
+  // apply. Capacity + project filters don't apply on Month (no capacity, assignments have no
+  // project) - they're inert here by design. Multi-day assignments chip on each covered day.
+  var _CAL_MO_MAX=3;
+  function _calMoTypeVisible(t){ return !(t && t.show_on_calendar===false); }
+  function _calMoChip(a, types, canEdit){
+    var t=types[a.type_id]||{}, col=/^#[0-9A-Fa-f]{6}$/.test(t.color||'')?t.color:'#4a5b6b';
+    var ini=a.username?avatarInitialsFor(a.username):'';
+    var label=(ini?ini+' ':'')+(t.name||a.type_id);
+    var eD=a.end_date||a.start_date;
+    var range=(a.start_date===eD)?_calShortD(a.start_date):(_calShortD(a.start_date)+' – '+_calShortD(eD));
+    var ttl=(a.username?displayName(a.username)+' · ':'')+(t.name||a.type_id)+' · '+range;
+    return '<span class="frz-cal-mo-chip'+(canEdit?' frz-cal-chip-asg is-clk':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+
+      'style="background:'+col+'1f;color:'+col+';border-color:'+col+'66" title="'+escA(ttl)+'">'+esc(label)+'</span>';
+  }
+  function _calMonthGrid(body, win, canEdit){
+    var f=_calFilterState();
+    var types={}; (_assignmentTypes||[]).forEach(function(t){ types[t.id]=t; });
+    var first=new Date(win.start.getFullYear(), win.start.getMonth(), 1);
+    var gridStart=startOfW(first);                                  // Monday on/before the 1st
+    var last=new Date(win.start.getFullYear(), win.start.getMonth()+1, 0);
+    var gridEnd=addDays(startOfW(last), 6);                         // Sunday on/after the last day
+    var fromStr=_ymdLocal(gridStart), toStr=_ymdLocal(gridEnd), todayStr=todayStrMT();
+    var mm=win.start.getMonth();
+    var visible=(_assignments||[]).filter(function(a){
+      if(!_calMoTypeVisible(types[a.type_id])) return false;
+      if(f.owner && a.owner!==f.owner) return false;               // owner-scope hides unowned (Stage 1 rule)
+      if(f.user && a.username!==f.user) return false;
+      if(f.type && a.type_id!==f.type) return false;
+      var s=a.start_date||'', e=a.end_date||a.start_date||'';
+      return s<=toStr && e>=fromStr;
     });
-    body.innerHTML = data.length ? html : '<div class="frz-cal-empty">No owners match. Add owners in Admin → Owners, or clear filters.</div>';
+    var DOW=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    var html='<div class="frz-cal-mo'+(canEdit?' frz-cal-mo--edit':'')+'"><div class="frz-cal-mo-hd">'+
+      DOW.map(function(d){ return '<span>'+d+'</span>'; }).join('')+'</div><div class="frz-cal-mo-grid">';
+    var d=new Date(gridStart);
+    while(_ymdLocal(d)<=toStr){
+      var ds=_ymdLocal(d);
+      var items=visible.filter(function(a){ var s=a.start_date||'', e=a.end_date||a.start_date||''; return s<=ds && e>=ds; });
+      var cls='frz-cal-mo-cell'+(d.getMonth()!==mm?' is-other':'')+(ds===todayStr?' is-today':'');
+      var chips=items.slice(0,_CAL_MO_MAX).map(function(a){ return _calMoChip(a, types, canEdit); }).join('');
+      var more=(items.length>_CAL_MO_MAX)?('<button class="frz-cal-mo-more" data-more="'+ds+'">+'+(items.length-_CAL_MO_MAX)+' more</button>'):'';
+      html+='<div class="'+cls+'" data-date="'+ds+'"><div class="frz-cal-mo-daynum">'+d.getDate()+'</div>'+
+        '<div class="frz-cal-mo-chips">'+chips+more+'</div></div>';
+      d=addDays(d,1);
+    }
+    html+='</div></div>';
+    body.innerHTML=html;
+    // "+N more" -> popover listing every entry for that day (reuses the app popover).
+    body.querySelectorAll('.frz-cal-mo-more').forEach(function(btn){
+      btn.addEventListener('click', function(e){
+        e.stopPropagation();
+        var ds=btn.getAttribute('data-more');
+        var items=visible.filter(function(a){ var s=a.start_date||'', en=a.end_date||a.start_date||''; return s<=ds && en>=ds; });
+        openPop(btn, function(pop){
+          var hd=document.createElement('div'); hd.className='frz-cal-mo-pop-hd'; hd.textContent=_calShortD(ds); pop.appendChild(hd);
+          items.forEach(function(a){
+            var t=types[a.type_id]||{};
+            var row=document.createElement(canEdit?'button':'div'); row.className='frz-cal-mo-pop-row';
+            row.innerHTML=_calMoChip(a, types, false)+'<span>'+esc(a.username?displayName(a.username):'Unassigned')+'</span>';
+            if(canEdit){ row.addEventListener('click', function(){ closePop(); openAssignmentModal(a); }); }
+            pop.appendChild(row);
+          });
+        });
+      });
+    });
+    // Empty-cell click -> New Assignment prefilled with that date (Stage 1 behavior intact).
+    if(canEdit){
+      body.querySelectorAll('.frz-cal-mo-cell').forEach(function(cell){
+        cell.addEventListener('click', function(e){
+          if(e.target.closest('.frz-cal-chip-asg,.frz-cal-mo-more')) return;   // chip/more handle themselves
+          var ds=cell.getAttribute('data-date');
+          openAssignmentModal({ start_date:ds, end_date:ds });
+        });
+      });
+    }
   }
   function _calWeek(body, data, win, canEdit){
     var days=[]; for(var i=0;i<7;i++) days.push(new Date(win.start.getFullYear(),win.start.getMonth(),win.start.getDate()+i));
@@ -18055,15 +18168,18 @@ if ('serviceWorker' in navigator) {
       '<button class="frz-cal-navbtn" id="frzCalNext" title="Next">›</button>'+
       '<button class="frz-cal-navbtn frz-cal-today" id="frzCalToday">Today</button>'+
       (canEdit ? '<span style="flex:1"></span><button class="frz-cal-newbtn" id="frzCalNew">+ New assignment</button>' : '');
-    nav.querySelector('#frzCalPrev').onclick=function(){ state.calDate=win.prev(); renderCalendar(); };
-    nav.querySelector('#frzCalNext').onclick=function(){ state.calDate=win.next(); renderCalendar(); };
-    nav.querySelector('#frzCalToday').onclick=function(){ state.calDate=new Date(); renderCalendar(); };
+    nav.querySelector('#frzCalPrev').onclick=function(){ state.calDate=win.prev(); renderCalendar(); syncURL(true); };
+    nav.querySelector('#frzCalNext').onclick=function(){ state.calDate=win.next(); renderCalendar(); syncURL(true); };
+    nav.querySelector('#frzCalToday').onclick=function(){ state.calDate=todayMT(); renderCalendar(); syncURL(true); };
     var _newBtn=nav.querySelector('#frzCalNew'); if(_newBtn) _newBtn.onclick=function(){ openAssignmentModal({}); };
     renderCalFilters();
-    var data=_calData(win);
-    if(state.calTab==='week') _calWeek(body, data, win, canEdit);
-    else if(state.calTab==='timeline') _calTimeline(body, data, win, canEdit);
-    else _calMonth(body, data, canEdit);
+    if(state.calTab==='week' || state.calTab==='timeline'){
+      var data=_calData(win);
+      if(state.calTab==='week') _calWeek(body, data, win, canEdit);
+      else _calTimeline(body, data, win, canEdit);
+    } else {
+      _calMonthGrid(body, win, canEdit);   // Stage 2: real month grid (month wires its own cell/more handlers)
+    }
     body.querySelectorAll('.frz-cal-chip-item').forEach(function(el){ el.addEventListener('click', function(){ var id=parseInt(el.getAttribute('data-item'),10); if(id) openItem(id); }); });
     body.querySelectorAll('.frz-cal-chip-asg').forEach(function(el){ el.addEventListener('click', function(){
       var aid=parseInt(el.getAttribute('data-aid'),10);
@@ -18583,7 +18699,7 @@ if ('serviceWorker' in navigator) {
     if (view==='kanban' && _val('isViewer', false)){ navigate('/gantt', replace); return; }   // viewers can't see Kanban
     if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
     if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
-    if (view==='team-calendar'){ var cm=path.match(/^\/team-calendar\/(week|timeline)/); state.calTab = cm ? cm[1] : 'month'; }
+    if (view==='team-calendar'){ state.calTab = _calTabFromURL(path, u.searchParams); _calSeedDateFromURL(u.searchParams); }   // Stage 2c: tab + period before render/syncURL
     applyURLToFilters(view, u.searchParams);
     setView(view);
     if (replace) history.replaceState({frzView:view},'',url); else history.pushState({frzView:view},'',url);
@@ -18624,7 +18740,7 @@ if ('serviceWorker' in navigator) {
       // reads it. With it set, syncURL preserves ?release= and renderReleasesTab auto-expands the row.
       state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }
     if (vm[1]==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
-    if (vm[1]==='team-calendar'){ var cm=path.match(/^\/team-calendar\/(week|timeline)/); state.calTab = cm ? cm[1] : 'month'; }
+    if (vm[1]==='team-calendar'){ var _csp=new URLSearchParams(location.search); state.calTab = _calTabFromURL(path, _csp); _calSeedDateFromURL(_csp); }   // Stage 2c: seed tab + period BEFORE the syncURL below (or ?d= gets stripped on cold load)
     applyDefaultCollapse(vm[1]);
     applyURLToFilters(vm[1], new URLSearchParams(location.search));
     setView(vm[1]);
@@ -18647,7 +18763,7 @@ if ('serviceWorker' in navigator) {
       if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
         state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }   // Stage 1b: seed before rerender (popstate doesn't syncURL, but keep symmetric + avoids a stale-expand flash)
       if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
-    if (view==='team-calendar'){ var cm=path.match(/^\/team-calendar\/(week|timeline)/); state.calTab = cm ? cm[1] : 'month'; }
+    if (view==='team-calendar'){ var _psp=new URLSearchParams(location.search); state.calTab = _calTabFromURL(path, _psp); _calSeedDateFromURL(_psp); }   // Stage 2c: tab + period on back/forward
       applyURLToFilters(view, new URLSearchParams(location.search));
       setView(view);
       if (view!=='my-home' && view!=='admin') rerender();   // My Home + Admin render themselves
