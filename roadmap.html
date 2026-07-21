@@ -2116,7 +2116,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.39.1';
+const APP_VERSION = '4.40.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16375,6 +16375,30 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-bl-meta { font-size:11px; color:var(--frz-text-muted); margin-top:2px; }
   .frz-beta .frz-bl-add { opacity:0; border:1px solid var(--frz-accent); background:var(--frz-accent-soft); color:var(--frz-accent); font:inherit; font-size:11px; font-weight:700; padding:3px 9px; border-radius:6px; cursor:pointer; white-space:nowrap; flex-shrink:0; }
   .frz-beta .frz-bl-row:hover .frz-bl-add { opacity:1; }
+  /* Stage 2: backlog ergonomics */
+  .frz-beta .frz-bl-cb { flex-shrink:0; margin:0; cursor:pointer; }
+  .frz-beta .frz-bl-search { position:relative; display:flex; align-items:center; }
+  .frz-beta .frz-bl-search input { font:inherit; font-size:12px; font-weight:400; padding:4px 22px 4px 9px; border:1px solid var(--frz-border-strong); border-radius:999px; background:var(--frz-bg-surface); color:var(--frz-text); outline:none; width:150px; }
+  .frz-beta .frz-bl-search input:focus { border-color:var(--frz-accent); }
+  .frz-beta .frz-bl-search-x { position:absolute; right:4px; border:none; background:none; color:var(--frz-text-muted); font-size:15px; line-height:1; cursor:pointer; padding:0 3px; }
+  .frz-beta .frz-bl-search-x:hover { color:var(--frz-text); }
+  .frz-beta .frz-bl-bulkbar { display:flex; align-items:center; gap:8px; margin:0 0 8px; padding:6px 10px; background:var(--frz-accent-soft); border:1px solid var(--frz-accent-soft-border); border-radius:8px; }
+  .frz-beta .frz-bl-bulk-count { font-size:12px; font-weight:700; color:var(--frz-accent); }
+  .frz-beta .frz-bl-bulkbar .frz-viewopt, .frz-beta .frz-bl-bulkbar .frz-newitem { font-size:12px; padding:4px 10px; }
+  .frz-beta .frz-bl-pts { cursor:default; }
+  .frz-beta [data-ptsedit] { cursor:pointer; border-bottom:1px dashed var(--frz-border-strong); }
+  .frz-beta [data-ptsedit]:hover { color:var(--frz-accent); border-bottom-color:var(--frz-accent); }
+  .frz-beta .frz-bl-pts-empty { color:var(--frz-text-muted); }
+  .frz-beta .frz-bl-pts-inp { font:inherit; font-size:11px; width:56px; padding:1px 4px; border:1px solid var(--frz-accent); border-radius:4px; background:var(--frz-bg-surface); color:var(--frz-text); outline:none; }
+  .frz-beta .frz-bl-pts-inp.frz-bl-pts-bad { border-color:#c0392b; background:rgba(232,57,74,.08); }
+  .frz-beta .frz-bl-divider { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--frz-text-muted); padding:8px 4px 4px; border-top:1px dashed var(--frz-border); margin-top:4px; user-select:none; }
+  .frz-beta .frz-mr-row { padding:8px 0; border-top:1px solid var(--frz-border); }
+  .frz-beta .frz-mr-hd { font-size:13px; color:var(--frz-text); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .frz-beta .frz-mr-fields { display:flex; gap:10px; margin-top:6px; flex-wrap:wrap; }
+  .frz-beta .frz-mr-f { display:flex; flex-direction:column; gap:2px; font-size:10px; font-weight:700; color:var(--frz-text-muted); text-transform:uppercase; letter-spacing:.4px; }
+  .frz-beta .frz-mr-f .frz-fld { width:110px; padding:5px 8px; }
+  .frz-beta .frz-mr-ready { font-size:11px; font-weight:700; color:#1E7B46; }
+  .frz-beta .frz-mr-note { font-size:11px; color:var(--frz-accent); }
   .frz-beta .frz-sp-remove { opacity:.5; border:0; background:none; color:var(--frz-text-muted); cursor:pointer; font-size:13px; line-height:1; padding:2px 5px; flex-shrink:0; }
   .frz-beta .frz-sp-card:hover .frz-sp-remove { opacity:1; }
   .frz-beta .frz-sprint-badge { font-size:10px; font-weight:700; padding:2px 9px; border-radius:999px; }
@@ -17053,10 +17077,18 @@ if ('serviceWorker' in navigator) {
   var _SPRINT_TRASH='<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
   // Stale-sprint test (Planning Stage 1.1): a sprint whose end date is before today (MT via todayStr).
   function _sprintStale(sp){ return !!(sp && sp.endDate && sp.endDate < todayStr()); }
-  // Sprints (non-discarded, excluding `id`) whose [start,end] overlaps [s,e] -> names for the edit-modal warning.
+  // Sprints (non-discarded, excluding `id`) whose [start,end] overlaps [s,e] -> names for the modal warning.
   function _sprintOverlaps(id, s, e){
     if(!s || !e) return [];
     return _sprints.filter(function(x){ return x.id!==id && x.state!=='Discarded' && x.startDate && x.endDate && x.startDate<=e && x.endDate>=s; }).map(function(x){ return x.name; });
+  }
+  // Shared date validation + overlap warning (used by BOTH the edit and create modals).
+  function _sprintDateError(s, e){ return (s && e && e<=s) ? 'End date must be after the start date.' : ''; }
+  function _sprintOverlapWarn(warnEl, id, sEl, eEl){
+    if(!warnEl) return;
+    var ov=_sprintOverlaps(id, sEl&&sEl.value, eEl&&eEl.value);
+    if(ov.length){ warnEl.hidden=false; warnEl.textContent='Dates overlap another sprint: '+ov.join(', ')+'. You can still save.'; }
+    else { warnEl.hidden=true; warnEl.textContent=''; }
   }
   // Release-state badge tints - distinct from item-status AND sprint-state.
   var RELEASE_BADGE = { Unreleased:'background:#FBF0E1;color:#9A6206', Released:'background:#E4F3EA;color:#1E7B46' };
@@ -19946,6 +19978,12 @@ if ('serviceWorker' in navigator) {
     // even when no required inputs are missing
     return { needStart:needStart, needEstimate:needEstimate, needPoints:needPoints, needPromote:needPromote, needAssignee:needAssignee, any:(needStart||needEstimate||needPoints||needPromote||needAssignee) };
   }
+  // ── Stage 2: backlog ergonomics state + helpers ─────────────────────────────
+  var _blSearch = '';            // ephemeral backlog search (not URL-persisted, cleared on reload)
+  var _blSel = new Set();         // multi-select backlog item ids
+  function _blSearchMatch(p){ if(!_blSearch) return true; var q=_blSearch.toLowerCase(); return (((p.itemKey||'')+' '+(p.name||'')).toLowerCase().indexOf(q) >= 0); }
+  function _blUnprioritized(p){ return !(p.priority && PRIO_LBL[p.priority]); }   // no visible priority label
+  function _blCanEdit(){ return !!(_val('isAdmin',false) || _val('isEditor',false)); }
   function backlogItems(){
     var fDev=getSelectedDevs(), fType=getSelectedTypes(), fSt=getSelectedStatuses();
     return (_val('projects',[])||[]).filter(function(p){
@@ -19966,26 +20004,101 @@ if ('serviceWorker' in navigator) {
   }
   function renderPlanTab(host){
     var sprint = currentSprint();
-    var bl = backlogItems();
+    var all = backlogItems();                              // chip-filtered + sorted (selection operates over this)
+    var shown = _blSearch ? all.filter(_blSearchMatch) : all;   // search narrows within (display-only)
+    // Prune selections that are no longer in the chip-filtered backlog
+    _blSel.forEach(function(id){ if(!all.some(function(p){return p.id===id;})) _blSel.delete(id); });
+    var firstUnprio = shown.findIndex(_blUnprioritized);   // divider goes above the first unprioritized row
+    var listHtml;
+    if(!shown.length){
+      listHtml = '<div class="frz-plan-empty">'+(_blSearch ? 'No matches for "'+esc(_blSearch)+'".' : 'No plannable items in the backlog.')+'</div>';
+    } else {
+      listHtml = shown.map(function(p, idx){
+        var div = (idx===firstUnprio) ? '<div class="frz-bl-divider" aria-hidden="true">No priority</div>' : '';
+        return div + backlogRow(p);
+      }).join('');
+    }
+    var clearBtn = _blSearch ? '<button class="frz-bl-search-x" id="frzBlSearchClear" title="Clear search">×</button>' : '';
     host.innerHTML =
       '<div class="frz-plan-pane frz-plan-backlog">'+
-        '<div class="frz-plan-pane-hd">Backlog <span class="frz-plan-count">'+bl.length+'</span></div>'+
-        '<div class="frz-plan-list" id="frzBacklogList">'+ (bl.length? bl.map(backlogRow).join('') : '<div class="frz-plan-empty">No plannable items in the backlog.</div>') +'</div>'+
+        '<div class="frz-plan-pane-hd">Backlog <span class="frz-plan-count">'+shown.length+'</span>'+
+          '<span class="frz-spacer"></span>'+
+          '<div class="frz-bl-search"><input type="text" id="frzBlSearch" placeholder="Search backlog…" value="'+escA(_blSearch)+'" autocomplete="off">'+clearBtn+'</div>'+
+        '</div>'+
+        '<div class="frz-bl-bulkbar" id="frzBlBulk" hidden></div>'+
+        '<div class="frz-plan-list" id="frzBacklogList">'+ listHtml +'</div>'+
       '</div>'+
       '<div class="frz-plan-pane frz-plan-sprint" id="frzSprintPane">'+ sprintPaneHTML(sprint) +'</div>';
+    _blUpdateBulk(sprint);
     wirePlanTab(sprint);
   }
+  // Selected items that are still in the (chip-filtered) backlog
+  function _blSelectedItems(){ return backlogItems().filter(function(p){ return _blSel.has(p.id); }); }
+  function _blUpdateBulk(sprint){
+    var bar=document.getElementById('frzBlBulk'); if(!bar) return;
+    var n=_blSel.size;
+    if(!n){ bar.hidden=true; bar.innerHTML=''; return; }
+    var canAdd = !!(sprint && (sprint.state==='Planned' || sprint.state==='Active'));
+    bar.hidden=false;
+    bar.innerHTML = '<span class="frz-bl-bulk-count">'+n+' selected</span>'+
+      '<span class="frz-spacer"></span>'+
+      '<button class="frz-newitem frz-bl-bulk-add" id="frzBlBulkAdd"'+(canAdd?'':' disabled title="Plan or start a sprint first"')+'>Add '+n+' to sprint</button>'+
+      '<button class="frz-viewopt" id="frzBlBulkClear">Clear</button>';
+    var add=document.getElementById('frzBlBulkAdd'); if(add && canAdd) add.addEventListener('click', function(){ openMultiReadyModal(_blSelectedItems(), sprint); });
+    var clr=document.getElementById('frzBlBulkClear'); if(clr) clr.addEventListener('click', function(){ _blSel.clear(); refreshPlan(); });
+  }
   function backlogRow(p){
+    var canEdit = _blCanEdit();
+    var cb = '<input type="checkbox" class="frz-bl-cb" data-blcb="'+p.id+'"'+(_blSel.has(p.id)?' checked':'')+' title="Select">';
     var prio = (p.priority&&PRIO_LBL[p.priority]) ? '<span style="color:'+PRIO_CLR[p.priority]+';font-weight:700;font-size:11px">'+PRIO_LBL[p.priority]+'</span>' : '';
-    var meta = [p.type, (p.storyPoints!=null&&p.storyPoints!==''?p.storyPoints+'pt':''), (+p.dueWeeks>0?p.dueWeeks+'w':''), p.dev||'Unassigned'].filter(Boolean).join(' · ');
+    var hasPts = (p.storyPoints!=null && p.storyPoints!=='');
+    var pts = '<span class="frz-bl-pts'+(hasPts?'':' frz-bl-pts-empty')+'"'+(canEdit?' data-ptsedit="'+p.id+'" title="Click to edit story points"':'')+'>'+(hasPts?esc(p.storyPoints+'pt'):'—')+'</span>';
+    var metaBits = [];
+    if(prio) metaBits.push(prio);
+    if(p.type) metaBits.push(esc(p.type));
+    metaBits.push(pts);
+    if(+p.dueWeeks>0) metaBits.push(esc(p.dueWeeks+'w'));
+    metaBits.push(esc(p.dev||'Unassigned'));
     var legacy = (p.sprintId && !sprintById(p.sprintId)) ? ' <span class="frz-legacy-tag" title="Legacy sprint label (preserved)">'+esc(p.sprintId)+'</span>' : '';
     return '<div class="frz-bl-row" draggable="true" data-id="'+p.id+'">'+
+      cb+
       '<div class="frz-bl-main" data-open="'+p.id+'">'+
         '<div class="frz-bl-name">'+(p.itemKey?'<span class="frz-bcard-key" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></span> ':'')+esc(p.name||'')+legacy+'</div>'+
-        '<div class="frz-bl-meta">'+prio+((prio&&meta)?' · ':'')+esc(meta)+'</div>'+
+        '<div class="frz-bl-meta">'+metaBits.join(' · ')+'</div>'+
       '</div>'+
       '<button class="frz-bl-add" data-add="'+p.id+'" title="Add to sprint">Add →</button>'+
     '</div>';
+  }
+  // 2c: inline story-points edit. Click -> numeric input; Enter/blur saves via the NORMAL
+  // guarded item-update path (putItemGuarded: optimistic concurrency + item-history audit);
+  // Esc cancels; empty = no change; negative/non-numeric rejects in place without saving.
+  function _blEditPoints(el, id){
+    if(!_blCanEdit()) return;
+    var ps=_val('projects',[])||[]; var p=ps.filter(function(x){return x.id===id;})[0]; if(!p) return;
+    var cur=(p.storyPoints!=null&&p.storyPoints!=='')?p.storyPoints:'';
+    var inp=document.createElement('input');
+    inp.type='text'; inp.inputMode='decimal'; inp.className='frz-bl-pts-inp'; inp.value=cur;   // text (not number) so non-numeric shows a visible in-place rejection
+    el.replaceWith(inp); inp.focus(); try{ inp.select(); }catch(e){}
+    var done=false;
+    function finish(){ done=true; refreshPlan(); }
+    function save(){
+      if(done) return;
+      var raw=(inp.value||'').trim();
+      if(raw===''){ finish(); return; }                                   // empty = no change
+      var n=Number(raw);
+      if(!isFinite(n) || n<0){ inp.classList.add('frz-bl-pts-bad'); inp.focus(); return; }   // reject in place
+      if(String(n)===String(cur)){ finish(); return; }                    // unchanged
+      done=true;
+      var r=_call('putItemGuarded', id, {storyPoints:n, _username:_call('getUsername')});
+      Promise.resolve(r).then(function(updated){
+        if(updated){ var i=ps.findIndex(function(x){return x.id===id;}); if(i>-1) ps[i]=updated; }
+        refreshPlan();
+      }).catch(function(e){ _call('showToast','Save failed: '+(e&&e.message||''),'error'); refreshPlan(); });
+    }
+    inp.addEventListener('input', function(){ inp.classList.remove('frz-bl-pts-bad'); });
+    inp.addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); save(); } else if(e.key==='Escape'){ e.preventDefault(); finish(); } });
+    inp.addEventListener('blur', save);
+    inp.addEventListener('click', function(e){ e.stopPropagation(); });
   }
   function sprintPaneHTML(sprint){
     if(!sprint){
@@ -20032,8 +20145,16 @@ if ('serviceWorker' in navigator) {
   }
   function wirePlanTab(sprint){
     var host = document.getElementById('frzPlanBody'); if(!host) return;
-    host.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(e){ if(e.target.closest('[data-add],[data-remove]')) return; navigate('/item/'+el.getAttribute('data-open'), false); }); });
+    host.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(e){ if(e.target.closest('[data-add],[data-remove],[data-ptsedit]')) return; navigate('/item/'+el.getAttribute('data-open'), false); }); });
     host.querySelectorAll('[data-add]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); addToSprint(+b.getAttribute('data-add')); }); });
+    // 2a backlog search (ephemeral; preserves focus/caret across the re-render)
+    var srch=document.getElementById('frzBlSearch');
+    if(srch){ srch.addEventListener('input', function(){ _blSearch=srch.value; var caret=srch.selectionStart; refreshPlan(); var s2=document.getElementById('frzBlSearch'); if(s2){ s2.focus(); try{ s2.setSelectionRange(caret,caret); }catch(e){} } }); }
+    var srchX=document.getElementById('frzBlSearchClear'); if(srchX) srchX.addEventListener('click', function(){ _blSearch=''; refreshPlan(); var s2=document.getElementById('frzBlSearch'); if(s2) s2.focus(); });
+    // 2d multi-select checkboxes
+    host.querySelectorAll('[data-blcb]').forEach(function(cb){ cb.addEventListener('click', function(e){ e.stopPropagation(); }); cb.addEventListener('change', function(){ var id=+cb.getAttribute('data-blcb'); if(cb.checked) _blSel.add(id); else _blSel.delete(id); _blUpdateBulk(sprint); }); });
+    // 2c inline points edit
+    host.querySelectorAll('[data-ptsedit]').forEach(function(el){ el.addEventListener('click', function(e){ e.stopPropagation(); _blEditPoints(el, +el.getAttribute('data-ptsedit')); }); });
     host.querySelectorAll('[data-remove]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); removeFromSprint(+b.getAttribute('data-remove')); }); });
     var ps=document.getElementById('frzPlanSprint'); if(ps) ps.addEventListener('click', openCreateSprint);
     var ss=document.getElementById('frzStartSprint'); if(ss) ss.addEventListener('click', startSprint);
@@ -20066,7 +20187,12 @@ if ('serviceWorker' in navigator) {
     if(!need.any){ applySprintReady(p, sprint, {}); return; }   // already ready → add silently
     openReadyModal(p, sprint, need);
   }
-  function applySprintReady(p, sprint, vals){
+  // Apply ONE item's sprint-ready changes (fields + floor promotion + sprint history) and
+  // PUT it. Returns the API promise (logs on success). No refresh - the caller refreshes
+  // once. Shared by the single-item flow (applySprintReady) and the multi-select batch
+  // (applySprintReadyBatch) so the floor/history rules are defined exactly once.
+  function _applyReadyItem(p, sprint, vals){
+    vals = vals || {};
     var ps=_val('projects',[])||[]; var i=ps.findIndex(function(x){return x.id===p.id;});
     var logs=[]; var patch=Object.assign({}, p);
     if(vals.start!=null && vals.start!==p.start){ logs.push(['Start date',(p.start||'(none)'),vals.start]); patch.start=vals.start; }
@@ -20083,11 +20209,20 @@ if ('serviceWorker' in navigator) {
     if(!hist.some(function(h){ return h.sprintId===sprint.id && !h.outcome; })) hist.push({sprintId:sprint.id, addedAt:todayStr(), outcome:''});
     patch.sprintHistory = hist;
     patch.sprintId = sprint.id; patch._username = _call('getUsername');
-    API.put('/api/projects/'+p.id, patch).then(function(updated){
+    return API.put('/api/projects/'+p.id, patch).then(function(updated){
       if(i>-1) ps[i]=updated;
       logs.forEach(function(l){ _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Sprint planning: '+l[0]+' '+l[1]+' → '+l[2], null, null); });
-      refreshPlan();
-    }).catch(function(e){ _call('showToast','Add failed: '+(e&&e.message||''),'error'); });
+    });
+  }
+  function applySprintReady(p, sprint, vals){
+    _applyReadyItem(p, sprint, vals).then(refreshPlan).catch(function(e){ _call('showToast','Add failed: '+(e&&e.message||''),'error'); });
+  }
+  // 2d: add many items in one go. Sequential PUTs (matches the completion flow) so it is
+  // atomic from the user's perspective (one confirm applies all; Cancel applied nothing).
+  function applySprintReadyBatch(items, sprint, valsById){
+    var chain=Promise.resolve();
+    items.forEach(function(p){ chain=chain.then(function(){ return _applyReadyItem(p, sprint, (valsById&&valsById[p.id])||{}); }); });
+    return chain;
   }
   function removeFromSprint(id){
     var ps=_val('projects',[])||[]; var p=ps.filter(function(x){return x.id===id;})[0]; if(!p) return;
@@ -20132,6 +20267,59 @@ if ('serviceWorker' in navigator) {
     });
     setTimeout(function(){ var f=bg.querySelector('input'); if(f) f.focus(); },0);
   }
+  // 2d: ONE combined readiness modal for a multi-select add. Reuses sprintReady() per item
+  // (no forked floor logic); ready items are listed, not-ready items get inline inputs for
+  // only their missing required fields. One confirm applies everything via the shared batch.
+  function openMultiReadyModal(items, sprint){
+    if(!sprint){ _call('showToast','Plan a sprint first'); return; }
+    items = (items||[]).filter(Boolean);
+    if(!items.length) return;
+    closePop();
+    var meta = items.map(function(p){ return { p:p, need:sprintReady(p, sprint) }; });
+    var rowsHtml = meta.map(function(m){
+      var p=m.p, need=m.need;
+      var key = p.itemKey ? '<span class="frz-bcard-key">'+esc(p.itemKey)+'</span> ' : '';
+      var fields='';
+      if(need.needStart) fields += '<label class="frz-mr-f"><span>Start</span><input type="date" class="frz-fld" data-mrstart="'+p.id+'" value="'+(sprint.startDate||todayStr())+'"></label>';
+      if(need.needEstimate) fields += '<label class="frz-mr-f"><span>Estimate (w)</span><input type="number" min="0.25" step="0.25" class="frz-fld" data-mrest="'+p.id+'" placeholder="req"></label>';
+      if(need.needPoints) fields += '<label class="frz-mr-f"><span>Points</span><input type="number" min="0" step="1" class="frz-fld" data-mrpts="'+p.id+'" placeholder="req"></label>';
+      var notes=[];
+      var reqMissing = need.needStart || need.needEstimate || need.needPoints;
+      if(!reqMissing) notes.push('<span class="frz-mr-ready">Ready</span>');
+      if(need.needPromote){ var ap=approvedStatusName(); if(ap) notes.push('<span class="frz-mr-note">status → '+esc(ap)+'</span>'); }
+      return '<div class="frz-mr-row">'+
+        '<div class="frz-mr-hd">'+key+esc(p.name||'')+' '+notes.join(' ')+'</div>'+
+        (fields?'<div class="frz-mr-fields">'+fields+'</div>':'')+
+      '</div>';
+    }).join('');
+    var bg=document.createElement('div'); bg.className='frz-modal-bg';
+    bg.innerHTML='<div class="frz-modal" style="width:520px">'+
+      '<div class="frz-modal-hd">Add '+items.length+' item'+(items.length===1?'':'s')+' to '+esc(sprint.name)+'<button class="frz-iconbtn" id="frzMrClose">✕</button></div>'+
+      '<div class="frz-modal-bd"><div class="frz-rd-info">All '+items.length+' item'+(items.length===1?'':'s')+' will be added to <b>'+esc(sprint.name)+'</b>. Fill any required fields below.</div>'+rowsHtml+'</div>'+
+      '<div class="frz-modal-ft"><span class="frz-modal-err" id="frzMrErr"></span><button class="frz-viewopt" id="frzMrCancel">Cancel</button><button class="frz-newitem" id="frzMrSave">Add '+items.length+' to sprint</button></div>'+
+    '</div>';
+    root.appendChild(bg);
+    function close(){ bg.remove(); }
+    bg.querySelector('#frzMrClose').addEventListener('click', close);
+    bg.querySelector('#frzMrCancel').addEventListener('click', close);
+    bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
+    bg.querySelector('#frzMrSave').addEventListener('click', function(){
+      var err=bg.querySelector('#frzMrErr'); err.textContent='';
+      var valsById={};
+      for(var k=0;k<meta.length;k++){
+        var p=meta[k].p, need=meta[k].need, vals={};
+        if(need.needStart){ var sv=(bg.querySelector('[data-mrstart="'+p.id+'"]')||{}).value||''; if(!sv){ err.textContent='Start date is required for '+(p.itemKey||p.name)+'.'; return; } vals.start=sv; }
+        if(need.needEstimate){ var ev=parseFloat((bg.querySelector('[data-mrest="'+p.id+'"]')||{}).value); if(!(ev>0)){ err.textContent='Time estimate is required for '+(p.itemKey||p.name)+'.'; return; } vals.dueWeeks=ev; }
+        if(need.needPoints){ var pv=(bg.querySelector('[data-mrpts="'+p.id+'"]')||{}).value; if(pv===''||isNaN(+pv)||+pv<0){ err.textContent='Story points are required for '+(p.itemKey||p.name)+'.'; return; } vals.storyPoints=+pv; }
+        valsById[p.id]=vals;
+      }
+      var btn=bg.querySelector('#frzMrSave'); btn.disabled=true;
+      applySprintReadyBatch(items, sprint, valsById).then(function(){
+        _blSel.clear(); close(); refreshPlan(); _call('showToast', items.length+' added to '+sprint.name);
+      }).catch(function(e){ btn.disabled=false; err.textContent='Some items failed to add.'; refreshPlan(); });
+    });
+    setTimeout(function(){ var f=bg.querySelector('input'); if(f) f.focus(); },0);
+  }
   function openCreateSprint(){
     closePop();
     var start=todayStr(), end=addDaysStr(start,14);
@@ -20142,6 +20330,7 @@ if ('serviceWorker' in navigator) {
         '<div style="margin-bottom:12px"><label class="frz-lbl">Name</label><input class="frz-fld" id="frzCsName" value="'+escA(nextSprintName())+'"></div>'+
         '<div style="display:flex;gap:12px;margin-bottom:12px"><div style="flex:1"><label class="frz-lbl">Start</label><input type="date" class="frz-fld" id="frzCsStart" value="'+start+'"></div><div style="flex:1"><label class="frz-lbl">End</label><input type="date" class="frz-fld" id="frzCsEnd" value="'+end+'"></div></div>'+
         '<div><label class="frz-lbl">Goal (optional)</label><input class="frz-fld" id="frzCsGoal" placeholder="Sprint goal…"></div>'+
+        '<div class="frz-asg-warn frz-sprint-modal-warn" id="frzCsWarn" hidden></div>'+
       '</div>'+
       '<div class="frz-modal-ft"><span class="frz-modal-err" id="frzCsErr"></span><button class="frz-viewopt" id="frzCsCancel">Cancel</button><button class="frz-newitem" id="frzCsSave">Create sprint</button></div>'+
     '</div>';
@@ -20150,12 +20339,17 @@ if ('serviceWorker' in navigator) {
     bg.querySelector('#frzCsClose').addEventListener('click', close);
     bg.querySelector('#frzCsCancel').addEventListener('click', close);
     bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
-    bg.querySelector('#frzCsStart').addEventListener('change', function(){ bg.querySelector('#frzCsEnd').value = addDaysStr(this.value,14); });
+    // Stage 2e: shared date validation + live overlap warning (id=null -> compares vs all non-discarded sprints).
+    function refreshCsWarn(){ _sprintOverlapWarn(bg.querySelector('#frzCsWarn'), null, bg.querySelector('#frzCsStart'), bg.querySelector('#frzCsEnd')); }
+    bg.querySelector('#frzCsStart').addEventListener('change', function(){ bg.querySelector('#frzCsEnd').value = addDaysStr(this.value,14); refreshCsWarn(); });
+    bg.querySelector('#frzCsEnd').addEventListener('change', refreshCsWarn);
+    refreshCsWarn();
     bg.querySelector('#frzCsSave').addEventListener('click', function(){
       var err=bg.querySelector('#frzCsErr'); err.textContent='';
       var name=bg.querySelector('#frzCsName').value.trim(); if(!name){ err.textContent='Name is required.'; return; }
       var s=bg.querySelector('#frzCsStart').value, e=bg.querySelector('#frzCsEnd').value;
       if(!s||!e){ err.textContent='Start and end dates are required.'; return; }
+      var de=_sprintDateError(s, e); if(de){ err.textContent=de; return; }   // shared: block end <= start
       var sp={ id:'sp'+Date.now(), name:name, goal:bg.querySelector('#frzCsGoal').value.trim(), startDate:s, endDate:e, state:'Planned', scope:'global', carryOver:0 };
       _sprints.push(sp);
       var btn=bg.querySelector('#frzCsSave'); btn.disabled=true;
@@ -20186,13 +20380,8 @@ if ('serviceWorker' in navigator) {
     bg.querySelector('#frzEsClose').addEventListener('click', close);
     bg.querySelector('#frzEsCancel').addEventListener('click', close);
     bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
-    // 1.1d: non-blocking overlap warning, live on date change (never prevents save).
-    function refreshWarn(){
-      var ov=_sprintOverlaps(sp.id, bg.querySelector('#frzEsStart').value, bg.querySelector('#frzEsEnd').value);
-      var w=bg.querySelector('#frzEsWarn');
-      if(ov.length){ w.hidden=false; w.textContent='Dates overlap another sprint: '+ov.join(', ')+'. You can still save.'; }
-      else { w.hidden=true; w.textContent=''; }
-    }
+    // 1.1d / Stage 2e: non-blocking overlap warning, live on date change (shared helper).
+    function refreshWarn(){ _sprintOverlapWarn(bg.querySelector('#frzEsWarn'), sp.id, bg.querySelector('#frzEsStart'), bg.querySelector('#frzEsEnd')); }
     bg.querySelector('#frzEsStart').addEventListener('change', refreshWarn);
     bg.querySelector('#frzEsEnd').addEventListener('change', refreshWarn);
     refreshWarn();
@@ -20200,7 +20389,7 @@ if ('serviceWorker' in navigator) {
       var err=bg.querySelector('#frzEsErr'); err.textContent='';
       var name=bg.querySelector('#frzEsName').value.trim(); if(!name){ err.textContent='Name is required.'; return; }
       var s=bg.querySelector('#frzEsStart').value, e=bg.querySelector('#frzEsEnd').value;
-      if(s && e && e<=s){ err.textContent='End date must be after the start date.'; return; }   // 1.1d: block end <= start
+      var de=_sprintDateError(s, e); if(de){ err.textContent=de; return; }   // shared: block end <= start
       var goal=bg.querySelector('#frzEsGoal').value.trim();
       var before={name:sp.name,goal:sp.goal,startDate:sp.startDate,endDate:sp.endDate};
       var chg=[]; if(before.name!==name)chg.push('name'); if(before.goal!==goal)chg.push('goal'); if((before.startDate||'')!==s)chg.push('start'); if((before.endDate||'')!==e)chg.push('end');
