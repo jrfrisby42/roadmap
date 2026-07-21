@@ -2112,7 +2112,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.13';
+const APP_VERSION = '4.37.14';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16216,6 +16216,10 @@ if ('serviceWorker' in navigator) {
   /* Filter row */
   .frz-beta .frz-filterbar { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-surface); overflow-x:auto; scrollbar-width:none; flex-shrink:0; }
   .frz-beta.frz-cal-active .frz-filterbar { padding:6px 14px; }   /* Stage 3.5: calendar-only trim (other views keep 10px) */
+  /* Stage 3.5.2 addendum: reserve the scrollbar gutter on the calendar's scroll container so
+     a scrollbar appearing on one tab (e.g. Week overflows, Month fill-height doesn't) can't
+     narrow the layout and shift the centered nav/tabs. Scoped to the calendar view only. */
+  .frz-beta.frz-cal-active .frz-content { scrollbar-gutter: stable; }
   .frz-beta .frz-filterbar::-webkit-scrollbar { display:none; }
   .frz-beta .frz-spacer { flex:1; }
   .frz-beta .frz-chip { border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); font:inherit; font-size:13px; color:var(--frz-text-secondary); display:inline-flex; align-items:center; gap:6px; padding:4px 10px 4px 12px; border-radius:var(--frz-radius-chip); cursor:pointer; white-space:nowrap; }
