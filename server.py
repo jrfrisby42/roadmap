@@ -782,6 +782,7 @@ def init_team_db(team: str):
                       (k, json.dumps(v)))
     _migrate_passwords(team)
     _migrate_config_keys(team)
+    _migrate_avatar_colors(team)   # Stage 6a: every user gets an avatarColor
     # Backfill indexed columns in its OWN transaction (after the schema migration
     # has committed the new columns). Keeping it separate means a rollback in the
     # schema block - or a concurrent worker boot - can't lose the backfill. It is
@@ -923,6 +924,44 @@ def _migrate_passwords(team: str):
         if changed:
             c.execute("UPDATE config SET value=? WHERE key='users'", (json.dumps(users),))
 
+# ── Per-user avatar colors (Stage 6a) ─────────────────────────────────────────
+# 24 evenly-spaced hues at S58%/L44% - dark enough for white avatar text AND usable
+# as pill text on a light tint. Deterministic; picker prefers a hue not already in use.
+def _hsl_hex(h, s, l):
+    c = (1 - abs(2*l - 1)) * s; x = c * (1 - abs((h/60.0) % 2 - 1)); m = l - c/2
+    if   h < 60:  r, g, b = c, x, 0
+    elif h < 120: r, g, b = x, c, 0
+    elif h < 180: r, g, b = 0, c, x
+    elif h < 240: r, g, b = 0, x, c
+    elif h < 300: r, g, b = x, 0, c
+    else:         r, g, b = c, 0, x
+    return '#%02x%02x%02x' % (round((r+m)*255), round((g+m)*255), round((b+m)*255))
+_AVATAR_PALETTE = [_hsl_hex(i * 360.0/24, 0.58, 0.44) for i in range(24)]
+
+def _pick_avatar_color(used, seed=""):
+    used_l = {str(c).lower() for c in used if c}
+    for col in _AVATAR_PALETTE:
+        if col.lower() not in used_l:
+            return col
+    return _AVATAR_PALETTE[int(hashlib.md5((seed or "x").encode()).hexdigest(), 16) % len(_AVATAR_PALETTE)]
+
+def _migrate_avatar_colors(team: str):
+    """Idempotent backfill: fill avatarColor for every user missing one, preferring an
+    unused hue. Never overwrites a stored color (jr.frisby's #2f86de stays)."""
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+        if not row:
+            return
+        users = json.loads(row["value"])
+        used = {u.get("avatarColor") for u in users if u.get("avatarColor")}
+        changed = False
+        for u in users:
+            if not u.get("avatarColor"):
+                col = _pick_avatar_color(used, u.get("username", ""))
+                u["avatarColor"] = col; used.add(col); changed = True
+        if changed:
+            c.execute("UPDATE config SET value=? WHERE key='users'", (json.dumps(users),))
+
 # ── Boot: ensure 'development' team exists, migrate legacy DB if needed ────────
 def boot():
     os.makedirs(TENANTS_DIR, exist_ok=True)
@@ -998,7 +1037,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.37.16"
+APP_VERSION = "4.37.17"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3279,6 +3318,7 @@ def set_config(key: str, body = Body(...), username: str = "",
         # grant themselves `builtin:true`, or delete the primary admin outright.
         caller = auth["username"]
         caller_is_primary = bool(existing.get(caller, {}).get("builtin"))
+        used_colors = {u.get("avatarColor") for u in existing.values() if u.get("avatarColor")}   # Stage 6a
         seen_emails = {}
         for u in body:
             uname = u.get("username","")
@@ -3294,6 +3334,8 @@ def set_config(key: str, body = Body(...), username: str = "",
                 u["avatarInitials"] = prev["avatarInitials"]
             if prev and "avatarColor" not in u and prev.get("avatarColor"):
                 u["avatarColor"] = prev["avatarColor"]
+            if not u.get("avatarColor"):   # Stage 6a: seed a distinct color for new/colorless users
+                _col = _pick_avatar_color(used_colors, uname); u["avatarColor"] = _col; used_colors.add(_col)
             pw = u.get("password","")
             if not pw:
                 if prev and prev.get("password"):

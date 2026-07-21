@@ -2112,7 +2112,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.37.16';
+const APP_VERSION = '4.37.17';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2134,6 +2134,9 @@ function applyJiraVisibility(){
 // ── DARK MODE ──────────────────────────────────────────────────────────────
 function applyDarkMode(on){
   document.body.classList.toggle('dark-mode', on);
+  // Stage 6b: the calendar's pill/bar tints are computed inline per theme, so re-render it
+  // when the theme flips (no-op unless the calendar is the active view).
+  try { if(window._frzRefreshCalendar) window._frzRefreshCalendar(); } catch(e){}
 }
 
 function setTheme(theme){
@@ -16125,7 +16128,7 @@ if ('serviceWorker' in navigator) {
      across the gutter/day boundary (same grid row = same height); the today column is one
      aligned highlighted stripe. */
   .frz-beta .frz-cal-wg, .frz-beta .frz-cal-tg { display:grid; border-top:1px solid var(--frz-border); --cal-gutter:170px; }
-  .frz-beta .frz-cal-wg { grid-template-columns:var(--cal-gutter) repeat(7, minmax(0,1fr)); }
+  .frz-beta .frz-cal-wg { grid-template-columns:var(--cal-gutter) repeat(var(--cal-days,7), minmax(0,1fr)); }   /* Stage 6c: 7 (all) or 5 (work days) */
   .frz-beta .frz-cal-tg { grid-template-columns:var(--cal-gutter) repeat(var(--cal-days,31), minmax(0,1fr)); }
   .frz-beta .frz-cal-hcell { position:sticky; top:0; z-index:3; background:var(--frz-bg-surface); border-bottom:2px solid var(--frz-border); border-left:1px solid var(--frz-border); }
   .frz-beta .frz-cal-hcell.frz-cal-gut-hd { border-left:0; }
@@ -16143,6 +16146,16 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-cal-caplabel { font-size:10px; font-weight:700; color:var(--frz-text-muted); text-transform:uppercase; letter-spacing:.3px; }
   .frz-beta .frz-cal-capcell { border-left:1px solid var(--frz-border); border-bottom:1px solid var(--frz-border); padding:3px 4px; text-align:center; font-size:11px; font-weight:700; white-space:nowrap; overflow:hidden; }
   .frz-beta .frz-cal-tg .frz-cal-capcell { font-size:9px; padding:2px 0; }
+  /* Stage 6d: item type icon left of the key in Week ticket chips */
+  .frz-beta .frz-cal-chip-item svg { margin-right:3px; vertical-align:middle; }
+  /* Stage 6b: dark-mode fixes for the capacity health cells (the global .cap-health-* dark
+     override is scoped to .cap-cal-cell only) and the assignment-modal warning/delete reds.
+     Everything else on the calendar rides the --frz-* tokens, which already have dark values. */
+  body.dark-mode .frz-beta .frz-cal-capcell.cap-health-ok   { background:rgba(232,160,0,0.22); color:#f0c040; }
+  body.dark-mode .frz-beta .frz-cal-capcell.cap-health-warn { background:rgba(34,185,110,0.22); color:#3dd68a; }
+  body.dark-mode .frz-beta .frz-cal-capcell.cap-health-over { background:rgba(232,57,74,0.22); color:#f06070; }
+  body.dark-mode .frz-beta .frz-asg-warn { background:rgba(232,57,74,.16); color:#f06070; border-color:rgba(232,57,74,.35); }
+  body.dark-mode .frz-beta .frz-asg-del  { border-color:#f06070; color:#f06070; }
   /* Timeline track spans the day columns; gridlines + today stripe painted via inline
      background (same fractional source as the header day cells); bars absolute over it. */
   .frz-beta .frz-cal-track { grid-column:2 / -1; position:relative; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-elevated); }
@@ -17982,12 +17995,28 @@ if ('serviceWorker' in navigator) {
     if(!users.length) return null;
     return { owner:'', unassigned:true, users:users, typeById:typeById };
   }
-  function _calAsgChip(a, typeById, canEdit){
-    var t=typeById[a.type_id]||{}, col=/^#[0-9A-Fa-f]{6}$/.test(t.color||'')?t.color:'#4a5b6b';
-    var range=(a.start_date===a.end_date)?_calShortD(a.start_date):(_calShortD(a.start_date)+' – '+_calShortD(a.end_date));
-    return '<span class="frz-cal-chip'+(canEdit?' frz-cal-chip-asg':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+'style="background:'+col+'1f;color:'+col+';border-color:'+col+'66" title="'+escA((t.name||a.type_id)+' · '+range)+'">'+esc(t.name||a.type_id)+'</span>';
+  // Stage 6a/6b: assignment pills are tinted by the USER's avatarColor (identity), with the
+  // assignment TYPE's color as a left border (semantics). Computed per theme so the text stays
+  // readable on any user color in light OR dark mode - solved once, shared by all pill surfaces.
+  function _calDark(){ return document.body.classList.contains('dark-mode'); }
+  function _calHexRGB(hex){ var m=/^#?([0-9a-f]{6})$/i.exec(hex||''); if(!m) return null; var n=parseInt(m[1],16); return {r:(n>>16)&255,g:(n>>8)&255,b:n&255}; }
+  function _calRgbHsl(r,g,b){ r/=255;g/=255;b/=255; var mx=Math.max(r,g,b),mn=Math.min(r,g,b),h=0,s=0,l=(mx+mn)/2; if(mx!==mn){ var d=mx-mn; s=l>0.5?d/(2-mx-mn):d/(mx+mn); h=mx===r?((g-b)/d+(g<b?6:0)):mx===g?((b-r)/d+2):((r-g)/d+4); h/=6; } return {h:h*360,s:s*100,l:l*100}; }
+  function _calHslHex(h,s,l){ s/=100;l/=100; var c=(1-Math.abs(2*l-1))*s,x=c*(1-Math.abs((h/60)%2-1)),mm=l-c/2,r,g,b; h=((h%360)+360)%360; if(h<60){r=c;g=x;b=0;}else if(h<120){r=x;g=c;b=0;}else if(h<180){r=0;g=c;b=x;}else if(h<240){r=0;g=x;b=c;}else if(h<300){r=x;g=0;b=c;}else{r=c;g=0;b=x;} function h2(v){return ('0'+Math.round((v+mm)*255).toString(16)).slice(-2);} return '#'+h2(r)+h2(g)+h2(b); }
+  function _calPillStyle(userHex, typeHex, dark){
+    var p=_calHexRGB(userHex)||{r:74,g:91,b:107};
+    var hsl=_calRgbHsl(p.r,p.g,p.b), s=Math.min(Math.max(hsl.s,30),70);
+    var bg=_calHslHex(hsl.h, dark?Math.min(s,48):Math.min(s,55), dark?20:92);   // deep (dark) / pale (light) hue tint
+    var text=_calHslHex(hsl.h, s, dark?76:34);                                    // readable hue for the theme
+    var tp=_calHexRGB(typeHex), border= tp?('rgb('+tp.r+','+tp.g+','+tp.b+')'):text;
+    return 'background:'+bg+';color:'+text+';border-color:'+bg+';border-left:3px solid '+border;
   }
-  function _calTicketChip(p){ return '<span class="frz-cal-chip frz-cal-chip-item" data-item="'+p.id+'" title="'+escA((p.itemKey?p.itemKey+' · ':'')+(p.name||''))+'">'+esc(p.itemKey||p.name||('#'+p.id))+'</span>'; }
+  function _calAsgChip(a, typeById, canEdit){
+    var t=typeById[a.type_id]||{};
+    var range=(a.start_date===a.end_date)?_calShortD(a.start_date):(_calShortD(a.start_date)+' – '+_calShortD(a.end_date));
+    return '<span class="frz-cal-chip'+(canEdit?' frz-cal-chip-asg':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+'style="'+_calPillStyle(avatarColorFor(a.username), t.color, _calDark())+'" title="'+escA((a.username?displayName(a.username)+' · ':'')+(t.name||a.type_id)+' · '+range)+'">'+esc(t.name||a.type_id)+'</span>';
+  }
+  // Stage 6d: Week ticket chip carries the item's type icon (shared typeIconHTML) left of the key; stays neutral-styled.
+  function _calTicketChip(p){ var ic=(typeIconHTML(p.type,{size:12})||''); return '<span class="frz-cal-chip frz-cal-chip-item" data-item="'+p.id+'" title="'+escA((p.itemKey?p.itemKey+' · ':'')+(p.name||''))+'">'+ic+esc(p.itemKey||p.name||('#'+p.id))+'</span>'; }
   // Stage 3a: does a work item's date range cover this day? Active-on-day = has a start,
   // and the day falls within start..(revised||due); missing both due+revised => start day only.
   // (Terminal/assignee/owner/project scoping already applied when _calData built u.tickets.)
@@ -18157,14 +18186,14 @@ if ('serviceWorker' in navigator) {
   var _CAL_MO_MAX=3;
   function _calMoTypeVisible(t){ return !(t && t.show_on_calendar===false); }
   function _calMoChip(a, types, canEdit){
-    var t=types[a.type_id]||{}, col=/^#[0-9A-Fa-f]{6}$/.test(t.color||'')?t.color:'#4a5b6b';
+    var t=types[a.type_id]||{};
     var ini=a.username?avatarInitialsFor(a.username):'';
     var label=(ini?ini+' ':'')+(t.name||a.type_id);
     var eD=a.end_date||a.start_date;
     var range=(a.start_date===eD)?_calShortD(a.start_date):(_calShortD(a.start_date)+' – '+_calShortD(eD));
     var ttl=(a.username?displayName(a.username)+' · ':'')+(t.name||a.type_id)+' · '+range;
     return '<span class="frz-cal-mo-chip'+(canEdit?' frz-cal-chip-asg is-clk':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+
-      'style="background:'+col+'1f;color:'+col+';border-color:'+col+'66" title="'+escA(ttl)+'">'+esc(label)+'</span>';
+      'style="'+_calPillStyle(avatarColorFor(a.username), t.color, _calDark())+'" title="'+escA(ttl)+'">'+esc(label)+'</span>';   // Stage 6a: user color + type-color left border
   }
   function _calMonthGrid(body, win, canEdit){
     var f=_calFilterState();
@@ -18238,10 +18267,11 @@ if ('serviceWorker' in navigator) {
   // bands + user rows, all sharing the grid's column definition. Cell content (assignment +
   // ticket chips, cap 2 + "+N more") is unchanged from Stage 3.
   function _calWeek(body, data, win, canEdit){
-    var days=[]; for(var i=0;i<7;i++) days.push(new Date(win.start.getFullYear(),win.start.getMonth(),win.start.getDate()+i));
+    var workDays=_calWorkDaysOn();   // Stage 6c: Mon-Fri (5 cols) vs Mon-Sun (7)
+    var days=[]; for(var i=0;i<7;i++){ var d=new Date(win.start.getFullYear(),win.start.getMonth(),win.start.getDate()+i); if(workDays && (d.getDay()===0||d.getDay()===6)) continue; days.push(d); }
     var dayStrs=days.map(_ymdLocal), todayStr=todayStrMT();
     var moreReg={}, mi=0;
-    var html='<div class="frz-cal-wg"><div class="frz-cal-hcell frz-cal-gut-hd"></div>'+
+    var html='<div class="frz-cal-wg" style="--cal-days:'+days.length+'"><div class="frz-cal-hcell frz-cal-gut-hd"></div>'+
       days.map(function(d,i){ return '<div class="frz-cal-hcell'+(dayStrs[i]===todayStr?' frz-cal-is-today':'')+'">'+d.toLocaleDateString(undefined,{weekday:'short'})+'<br>'+d.getDate()+'</div>'; }).join('');
     data.forEach(function(o){
       html+=_calBand(o, canEdit);
@@ -18275,22 +18305,23 @@ if ('serviceWorker' in navigator) {
   // tickets, ever; month-edge clipping keeps its chevron cue.
   function _calTimeline(body, data, win, canEdit){
     var y=win.start.getFullYear(), m=win.start.getMonth(), daysInMonth=new Date(y,m+1,0).getDate(), todayStr=todayStrMT();
-    var LANE=22, PAD=4;
-    var firstStr=_ymdLocal(new Date(y,m,1));
-    var todayCol=(todayStr.slice(0,7)===firstStr.slice(0,7))?parseInt(todayStr.slice(8,10),10):0;
-    var tlDayStrs=[]; for(var _di=1;_di<=daysInMonth;_di++) tlDayStrs.push(_ymdLocal(new Date(y,m,_di)));   // Stage 4c: per-day capacity strip
-    var per='calc(100% / '+daysInMonth+')';
+    var LANE=22, PAD=4, dark=_calDark(), workDays=_calWorkDaysOn();
+    // Stage 6c: the axis is the month's displayed days - workdays-only when the toggle is on.
+    // Bars map onto axis INDICES, so a Fri->Mon span is one contiguous bar across the seam.
+    var days=[]; for(var _d=1;_d<=daysInMonth;_d++){ var dt=new Date(y,m,_d); if(workDays && (dt.getDay()===0||dt.getDay()===6)) continue; days.push(_ymdLocal(dt)); }
+    var N=days.length, idxOf={}; days.forEach(function(ds,i){ idxOf[ds]=i; });
+    var per='calc(100% / '+N+')';
     var gridBg='repeating-linear-gradient(90deg, var(--frz-border) 0, var(--frz-border) 1px, transparent 1px, transparent '+per+')';
-    var trackBg=gridBg;
-    if(todayCol){ var a='calc('+per+' * '+(todayCol-1)+')', b='calc('+per+' * '+todayCol+')';
+    var trackBg=gridBg, todayIdx=(todayStr in idxOf)?idxOf[todayStr]:-1;
+    if(todayIdx>=0){ var a='calc('+per+' * '+todayIdx+')', b='calc('+per+' * '+(todayIdx+1)+')';
       trackBg='linear-gradient(90deg, transparent '+a+', var(--frz-accent-soft) '+a+', var(--frz-accent-soft) '+b+', transparent '+b+'), '+gridBg; }
-    var html='<div class="frz-cal-tg" style="--cal-days:'+daysInMonth+'"><div class="frz-cal-hcell frz-cal-gut-hd"></div>';
-    for(var i=1;i<=daysInMonth;i++){ html+='<div class="frz-cal-hcell'+(i===todayCol?' frz-cal-is-today':'')+'">'+i+'</div>'; }
+    var html='<div class="frz-cal-tg" style="--cal-days:'+N+'"><div class="frz-cal-hcell frz-cal-gut-hd"></div>';
+    days.forEach(function(ds){ html+='<div class="frz-cal-hcell'+(ds===todayStr?' frz-cal-is-today':'')+'">'+parseInt(ds.slice(8,10),10)+'</div>'; });
     data.forEach(function(o){
       var typeById=o.typeById;
       var users=o.users.filter(function(u){ return u.assigns.some(function(a){ return _calMoTypeVisible(typeById[a.type_id]); }); });   // rows only for users with visible assignments
       html+=_calBand(o, canEdit);
-      if(!o.unassigned) html+=_calCapRow(o.owner, tlDayStrs, todayStr);   // Stage 4c: per-day capacity strip (no-op if no configured base)
+      if(!o.unassigned) html+=_calCapRow(o.owner, days, todayStr);   // Stage 4c/6c: per-day capacity strip on the same (workday) axis
       if(!users.length){ html+='<div class="frz-cal-emptyrow">No one scheduled.</div>'; return; }
       users.forEach(function(u){
         var asgs=u.assigns.filter(function(a){ return _calMoTypeVisible(typeById[a.type_id]); }).slice()
@@ -18298,16 +18329,17 @@ if ('serviceWorker' in navigator) {
         var lanes=[], bars='';   // lanes[i] = last end-ymd occupying lane i (greedy first-fit)
         asgs.forEach(function(a){
           var s=(a.start_date||''), e=(a.end_date||a.start_date||'');
+          var clipL=s<win.from, clipR=e>win.to, vs=clipL?win.from:s, ve=clipR?win.to:e;
+          var first=-1,last=-1; for(var di=0; di<N; di++){ if(days[di]>=vs && days[di]<=ve){ if(first<0)first=di; last=di; } }
+          if(first<0) return;   // no displayed column (e.g. weekend-only assignment in work-days mode)
           var lane=-1; for(var li=0; li<lanes.length; li++){ if(lanes[li] < s){ lane=li; break; } }
           if(lane<0){ lane=lanes.length; lanes.push(e); } else { lanes[lane]=e; }
-          var t=typeById[a.type_id]||{}, col=/^#[0-9A-Fa-f]{6}$/.test(t.color||'')?t.color:'#4a5b6b';
-          var clipL=s<win.from, clipR=e>win.to, vs=clipL?win.from:s, ve=clipR?win.to:e;
-          var sDay=parseInt(vs.slice(8,10),10), eDay=parseInt(ve.slice(8,10),10);
-          var left=((sDay-1)/daysInMonth*100), width=((eDay-sDay+1)/daysInMonth*100), top=PAD+lane*LANE;
+          var t=typeById[a.type_id]||{};
+          var left=first/N*100, width=(last-first+1)/N*100, top=PAD+lane*LANE;
           var range=(a.start_date===e)?_calShortD(a.start_date):(_calShortD(a.start_date)+' – '+_calShortD(a.end_date||a.start_date));
-          var ttl=(t.name||a.type_id)+' · '+range+(a.description?(' · '+a.description):'');
+          var ttl=(a.username?displayName(a.username)+' · ':'')+(t.name||a.type_id)+' · '+range+(a.description?(' · '+a.description):'');
           bars+='<span class="frz-cal-tl-bar'+(canEdit?' frz-cal-chip-asg':'')+(clipL?' is-clipL':'')+(clipR?' is-clipR':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+
-            'style="left:'+left+'%;width:'+width+'%;top:'+top+'px;background:'+col+'22;color:'+col+';border-color:'+col+'66;border-left:3px solid '+col+'" title="'+escA(ttl)+'">'+esc(t.name||a.type_id)+'</span>';
+            'style="left:'+left+'%;width:'+width+'%;top:'+top+'px;'+_calPillStyle(avatarColorFor(a.username), t.color, dark)+'" title="'+escA(ttl)+'">'+esc(t.name||a.type_id)+'</span>';
         });
         var h=PAD+Math.max(1,lanes.length)*LANE;
         html+='<div class="frz-cal-gut">'+avatarHTML(u.user,18)+'<span title="'+escA(displayName(u.user))+'">'+esc(displayName(u.user))+'</span></div>'+
@@ -18323,12 +18355,11 @@ if ('serviceWorker' in navigator) {
     var canEdit=_val('isAdmin',false)||_val('isEditor',false);
     var win=_calWindow();
     var _wd=_calWorkDaysOn();
-    var _dayToggle = (state.calTab==='month')
-      ? '<div class="frz-cal-daytoggle" role="group" aria-label="Days shown">'+
+    // Stage 6c: the work-days/all-days toggle is a shared calendar setting on ALL three tabs.
+    var _dayToggle = '<div class="frz-cal-daytoggle" role="group" aria-label="Days shown">'+
           '<button class="frz-cal-dbtn'+(_wd?' is-active':'')+'" data-days="work">Work days</button>'+
           '<button class="frz-cal-dbtn'+(_wd?'':' is-active')+'" data-days="all">All days</button>'+
-        '</div>'
-      : '';
+        '</div>';
     var _newBtnHtml = canEdit ? '<button class="frz-cal-newbtn" id="frzCalNew">+ New assignment</button>' : '';
     // Stage 3.5: Month/Week/Timeline tabs live in the nav row, absolutely centered (stable
     // regardless of whether the day-toggle/right cluster is shown). Same .frz-plan-tab
