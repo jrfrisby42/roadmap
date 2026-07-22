@@ -2121,7 +2121,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.48.0';
+const APP_VERSION = '4.48.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2743,7 +2743,21 @@ function _avatarUserRec(username){
 // Display name: "First Last" when set on the user record, else the username.
 function displayName(username){
   var rec = _avatarUserRec(username);
-  if(rec){ var full = ((rec.firstName||'').trim() + ' ' + (rec.lastName||'').trim()).trim(); if(full) return full; }
+  if(rec){
+    var full = ((rec.firstName||'').trim() + ' ' + (rec.lastName||'').trim()).trim();
+    if(full){
+      // Collision safety: if another user resolves to the SAME first+last, disambiguate by
+      // appending the username in parens. Single matches stay byte-identical to before.
+      try {
+        var clash = (users||[]).some(function(u){
+          if(!u || u.username === username) return false;
+          return (((u.firstName||'').trim() + ' ' + (u.lastName||'').trim()).trim()) === full;
+        });
+        if(clash) return full + ' (' + username + ')';
+      } catch(e){}
+      return full;
+    }
+  }
   return username || '';
 }
 function avatarInitialsFor(username){
@@ -9489,6 +9503,15 @@ function descToPlainText(html){
   return (d.textContent || '').replace(/\s+/g, ' ').trim();
 }
 function _listCell(v){ return esc(v==null||v===''?'-':String(v)); }
+// Resolve a sprint id -> its name for display. The sprints config + resolver live in the Flow
+// module (window._frzSprintName, set on shell init); when it's absent (classic UI) or the id is
+// unknown/closed, fall back to the raw id (never blank, never a crash). Display only - sort/value
+// still use sprint_id/sprintId.
+function _frzSprintLabel(id){
+  if(!id) return '';
+  try { if(typeof window._frzSprintName==='function'){ var n=window._frzSprintName(id); if(n) return n; } } catch(e){}
+  return id;
+}
 
 // ── List columns: model + per-user ORDER (user-driven reordering) ─────────────
 // Single source of truth for the main #listView table. Each column is a self-contained
@@ -9527,11 +9550,14 @@ const _LIST_COL_DEF = {
   owner:      { label:'Owner',       sort:'owner',
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.dev)}</td>` },
   assignee:   { label:'Assignee',    sort:'assignee',
-                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.assignee)}</td>` },
+                // Display resolves username -> displayName; sort still keys on 'assignee' (username). Value untouched.
+                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.assignee ? displayName(it.assignee) : '')}</td>` },
   points:     { label:'Points',      sort:'story_points', center:true,
                 td:(it)=>`<td style="padding:7px 10px;text-align:center">${_listCell(it.storyPoints)}</td>` },
   sprint:     { label:'Sprint',      sort:'sprint_id',
-                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.sprintId)}</td>` },
+                // Display resolves sprint id -> name via the beta resolver (raw id fallback when unknown/
+                // closed/classic); sort still keys on 'sprint_id'. Empty id -> the column's "-" convention.
+                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.sprintId ? _frzSprintLabel(it.sprintId) : '')}</td>` },
   project:    { label:'Project',     sort:'product',
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.product)}</td>` },
 };
@@ -9805,7 +9831,7 @@ function _listBulkValue(){
   const sel = opts => `<select id="listBulkVal" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">${opts}</select>`;
   if(field==='status')        wrap.innerHTML = sel(statuses.map(s=>`<option value="${escA(s)}">${esc(s)}</option>`).join(''));
   else if(field==='dev')      wrap.innerHTML = sel(developers.map(d=>`<option value="${escA(d)}">${esc(d)}</option>`).join(''));
-  else if(field==='assignee') wrap.innerHTML = sel(users.map(u=>`<option value="${escA(u.username)}">${esc(u.username)}</option>`).join(''));
+  else if(field==='assignee') wrap.innerHTML = sel(users.map(u=>`<option value="${escA(u.username)}">${esc(displayName(u.username))}</option>`).join(''));
   else if(field==='archived') wrap.innerHTML = sel(`<option value="1">Yes</option><option value="0">No</option>`);
   else                        wrap.innerHTML = `<input id="listBulkVal" type="text" placeholder="value" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">`;
 }
@@ -13783,7 +13809,7 @@ function _ipFieldOptions(field){
   if(field==='status')   return statuses.map(s=>o(s,s));
   if(field==='type')     return types.map(t=>o(t.name,t.name));
   if(field==='dev')      return [o('','- Unassigned -'), ...developers.map(d=>o(d,d))];
-  if(field==='assignee') return [o('','- Unassigned -'), ...users.map(u=>o(u.username,u.username))];
+  if(field==='assignee') return [o('','- Unassigned -'), ...users.map(u=>o(u.username, displayName(u.username)))];   // label=name, value=username
   if(field==='priority') return [o('','- None -'), o(1,'Urgent'), o(2,'High'), o(3,'Medium'), o(4,'Low')];
   if(field==='recurrence') return [o('none','None'), o('weekly','Weekly'), o('biweekly','Biweekly'), o('monthly','Monthly')];   // IP1
   return [];
@@ -14272,7 +14298,7 @@ function renderItemPage(p){
   document.getElementById('ipFields').innerHTML = [
     ipEditField('status',     'Status',       p.status ? `<span class="${statusCls(p.status)}" style="background:none;border:none;padding:0">${esc(p.status)}</span>` : '', 'select', {bold:true}),
     ipEditField('dev',        'Owner (Pod)',  esc(p.dev||''),    'select', {bold:true}),
-    ipEditField('assignee',   'Assignee',     esc(p.assignee||''), 'select'),
+    ipEditField('assignee',   'Assignee',     esc(p.assignee ? displayName(p.assignee) : ''), 'select'),
     ipEditField('type',       'Type',         esc(p.type||''),   'select'),
     ipEditField('priority',   'Priority',     p.priority ? `<span style="color:${PRIO_COLORS[p.priority]};font-weight:700">${esc(PRIO_LABELS[p.priority])}</span>` : '', 'select'),
     ipEditField('storyPoints','Story Points', (p.storyPoints==null||p.storyPoints==='') ? '' : String(p.storyPoints), 'number'),
@@ -17361,7 +17387,7 @@ if ('serviceWorker' in navigator) {
       var itemsHtml = n ? list.map(function(x){
         var oc = x.outcome==='carried-over' ? ' <span class="frz-mo-oc">→ carried over</span>' : (x.outcome==='completed' ? ' <span class="frz-mo-oc frz-mo-oc-done">✓ completed</span>' : '');
         var stpill = x.status ? '<span class="'+(_call('statusCls',x.status)||'')+'" style="padding:0 7px;border-radius:9px;font-size:10px;font-weight:700">'+esc(x.status)+'</span>' : '';
-        return '<div class="frz-mo-item" onclick="openItemPage('+x.id+')"><span class="frz-mo-key">'+esc(x.key||('#'+x.id))+'</span> <span class="frz-mo-iname">'+esc(x.name||'')+'</span> '+stpill+(x.assignee?' <span class="frz-mo-asg">'+esc(x.assignee)+'</span>':'')+oc+'</div>';
+        return '<div class="frz-mo-item" onclick="openItemPage('+x.id+')"><span class="frz-mo-key">'+esc(x.key||('#'+x.id))+'</span> <span class="frz-mo-iname">'+esc(x.name||'')+'</span> '+stpill+(x.assignee?' <span class="frz-mo-asg">'+esc(displayName(x.assignee))+'</span>':'')+oc+'</div>';
       }).join('') : '<div class="frz-mo-empty">'+zero+'</div>';
       return '<details class="frz-mo-sprint"'+(sp.state==='Active'?' open':'')+'>'+
         '<summary class="frz-mo-sum"><span class="frz-mo-nm">'+esc(sp.name)+'</span> '+badge+' <span class="frz-mo-dates">'+dates+'</span> <span class="frz-mo-duty">Duty: <b>'+esc(sp.maintenanceDutyPod)+'</b></span> <span class="frz-mo-count">'+countTxt+'</span>'+activeMark+'<span class="frz-spacer"></span>'+link+'</summary>'+
@@ -19971,6 +19997,9 @@ if ('serviceWorker' in navigator) {
     window._frzDashboardMO = _frzDashboardMO;
     window._viewDutyOnBoard = _viewDutyOnBoard;
     window._frzGotoSprints = function(){ navigate('/planning/sprints', false); };
+    // Display fix: let the block-0 List Sprint column resolve id -> name via the Flow module's
+    // sprints config. Returns '' for unknown/closed ids so the caller falls back to the raw id.
+    window._frzSprintName = function(id){ var s=sprintById(id); return (s && s.name) ? s.name : ''; };
     document.getElementById('frzAdmin').addEventListener('click', function(){ navigate('/admin', false); });
     var av=document.getElementById('frzAvatar'), am=document.getElementById('frzAcctMenu');
     av.addEventListener('click', function(e){ e.stopPropagation(); am.hidden=!am.hidden; if(!am.hidden){ try { renderTeamSwitch(); } catch(_e){} } });
@@ -20816,7 +20845,7 @@ if ('serviceWorker' in navigator) {
     if(need.needPoints) rows += '<div style="margin-bottom:12px"><label class="frz-lbl">Story points - required</label><input type="number" min="0" step="1" class="frz-fld" id="frzRdPts" placeholder="e.g. 5"></div>';
     // Stage 3a: optional Assignee (encourage assignee usage; never required)
     var _rdUsers = _val('users',[])||[];
-    var _rdAopts = '<option value="">- Unassigned -</option>' + _rdUsers.map(function(u){ var un=(u&&u.username)||u; return '<option value="'+escA(un)+'" '+(((p.assignee||'')===un)?'selected':'')+'>'+esc(un)+'</option>'; }).join('');
+    var _rdAopts = '<option value="">- Unassigned -</option>' + _rdUsers.map(function(u){ var un=(u&&u.username)||u; return '<option value="'+escA(un)+'" '+(((p.assignee||'')===un)?'selected':'')+'>'+esc(displayName(un))+'</option>'; }).join('');   // label=name, value=username
     rows += '<div style="margin-bottom:12px"><label class="frz-lbl">Assignee - optional</label><select class="frz-fld" id="frzRdAssignee">'+_rdAopts+'</select></div>';
     rows += need.needPromote
       ? '<div class="frz-rd-info">Status will change: <b>'+esc(p.status||'-')+'</b> → <b>'+esc(approvedStatusName())+'</b></div>'
@@ -22655,7 +22684,7 @@ if ('serviceWorker' in navigator) {
     var dept=Array.isArray(p.departments)?p.departments.join(', '):(p.department||'');
     // Read-only details - the right-rail set (display-only v1; blanks auto-skip).
     var details=[ _frzPanelRow('Key',p.itemKey), _frzPanelRow('Project',p.product), _frzPanelRow('Type',p.type),
-      _frzPanelRow('Owner',p.dev), _frzPanelRow('Assignee',p.assignee), _frzPanelRow('Reporter',p.reporter),
+      _frzPanelRow('Owner',p.dev), _frzPanelRow('Assignee',p.assignee ? displayName(p.assignee) : p.assignee), _frzPanelRow('Reporter',p.reporter),
       (p.reporterEmail ? '<div class="frz-lp-row"><span class="frz-lp-k">Reporter Email</span><span class="frz-lp-v"><a href="mailto:'+escA(p.reporterEmail)+'" style="color:var(--frz-accent)">'+esc(p.reporterEmail)+'</a></span></div>' : ''),
       _frzPanelRow('Priority',(p.priority&&PRIO_LBL[p.priority])?PRIO_LBL[p.priority]:null), _frzPanelRow('Department',dept),
       _frzPanelRow('Points',(p.storyPoints!=null&&p.storyPoints!=='')?p.storyPoints:null), _frzPanelRow('Sprint',sprint),
