@@ -2121,7 +2121,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.45.0';
+const APP_VERSION = '4.46.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16478,6 +16478,18 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-sprint-duty-sum { cursor:pointer; }
   .frz-beta .frz-duty-note { font-style:italic; }
   .frz-beta .frz-ip-sprint:hover { background:var(--surface); }   /* IP1: sprint-field hover cue (matches ipEditField) */
+  /* Stage 4: per-pod commitment vs capacity rows */
+  .frz-beta .frz-pod-load { margin-top:4px; display:flex; flex-direction:column; gap:3px; }
+  .frz-beta .frz-pod-row { font-size:12px; color:var(--frz-text-muted); display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .frz-beta .frz-pod-lbl { font-weight:600; color:var(--text); }
+  .frz-beta .frz-pod-unsched { color:var(--frz-text-muted); font-style:italic; }
+  .frz-beta .frz-podbar { flex:0 0 120px; height:6px; border-radius:4px; background:var(--border); overflow:hidden; }
+  .frz-beta .frz-podbar-fill { height:100%; border-radius:4px; display:block; }
+  .frz-beta .frz-podbar-fill.cap-health-ok   { background:#E8A000; }   /* under - yellow */
+  .frz-beta .frz-podbar-fill.cap-health-warn { background:#22B96E; }   /* at/near - green */
+  .frz-beta .frz-podbar-fill.cap-health-over { background:#E8394A; }   /* over - red */
+  .frz-beta .frz-podbar-fill.cap-health-off  { background:var(--frz-text-muted); opacity:.4; }
+  .frz-beta .frz-pod-warn { margin-top:4px; }
   /* M2: Dashboard Maintenance & Operations (sprint-duty) */
   .frz-beta .frz-mo-wrap { display:flex; flex-direction:column; gap:6px; }
   .frz-beta .frz-mo-sprint, .frz-beta .frz-mo-row { background:var(--surface); border:1px solid var(--border); border-radius:10px; }
@@ -17186,6 +17198,82 @@ if ('serviceWorker' in navigator) {
   }
   // M1.4: the maintenance-flagged type names (drives the duty board link's type filter).
   function _maintenanceTypeNames(){ return (_val('types',[])||[]).filter(function(t){ return t && t.maintenance; }).map(function(t){ return t.name||t; }); }
+  // ── Stage 4: commitment vs capacity (aggregate the two EXISTING engines) ─────
+  // No new math. Over the sprint window's WORKDAYS (Mon-Fri):
+  //   available_w = Σ getEffectiveCapacity(pod, day) / 5   ((override ?? base) − impacts, floored)
+  //   committed_w = Σ itemCapacityOnDay(item, day) / 5      (the Gantt/conflict per-day item load)
+  // Windowed (decision 2): an 8w item in a 2w sprint commits only its in-window days. Both sides
+  // come from window.getEffectiveCapacity / window.itemCapacityOnDay - the single canonical
+  // sources; if that ever changes, STOP rather than fork an estimator. Future consumers (Sprints
+  // tab, M2 dashboard) reuse _sprintPodLoad, not a copy.
+  function _sprintWorkdays(sprint){
+    var out=[]; if(!sprint || !sprint.startDate || !sprint.endDate) return out;
+    var cur=new Date(sprint.startDate+'T00:00:00'), end=new Date(sprint.endDate+'T00:00:00');
+    if(isNaN(cur.getTime())||isNaN(end.getTime())||end<cur) return out;
+    var guard=0;
+    while(cur<=end && guard++<3660){ var dw=cur.getDay(); if(dw!==0&&dw!==6){ var m=cur.getMonth()+1, d=cur.getDate(); out.push(cur.getFullYear()+'-'+(m<10?'0':'')+m+'-'+(d<10?'0':'')+d); } cur.setDate(cur.getDate()+1); }
+    return out;
+  }
+  function _fmtW(n){ n=Math.round((+n||0)*100)/100; if(Math.round(n)===n) return String(n); var s=n.toFixed(2); return s.replace(/0+$/,'').replace(/\.$/,''); }
+  // Returns one entry per pod owning >=1 sprint item: {pod, committed, available, items:[{key,weeks}],
+  // unscheduled:[{key,est}]}. Unscheduled = pod items with no schedulable span (no start or no due),
+  // which contribute 0 to committed (decision 3) - surfaced, never silently zero.
+  function _sprintPodLoad(sprint){
+    var pods=[]; if(!sprint) return pods;
+    var days=_sprintWorkdays(sprint); if(!days.length) return pods;
+    var items=sprintItems(sprint.id);
+    var byPod={};
+    items.forEach(function(p){ var pod=p.dev||''; if(!pod) return; (byPod[pod]=byPod[pod]||[]).push(p); });
+    Object.keys(byPod).sort().forEach(function(pod){
+      var availDays=0; days.forEach(function(ds){ availDays += (+_call('getEffectiveCapacity', pod, ds)||0); });
+      var perItem=[], unsched=[], committedDays=0;
+      byPod[pod].forEach(function(p){
+        if(!p.start || !p.due){ unsched.push({ key:p.itemKey||p.name||('#'+p.id), est:(+p.dueWeeks||0) }); return; }
+        var u=0; days.forEach(function(ds){ u += (+_call('itemCapacityOnDay', p, new Date(ds+'T00:00:00'))||0); });
+        committedDays+=u;
+        if(u>0) perItem.push({ key:p.itemKey||p.name||('#'+p.id), weeks:u/5 });
+      });
+      pods.push({ pod:pod, committed:committedDays/5, available:availDays/5, items:perItem, unscheduled:unsched });
+    });
+    return pods;
+  }
+  // Reuse the existing cap-health thresholds (capacityHealthClass): under=ok (yellow),
+  // at/near=warn-band (green), over=over (red). off when nothing committed.
+  function _podHealthCls(committed, available){
+    if(committed<=0) return 'cap-health-off';
+    if(available<=0) return 'cap-health-over';
+    var r=committed/available;
+    return r<0.5 ? 'cap-health-ok' : (r<=1.001 ? 'cap-health-warn' : 'cap-health-over');
+  }
+  // Per-pod tooltip: each contributing item's in-window weeks + the canonical capacity
+  // breakdown reference (capacityBreakdownText, reused - not re-derived) for the first
+  // in-window day that carries an assignment impact.
+  function _podLoadTitle(sprint, x){
+    var lines=['Committed: '+_fmtW(x.committed)+'w'];
+    x.items.forEach(function(it){ lines.push('  '+it.key+': '+_fmtW(it.weeks)+'w in window'); });
+    if(x.unscheduled.length){ x.unscheduled.forEach(function(u){ lines.push('  '+u.key+': unscheduled ('+_fmtW(u.est)+'w est, no dates)'); }); }
+    var days=_sprintWorkdays(sprint);
+    lines.push('Capacity ('+x.pod+'): '+_fmtW(x.available)+'w available over '+days.length+' workday'+(days.length===1?'':'s'));
+    for(var i=0;i<days.length;i++){ var bt=_call('capacityBreakdownText', x.pod, days[i]); if(bt){ lines.push('e.g. '+days[i]+':'); bt.split('\n').forEach(function(l){ lines.push('  '+l); }); break; } }
+    return lines.join('\n');
+  }
+  // Per-pod commitment rows + overcommit warning for the sprint pane (Planned + Active).
+  function _sprintCapHTML(sprint){
+    var pods=_sprintPodLoad(sprint); if(!pods.length) return '';
+    var over=[];
+    var rows=pods.map(function(x){
+      if(x.committed > x.available + 0.001) over.push({ pod:x.pod, by:x.committed-x.available });
+      var cls=_podHealthCls(x.committed, x.available);
+      var pct=Math.min(100, x.available>0 ? (x.committed/x.available*100) : (x.committed>0?100:0));
+      var un=x.unscheduled.length ? ' <span class="frz-pod-unsched">+ '+x.unscheduled.length+' unscheduled ('+_fmtW(x.unscheduled.reduce(function(s,u){return s+(+u.est||0);},0))+'w est)</span>' : '';
+      return '<div class="frz-pod-row" title="'+escA(_podLoadTitle(sprint,x))+'">'+
+        '<span class="frz-pod-lbl">'+esc(x.pod)+' · '+_fmtW(x.committed)+'w / '+_fmtW(x.available)+'w</span>'+un+
+        '<span class="frz-podbar"><span class="frz-podbar-fill '+cls+'" style="width:'+pct.toFixed(1)+'%"></span></span>'+
+      '</div>';
+    }).join('');
+    var warn=over.length ? '<div class="frz-asg-warn frz-pod-warn">'+over.map(function(o){ return 'Overcommitted: '+esc(o.pod)+' by '+_fmtW(o.by)+'w'; }).join(' · ')+'</div>' : '';
+    return '<div class="frz-pod-load">'+rows+'</div>'+warn;
+  }
   // M2: COMPLETED-sprint duty list. Live membership lies (carried bugs moved on), so read the
   // Stage-1 completion snapshot's committed items, filter to maintenance-type + owner==duty pod
   // (type/owner resolved from the current item by id), and carry the snapshot outcome.
@@ -20521,6 +20609,7 @@ if ('serviceWorker' in navigator) {
         (sprint.goal?'<div class="frz-sprint-goal" title="'+escA(sprint.goal)+'">'+esc(sprint.goal)+'</div>':'')+
         '<div class="frz-sprint-cap">'+items.length+' items · '+pts+' pts · '+est+'w · '+done+'/'+items.length+' done</div>'+
         (sprint.maintenanceDutyPod?(function(){ var di=_dutyItems(sprint), dn=di.length, dd=di.filter(function(p){return isTerm(p.status);}).length; var sum=dn?(dn+' bug'+(dn===1?'':'s')+' · '+dd+'/'+dn+' done'):'no bugs yet'; return '<div class="frz-sprint-duty frz-sprint-duty-sum" data-dutyboard="'+escA(sprint.id)+'" title="View maintenance bugs on the board">Maintenance duty: '+esc(sprint.maintenanceDutyPod)+' · '+sum+'</div>'; })():'')+
+        _sprintCapHTML(sprint)+   /* Stage 4: per-pod commitment vs capacity + overcommit warning */
         '</div>'+
       nudge+
       '<div class="frz-plan-list" id="frzSprintList">'+cards+'</div>';
@@ -20856,6 +20945,12 @@ if ('serviceWorker' in navigator) {
     var sp=currentSprint(); if(!sp || sp.state!=='Planned') return;
     if(activeSprint()){ _call('showToast','Another sprint is already Active - complete it first.','error'); return; }
     if(sprintItems(sp.id).length<1){ _call('showToast','Add at least one item before starting.','error'); return; }
+    // Stage 4: warn (never block) if any pod is overcommitted for the sprint window.
+    var over=_sprintPodLoad(sp).filter(function(x){ return x.committed > x.available + 0.001; });
+    if(over.length){
+      var msg='Starting overcommits '+over.map(function(o){ return o.pod+' by '+_fmtW(o.committed-o.available)+'w'; }).join(', ')+'.\n\nStart the sprint anyway?';
+      if(!confirm(msg)) return;
+    }
     sp.state='Active';
     // M1 1b: create the Maintenance Duty assignment (idempotent - _applyDutyForSprint updates,
     // never duplicates, when dutyAssignmentId is already set). Note goes into the sprint audit.
