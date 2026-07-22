@@ -132,6 +132,14 @@ sudo -u ubuntu /opt/roadmap/venv/bin/python server.py --new-team acme
 
 Then share `https://roadmap.frazil.app?team=acme` with the team.
 
+`--new-team` also **auto-updates the Litestream backup config** (if configured, see
+"Continuous replication" below) so the new team's DB starts replicating immediately -
+it prints `Litestream backup now covers this team.` on success. It is a silent no-op
+when `LITESTREAM_FLOW_CONFIG` is not set (the `LITESTREAM_*` vars belong in
+`/opt/roadmap/.env`, which `--new-team` reads). If the reload step needs root and the
+command was not run with sufficient privileges, it prints the reload command to run
+manually - the config file is still written.
+
 ---
 
 ## Reference: systemd unit
@@ -284,7 +292,79 @@ manual, per-team JSON via `GET /api/export`).
 replace `/data/tenants/<team>/roadmap.db`, start the service. (Test restores
 periodically — an untested backup is a hope, not a backup.)
 
-**Upgrade path (continuous / PITR):** for near-zero-loss recovery, Litestream can
-stream each DB to S3 with point-in-time restore. It needs a per-DB config entry
-(regenerated when a team is added), so the cron snapshot above is the simpler
-baseline; add Litestream if the recovery-window requirement tightens.
+## Continuous replication (Litestream, PITR)
+
+For near-zero-loss recovery, Litestream streams each team DB to S3 continuously with
+point-in-time restore - a strict upgrade over the 6-hourly snapshot above (keep both:
+the cron snapshot is a cheap independent backstop). Litestream needs **every** DB
+enumerated in its config, and Flow creates a new DB file per team at runtime, so
+`server.py` **generates a Flow-owned config from the tenants directory** and keeps it
+current on team creation. This runs as its **own `litestream-flow` service**,
+completely separate from any other Litestream config on the box (e.g. sharebox's is
+never touched).
+
+**How the config stays correct:**
+- `python server.py --sync-litestream` - regenerate the config from `/data/tenants/*/roadmap.db`
+  and restart the service. Run it **once** at setup (enumerates existing teams incl. the
+  auto-seeded `development`/`technology`) and any time you want to reconcile with disk.
+- `--new-team` calls the same sync automatically, so new teams are covered without a
+  manual step.
+
+Both are env-gated and best-effort: with `LITESTREAM_FLOW_CONFIG` unset they are no-ops.
+
+**Config via `.env`** (`/opt/roadmap/.env`):
+```
+LITESTREAM_FLOW_CONFIG=/opt/roadmap/litestream-flow.yml   # path the generator writes (app-owned; no root needed to write)
+LITESTREAM_S3_BUCKET=frazil-flow-backups                  # reuse the backups bucket
+LITESTREAM_S3_PREFIX=litestream                           # distinct from the cron snapshots' db-backups/ prefix
+# AWS_REGION reused from the SES config (default us-west-2)
+# LITESTREAM_RELOAD_CMD defaults to: systemctl restart litestream-flow
+```
+Replicas authenticate via the **EC2 instance role** (no keys in the file), same as SES.
+The generated file lists one `dbs:` entry per team → `s3://frazil-flow-backups/litestream/<team>/`.
+
+**One-time setup:**
+1. **IAM.** Grant the instance role, scoped to the Litestream prefix, `s3:GetObject`,
+   `s3:PutObject`, `s3:DeleteObject`, **and `s3:ListBucket`** on
+   `arn:aws:s3:::frazil-flow-backups/litestream/*` (Litestream needs ListBucket on the
+   prefix - note the existing role is otherwise *denied* ListBucket, so this is an
+   additive, prefix-scoped grant).
+2. **`.env`.** Add the block above and `sudo systemctl restart roadmap`.
+3. **systemd unit** `/etc/systemd/system/litestream-flow.service`:
+   ```ini
+   [Unit]
+   Description=Litestream (Frazil Flow per-team DBs)
+   After=network-online.target
+   Wants=network-online.target
+
+   [Service]
+   Type=simple
+   User=ubuntu
+   ExecStart=/usr/bin/litestream replicate -config /opt/roadmap/litestream-flow.yml
+   Restart=always
+   RestartSec=5
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+4. **Generate + enable:**
+   ```bash
+   cd /opt/roadmap
+   sudo -u ubuntu /opt/roadmap/venv/bin/python server.py --sync-litestream   # writes litestream-flow.yml
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now litestream-flow
+   sudo systemctl status litestream-flow      # confirm it is replicating each DB
+   ```
+   Allow `ubuntu` to restart the unit without a password (so `--new-team`'s auto-reload
+   works), or run `--new-team` with `sudo`; otherwise it writes the config and prints the
+   reload command for you to run.
+
+**Restore a single team (PITR):**
+```bash
+sudo systemctl stop roadmap
+sudo -u ubuntu litestream restore -config /opt/roadmap/litestream-flow.yml /data/tenants/<team>/roadmap.db
+# or point at the replica directly:
+# sudo -u ubuntu litestream restore -o /data/tenants/<team>/roadmap.db s3://frazil-flow-backups/litestream/<team>
+sudo systemctl start roadmap
+```
+Test a restore periodically - an untested backup is a hope, not a backup.
