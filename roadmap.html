@@ -2121,7 +2121,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.42.1';
+const APP_VERSION = '4.42.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16453,6 +16453,8 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-tbl-sub { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
   .frz-beta .frz-sprint-goal { font-size:12px; color:var(--frz-text-muted); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
   .frz-beta .frz-sprint-duty { font-size:12px; color:var(--frz-text-muted); margin-top:3px; }
+  .frz-beta .frz-sprint-duty-sum { cursor:pointer; }
+  .frz-beta .frz-sprint-duty-sum:hover { color:var(--frz-accent); }
   .frz-beta .frz-bl-parent { display:block; font-size:11px; color:var(--frz-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; margin-top:1px; }
   .frz-beta .frz-sprint-nudge { margin:0 0 12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .frz-beta .frz-nudge-acts { display:inline-flex; gap:10px; }
@@ -17125,6 +17127,25 @@ if ('serviceWorker' in navigator) {
     return types.filter(function(t){ return /maintenance\s*duty/i.test((t.name||'')) || /maintenance-?duty/i.test((t.id||'')); })[0] || null;
   }
   function _dutyAssignment(sp){ if(!sp||!sp.dutyAssignmentId) return null; return (_val('_assignments',[])||[]).filter(function(a){ return a.id===sp.dutyAssignmentId; })[0] || null; }
+  // M1.2 (shared with the M2 Dashboard rework - consume this, do NOT fork it): "duty work" for
+  // a sprint = items currently in the sprint owned by its maintenanceDutyPod whose type is Bug
+  // Fix. Feature/Enhancement work owned by the same pod is NOT duty work. Done = statusIsTerminal.
+  function _dutyItems(sp){
+    if(!sp || !sp.maintenanceDutyPod) return [];
+    return (_val('projects',[])||[]).filter(function(p){
+      return !p.archived && p.sprintId===sp.id && (p.dev||'')===sp.maintenanceDutyPod && p.type==='Bug Fix';
+    });
+  }
+  // M1.2: open the sprint-scoped board filtered to the duty work (shared filter system:
+  // ?sprint + ?owner + ?type=Bug Fix), preserving the rail project scope.
+  function _viewDutyOnBoard(id){
+    var sp=sprintById(id); if(!sp) return;
+    var u=new URLSearchParams(_frzCarryQS(false).replace(/^\?/,''));   // project only
+    u.set('sprint', id);
+    if(sp.maintenanceDutyPod) u.set('owner', sp.maintenanceDutyPod);
+    u.set('type', 'Bug Fix');
+    navigate('/kanban?'+u.toString(), false);
+  }
   function _reloadAssignments(){ try{ var r=_call('loadAssignmentData'); if(r&&r.then) return r; }catch(e){} return Promise.resolve(); }
   function _ownerList(){ return (_val('developers',[])||[]); }
   function _dutySelectHtml(id, cur){
@@ -20323,7 +20344,7 @@ if ('serviceWorker' in navigator) {
     return '<div class="frz-plan-pane-hd">'+esc(sprint.name)+' '+badge+'<span class="frz-spacer"></span>'+boardBtn+editBtn+actions+'</div>'+
       '<div class="frz-sprint-meta">'+(sprint.startDate?fmtD(sprint.startDate):'-')+' → '+(sprint.endDate?fmtD(sprint.endDate):'-')+
         (sprint.goal?'<div class="frz-sprint-goal" title="'+escA(sprint.goal)+'">'+esc(sprint.goal)+'</div>':'')+
-        (sprint.maintenanceDutyPod?'<div class="frz-sprint-duty">Maintenance: '+esc(sprint.maintenanceDutyPod)+'</div>':'')+
+        (sprint.maintenanceDutyPod?(function(){ var di=_dutyItems(sprint), dn=di.length, dd=di.filter(function(p){return isTerm(p.status);}).length; var sum=dn?(dn+' bug'+(dn===1?'':'s')+' · '+dd+'/'+dn+' done'):'no bugs yet'; return '<div class="frz-sprint-duty frz-sprint-duty-sum" data-dutyboard="'+escA(sprint.id)+'" title="View maintenance bugs on the board">Maintenance duty: '+esc(sprint.maintenanceDutyPod)+' · '+sum+'</div>'; })():'')+
         '<div class="frz-sprint-cap">'+items.length+' items · '+pts+' pts · '+est+'w · '+done+'/'+items.length+' done</div></div>'+
       nudge+
       '<div class="frz-plan-list" id="frzSprintList">'+cards+'</div>';
@@ -20355,6 +20376,7 @@ if ('serviceWorker' in navigator) {
     // 1.1b pane-header Edit + 1.1a stale-nudge inline actions (all reuse the existing flows)
     var pe=document.getElementById('frzPaneEdit'); if(pe && sprint) pe.addEventListener('click', function(){ editSprint(sprint.id); });
     var pbd=document.getElementById('frzPaneBoard'); if(pbd && sprint) pbd.addEventListener('click', function(){ _viewSprintOnBoard(sprint.id); });
+    var dbd=host.querySelector('[data-dutyboard]'); if(dbd) dbd.addEventListener('click', function(){ _viewDutyOnBoard(dbd.getAttribute('data-dutyboard')); });
     var ne=document.getElementById('frzNudgeEdit'); if(ne && sprint) ne.addEventListener('click', function(){ editSprint(sprint.id); });
     var na=document.getElementById('frzNudgeStart'); if(na) na.addEventListener('click', startSprint);
     var nd=document.getElementById('frzNudgeDiscard'); if(nd && sprint) nd.addEventListener('click', function(){ discardSprint(sprint.id); });
