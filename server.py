@@ -787,6 +787,7 @@ def init_team_db(team: str):
     _migrate_config_keys(team)
     _migrate_avatar_colors(team)   # Stage 6a: every user gets an avatarColor
     _migrate_sprint_snapshots(team)  # Planning Stage 1: durable snapshot for completed sprints
+    _migrate_maintenance_flag(team)  # M1.4: seed maintenance=True on the "Bug Fix" type (presence-only)
     # Backfill indexed columns in its OWN transaction (after the schema migration
     # has committed the new columns). Keeping it separate means a rollback in the
     # schema block - or a concurrent worker boot - can't lose the backfill. It is
@@ -1018,6 +1019,27 @@ def _reconstruct_sprint_history(acts, by_name, name_of):
                 hist.append({"sprintId": name_to_id(new_name), "addedAt": ts, "outcome": ""})
     return hist
 
+def _migrate_maintenance_flag(team: str):
+    """M1.4: one-time, presence-only seed of maintenance=True on a type named exactly
+    "Bug Fix" (the M1.2 duty predicate, now config-driven). Only sets the flag when the
+    key is ABSENT on that type object - never overwrites an admin's explicit choice."""
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='types'").fetchone()
+        if not row:
+            return
+        try:
+            types = json.loads(row["value"]) or []
+        except Exception:
+            return
+        changed = False
+        for t in types:
+            if isinstance(t, dict) and t.get("name") == "Bug Fix" and "maintenance" not in t:
+                t["maintenance"] = True
+                changed = True
+        if changed:
+            c.execute("UPDATE config SET value=? WHERE key='types'", (json.dumps(types),))
+            print(f"[Migration] {team}: seeded maintenance=True on the 'Bug Fix' type")
+
 def _migrate_sprint_snapshots(team: str):
     with db(team) as c:
         srow = c.execute("SELECT value FROM config WHERE key='sprints'").fetchone()
@@ -1142,7 +1164,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.42.3"
+APP_VERSION = "4.43.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 

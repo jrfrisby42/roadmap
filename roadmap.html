@@ -2121,7 +2121,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.42.3';
+const APP_VERSION = '4.43.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -7568,6 +7568,10 @@ function renderTypeList(){
         <input type="checkbox" onchange="toggleTypeIgnore(${i},this.checked)" ${ignored?'checked':''} style="accent-color:var(--accent);cursor:pointer">
         Ignore Conflicts
       </label>
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;flex-shrink:0" title="Items of this type count as sprint maintenance-duty work (drives the duty summary + duty-pod defaulting)">
+        <input type="checkbox" onchange="toggleTypeMaintenance(${i},this.checked)" ${t.maintenance?'checked':''} style="accent-color:var(--accent);cursor:pointer">
+        Maintenance
+      </label>
       ${delBtn}
     </div>`;
   }).join('');
@@ -7676,6 +7680,19 @@ function isScheduledType(typeName){
 function toggleTypeScheduled(i, val){
   typeScheduled[types[i].name] = val;
   saveConfig('typeScheduled', typeScheduled);
+  render();
+}
+// M1.4: the per-type "maintenance" flag lives ON the type object in the types config
+// (default false). Single read point - _dutyItems + duty UI wire to this, never a
+// hardcoded type name.
+function isMaintenanceType(typeName){
+  const t = types.filter(x => (x.name||x) === typeName)[0];
+  return !!(t && t.maintenance);
+}
+function toggleTypeMaintenance(i, val){
+  if(!types[i]) return;
+  types[i].maintenance = !!val;
+  saveConfig('types', types);
   render();
 }
 
@@ -16454,6 +16471,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-sprint-goal { font-size:12px; color:var(--frz-text-muted); margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
   .frz-beta .frz-sprint-duty { font-size:12px; color:var(--frz-text-muted); margin-top:3px; }
   .frz-beta .frz-sprint-duty-sum { cursor:pointer; }
+  .frz-beta .frz-duty-note { font-style:italic; }
   .frz-beta .frz-sprint-duty-sum:hover { color:var(--frz-accent); }
   .frz-beta .frz-bl-parent { display:block; font-size:11px; color:var(--frz-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; margin-top:1px; }
   .frz-beta .frz-sprint-nudge { margin:0 0 12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
@@ -17133,8 +17151,21 @@ if ('serviceWorker' in navigator) {
   function _dutyItems(sp){
     if(!sp || !sp.maintenanceDutyPod) return [];
     return (_val('projects',[])||[]).filter(function(p){
-      return !p.archived && p.sprintId===sp.id && (p.dev||'')===sp.maintenanceDutyPod && p.type==='Bug Fix';
+      return !p.archived && p.sprintId===sp.id && (p.dev||'')===sp.maintenanceDutyPod && _call('isMaintenanceType', p.type);   // M1.4: config-driven maintenance flag (was literal "Bug Fix")
     });
+  }
+  // M1.4: the maintenance-flagged type names (drives the duty board link's type filter).
+  function _maintenanceTypeNames(){ return (_val('types',[])||[]).filter(function(t){ return t && t.maintenance; }).map(function(t){ return t.name||t; }); }
+  // M1.4: readiness-modal note for a maintenance-flagged item vs the sprint's duty pod.
+  // Blank owner -> "Owner will default to the pod"; owner set but different -> a muted
+  // differs-note (won't count as duty work); matching owner -> nothing. '' when N/A.
+  function _dutyOwnerNote(p, sprint){
+    if(!sprint || !sprint.maintenanceDutyPod) return '';
+    if(!_call('isMaintenanceType', p.type)) return '';
+    var pod=sprint.maintenanceDutyPod, own=(p.dev||'');
+    if(!own) return '<div class="frz-rd-info frz-duty-note">Owner → <b>'+esc(pod)+'</b> (maintenance duty)</div>';
+    if(own!==pod) return '<div class="frz-rd-info frz-duty-note">'+esc(p.itemKey||p.name||'This item')+' is owned by <b>'+esc(own)+'</b> - it will not count as '+esc(pod)+"'s duty work</div>";
+    return '';
   }
   // M1.2: open the sprint-scoped board filtered to the duty work (shared filter system:
   // ?sprint + ?owner + ?type=Bug Fix), preserving the rail project scope.
@@ -17143,7 +17174,10 @@ if ('serviceWorker' in navigator) {
     var u=new URLSearchParams(_frzCarryQS(false).replace(/^\?/,''));   // project only
     u.set('sprint', id);
     if(sp.maintenanceDutyPod) u.set('owner', sp.maintenanceDutyPod);
-    u.set('type', 'Bug Fix');
+    // M1.4: the shared type chip is single-valued, so only filter by type when EXACTLY one
+    // maintenance type exists; with several, apply owner+sprint only (documented gap).
+    var mt=_maintenanceTypeNames();
+    if(mt.length===1) u.set('type', mt[0]);
     navigate('/kanban?'+u.toString(), false);
   }
   function _reloadAssignments(){ try{ var r=_call('loadAssignmentData'); if(r&&r.then) return r; }catch(e){} return Promise.resolve(); }
@@ -20418,6 +20452,12 @@ if ('serviceWorker' in navigator) {
     if(vals.assignee!=null && String(vals.assignee)!==String(p.assignee||'')){ logs.push(['Assignee',(p.assignee||'(none)'),(vals.assignee||'(none)')]); patch.assignee=vals.assignee; }   // Stage 3a
     // Stage 1b: readiness floor - promote below-floor/Inactive items to Approved (never demote)
     if(needsFloorPromotion(p.status)){ var _ap=approvedStatusName(); if(_ap && _ap!==p.status){ logs.push(['Status',(p.status||'(none)'),_ap]); patch.status=_ap; } }
+    // M1.4: DEFAULT (never override) - a maintenance-flagged item with a BLANK owner takes the
+    // sprint's duty pod, set explicitly so 4.38.0's server bucketing leaves it alone. A set owner
+    // is never touched. Logged like any owner change (readiness activities).
+    if(sprint.maintenanceDutyPod && !(p.dev||'') && _call('isMaintenanceType', p.type)){
+      logs.push(['Owner','(none)',sprint.maintenanceDutyPod]); patch.dev=sprint.maintenanceDutyPod;
+    }
     var prevSprint = (p.sprintId && sprintById(p.sprintId)) ? sprintById(p.sprintId).name : (p.sprintId||'(none)');
     logs.push(['Sprint', prevSprint, sprint.name]);
     // Stage 2b: append to the sprint HISTORY (migration-aware via _histClone).
@@ -20463,6 +20503,7 @@ if ('serviceWorker' in navigator) {
       ? '<div class="frz-rd-info">Status will change: <b>'+esc(p.status||'-')+'</b> → <b>'+esc(approvedStatusName())+'</b></div>'
       : '<div class="frz-rd-info">Status: <b>'+esc(p.status||'-')+'</b> <span style="color:var(--frz-text-muted)">(unchanged)</span></div>';
     rows += '<div class="frz-rd-info">Sprint will be set to <b>'+esc(sprint.name)+'</b></div>';
+    rows += _dutyOwnerNote(p, sprint);   // M1.4: duty-pod default / differs note (maintenance items only)
     bg.innerHTML='<div class="frz-modal" style="width:440px">'+
       '<div class="frz-modal-hd">Make sprint-ready<button class="frz-iconbtn" id="frzRdClose">✕</button></div>'+
       '<div class="frz-modal-bd"><div style="font-size:12px;color:var(--frz-text-muted);margin-bottom:12px">Review '+esc(p.name||'')+' before adding it to '+esc(sprint.name)+'.</div>'+rows+'</div>'+
@@ -20506,6 +20547,7 @@ if ('serviceWorker' in navigator) {
       if(need.needPromote){ var ap=approvedStatusName(); if(ap) notes.push('<span class="frz-mr-note">status → '+esc(ap)+'</span>'); }
       return '<div class="frz-mr-row">'+
         '<div class="frz-mr-hd">'+key+esc(p.name||'')+' '+notes.join(' ')+'</div>'+
+        _dutyOwnerNote(p, sprint)+   // M1.4: duty-pod default / differs note (maintenance items only)
         (fields?'<div class="frz-mr-fields">'+fields+'</div>':'')+
       '</div>';
     }).join('');
