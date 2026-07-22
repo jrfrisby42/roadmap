@@ -2121,7 +2121,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.47.0';
+const APP_VERSION = '4.47.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -17962,7 +17962,9 @@ if ('serviceWorker' in navigator) {
     // built-in "All statuses"
     var all = document.createElement('button');
     all.className='frz-item'; all.setAttribute('data-board','__all__'); all.title='All statuses';
-    all.setAttribute('aria-current', String(onKanban && state.board==='__all__'));
+    // Mutually exclusive with Active Sprint: All statuses is "selected" only when NOT sprint-scoped
+    // (a sprint scope means the Active-Sprint pseudo-board is the active selection, not this one).
+    all.setAttribute('aria-current', String(onKanban && state.board==='__all__' && !state.sprintFilter));
     all.innerHTML = KANBAN_IC + '<span>All statuses</span>';
     bn.appendChild(all);
     // Built-in "Active Sprint" board: shows only while a sprint is Active (only one can be at a
@@ -19689,13 +19691,18 @@ if ('serviceWorker' in navigator) {
     // Mobile companion (Phase 5): mark the current view on root so phone CSS can show the
     // Gantt "open as List" nudge only on Gantt.
     if(root) root.setAttribute('data-view', state.onItem ? 'item' : (state.view||''));
-    // Fix 2: rail BOARDS highlight is part of the view sync - exactly one lit on a Kanban URL
-    // (the active board, or "All statuses" when there's no board param).
+    // Fix 2: rail BOARDS highlight is part of the view sync - exactly one lit on a Kanban URL.
+    // A [data-board] (incl. "All statuses") lights ONLY when NOT sprint-scoped; a sprint scope
+    // lights the Active Sprint pseudo-board instead (mutually exclusive), so board + active-sprint
+    // highlighting is single-sourced here (syncURL runs on every filter/nav change).
     var bnav=document.getElementById('frzBoardNav');
     if(bnav){ var onK=(state.view==='kanban' && !state.onItem);
       [].slice.call(bnav.querySelectorAll('.frz-item[data-board]')).forEach(function(b){
-        b.setAttribute('aria-current', String(onK && state.board===b.getAttribute('data-board')));
-      }); }
+        b.setAttribute('aria-current', String(onK && !state.sprintFilter && state.board===b.getAttribute('data-board')));
+      });
+      var asEl=bnav.querySelector('[data-activesprint]');
+      if(asEl) asEl.setAttribute('aria-current', String(onK && state.sprintFilter===asEl.getAttribute('data-activesprint')));
+    }
   }
 
   // ════════ popovers ════════
@@ -19870,6 +19877,9 @@ if ('serviceWorker' in navigator) {
         // Issue-3: a board click CARRIES the active chips (consistent with view switches; they
         // then filter within the board's columns), instead of dropping them.
         var _bid=boardBtn.getAttribute('data-board'); var _bcu=new URLSearchParams(_frzCarryQS(true).replace(/^\?/,''));
+        // A real board is a board, not a sprint scope: selecting one clears the Active-Sprint
+        // sprint filter so only that board reads as selected (drop ?sprint=).
+        _bcu.delete('sprint');
         if(_bid!=='__all__') _bcu.set('board', _bid); else _bcu.delete('board');
         var _bcs=_bcu.toString(); navigate('/kanban'+(_bcs?('?'+_bcs):''), false); return;
       }
