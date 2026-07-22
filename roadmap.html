@@ -2121,7 +2121,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.42.0';
+const APP_VERSION = '4.42.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16175,6 +16175,9 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-cal-emptyrow { grid-column:1 / -1; padding:11px 16px; color:var(--frz-text-muted); font-size:13px; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-elevated); }
   .frz-beta .frz-cal-gut { display:flex; align-items:center; gap:7px; padding:8px 12px; font-size:13px; font-weight:600; color:var(--frz-text); background:var(--frz-bg-elevated); border-bottom:1px solid var(--frz-border); overflow:hidden; }
   .frz-beta .frz-cal-gut > span:not(.frz-ava) { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* M1.1: pod (pool-scoped) row gutter - accent dot + owner name, no user avatar */
+  .frz-beta .frz-cal-poddot { flex-shrink:0; width:10px; height:10px; border-radius:50%; background:var(--frz-accent); box-shadow:0 0 0 3px var(--frz-accent-soft); }
+  .frz-beta .frz-cal-podtag { font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:var(--frz-accent); background:var(--frz-accent-soft); border-radius:6px; padding:0 5px; }
   .frz-beta .frz-cal-wcell { border-left:1px solid var(--frz-border); border-bottom:1px solid var(--frz-border); padding:5px 6px; background:var(--frz-bg-elevated); min-width:0; }
   .frz-beta .frz-cal-wcell .frz-cal-chip { display:block; margin-bottom:4px; text-align:center; }
   .frz-beta .frz-cal-wcell .frz-cal-mo-more { display:block; padding:1px 0; }
@@ -17070,7 +17073,7 @@ if ('serviceWorker' in navigator) {
     caret:'<svg class="frz-chip-caret" viewBox="0 0 12 12"><path d="M3 4.5l3 3 3-3"/></svg>'
   };
   var VIEW_KEYS = ['gantt','kanban','list','planning','dashboard'];
-  var VIEW_LABEL = { gantt:'Gantt', kanban:'Kanban', list:'List', planning:'Planning', dashboard:'Dashboard' };
+  var VIEW_LABEL = { gantt:'Gantt', kanban:'Kanban', list:'List', planning:'Planning', dashboard:'Dashboard', 'my-home':'My Home', 'team-calendar':'Calendar', admin:'Admin' };
   // chip key -> production panel + selection getter + URL param
   var CHIPS = {
     owner:   { label:'Owner',    panel:'devDropPanel',      get:function(){ return _g('getSelectedDevs'); },      param:'owner' },
@@ -18168,6 +18171,13 @@ if ('serviceWorker' in navigator) {
           assigns: winAssigns.filter(function(a){ return a.owner===owner && a.username===u && (!f.type||a.type_id===f.type); }),
           tickets: f.type ? [] : projs.filter(function(p){ return p.dev===owner && p.assignee===u && !isTerminalStatus(p.status) && inScope(p) && _calTicketOverlapsWin(p, win); }) };
       });
+      // M1.1: pool-scoped assignments (owner set, NO username) render as a pod row FIRST in the
+      // owner's section. The User filter never matches a pod entry (no user), so it's suppressed
+      // whenever a user filter is active. Owner/type/capacity filters already applied above.
+      if(!f.user){
+        var podAssigns=winAssigns.filter(function(a){ return a.owner===owner && !a.username && (!f.type||a.type_id===f.type); });
+        if(podAssigns.length) users.unshift({ user:'', pod:true, assigns:podAssigns, tickets:[] });
+      }
       out.push({ owner:owner, baseCap:baseCap, effToday:effToday, users:users, typeById:typeById });
     });
     var unassigned=_calUnassignedData(win, f, typeById);   // Stage 1b: unowned assignments are never invisible
@@ -18204,10 +18214,16 @@ if ('serviceWorker' in navigator) {
     var tp=_calHexRGB(typeHex), border= tp?('rgb('+tp.r+','+tp.g+','+tp.b+')'):text;
     return 'background:'+bg+';color:'+text+';border-color:'+bg+';border-left:3px solid '+border;
   }
+  // M1.1: a pod (username-less) assignment has no person, so its fill is the TYPE color; a
+  // user assignment keeps the user's avatar color (Stage 6a). The type color is the left border either way.
+  function _calAsgFill(a, t){ return a.username ? avatarColorFor(a.username) : ((t&&t.color)||'#4a5b6b'); }
+  function _calWho(a){ return a.username ? displayName(a.username) : (a.owner ? a.owner+' (pool)' : 'Unassigned'); }
+  // M1.1: pod-row gutter - a small accent dot + the owner name (no user avatar).
+  function _calPodGut(owner){ return '<div class="frz-cal-gut frz-cal-gut-pod"><span class="frz-cal-poddot" aria-hidden="true"></span><span title="'+escA(owner+' (pool)')+'">'+esc(owner)+' <span class="frz-cal-podtag">pool</span></span></div>'; }
   function _calAsgChip(a, typeById, canEdit){
     var t=typeById[a.type_id]||{};
     var range=(a.start_date===a.end_date)?_calShortD(a.start_date):(_calShortD(a.start_date)+' – '+_calShortD(a.end_date));
-    return '<span class="frz-cal-chip'+(canEdit?' frz-cal-chip-asg':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+'style="'+_calPillStyle(avatarColorFor(a.username), t.color, _calDark())+'" title="'+escA((a.username?displayName(a.username)+' · ':'')+(t.name||a.type_id)+' · '+range)+'">'+esc(t.name||a.type_id)+'</span>';
+    return '<span class="frz-cal-chip'+(canEdit?' frz-cal-chip-asg':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+'style="'+_calPillStyle(_calAsgFill(a,t), t.color, _calDark())+'" title="'+escA(_calWho(a)+' · '+(t.name||a.type_id)+' · '+range)+'">'+esc(t.name||a.type_id)+'</span>';
   }
   // Stage 6d: Week ticket chip carries the item's type icon (shared typeIconHTML) left of the key; stays neutral-styled.
   function _calTicketChip(p){ var ic=(typeIconHTML(p.type,{size:12})||''); return '<span class="frz-cal-chip frz-cal-chip-item" data-item="'+p.id+'" title="'+escA((p.itemKey?p.itemKey+' · ':'')+(p.name||''))+'">'+ic+esc(p.itemKey||p.name||('#'+p.id))+'</span>'; }
@@ -18233,7 +18249,7 @@ if ('serviceWorker' in navigator) {
       entries.forEach(function(e){
         var row=document.createElement('button'); row.className='frz-cal-mo-pop-row';
         if(e.k==='a'){
-          row.innerHTML=_calAsgChip(e.a,typeById,false)+'<span>'+esc(e.a.username?displayName(e.a.username):'Unassigned')+'</span>';
+          row.innerHTML=_calAsgChip(e.a,typeById,false)+'<span>'+esc(_calWho(e.a))+'</span>';
           if(canEdit) row.addEventListener('click', function(){ closePop(); openAssignmentModal(e.a); });
         } else {
           row.innerHTML=_calTicketChip(e.p)+'<span>'+esc(e.p.name||'')+'</span>';
@@ -18381,13 +18397,13 @@ if ('serviceWorker' in navigator) {
   function _calMoTypeVisible(t){ return !(t && t.show_on_calendar===false); }
   function _calMoChip(a, types, canEdit){
     var t=types[a.type_id]||{};
-    var ini=a.username?avatarInitialsFor(a.username):'';
-    var label=(ini?ini+' ':'')+(t.name||a.type_id);
+    var who=a.username?avatarInitialsFor(a.username):(a.owner||'');   // M1.1: pod chip shows the owner name in place of initials
+    var label=(who?who+' ':'')+(t.name||a.type_id);
     var eD=a.end_date||a.start_date;
     var range=(a.start_date===eD)?_calShortD(a.start_date):(_calShortD(a.start_date)+' – '+_calShortD(eD));
-    var ttl=(a.username?displayName(a.username)+' · ':'')+(t.name||a.type_id)+' · '+range;
+    var ttl=_calWho(a)+' · '+(t.name||a.type_id)+' · '+range;
     return '<span class="frz-cal-mo-chip'+(canEdit?' frz-cal-chip-asg is-clk':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+
-      'style="'+_calPillStyle(avatarColorFor(a.username), t.color, _calDark())+'" title="'+escA(ttl)+'">'+esc(label)+'</span>';   // Stage 6a: user color + type-color left border
+      'style="'+_calPillStyle(_calAsgFill(a,t), t.color, _calDark())+'" title="'+escA(ttl)+'">'+esc(label)+'</span>';   // Stage 6a / M1.1: user color OR type-color fill + type-color left border
   }
   function _calMonthGrid(body, win, canEdit){
     var f=_calFilterState();
@@ -18435,7 +18451,7 @@ if ('serviceWorker' in navigator) {
           items.forEach(function(a){
             var t=types[a.type_id]||{};
             var row=document.createElement(canEdit?'button':'div'); row.className='frz-cal-mo-pop-row';
-            row.innerHTML=_calMoChip(a, types, false)+'<span>'+esc(a.username?displayName(a.username):'Unassigned')+'</span>';
+            row.innerHTML=_calMoChip(a, types, false)+'<span>'+esc(_calWho(a))+'</span>';
             if(canEdit){ row.addEventListener('click', function(){ closePop(); openAssignmentModal(a); }); }
             pop.appendChild(row);
           });
@@ -18472,7 +18488,7 @@ if ('serviceWorker' in navigator) {
       if(!o.unassigned) html+=_calCapRow(o.owner, dayStrs, todayStr);   // Stage 4b: per-day capacity row (no-op if owner has no configured base)
       if(!o.users.length){ html+='<div class="frz-cal-emptyrow">No one scheduled.</div>'; return; }
       o.users.forEach(function(u){
-        html+='<div class="frz-cal-gut">'+avatarHTML(u.user,18)+'<span title="'+escA(displayName(u.user))+'">'+esc(displayName(u.user))+'</span></div>';
+        html+= u.pod ? _calPodGut(o.owner) : ('<div class="frz-cal-gut">'+avatarHTML(u.user,18)+'<span title="'+escA(displayName(u.user))+'">'+esc(displayName(u.user))+'</span></div>');
         dayStrs.forEach(function(ds){
           var asgs=u.assigns.filter(function(a){ return _calMoTypeVisible(o.typeById[a.type_id]) && (a.start_date||'')<=ds && (a.end_date||a.start_date||'')>=ds; });
           var tkts=(u.tickets||[]).filter(function(p){ return _calTicketCoversDay(p, ds); });
@@ -18531,12 +18547,12 @@ if ('serviceWorker' in navigator) {
           var t=typeById[a.type_id]||{};
           var left=first/N*100, width=(last-first+1)/N*100, top=PAD+lane*LANE;
           var range=(a.start_date===e)?_calShortD(a.start_date):(_calShortD(a.start_date)+' – '+_calShortD(a.end_date||a.start_date));
-          var ttl=(a.username?displayName(a.username)+' · ':'')+(t.name||a.type_id)+' · '+range+(a.description?(' · '+a.description):'');
+          var ttl=_calWho(a)+' · '+(t.name||a.type_id)+' · '+range+(a.description?(' · '+a.description):'');
           bars+='<span class="frz-cal-tl-bar'+(canEdit?' frz-cal-chip-asg':'')+(clipL?' is-clipL':'')+(clipR?' is-clipR':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+
-            'style="left:'+left+'%;width:'+width+'%;top:'+top+'px;'+_calPillStyle(avatarColorFor(a.username), t.color, dark)+'" title="'+escA(ttl)+'">'+esc(t.name||a.type_id)+'</span>';
+            'style="left:'+left+'%;width:'+width+'%;top:'+top+'px;'+_calPillStyle(_calAsgFill(a,t), t.color, dark)+'" title="'+escA(ttl)+'">'+esc(t.name||a.type_id)+'</span>';
         });
         var h=PAD+Math.max(1,lanes.length)*LANE;
-        html+='<div class="frz-cal-gut">'+avatarHTML(u.user,18)+'<span title="'+escA(displayName(u.user))+'">'+esc(displayName(u.user))+'</span></div>'+
+        html+= (u.pod ? _calPodGut(o.owner) : ('<div class="frz-cal-gut">'+avatarHTML(u.user,18)+'<span title="'+escA(displayName(u.user))+'">'+esc(displayName(u.user))+'</span></div>'))+
           '<div class="frz-cal-track" style="min-height:'+h+'px;background:'+trackBg+'">'+bars+'</div>';
       });
     });
