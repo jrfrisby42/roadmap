@@ -2121,7 +2121,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.47.1';
+const APP_VERSION = '4.48.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16483,6 +16483,8 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-pod-row { font-size:12px; color:var(--frz-text-muted); display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .frz-beta .frz-pod-lbl { font-weight:600; color:var(--text); }
   .frz-beta .frz-pod-unsched { color:var(--frz-text-muted); font-style:italic; }
+  /* Stage 4.1: duty-pod "covered by reservation" line - own line within the flex row, muted. */
+  .frz-beta .frz-pod-covered { flex:1 0 100%; color:var(--frz-text-muted); font-style:italic; }
   .frz-beta .frz-podbar { flex:0 0 120px; height:6px; border-radius:4px; background:var(--border); overflow:hidden; }
   .frz-beta .frz-podbar-fill { height:100%; border-radius:4px; display:block; }
   .frz-beta .frz-podbar-fill.cap-health-ok   { background:#E8A000; }   /* under - yellow */
@@ -17234,19 +17236,29 @@ if ('serviceWorker' in navigator) {
   function _sprintPodLoad(sprint){
     var pods=[]; if(!sprint) return pods;
     var days=_sprintWorkdays(sprint); if(!days.length) return pods;
+    var dutyPod=sprint.maintenanceDutyPod||'';   // Stage 4.1: this sprint's Maintenance Duty pod
     var items=sprintItems(sprint.id);
     var byPod={};
     items.forEach(function(p){ var pod=p.dev||''; if(!pod) return; (byPod[pod]=byPod[pod]||[]).push(p); });
     Object.keys(byPod).sort().forEach(function(pod){
       var availDays=0; days.forEach(function(ds){ availDays += (+_call('getEffectiveCapacity', pod, ds)||0); });
-      var perItem=[], unsched=[], committedDays=0;
+      var perItem=[], unsched=[], covered=[], committedDays=0;
       byPod[pod].forEach(function(p){
         if(!p.start || !p.due){ unsched.push({ key:p.itemKey||p.name||('#'+p.id), est:(+p.dueWeeks||0) }); return; }
         var u=0; days.forEach(function(ds){ u += (+_call('itemCapacityOnDay', p, new Date(ds+'T00:00:00'))||0); });
+        // Stage 4.1: duty work is already reserved on the AVAILABLE side (the duty assignment's
+        // impact), so a maintenance-flagged item owned by THIS sprint's duty pod is covered by the
+        // reservation - tallied separately, not added to committed (no double-count). Relational +
+        // live: reassign the bug to a non-duty pod (owner follows assignee, 4.38.0) and it flips
+        // back to counted automatically. isMaintenanceType = the M1.4 flag, NOT typeIgnoreConflicts.
+        if(dutyPod && pod===dutyPod && _call('isMaintenanceType', p.type)){
+          if(u>0) covered.push({ key:p.itemKey||p.name||('#'+p.id), weeks:u/5 });
+          return;
+        }
         committedDays+=u;
         if(u>0) perItem.push({ key:p.itemKey||p.name||('#'+p.id), weeks:u/5 });
       });
-      pods.push({ pod:pod, committed:committedDays/5, available:availDays/5, items:perItem, unscheduled:unsched });
+      pods.push({ pod:pod, committed:committedDays/5, available:availDays/5, items:perItem, unscheduled:unsched, covered:covered });
     });
     return pods;
   }
@@ -17264,6 +17276,7 @@ if ('serviceWorker' in navigator) {
   function _podLoadTitle(sprint, x){
     var lines=['Committed: '+_fmtW(x.committed)+'w'];
     x.items.forEach(function(it){ lines.push('  '+it.key+': '+_fmtW(it.weeks)+'w in window'); });
+    if(x.covered && x.covered.length){ x.covered.forEach(function(c){ lines.push('  '+c.key+' - '+_fmtW(c.weeks)+'w, covered by duty reservation'); }); }   // Stage 4.1
     if(x.unscheduled.length){ x.unscheduled.forEach(function(u){ lines.push('  '+u.key+': unscheduled ('+_fmtW(u.est)+'w est, no dates)'); }); }
     var days=_sprintWorkdays(sprint);
     lines.push('Capacity ('+x.pod+'): '+_fmtW(x.available)+'w available over '+days.length+' workday'+(days.length===1?'':'s'));
@@ -17279,9 +17292,14 @@ if ('serviceWorker' in navigator) {
       var cls=_podHealthCls(x.committed, x.available);
       var pct=Math.min(100, x.available>0 ? (x.committed/x.available*100) : (x.committed>0?100:0));
       var un=x.unscheduled.length ? ' <span class="frz-pod-unsched">+ '+x.unscheduled.length+' unscheduled ('+_fmtW(x.unscheduled.reduce(function(s,u){return s+(+u.est||0);},0))+'w est)</span>' : '';
+      // Stage 4.1: covered[] is only ever populated for the duty pod (the rule requires
+      // pod===maintenanceDutyPod), so this line is inherently duty-pod-only. Keeps maintenance
+      // capacity VISIBLE without double-charging it against the pod's commitment.
+      var cov=(x.covered && x.covered.length) ? '<div class="frz-pod-covered">+ '+x.covered.length+' duty item'+(x.covered.length===1?'':'s')+' covered by reservation ('+_fmtW(x.covered.reduce(function(s,c){return s+(+c.weeks||0);},0))+'w)</div>' : '';
       return '<div class="frz-pod-row" title="'+escA(_podLoadTitle(sprint,x))+'">'+
         '<span class="frz-pod-lbl">'+esc(x.pod)+' · '+_fmtW(x.committed)+'w / '+_fmtW(x.available)+'w</span>'+un+
         '<span class="frz-podbar"><span class="frz-podbar-fill '+cls+'" style="width:'+pct.toFixed(1)+'%"></span></span>'+
+        cov+
       '</div>';
     }).join('');
     var warn=over.length ? '<div class="frz-asg-warn frz-pod-warn">'+over.map(function(o){ return 'Overcommitted: '+esc(o.pod)+' by '+_fmtW(o.by)+'w'; }).join(' · ')+'</div>' : '';
