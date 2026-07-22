@@ -2121,7 +2121,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.46.0';
+const APP_VERSION = '4.47.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -17103,6 +17103,19 @@ if ('serviceWorker' in navigator) {
     }
     .frz-beta .frz-fab svg { width:24px; height:24px; }
     .frz-beta.on-item .frz-fab { display:none; }
+    /* Calendar on phone: Month-only. Hide the Week/Timeline tabs and render the agenda list
+       (_calMobileAgenda) instead of the desktop grid. */
+    .frz-beta .frz-cal-tabs [data-caltab="week"],
+    .frz-beta .frz-cal-tabs [data-caltab="timeline"] { display:none; }
+    .frz-beta .frz-cal-agenda { display:flex; flex-direction:column; gap:14px; padding:12px; overflow-y:auto; }
+    .frz-beta .frz-cal-ag-sec { border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); overflow:hidden; }
+    .frz-beta .frz-cal-ag-owner { font-size:13px; font-weight:700; color:var(--frz-text); padding:9px 12px; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-subtle,var(--frz-bg-surface)); }
+    .frz-beta .frz-cal-ag-cap { font-weight:600; color:var(--frz-text-muted); font-size:11px; }
+    .frz-beta .frz-cal-ag-row { display:flex; flex-direction:column; gap:5px; padding:8px 12px; border-top:1px solid var(--frz-border); }
+    .frz-beta .frz-cal-ag-sec .frz-cal-ag-row:first-of-type { border-top:0; }
+    .frz-beta .frz-cal-ag-who { font-size:12px; font-weight:600; color:var(--frz-text-muted); }
+    .frz-beta .frz-cal-ag-chips { display:flex; flex-wrap:wrap; gap:5px; }
+    .frz-beta .frz-cal-ag-none { font-size:12px; color:var(--frz-text-muted); }
   }
 </style>
 <script>
@@ -17952,6 +17965,17 @@ if ('serviceWorker' in navigator) {
     all.setAttribute('aria-current', String(onKanban && state.board==='__all__'));
     all.innerHTML = KANBAN_IC + '<span>All statuses</span>';
     bn.appendChild(all);
+    // Built-in "Active Sprint" board: shows only while a sprint is Active (only one can be at a
+    // time). Reuses the Stage 3 ?sprint= Kanban scoping - navigates to All-statuses columns
+    // filtered to the active sprint's items. Hidden when no sprint is Active.
+    var _as=activeSprint();
+    if(_as){
+      var asb=document.createElement('button');
+      asb.className='frz-item'; asb.setAttribute('data-activesprint', _as.id); asb.title='Active Sprint: '+_as.name;
+      asb.setAttribute('aria-current', String(onKanban && state.sprintFilter===_as.id));
+      asb.innerHTML = KANBAN_IC + '<span>Active Sprint</span>';
+      bn.appendChild(asb);
+    }
     _boards.forEach(function(b){
       var btn = document.createElement('button');
       btn.className='frz-item'; btn.setAttribute('data-board', b.id); btn.title=b.name;
@@ -18799,6 +18823,31 @@ if ('serviceWorker' in navigator) {
     html+='</div>';
     body.innerHTML = data.length ? html : '<div class="frz-cal-empty">No owners match.</div>';
   }
+  // Mobile-only Month agenda: owner -> user rows with wrapping assignment pills + ticket chips
+  // over the month window. Reuses _calData + the shared chip builders (so the .frz-cal-chip-asg
+  // /.frz-cal-chip-item click wiring at the end of renderCalendar applies unchanged). No grid.
+  function _calMobileAgenda(body, win, canEdit){
+    var data=_calData(win);
+    var typeById={}; (_assignmentTypes||[]).forEach(function(t){ typeById[t.id]=t; });
+    if(!data.length){ body.innerHTML='<div class="frz-cal-agenda"><div class="frz-cal-empty">Nothing scheduled for '+esc(win.label)+'.</div></div>'; return; }
+    var html='<div class="frz-cal-agenda">';
+    data.forEach(function(sec){
+      var head = sec.unassigned ? 'Unassigned'
+        : esc(sec.owner) + (sec.baseCap!=null ? ' <span class="frz-cal-ag-cap">'+_calFmt(sec.effToday)+'/'+_calFmt(sec.baseCap)+'</span>' : '');
+      html+='<div class="frz-cal-ag-sec"><div class="frz-cal-ag-owner">'+head+'</div>';
+      (sec.users||[]).forEach(function(u){
+        var who = u.pod ? (esc(sec.owner)+' <span class="frz-cal-podtag">pool</span>')
+          : (u.user ? esc(displayName(u.user)) : 'Unassigned');
+        var chips = (u.assigns||[]).map(function(a){ return _calAsgChip(a, typeById, canEdit); }).join('')
+                  + (u.tickets||[]).map(_calTicketChip).join('');
+        html+='<div class="frz-cal-ag-row"><div class="frz-cal-ag-who">'+who+'</div>'+
+          '<div class="frz-cal-ag-chips">'+(chips||'<span class="frz-cal-ag-none">-</span>')+'</div></div>';
+      });
+      html+='</div>';
+    });
+    html+='</div>';
+    body.innerHTML=html;
+  }
   function renderCalendar(){
     var body=document.getElementById('frzCalBody'), nav=document.getElementById('frzCalNav'); if(!body) return;
     body.classList.toggle('frz-cal-body--month', state.calTab==='month');   // Stage 3.5: month body fills height
@@ -18830,7 +18879,12 @@ if ('serviceWorker' in navigator) {
     nav.querySelectorAll('.frz-cal-dbtn').forEach(function(b){ b.onclick=function(){ _calSetWorkDays(b.getAttribute('data-days')==='work'); renderCalendar(); }; });   // per-user pref, not URL state
     var _newBtn=nav.querySelector('#frzCalNew'); if(_newBtn) _newBtn.onclick=function(){ openAssignmentModal({}); };
     renderCalFilters();
-    if(state.calTab==='week' || state.calTab==='timeline'){
+    if(_isListPhone()){
+      // Mobile: the desktop month grid / Week / Timeline don't fit a phone. Render a single
+      // Month-scoped agenda (owner -> user, pills wrap) instead; Week/Timeline tabs are hidden
+      // by CSS at this width. Nav (prev/next/today) still scopes the month window.
+      _calMobileAgenda(body, win, canEdit);
+    } else if(state.calTab==='week' || state.calTab==='timeline'){
       var data=_calData(win);
       if(state.calTab==='week') _calWeek(body, data, win, canEdit);
       else _calTimeline(body, data, win, canEdit);
@@ -19756,9 +19810,10 @@ if ('serviceWorker' in navigator) {
     var fs=document.getElementById('frzSearch'), sb=document.getElementById('frzSearchResults'); if(!fs) return;
     if(sb) sb.hidden=true;
     // Fix: the top-bar box is inert on Planning (the Plan-tab backlog has its own in-pane
-    // "Search backlog…"; Sprints/Releases don't use it). Hide the whole slot there rather
-    // than show a control that does nothing.
-    var slot=document.getElementById('frzSearchSlot'); if(slot) slot.style.display = (state.view==='planning') ? 'none' : '';
+    // "Search backlog…") AND on the Calendar (Flow-owned; it filters through its own chip row
+    // via state.calFilter and never reads the production #itemSearch this box mirrors). Hide the
+    // whole slot on both rather than show a control that does nothing.
+    var slot=document.getElementById('frzSearchSlot'); if(slot) slot.style.display = (state.view==='planning'||state.view==='team-calendar') ? 'none' : '';
     if(_searchGlobal()){ fs.placeholder='Search items…'; fs.value=''; }
     else { fs.placeholder='Filter items…'; var prod=document.getElementById('itemSearch'); fs.value=(prod&&prod.value)||''; }
   }
@@ -19817,6 +19872,12 @@ if ('serviceWorker' in navigator) {
         var _bid=boardBtn.getAttribute('data-board'); var _bcu=new URLSearchParams(_frzCarryQS(true).replace(/^\?/,''));
         if(_bid!=='__all__') _bcu.set('board', _bid); else _bcu.delete('board');
         var _bcs=_bcu.toString(); navigate('/kanban'+(_bcs?('?'+_bcs):''), false); return;
+      }
+      var asBtn = e.target.closest && e.target.closest('[data-activesprint]');
+      if (asBtn){
+        // Active Sprint board = All-statuses Kanban scoped to the active sprint (?sprint=), carrying chips.
+        var _asid=asBtn.getAttribute('data-activesprint'); var _asu=new URLSearchParams(_frzCarryQS(true).replace(/^\?/,''));
+        _asu.delete('board'); _asu.set('sprint', _asid); navigate('/kanban?'+_asu.toString(), false); return;
       }
       var clr = e.target.closest && e.target.closest('[data-clear]');
       if (clr){ e.stopPropagation(); var k=clr.getAttribute('data-clear'); if(k==='range'){ var ff=document.getElementById('filterFrom'),ft=document.getElementById('filterTo'); if(ff){ff.value='';ff.dispatchEvent(new Event('change'));} if(ft){ft.value='';ft.dispatchEvent(new Event('change'));} } else if(k==='sprint'){ state.sprintFilter=''; } else applyPanel(CHIPS[k].panel,null); rerender(); renderBar(); renderRail(); syncURL(true); return; }
