@@ -2121,7 +2121,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.44.0';
+const APP_VERSION = '4.45.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -13771,7 +13771,7 @@ function ipField(label, value, opts={}){
 
 // ── Inline-editable Item Page fields (inline-edit overhaul, Stage 1) ──
 function ipEditField(field, label, displayHtml, kind, opts={}){
-  const editable = (isAdmin||isEditor) && !opts.readonly;
+  const editable = (opts.adminOnly ? isAdmin : (isAdmin||isEditor)) && !opts.readonly;   // IP1: adminOnly for Recurrence (matches the modal's gating)
   const val = (displayHtml===''||displayHtml==null) ? '<span style="color:var(--muted)">-</span>' : displayHtml;
   const lbl = `<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">${label}</div>`;
   const vs  = `font-size:13px;font-weight:${opts.bold?'700':'400'};color:var(--text)`;
@@ -13785,6 +13785,7 @@ function _ipFieldOptions(field){
   if(field==='dev')      return [o('','- Unassigned -'), ...developers.map(d=>o(d,d))];
   if(field==='assignee') return [o('','- Unassigned -'), ...users.map(u=>o(u.username,u.username))];
   if(field==='priority') return [o('','- None -'), o(1,'Urgent'), o(2,'High'), o(3,'Medium'), o(4,'Low')];
+  if(field==='recurrence') return [o('none','None'), o('weekly','Weekly'), o('biweekly','Biweekly'), o('monthly','Monthly')];   // IP1
   return [];
 }
 function _ipBeginEdit(cell){
@@ -14275,7 +14276,7 @@ function renderItemPage(p){
     ipEditField('type',       'Type',         esc(p.type||''),   'select'),
     ipEditField('priority',   'Priority',     p.priority ? `<span style="color:${PRIO_COLORS[p.priority]};font-weight:700">${esc(PRIO_LABELS[p.priority])}</span>` : '', 'select'),
     ipEditField('storyPoints','Story Points', (p.storyPoints==null||p.storyPoints==='') ? '' : String(p.storyPoints), 'number'),
-    ipEditField('sprintId',   'Sprint',       esc(p.sprintId||''), 'text'),
+    ipField('Sprint', p.sprintId ? esc(p.sprintId) : '', {always:true}),
     ipField('Key', p.itemKey ? `<span style="font-family:monospace">${esc(p.itemKey)}</span>` : '-', {bold:true}),
     ipField('Project',       esc(p.product||'-')),
     ipField('Reporter',      esc(p.reporter||'-')),
@@ -14393,7 +14394,7 @@ function renderItemPage(p){
     // Sync Children button - shown for recurring items with syncChildren enabled and Jira linked
     const showSyncBtn = p.syncChildren && jiraConfigured && p.jiraTickets?.length && p.recurrence && p.recurrence !== 'none';
     adminEl.innerHTML = [
-      ipField('Recurrence', p.recurrence&&p.recurrence!=='none'?p.recurrence:null),
+      ipEditField('recurrence', 'Recurrence', (p.recurrence&&p.recurrence!=='none')?esc(p.recurrence):'none', 'select', {always:true, adminOnly:true}),
       p.recurrence_parent ? ipField('Recurrence Parent', `Item #${p.recurrence_parent}`) : '',
       showSyncBtn ? `<div>
         <button onclick="syncChildrenFromJira(${p.id})" id="syncChildrenBtn"
@@ -16476,6 +16477,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-sprint-duty { font-size:12px; color:var(--frz-text-muted); margin-top:3px; }
   .frz-beta .frz-sprint-duty-sum { cursor:pointer; }
   .frz-beta .frz-duty-note { font-style:italic; }
+  .frz-beta .frz-ip-sprint:hover { background:var(--surface); }   /* IP1: sprint-field hover cue (matches ipEditField) */
   /* M2: Dashboard Maintenance & Operations (sprint-duty) */
   .frz-beta .frz-mo-wrap { display:flex; flex-direction:column; gap:6px; }
   .frz-beta .frz-mo-sprint, .frz-beta .frz-mo-row { background:var(--surface); border:1px solid var(--border); border-radius:10px; }
@@ -19118,6 +19120,46 @@ if ('serviceWorker' in navigator) {
     ['Code Complete','Due Date','Revised Due','Expected Date','Release Date'].forEach(function(l){ mv(cBody, _frzFieldByLabel(sched,l)); });
     var dc=document.getElementById('ipFieldsCard'); if(dc) dc.style.display='none';   // empty production Details card
     var scard=sched?sched.parentElement:null; if(scard) scard.style.display='none';   // empty production Schedule card
+    _frzWireSprintField(p);   // IP1: Sprint = picker -> readiness (never a raw setter)
+  }
+  // IP1: the Sprint field on the item page is a picker, not a raw text setter (decision 2).
+  // Completed sprint = plain immutable text; open sprint / none = a picker (None + Planned/
+  // Active) that hands off to the shared readiness modal (add) or a confirm+clear (remove).
+  function _frzWireSprintField(p){
+    var dBody=document.getElementById('frzRailDetailsBody'); if(!dBody) return;
+    var node=_frzFieldByLabel(dBody,'Sprint'); if(!node) return;
+    var valDiv=node.children[1]; if(!valDiv) return;
+    var sp=p.sprintId ? sprintById(p.sprintId) : null;
+    if(sp && sp.state==='Completed'){ valDiv.textContent=sp.name; valDiv.title='Completed sprint (permanent history)'; return; }   // immutable
+    var label = sp ? sp.name : (p.sprintId || '-');
+    if(!(_val('isAdmin',false)||_val('isEditor',false))){ valDiv.textContent=label; return; }   // viewer -> text
+    valDiv.innerHTML='<span class="frz-ip-sprint" title="Change sprint" style="cursor:pointer;border-radius:4px;padding:2px 5px;margin:-2px -5px;display:inline-flex;align-items:center;gap:4px">'+esc(label)+'<span style="font-size:10px;opacity:.7">▾</span></span>';
+    var cell=valDiv.firstElementChild;
+    cell.addEventListener('click', function(e){ e.stopPropagation(); _ipSprintPicker(p, cell); });
+  }
+  function _ipRefreshItem(p){ var fr=(_val('projects',[])||[]).filter(function(x){return x.id===p.id;})[0]; if(fr) _call('renderItemPage', fr); refreshPlan(); }
+  function _ipSprintPicker(p, anchor){
+    openPop(anchor, function(pop){
+      function opt(label, fn, danger){ var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt'; if(danger) b.style.color='#C0392B'; b.textContent=label; b.addEventListener('click', function(){ closePop(); fn(); }); return b; }
+      var cur=p.sprintId ? sprintById(p.sprintId) : null;
+      if(p.sprintId && (!cur || cur.state!=='Completed')) pop.appendChild(opt('None (remove from sprint)', function(){ _ipClearSprint(p); }, true));
+      var list=_sprints.filter(function(s){ return (s.state==='Planned'||s.state==='Active') && s.id!==p.sprintId; });
+      if(!list.length && !p.sprintId){ var d=document.createElement('div'); d.className='frz-pop-opt'; d.style.color='var(--frz-text-muted)'; d.textContent='No Planned or Active sprints'; pop.appendChild(d); }
+      list.forEach(function(s){ pop.appendChild(opt(s.name+(s.state==='Active'?' · Active':''), function(){ _ipAddToSprint(p, s); })); });
+    });
+  }
+  function _ipAddToSprint(p, sp){
+    var need=sprintReady(p, sp), done=function(){ _ipRefreshItem(p); };
+    if(!need.any){ applySprintReady(p, sp, {}, done); } else { openReadyModal(p, sp, need, done); }   // reuses the shared readiness flow (floor + M1.4 duty defaulting)
+  }
+  function _ipClearSprint(p){
+    if(!p.sprintId) return;
+    var nm=(sprintById(p.sprintId)&&sprintById(p.sprintId).name)||p.sprintId;
+    if(!confirm('Remove this item from '+nm+'? It returns to the backlog.')) return;
+    var ps=_val('projects',[])||[]; var i=ps.findIndex(function(x){return x.id===p.id;});
+    var hist=_histClone(p); _histCloseOpen(hist, p.sprintId, 'returned-to-backlog');   // matches the sprint pane's ✕ behavior
+    var patch=Object.assign({}, p, {sprintId:'', sprintHistory:hist, _username:_call('getUsername')});
+    API.put('/api/projects/'+p.id, patch).then(function(updated){ if(i>-1) ps[i]=updated; _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Sprint planning: removed from sprint (returned to backlog)', null, null); _ipRefreshItem(p); }).catch(function(){ _call('showToast','Remove failed','error'); });
   }
   // Move the RTE toolbar (Bold / Italic / List) up into the Description header,
   // grouped on the right next to the Save button. Idempotent; role-based show/hide
@@ -20570,8 +20612,8 @@ if ('serviceWorker' in navigator) {
       logs.forEach(function(l){ _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Sprint planning: '+l[0]+' '+l[1]+' → '+l[2], null, null); });
     });
   }
-  function applySprintReady(p, sprint, vals){
-    _applyReadyItem(p, sprint, vals).then(refreshPlan).catch(function(e){ _call('showToast','Add failed: '+(e&&e.message||''),'error'); });
+  function applySprintReady(p, sprint, vals, onDone){
+    _applyReadyItem(p, sprint, vals).then(onDone||refreshPlan).catch(function(e){ _call('showToast','Add failed: '+(e&&e.message||''),'error'); });   // IP1: onDone lets the item page re-render itself
   }
   // 2d: add many items in one go. Sequential PUTs (matches the completion flow) so it is
   // atomic from the user's perspective (one confirm applies all; Cancel applied nothing).
@@ -20587,7 +20629,7 @@ if ('serviceWorker' in navigator) {
     var patch=Object.assign({}, p, {sprintId:'', sprintHistory:hist, _username:_call('getUsername')});
     API.put('/api/projects/'+id, patch).then(function(updated){ if(i>-1) ps[i]=updated; _call('logActionOnItem', id, p.name||'', p.dev||'', p.product||'', 'Sprint planning: removed from sprint (returned to backlog)', null, null); refreshPlan(); }).catch(function(){ _call('showToast','Remove failed','error'); });
   }
-  function openReadyModal(p, sprint, need){
+  function openReadyModal(p, sprint, need, onDone){
     closePop();
     var bg=document.createElement('div'); bg.className='frz-modal-bg';
     var rows='';
@@ -20620,7 +20662,7 @@ if ('serviceWorker' in navigator) {
       if(need.needEstimate){ var ev=parseFloat(bg.querySelector('#frzRdEst').value); if(!(ev>0)){ err.textContent='Enter a time estimate.'; return; } vals.dueWeeks=ev; }
       if(need.needPoints){ var pv=bg.querySelector('#frzRdPts').value; if(pv===''||isNaN(+pv)){ err.textContent='Enter story points.'; return; } vals.storyPoints=+pv; }
       var aSel=bg.querySelector('#frzRdAssignee'); if(aSel) vals.assignee=aSel.value;   // Stage 3a (optional)
-      close(); applySprintReady(p, sprint, vals);
+      close(); applySprintReady(p, sprint, vals, onDone);
     });
     setTimeout(function(){ var f=bg.querySelector('input'); if(f) f.focus(); },0);
   }
