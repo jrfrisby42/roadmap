@@ -2121,7 +2121,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.43.0';
+const APP_VERSION = '4.44.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -10127,8 +10127,10 @@ function renderDashboard(){
       </tr>`;
   }).join('');
 
-  const row4 = dashSection('Maintenance & Operations', `${recurringParents.length} recurring item${recurringParents.length!==1?'s':''}`) +
-    (recurringParents.length ? `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+  // Legacy recurring-items table body (unchanged). In the Flow shell it becomes the collapsed
+  // "Legacy recurring items" disclosure under the new sprint-duty content (M2); classic root
+  // still shows it as the section's primary content.
+  const legacyMOBody = (recurringParents.length ? `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden">
       <table style="width:100%;border-collapse:collapse">
         <thead><tr style="background:var(--surface)">${['Item / Cycle','Start','Recurrence','Owner','Children'].map(h=>
           `<th style="text-align:left;padding:7px 10px;border-bottom:2px solid var(--border);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">${h}</th>`).join('')}</tr></thead>
@@ -10136,6 +10138,8 @@ function renderDashboard(){
       </table>
     </div>`
     : `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px;color:var(--muted);font-size:13px">No recurring items configured. Set recurrence on any item via the edit modal.</div>`);
+  const _moBeta = (typeof window._frzDashboardMO === 'function') ? window._frzDashboardMO(legacyMOBody, recurringParents.length) : null;   // M2: Flow shell renders sprint-duty M&O
+  const row4 = _moBeta || (dashSection('Maintenance & Operations', `${recurringParents.length} recurring item${recurringParents.length!==1?'s':''}`) + legacyMOBody);
 
   // ── SECTION 5: Team Execution ───────────────────────────────────────────
   const ownerStats = developers.map(d => {
@@ -16472,6 +16476,30 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-sprint-duty { font-size:12px; color:var(--frz-text-muted); margin-top:3px; }
   .frz-beta .frz-sprint-duty-sum { cursor:pointer; }
   .frz-beta .frz-duty-note { font-style:italic; }
+  /* M2: Dashboard Maintenance & Operations (sprint-duty) */
+  .frz-beta .frz-mo-wrap { display:flex; flex-direction:column; gap:6px; }
+  .frz-beta .frz-mo-sprint, .frz-beta .frz-mo-row { background:var(--surface); border:1px solid var(--border); border-radius:10px; }
+  .frz-beta .frz-mo-row { padding:10px 14px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .frz-beta .frz-mo-sum { padding:10px 14px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; cursor:pointer; list-style:none; font-size:12px; }
+  .frz-beta .frz-mo-sum::-webkit-details-marker { display:none; }
+  .frz-beta .frz-mo-nm { font-weight:800; color:var(--text); font-size:13px; }
+  .frz-beta .frz-mo-dates, .frz-beta .frz-mo-duty, .frz-beta .frz-mo-muted { font-size:12px; color:var(--muted); }
+  .frz-beta .frz-mo-count { font-size:12px; font-weight:700; color:var(--text); }
+  .frz-beta .frz-mo-active { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--accent); background:rgba(0,89,169,0.1); border-radius:6px; padding:1px 6px; }
+  .frz-beta .frz-mo-nopod { opacity:.7; }
+  .frz-beta .frz-mo-link { border:1px solid var(--accent); background:none; color:var(--accent); font:inherit; font-size:11px; font-weight:700; border-radius:6px; padding:2px 9px; cursor:pointer; flex-shrink:0; }
+  .frz-beta .frz-mo-link:hover { background:rgba(0,89,169,0.08); }
+  .frz-beta .frz-mo-items { padding:0 14px 10px; display:flex; flex-direction:column; gap:4px; }
+  .frz-beta .frz-mo-item { display:flex; align-items:center; gap:8px; padding:4px 6px; border-radius:6px; cursor:pointer; font-size:12px; }
+  .frz-beta .frz-mo-item:hover { background:var(--surface2); }
+  .frz-beta .frz-mo-key { font-weight:700; color:var(--accent); flex-shrink:0; }
+  .frz-beta .frz-mo-iname { color:var(--text); }
+  .frz-beta .frz-mo-asg { color:var(--muted); font-size:11px; }
+  .frz-beta .frz-mo-oc { font-size:11px; font-weight:700; color:var(--muted); }
+  .frz-beta .frz-mo-oc-done { color:#1E7B46; }
+  .frz-beta .frz-mo-empty { color:var(--muted); font-size:12px; font-style:italic; padding:2px 6px 6px; }
+  .frz-beta .frz-mo-legacy { margin-top:10px; }
+  .frz-beta .frz-mo-legacy > summary { cursor:pointer; font-size:12px; color:var(--muted); font-weight:700; padding:4px 0; }
   .frz-beta .frz-sprint-duty-sum:hover { color:var(--frz-accent); }
   .frz-beta .frz-bl-parent { display:block; font-size:11px; color:var(--frz-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; margin-top:1px; }
   .frz-beta .frz-sprint-nudge { margin:0 0 12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
@@ -17156,6 +17184,73 @@ if ('serviceWorker' in navigator) {
   }
   // M1.4: the maintenance-flagged type names (drives the duty board link's type filter).
   function _maintenanceTypeNames(){ return (_val('types',[])||[]).filter(function(t){ return t && t.maintenance; }).map(function(t){ return t.name||t; }); }
+  // M2: COMPLETED-sprint duty list. Live membership lies (carried bugs moved on), so read the
+  // Stage-1 completion snapshot's committed items, filter to maintenance-type + owner==duty pod
+  // (type/owner resolved from the current item by id), and carry the snapshot outcome.
+  function _dutyItemsCompleted(sp){
+    if(!sp || !sp.maintenanceDutyPod || !sp.snapshot || !Array.isArray(sp.snapshot.items)) return [];
+    var ps=_val('projects',[])||[]; var byId={}; ps.forEach(function(p){ byId[p.id]=p; });
+    var out=[];
+    sp.snapshot.items.forEach(function(si){
+      var p=byId[si.id]; if(!p) return;                                  // deleted item -> skip
+      if((p.dev||'')!==sp.maintenanceDutyPod) return;
+      if(!_call('isMaintenanceType', p.type)) return;
+      out.push({ id:si.id, key:si.key||p.itemKey||'', name:si.name||p.name||'', status:p.status, assignee:p.assignee||'', outcome:si.outcome||'', done:(si.outcome==='completed') });
+    });
+    return out;
+  }
+  // M2: THE single duty-list entry point for reporting. Live (_dutyItems) for Planned/Active;
+  // snapshot mode for Completed. One shape: {id,key,name,status,assignee,outcome,done}.
+  function _sprintDutyList(sp){
+    if(sp && sp.state==='Completed') return _dutyItemsCompleted(sp);
+    return _dutyItems(sp).map(function(p){ return { id:p.id, key:p.itemKey||'', name:p.name||'', status:p.status, assignee:p.assignee||'', outcome:'', done:isTerm(p.status) }; });
+  }
+  // M2: build the Dashboard "Maintenance & Operations" section as sprint-bucketed duty
+  // reporting. Called by the production renderDashboard when the Flow shell is active
+  // (window._frzDashboardMO); returns the full section incl. the collapsed legacy table.
+  function _frzDashboardMO(legacyBody, legacyCount){
+    var from=(document.getElementById('filterFrom')||{}).value||'';
+    var to=(document.getElementById('filterTo')||{}).value||'';
+    var devs=_call('getSelectedDevs');   // null = all owners
+    var ownerSet=!!(devs && devs.length);
+    var shown=(_sprints||[]).filter(function(s){ return s && s.state!=='Discarded'; }).filter(function(s){
+      if(s.state!=='Active'){   // Active is range-exempt (always included + marked)
+        var ss=s.startDate||'', se=s.endDate||s.startDate||'';
+        if(from && se && se<from) return false;
+        if(to && ss && ss>to) return false;
+      }
+      if(ownerSet && devs.indexOf(s.maintenanceDutyPod||'')<0) return false;   // owner filter = this pod's rotations (drops no-duty sprints)
+      return true;
+    }).sort(function(a,b){ return (b.startDate||'').localeCompare(a.startDate||'') || (b.id||'').localeCompare(a.id||''); });
+    var totalBugs=0;
+    var rows=shown.map(function(sp){
+      var badge='<span class="frz-sprint-badge" style="'+(SPRINT_BADGE[sp.state]||'')+'">'+esc(sp.state)+'</span>';
+      var dates=(sp.startDate?fmtD(sp.startDate):'-')+' → '+(sp.endDate?fmtD(sp.endDate):'-');
+      var activeMark=(sp.state==='Active')?' <span class="frz-mo-active">Active</span>':'';
+      if(!sp.maintenanceDutyPod){
+        return '<div class="frz-mo-row frz-mo-nopod"><span class="frz-mo-nm">'+esc(sp.name)+'</span> '+badge+' <span class="frz-mo-dates">'+dates+'</span> <span class="frz-mo-muted">no duty pod assigned</span>'+activeMark+'</div>';
+      }
+      var list=_sprintDutyList(sp), n=list.length, done=list.filter(function(x){return x.done;}).length;
+      totalBugs+=n;
+      var zero=(sp.state==='Completed')?'no duty bugs':'no bugs yet';
+      var countTxt=n?(done+'/'+n+' bug'+(n===1?'':'s')):zero;
+      var link=(sp.state==='Completed')
+        ? '<button class="frz-mo-link" onclick="event.stopPropagation();event.preventDefault();window._frzGotoSprints&&window._frzGotoSprints()">Sprints tab →</button>'
+        : '<button class="frz-mo-link" onclick="event.stopPropagation();event.preventDefault();window._viewDutyOnBoard&&window._viewDutyOnBoard(\''+escA(sp.id)+'\')">View on board →</button>';
+      var itemsHtml = n ? list.map(function(x){
+        var oc = x.outcome==='carried-over' ? ' <span class="frz-mo-oc">→ carried over</span>' : (x.outcome==='completed' ? ' <span class="frz-mo-oc frz-mo-oc-done">✓ completed</span>' : '');
+        var stpill = x.status ? '<span class="'+(_call('statusCls',x.status)||'')+'" style="padding:0 7px;border-radius:9px;font-size:10px;font-weight:700">'+esc(x.status)+'</span>' : '';
+        return '<div class="frz-mo-item" onclick="openItemPage('+x.id+')"><span class="frz-mo-key">'+esc(x.key||('#'+x.id))+'</span> <span class="frz-mo-iname">'+esc(x.name||'')+'</span> '+stpill+(x.assignee?' <span class="frz-mo-asg">'+esc(x.assignee)+'</span>':'')+oc+'</div>';
+      }).join('') : '<div class="frz-mo-empty">'+zero+'</div>';
+      return '<details class="frz-mo-sprint"'+(sp.state==='Active'?' open':'')+'>'+
+        '<summary class="frz-mo-sum"><span class="frz-mo-nm">'+esc(sp.name)+'</span> '+badge+' <span class="frz-mo-dates">'+dates+'</span> <span class="frz-mo-duty">Duty: <b>'+esc(sp.maintenanceDutyPod)+'</b></span> <span class="frz-mo-count">'+countTxt+'</span>'+activeMark+'<span class="frz-spacer"></span>'+link+'</summary>'+
+        '<div class="frz-mo-items">'+itemsHtml+'</div></details>';
+    }).join('');
+    var body = shown.length ? rows : '<div class="frz-mo-empty" style="padding:16px">No sprints in range.</div>';
+    var legacy = '<details class="frz-mo-legacy"><summary>Legacy recurring items ('+legacyCount+')</summary><div style="margin-top:10px">'+(legacyBody||'')+'</div></details>';
+    return _call('dashSection','Maintenance & Operations', shown.length+' sprint'+(shown.length===1?'':'s')+' · '+totalBugs+' duty bug'+(totalBugs===1?'':'s')+' in range')+
+      '<div class="frz-mo-wrap">'+body+'</div>'+legacy;
+  }
   // M1.4: readiness-modal note for a maintenance-flagged item vs the sprint's duty pod.
   // Blank owner -> "Owner will default to the pod"; owner set but different -> a muted
   // differs-note (won't count as duty work); matching owner -> nothing. '' when N/A.
@@ -19653,6 +19748,10 @@ if ('serviceWorker' in navigator) {
     document.getElementById('frzSettings').addEventListener('click', openSettings);   // Stage 4a: tabbed Settings
     window._frzNav = navigate;   // bridge so classic-scope code (openAdminPanel) can route into the Flow shell
     window._frzRefreshCalendar = function(){ try { if(state.view==='team-calendar') renderCalendar(); } catch(e){} };   // re-render after async assignment data loads
+    // M2: expose the sprint-duty dashboard hook + its links to the production renderDashboard scope.
+    window._frzDashboardMO = _frzDashboardMO;
+    window._viewDutyOnBoard = _viewDutyOnBoard;
+    window._frzGotoSprints = function(){ navigate('/planning/sprints', false); };
     document.getElementById('frzAdmin').addEventListener('click', function(){ navigate('/admin', false); });
     var av=document.getElementById('frzAvatar'), am=document.getElementById('frzAcctMenu');
     av.addEventListener('click', function(e){ e.stopPropagation(); am.hidden=!am.hidden; if(!am.hidden){ try { renderTeamSwitch(); } catch(_e){} } });
