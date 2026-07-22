@@ -2121,7 +2121,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.48.1';
+const APP_VERSION = '4.48.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -23062,12 +23062,21 @@ if ('serviceWorker' in navigator) {
     var p=document.getElementById('frzNotif'); if(!p) return;
     if(p.hidden){ renderNotifPanel(); p.hidden=false; loadNotifs(); } else p.hidden=true;
   }
+  // Display fix: notification messages are server-built with the actor's USERNAME as the leading
+  // token (e.g. "chris.lee2 mentioned you in X"); the actor username is also stored on the row.
+  // Resolve that leading token to the human label at render (displayName) - value/storage untouched,
+  // and it fixes existing notifications too. Only the leading actor token is swapped; the rest is verbatim.
+  function _notifMsg(n){
+    var m=n.message||''; var a=n.actor||'';
+    if(a && m.slice(0, a.length+1)===a+' '){ var dn=displayName(a); if(dn && dn!==a) return dn+m.slice(a.length); }
+    return m;
+  }
   function renderNotifPanel(){
     var p=document.getElementById('frzNotif'); if(!p) return;
     var hd='<div class="frz-notif-hd"><span>Notifications</span>'+(_notifUnread?'<button class="frz-notif-all" id="frzNotifAll">Mark all read</button>':'')+'</div>';
     var body = _notifs.length ? _notifs.map(function(n){
       return '<button class="frz-notif-row'+(n.read?'':' is-unread')+'" data-nid="'+n.id+'" data-nitem="'+(n.item_id||'')+'">'+
-        '<span class="frz-notif-msg">'+esc(n.message||'')+'</span>'+
+        '<span class="frz-notif-msg">'+esc(_notifMsg(n))+'</span>'+
         '<span class="frz-notif-meta">'+esc(n.item_name||'')+(n.created_ts?(' · '+esc(String(n.created_ts).slice(0,10))):'')+'</span>'+
       '</button>';
     }).join('') : '<div class="frz-notif-empty">You’re all caught up.</div>';
