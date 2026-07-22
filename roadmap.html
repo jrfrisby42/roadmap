@@ -2121,7 +2121,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.49.0';
+const APP_VERSION = '4.49.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16618,80 +16618,8 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-notif-msg { font-size:13px; color:var(--frz-text); }
   .frz-beta .frz-notif-meta { font-size:11px; color:var(--frz-text-muted); }
   .frz-beta .frz-notif-empty { padding:22px 14px; text-align:center; font-size:12.5px; color:var(--frz-text-muted); }
-  /* ── Flow User Manual (print-to-PDF) ─────────────────────────────────────────
-     Appended to <body> above the shell (like .frz-mention-menu), so it is
-     intentionally UNSCOPED and carries a self-contained palette (does not depend
-     on the shell's --frz-* vars, which don't inherit up to a body-level child).
-     Print CSS hides the app and paginates the document. */
-  .frz-man { position:fixed; inset:0; z-index:200; overflow-y:auto; background:#f6f8fb;
-    color:#1f2733; font-family:'Lato',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-    -webkit-font-smoothing:antialiased; }
-  .frz-man-bar { position:sticky; top:0; z-index:2; display:flex; align-items:center; gap:12px;
-    padding:11px 20px; background:#fff; border-bottom:1px solid #d9e1ea; box-shadow:0 1px 4px rgba(20,40,63,.06); }
-  .frz-man-bar img { height:22px; width:auto; display:block; }
-  .frz-man-bar .frz-man-tt { font-weight:800; font-size:14px; color:#1f2733; }
-  .frz-man-bar .frz-man-ver { font-size:11px; font-weight:700; color:#7a8899; }
-  .frz-man-bar .frz-man-sp { flex:1; }
-  .frz-man-btn { background:#0059A9; color:#fff; border:0; border-radius:8px; padding:9px 16px;
-    font:inherit; font-weight:700; font-size:13px; cursor:pointer; display:inline-flex; align-items:center; gap:7px; }
-  .frz-man-btn:hover { background:#004a8d; }
-  .frz-man-x { background:none; border:1px solid #d9e1ea; border-radius:8px; width:36px; height:36px;
-    font-size:17px; line-height:1; cursor:pointer; color:#5b6b7b; }
-  .frz-man-x:hover { background:#eef2f7; }
-  .frz-man-doc { max-width:820px; margin:0 auto; padding:34px 44px 90px; font-size:14px; line-height:1.62; }
-  .frz-man-doc h1 { font-size:25px; font-weight:800; margin:0 0 4px; color:#12314f; }
-  .frz-man-doc h2 { font-size:19px; font-weight:800; margin:30px 0 8px; color:#0059A9;
-    padding-bottom:5px; border-bottom:2px solid #eaf2fb; }
-  .frz-man-doc h3 { font-size:15px; font-weight:800; margin:18px 0 5px; color:#1f2733; }
-  .frz-man-doc p { margin:8px 0; }
-  .frz-man-doc ul, .frz-man-doc ol { margin:8px 0; padding-left:22px; }
-  .frz-man-doc li { margin:4px 0; }
-  .frz-man-doc code { background:#eef2f7; border:1px solid #dbe3ec; border-radius:4px; padding:0 5px; font-size:12.5px; font-family:ui-monospace,Menlo,Consolas,monospace; }
-  .frz-man-doc table { border-collapse:collapse; width:100%; margin:12px 0; font-size:13px; }
-  .frz-man-doc th, .frz-man-doc td { border:1px solid #d9e1ea; padding:6px 10px; text-align:left; vertical-align:top; }
-  .frz-man-doc th { background:#f0f5fa; font-weight:800; }
-  .frz-man-doc a { color:#0059A9; text-decoration:none; }
-  .frz-man-ic { display:inline-flex; width:15px; height:15px; vertical-align:-3px; color:#0059A9; }
-  .frz-man-ic svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
-  .frz-man-note { background:#eaf2fb; border-left:3px solid #0059A9; border-radius:0 8px 8px 0; padding:10px 14px; margin:14px 0; font-size:13px; }
-  .frz-man-role { display:inline-block; font-size:11px; font-weight:800; padding:1px 8px; border-radius:9px; background:#eaf2fb; color:#0059A9; margin-right:3px; }
-  .frz-man-cover { text-align:center; padding:70px 0 40px; border-bottom:1px solid #e4ebf2; }
-  .frz-man-cover img { height:44px; margin-bottom:22px; }
-  .frz-man-cover .frz-man-title { font-size:34px; font-weight:800; color:#12314f; margin:0; }
-  .frz-man-cover .frz-man-sub { font-size:15px; color:#5b6b7b; margin-top:8px; }
-  .frz-man-toc ol { columns:2; column-gap:34px; }
-  .frz-man-sec { }
-  /* Dark mode (screen only): body.dark-mode is a body-level ancestor, so this matches. */
-  body.dark-mode .frz-man { background:#12181f; color:#dbe4ec; }
-  body.dark-mode .frz-man-bar { background:#1b232c; border-bottom-color:#2c3742; }
-  body.dark-mode .frz-man-bar .frz-man-tt { color:#eef3f8; }
-  body.dark-mode .frz-man-x { border-color:#2c3742; color:#9fb0c0; }
-  body.dark-mode .frz-man-x:hover { background:#232d38; }
-  body.dark-mode .frz-man-doc h1, body.dark-mode .frz-man-cover .frz-man-title { color:#cfe2f5; }
-  body.dark-mode .frz-man-doc h2 { color:#2F86DE; border-bottom-color:#22303d; }
-  body.dark-mode .frz-man-doc h3 { color:#eef3f8; }
-  body.dark-mode .frz-man-doc code { background:#1b232c; border-color:#2c3742; }
-  body.dark-mode .frz-man-doc th, body.dark-mode .frz-man-doc td { border-color:#2c3742; }
-  body.dark-mode .frz-man-doc th { background:#1b232c; }
-  body.dark-mode .frz-man-doc a, body.dark-mode .frz-man-ic { color:#2F86DE; }
-  body.dark-mode .frz-man-note { background:#16212e; border-left-color:#2F86DE; }
-  body.dark-mode .frz-man-role { background:#16212e; color:#2F86DE; }
-  body.dark-mode .frz-man-cover .frz-man-sub { color:#9fb0c0; }
-  @media print {
-    /* Hide the entire app; show only the manual document, forced light + paginated. */
-    body.frz-man-print > *:not(#frzManual) { display:none !important; }
-    body.frz-man-print #frzManual { position:static !important; inset:auto !important; overflow:visible !important; background:#fff !important; color:#000 !important; }
-    body.frz-man-print .frz-man-bar { display:none !important; }
-    body.frz-man-print .frz-man-doc { max-width:none; margin:0; padding:0; font-size:11pt; }
-    body.frz-man-print .frz-man-cover { min-height:88vh; display:flex; flex-direction:column; align-items:center; justify-content:center; border:0; page-break-after:always; }
-    body.frz-man-print .frz-man-toc { page-break-after:always; }
-    body.frz-man-print .frz-man-sec { page-break-before:always; }
-    body.frz-man-print h2 { page-break-after:avoid; }
-    body.frz-man-print h3 { page-break-after:avoid; }
-    body.frz-man-print table, body.frz-man-print .frz-man-note, body.frz-man-print li { page-break-inside:avoid; }
-    body.frz-man-print .frz-man-doc a { color:#000 !important; text-decoration:none; }
-    @page { margin:16mm 15mm; }
-  }
+  /* Flow User Manual: styles moved into the _FRZ_MANUAL_CSS JS constant and inlined
+     into the standalone new-tab document (see openManual). Nothing here in the shell. */
   /* Stage 3b - watch toggle + @mention chips */
   .frz-beta .frz-watch { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); color:var(--frz-text-secondary); font-weight:700; font-size:11px; border-radius:999px; padding:3px 11px; cursor:pointer; }
   .frz-beta .frz-watch .frz-ic { width:13px; height:13px; }
@@ -23144,38 +23072,91 @@ if ('serviceWorker' in navigator) {
   // "Flow User Manual" during print so the saved file defaults to that name.
   // Built lazily + appended to <body> (above the shell, like the mention menu).
   function _mi(icon){ return '<span class="frz-man-ic">'+(IC[icon]||'')+'</span>'; }
+  // Standalone stylesheet for the new-tab manual document (theme via a body.dark class read
+  // from the app's dark-mode preference). Kept in JS so it can be inlined into the written tab.
+  var _FRZ_MANUAL_CSS = [
+    "*{box-sizing:border-box}",
+    "html,body{margin:0}",
+    "body{background:#f6f8fb;color:#1f2733;font-family:'Lato',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased}",
+    ".frz-man-bar{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:12px;padding:11px 20px;background:#fff;border-bottom:1px solid #d9e1ea;box-shadow:0 1px 4px rgba(20,40,63,.06)}",
+    ".frz-man-bar img{height:22px;width:auto;display:block}",
+    ".frz-man-bar .frz-man-tt{font-weight:800;font-size:14px;color:#1f2733}",
+    ".frz-man-bar .frz-man-ver{font-size:11px;font-weight:700;color:#7a8899}",
+    ".frz-man-bar .frz-man-sp{flex:1}",
+    ".frz-man-btn{background:#0059A9;color:#fff;border:0;border-radius:8px;padding:9px 16px;font:inherit;font-weight:700;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:7px}",
+    ".frz-man-btn:hover{background:#004a8d}",
+    ".frz-man-doc{max-width:820px;margin:0 auto;padding:34px 44px 90px;font-size:14px;line-height:1.62}",
+    ".frz-man-doc h1{font-size:25px;font-weight:800;margin:0 0 4px;color:#12314f}",
+    ".frz-man-doc h2{font-size:19px;font-weight:800;margin:30px 0 8px;color:#0059A9;padding-bottom:5px;border-bottom:2px solid #eaf2fb}",
+    ".frz-man-doc h3{font-size:15px;font-weight:800;margin:18px 0 5px;color:#1f2733}",
+    ".frz-man-doc p{margin:8px 0}",
+    ".frz-man-doc ul,.frz-man-doc ol{margin:8px 0;padding-left:22px}",
+    ".frz-man-doc li{margin:4px 0}",
+    ".frz-man-doc code{background:#eef2f7;border:1px solid #dbe3ec;border-radius:4px;padding:0 5px;font-size:12.5px;font-family:ui-monospace,Menlo,Consolas,monospace}",
+    ".frz-man-doc table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}",
+    ".frz-man-doc th,.frz-man-doc td{border:1px solid #d9e1ea;padding:6px 10px;text-align:left;vertical-align:top}",
+    ".frz-man-doc th{background:#f0f5fa;font-weight:800}",
+    ".frz-man-doc a{color:#0059A9;text-decoration:none}",
+    ".frz-man-ic{display:inline-flex;width:15px;height:15px;vertical-align:-3px;color:#0059A9}",
+    ".frz-man-ic svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}",
+    ".frz-man-note{background:#eaf2fb;border-left:3px solid #0059A9;border-radius:0 8px 8px 0;padding:10px 14px;margin:14px 0;font-size:13px}",
+    ".frz-man-role{display:inline-block;font-size:11px;font-weight:800;padding:1px 8px;border-radius:9px;background:#eaf2fb;color:#0059A9;margin-right:3px}",
+    ".frz-man-cover{text-align:center;padding:70px 0 40px;border-bottom:1px solid #e4ebf2}",
+    ".frz-man-cover img{height:44px;margin-bottom:22px}",
+    ".frz-man-cover .frz-man-title{font-size:34px;font-weight:800;color:#12314f;margin:0}",
+    ".frz-man-cover .frz-man-sub{font-size:15px;color:#5b6b7b;margin-top:8px}",
+    ".frz-man-toc ol{columns:2;column-gap:34px}",
+    "body.dark{background:#12181f;color:#dbe4ec}",
+    "body.dark .frz-man-bar{background:#1b232c;border-bottom-color:#2c3742}",
+    "body.dark .frz-man-bar .frz-man-tt{color:#eef3f8}",
+    "body.dark .frz-man-doc h1,body.dark .frz-man-cover .frz-man-title{color:#cfe2f5}",
+    "body.dark .frz-man-doc h2{color:#2F86DE;border-bottom-color:#22303d}",
+    "body.dark .frz-man-doc h3{color:#eef3f8}",
+    "body.dark .frz-man-doc code{background:#1b232c;border-color:#2c3742}",
+    "body.dark .frz-man-doc th,body.dark .frz-man-doc td{border-color:#2c3742}",
+    "body.dark .frz-man-doc th{background:#1b232c}",
+    "body.dark .frz-man-doc a,body.dark .frz-man-ic{color:#2F86DE}",
+    "body.dark .frz-man-note{background:#16212e;border-left-color:#2F86DE}",
+    "body.dark .frz-man-role{background:#16212e;color:#2F86DE}",
+    "body.dark .frz-man-cover .frz-man-sub{color:#9fb0c0}",
+    "@media print{",
+    "  .frz-man-bar{display:none}",
+    "  body,body.dark{background:#fff;color:#000}",
+    "  .frz-man-doc{max-width:none;margin:0;padding:0;font-size:11pt}",
+    "  .frz-man-doc a{color:#000;text-decoration:none}",
+    "  .frz-man-cover{min-height:88vh;display:flex;flex-direction:column;align-items:center;justify-content:center;border:0;page-break-after:always}",
+    "  .frz-man-toc{page-break-after:always}",
+    "  .frz-man-sec{page-break-before:always}",
+    "  h2,h3{page-break-after:avoid}",
+    "  table,.frz-man-note,li{page-break-inside:avoid}",
+    "  @page{margin:16mm 15mm}",
+    "}"
+  ].join("\n");
+  // Open the manual in a NEW browser tab as a fully self-contained document (its own <title>,
+  // so the browser's "Save as PDF" names the file "Flow User Manual"). No routing/boot changes:
+  // the document is written into the new window; its Download PDF button just calls print().
   function openManual(){
-    var el=document.getElementById('frzManual');
-    if(!el){
-      el=document.createElement('div'); el.id='frzManual'; el.className='frz-man';
-      el.innerHTML=
+    var w = window.open('', '_blank');
+    if(!w){ _call('showToast', 'Please allow pop-ups to open the manual.', 'error'); return; }
+    var dark=false; try { dark = localStorage.getItem('frazil_dark_mode')==='1'; } catch(e){}
+    var ver = esc(_val('APP_VERSION','')||'');
+    var doc =
+      '<!doctype html><html lang="en"><head><meta charset="utf-8">'+
+      '<meta name="viewport" content="width=device-width, initial-scale=1">'+
+      '<title>Flow User Manual</title>'+
+      '<style>'+_FRZ_MANUAL_CSS+'</style>'+
+      '</head><body class="'+(dark?'dark':'')+'">'+
         '<div class="frz-man-bar">'+
           '<img src="'+FLOW_LOGO_FULL+'" alt="Flow">'+
           '<span class="frz-man-tt">User Manual</span>'+
-          '<span class="frz-man-ver">v'+esc(_val('APP_VERSION','')||'')+'</span>'+
+          '<span class="frz-man-ver">v'+ver+'</span>'+
           '<span class="frz-man-sp"></span>'+
-          '<button class="frz-man-btn" id="frzManPrint">'+_mi('list')+'Download PDF</button>'+
-          '<button class="frz-man-x" id="frzManClose" title="Close" aria-label="Close">✕</button>'+
+          '<button class="frz-man-btn" onclick="window.print()">'+_mi('list')+'Download PDF</button>'+
         '</div>'+
-        '<div class="frz-man-doc">'+_frzManualHTML()+'</div>';
-      document.body.appendChild(el);
-      el.querySelector('#frzManClose').addEventListener('click', closeManual);
-      el.querySelector('#frzManPrint').addEventListener('click', function(){
-        var prev=document.title; document.title='Flow User Manual';
-        var restore=function(){ document.title=prev; document.body.classList.remove('frz-man-print'); window.removeEventListener('afterprint', restore); };
-        window.addEventListener('afterprint', restore);
-        document.body.classList.add('frz-man-print');
-        window.print();
-        setTimeout(restore, 1500);   // fallback for browsers that don't fire afterprint
-      });
-      // in-page anchor nav (smooth) for the table of contents
-      el.querySelectorAll('a[data-manjump]').forEach(function(a){ a.addEventListener('click', function(e){ e.preventDefault(); var t=el.querySelector('#'+a.getAttribute('data-manjump')); if(t) t.scrollIntoView({behavior:'smooth', block:'start'}); }); });
-    }
-    el.style.display='block'; el.scrollTop=0;
-    document.addEventListener('keydown', _manEsc);
+        '<div class="frz-man-doc">'+_frzManualHTML()+'</div>'+
+      '</body></html>';
+    w.document.open(); w.document.write(doc); w.document.close();
   }
-  function closeManual(){ var el=document.getElementById('frzManual'); if(el) el.style.display='none'; document.removeEventListener('keydown', _manEsc); }
-  function _manEsc(e){ if(e.key==='Escape') closeManual(); }
   function _frzManualHTML(){
     var v = esc(_val('APP_VERSION','')||'');
     return ''+
@@ -23188,14 +23169,14 @@ if ('serviceWorker' in navigator) {
     '</div>'+
     // ── Table of contents ──
     '<div class="frz-man-toc"><h2>Contents</h2><ol>'+
-      '<li><a href="#" data-manjump="man-start">Getting started</a></li>'+
-      '<li><a href="#" data-manjump="man-filters">Filtering &amp; saved views</a></li>'+
-      '<li><a href="#" data-manjump="man-views">The views</a></li>'+
-      '<li><a href="#" data-manjump="man-items">Working with items</a></li>'+
-      '<li><a href="#" data-manjump="man-planning">Planning, sprints &amp; releases</a></li>'+
-      '<li><a href="#" data-manjump="man-capacity">Capacity &amp; the team calendar</a></li>'+
-      '<li><a href="#" data-manjump="man-admin">Admin &amp; setup</a></li>'+
-      '<li><a href="#" data-manjump="man-ref">Reference</a></li>'+
+      '<li><a href="#man-start">Getting started</a></li>'+
+      '<li><a href="#man-filters">Filtering &amp; saved views</a></li>'+
+      '<li><a href="#man-views">The views</a></li>'+
+      '<li><a href="#man-items">Working with items</a></li>'+
+      '<li><a href="#man-planning">Planning, sprints &amp; releases</a></li>'+
+      '<li><a href="#man-capacity">Capacity &amp; the team calendar</a></li>'+
+      '<li><a href="#man-admin">Admin &amp; setup</a></li>'+
+      '<li><a href="#man-ref">Reference</a></li>'+
     '</ol></div>'+
 
     // ── 1. Getting started ──
