@@ -2121,7 +2121,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.42.2';
+const APP_VERSION = '4.42.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -20344,8 +20344,9 @@ if ('serviceWorker' in navigator) {
     return '<div class="frz-plan-pane-hd">'+esc(sprint.name)+' '+badge+'<span class="frz-spacer"></span>'+boardBtn+editBtn+actions+'</div>'+
       '<div class="frz-sprint-meta">'+(sprint.startDate?fmtD(sprint.startDate):'-')+' → '+(sprint.endDate?fmtD(sprint.endDate):'-')+
         (sprint.goal?'<div class="frz-sprint-goal" title="'+escA(sprint.goal)+'">'+esc(sprint.goal)+'</div>':'')+
+        '<div class="frz-sprint-cap">'+items.length+' items · '+pts+' pts · '+est+'w · '+done+'/'+items.length+' done</div>'+
         (sprint.maintenanceDutyPod?(function(){ var di=_dutyItems(sprint), dn=di.length, dd=di.filter(function(p){return isTerm(p.status);}).length; var sum=dn?(dn+' bug'+(dn===1?'':'s')+' · '+dd+'/'+dn+' done'):'no bugs yet'; return '<div class="frz-sprint-duty frz-sprint-duty-sum" data-dutyboard="'+escA(sprint.id)+'" title="View maintenance bugs on the board">Maintenance duty: '+esc(sprint.maintenanceDutyPod)+' · '+sum+'</div>'; })():'')+
-        '<div class="frz-sprint-cap">'+items.length+' items · '+pts+' pts · '+est+'w · '+done+'/'+items.length+' done</div></div>'+
+        '</div>'+
       nudge+
       '<div class="frz-plan-list" id="frzSprintList">'+cards+'</div>';
   }
