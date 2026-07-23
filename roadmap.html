@@ -3,6 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- FOUC guard: hide the classic top-bar chrome until the Flow shell mounts, so it never
+     flashes on cold load. Must be inline + in <head> to apply before first paint. boot()
+     removes .frz-boot at the reveal site once the rail is built + the initial route rendered;
+     the setTimeout is a fail-safe so a boot hiccup can never leave the page blank. -->
+<script>document.documentElement.classList.add('frz-boot');
+setTimeout(function(){document.documentElement.classList.remove('frz-boot');},5000);</script>
+<style>
+html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):not(script):not(style){
+  visibility: hidden !important;   /* visibility (not display) keeps classic containers measurable while the shell re-parents them */
+}
+</style>
 <title>Frazil Flow</title>
 <link rel="icon" type="image/png" href="/favicon.png">
 <!-- PWA: installable standalone app -->
@@ -2137,7 +2148,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.57.0';
+const APP_VERSION = '4.58.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -18193,7 +18204,7 @@ if ('serviceWorker' in navigator) {
     loadNotifs();
     _notifTimer = setInterval(loadNotifs, 60000);
     // Load shared boards + sprints + releases first so deep links mount correctly, then route.
-    loadBoards(function(){ loadSprints(function(){ loadReleases(function(){ routeFromLocation(true); _call('showLoading', false); }); }); });
+    loadBoards(function(){ loadSprints(function(){ loadReleases(function(){ routeFromLocation(true); _call('showLoading', false); document.documentElement.classList.remove('frz-boot'); /* FOUC guard: reveal now the rail is mounted + first route rendered */ }); }); });
   }
 
   // ════════ rail ════════
