@@ -776,6 +776,7 @@
     <span class="ctrl-lbl" id="groupByLbl">Group</span>
     <select id="groupBy">
       <option value="developer">Owner</option>
+      <option value="assignee">Assignee</option>
       <option value="status">Status</option>
       <option value="priority">Priority</option>
       <option value="none">None</option>
@@ -2121,7 +2122,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.50.0';
+const APP_VERSION = '4.51.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -3496,8 +3497,19 @@ function render(){
       return ai - bi;
     });
   } else {
+    // Assignee groups by the DISPLAY name (displayName is 1:1 with a username - it appends
+    // the username on a first+last collision - so keying by it groups an assignee's items
+    // together while showing "First Last" (rolls to username when no name is set). Grouping
+    // only ever emits a group for an assignee actually present in the current (filtered)
+    // items, so "only users with current assignments" is inherent - no extra work.
     const map = {};
-    list.forEach(p => { const k=groupBy==='developer'?(p.dev||'Unassigned'):(p.status||'Unknown'); (map[k]=map[k]||[]).push(p); });
+    list.forEach(p => {
+      let k;
+      if(groupBy==='developer')      k = p.dev || 'Unassigned';
+      else if(groupBy==='assignee')  k = p.assignee ? displayName(p.assignee) : 'Unassigned';
+      else                           k = p.status || 'Unknown';
+      (map[k]=map[k]||[]).push(p);
+    });
     if(groupBy==='developer'){
       groups = Object.entries(map).map(([label,items])=>({label,items:sortByStart(items)}));
       groups.sort((a,b)=>{
@@ -3506,6 +3518,13 @@ function render(){
         const an = ai === -1 ? 9999 : ai;
         const bn = bi === -1 ? 9999 : bi;
         return an - bn;
+      });
+    } else if(groupBy==='assignee'){
+      groups = Object.entries(map).map(([label,items])=>({label,items:sortByStart(items)}));
+      groups.sort((a,b)=>{
+        if(a.label==='Unassigned') return 1;   // Unassigned always last
+        if(b.label==='Unassigned') return -1;
+        return a.label.localeCompare(b.label);  // otherwise alphabetical by display name
       });
     } else {
       groups = Object.entries(map).map(([label,items])=>({label,items:sortByStart(items)}));
