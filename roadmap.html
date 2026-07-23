@@ -2137,7 +2137,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.52.1';
+const APP_VERSION = '4.53.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2338,11 +2338,52 @@ function _scenarioRerender(){
   try { if(document.body.classList.contains('frz-beta-active') && window._frzScenarioRefresh) window._frzScenarioRefresh(); } catch(e){}
 }
 // Phase-1 lever entry point (skeleton; declarative ops only, no closures).
+// Phase 1a: declarative ops (pure data, no closures - Phase 3 will persist them). A single
+// deterministic apply path guarantees applied state == "backup + all ops", which is exactly
+// what Phase 1b's commit will replay through real endpoints.
+let _scenarioOpSeq = 0;
 function scenarioMutate(op){
   if(!_scenarioActive) return;
-  _scenarioOps.push(op);                   // op is pure data {kind,target,from,to}; Phase 1 adds applyScenarioOp(op) + buildAssignmentImpactMap() when _assignments change
+  op._seq = ++_scenarioOpSeq;
+  _scenarioOps.push(op);
+  _scenarioReplay();                       // reset to backup, replay all ops
+}
+// Per-op undo: drop one op by _seq, then replay.
+function scenarioRemoveOp(seq){
+  if(!_scenarioActive) return;
+  _scenarioOps = _scenarioOps.filter(function(o){ return o._seq !== seq; });
+  _scenarioReplay();
+}
+// Reset the five live inputs to fresh clones of the backup, replay every op, rebuild the
+// impact map once, then re-render + refresh the banner count.
+function _scenarioReplay(){
+  if(!_scenarioBackup) return;
+  projects           = _scenarioClone(_scenarioBackup.projects);
+  ownerCapacity      = _scenarioClone(_scenarioBackup.ownerCapacity);
+  _capOverrides      = _scenarioClone(_scenarioBackup._capOverrides);
+  _assignments       = _scenarioClone(_scenarioBackup._assignments);
+  _assignmentImpacts = _scenarioClone(_scenarioBackup._assignmentImpacts);
+  _scenarioOps.forEach(applyScenarioOp);
+  try { buildAssignmentImpactMap(); } catch(e){}   // covers any markOut ops; cheap at this scale
   _scenarioRerender();
-  _scenarioBanner(true);                   // refresh the "N changes" count
+  _scenarioBanner(true);
+}
+function applyScenarioOp(op){
+  if(op.kind === 'markOut'){
+    _assignments.push({
+      id: 'scn_' + op._seq,                // string id: cannot collide with integer real ids
+      type_id: op.typeId, owner: op.owner, username: op.username,
+      start_date: op.from, end_date: op.to,
+      description: 'What-if', recurrence: 'none', _scenario: true
+    });
+    // impact map rebuilt by _scenarioReplay after all ops apply
+  } else if(op.kind === 'sprintAdd'){
+    var p = projects.find(function(x){ return x.id === op.itemId; });
+    if(p){ p.sprintId = op.sprintId; if(!p.start && op.assumedStart) p.start = op.assumedStart; }
+  } else if(op.kind === 'sprintRemove'){
+    var q = projects.find(function(x){ return x.id === op.itemId; });
+    if(q){ q.sprintId = null; }
+  }
 }
 // Bottom-pinned, body-level banner (unscoped, like the @mention menu / manual).
 function _scenarioBanner(show){
@@ -2358,7 +2399,7 @@ function _scenarioBanner(show){
     '<button class="sb-discard" id="sbDiscard">Discard</button>';
   el.querySelector('#sbDiscard').onclick = function(){ discardScenario(); };
   var cb = el.querySelector('#sbCommit');
-  cb.style.display = _scenarioOps.length ? '' : 'none';   // P0: always hidden (no ops)
+  cb.style.display = 'none';   // Phase 1a: ops exist but commit isn't built yet - keep Commit hidden so it can't silently discard. Phase 1b re-enables: _scenarioOps.length ? '' : 'none'
   cb.onclick = function(){ commitScenario(); };
 }
 
@@ -16666,6 +16707,22 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-podbar-fill.cap-health-over { background:#E8394A; }   /* over - red */
   .frz-beta .frz-podbar-fill.cap-health-off  { background:var(--frz-text-muted); opacity:.4; }
   .frz-beta .frz-pod-warn { margin-top:4px; }
+  /* What-if scenario panel (Phase 1a) - Planning-only overlay levers */
+  .frz-beta .frz-scn-panel { border:1px solid var(--frz-accent); border-radius:12px; background:var(--frz-bg-surface); padding:12px 14px; margin:0 0 12px; }
+  .frz-beta .frz-scn-hd { font-weight:800; font-size:13px; color:var(--frz-accent); margin-bottom:8px; display:flex; align-items:center; gap:8px; }
+  .frz-beta .frz-scn-note { font-weight:600; font-size:11px; color:var(--frz-text-muted); }
+  .frz-beta .frz-scn-sec { border-top:1px solid var(--frz-border); padding:9px 0 4px; }
+  .frz-beta .frz-scn-sec:first-of-type { border-top:0; padding-top:0; }
+  .frz-beta .frz-scn-lbl { font-size:10px; font-weight:800; letter-spacing:.4px; text-transform:uppercase; color:var(--frz-text-muted); margin-bottom:6px; }
+  .frz-beta .frz-scn-row { display:flex; align-items:center; gap:7px; margin-bottom:6px; flex-wrap:wrap; }
+  .frz-beta .frz-scn-to { font-size:12px; color:var(--frz-text-muted); }
+  .frz-beta .frz-scn-inp { padding:5px 8px; font:inherit; font-size:12.5px; border:1px solid var(--frz-border); border-radius:6px; background:var(--frz-bg-app); color:var(--frz-text); min-width:0; }
+  .frz-beta .frz-scn-inp select, .frz-beta select.frz-scn-inp { flex:1; }
+  .frz-beta .frz-scn-mem, .frz-beta .frz-scn-op, .frz-beta .frz-scn-delta { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12.5px; color:var(--frz-text); padding:3px 0; }
+  .frz-beta .frz-scn-x { border:0; background:none; color:var(--frz-accent2,#C0392B); cursor:pointer; font-size:15px; line-height:1; padding:0 4px; }
+  .frz-beta .frz-scn-empty { font-size:12px; color:var(--frz-text-muted); font-style:italic; padding:2px 0; }
+  .frz-beta .frz-scn-delta { border-top:1px dashed var(--frz-border); margin-top:4px; padding-top:6px; }
+  .frz-beta .frz-scn-pod { font-weight:700; }
   /* M2: Dashboard Maintenance & Operations (sprint-duty) */
   .frz-beta .frz-mo-wrap { display:flex; flex-direction:column; gap:6px; }
   .frz-beta .frz-mo-sprint, .frz-beta .frz-mo-row { background:var(--surface); border:1px solid var(--border); border-radius:10px; }
@@ -20152,9 +20209,13 @@ if ('serviceWorker' in navigator) {
     // Display fix: let the block-0 List Sprint column resolve id -> name via the Flow module's
     // sprints config. Returns '' for unknown/closed ids so the caller falls back to the raw id.
     window._frzSprintName = function(id){ var s=sprintById(id); return (s && s.name) ? s.name : ''; };
-    // What-if (Phase 0): let block-0 _scenarioRerender refresh the Flow toolbar so the
-    // "What-if" button's active highlight tracks enter/exit.
-    window._frzScenarioRefresh = function(){ try { renderBar(); } catch(e){} };
+    // What-if: block-0 _scenarioRerender calls this. Refresh the toolbar highlight (Phase 0),
+    // the Plan tab so the sprint gauge recomputes, and the scenario panel (Phase 1a).
+    window._frzScenarioRefresh = function(){
+      try { renderBar(); } catch(e){}
+      try { if(state.view==='planning' && state.planTab==='plan') refreshPlan(); } catch(e){}
+      try { _frzRenderScenarioPanel(); } catch(e){}
+    };
     document.getElementById('frzAdmin').addEventListener('click', function(){ navigate('/admin', false); });
     var av=document.getElementById('frzAvatar'), am=document.getElementById('frzAcctMenu');
     av.addEventListener('click', function(e){ e.stopPropagation(); am.hidden=!am.hidden; if(!am.hidden){ try { renderTeamSwitch(); } catch(_e){} } });
@@ -20779,6 +20840,7 @@ if ('serviceWorker' in navigator) {
       '<div class="frz-plan-pane frz-plan-sprint" id="frzSprintPane">'+ sprintPaneHTML(sprint) +'</div>';
     _blUpdateBulk(sprint);
     wirePlanTab(sprint);
+    try { _frzRenderScenarioPanel(); } catch(e){}   // What-if (Phase 1a): (re)insert the scenario panel above the plan body when active
   }
   // Selected items that are still in the (chip-filtered) backlog
   function _blSelectedItems(){ return backlogItems().filter(function(p){ return _blSel.has(p.id); }); }
@@ -20934,6 +20996,124 @@ if ('serviceWorker' in navigator) {
     }
   }
   function refreshPlan(){ var body=document.getElementById('frzPlanBody'); if(body && state.view==='planning' && state.planTab==='plan') renderPlanTab(body); renderRail(); }
+
+  // ── What-if scenario panel (Phase 1a) - Planning-only levers + live gauge deltas ─────
+  // Dedicated scenario surface; does NOT rewire the production sprint pane / readiness modal.
+  // Ops go to block-0 scenarioMutate (overlay-only); the sprint gauge recomputes via the
+  // Stage-4 _sprintPodLoad off the mutated overlay. Baseline (for before/after) is captured
+  // lazily on the first render after enter (state == baseline, ops empty).
+  var _frzScenarioBaseline = null;
+  function _frzScnPodMap(sprint){
+    var m={}; if(!sprint) return m;
+    (_sprintPodLoad(sprint)||[]).forEach(function(x){ m[x.pod]={committed:x.committed, available:x.available}; });
+    return m;
+  }
+  function _frzScnUserLabel(u){ return u.username ? (displayName(u.username)) : ''; }
+  function _frzScnUserPod(u){ return ((u && u.ownerFilter) || '').trim(); }   // single-valued in this codebase
+  function _frzRenderScenarioPanel(){
+    var active = _val('_scenarioActive', false);
+    var existing = document.getElementById('frzScenarioPanel');
+    var body = document.getElementById('frzPlanBody');
+    // Panel is Planning/Plan-tab only in 1a.
+    if(!active || state.view!=='planning' || state.planTab!=='plan' || !body){
+      if(existing) existing.remove();
+      if(!active) _frzScenarioBaseline = null;
+      return;
+    }
+    var sprint = currentSprint();
+    if(_frzScenarioBaseline===null) _frzScenarioBaseline = _frzScnPodMap(sprint);   // capture baseline (ops empty on first render)
+    var hostParent = body.parentElement; if(!hostParent) return;
+    var panel = existing;
+    if(!panel){ panel=document.createElement('div'); panel.id='frzScenarioPanel'; panel.className='frz-scn-panel'; hostParent.insertBefore(panel, body); }
+    panel.innerHTML = _frzScenarioPanelHTML(sprint);
+    _frzWireScenarioPanel(panel, sprint);
+  }
+  function _frzScenarioPanelHTML(sprint){
+    if(!sprint) return '<div class="frz-scn-hd">What-if</div><div class="frz-scn-empty">No sprint on this board to model against.</div>';
+    var users = (_val('users',[])||[]).filter(function(u){ return u && u.username; });
+    var pods  = _val('developers',[])||[];
+    var types = (_val('_assignmentTypes',[])||[]).filter(function(t){ return t && t.active!==false && (+t.capacity_impact||0)>0; });
+    var s0=esc(sprint.startDate||''), s1=esc(sprint.endDate||sprint.startDate||'');
+    // Region 1: mark a person out
+    var userOpts = '<option value="">Select a person…</option>'+users.map(function(u){ return '<option value="'+escA(u.username)+'">'+esc(_frzScnUserLabel(u))+'</option>'; }).join('');
+    var typeOpts = types.length ? types.map(function(t){ return '<option value="'+escA(t.id)+'">'+esc(t.name||t.id)+' (-'+esc(String(t.capacity_impact))+')</option>'; }).join('') : '<option value="">No impact types configured</option>';
+    var podOpts  = '<option value="">Select pod…</option>'+pods.map(function(d){ return '<option value="'+escA(d)+'">'+esc(d)+'</option>'; }).join('');
+    var markOut =
+      '<div class="frz-scn-sec"><div class="frz-scn-lbl">Mark a person out</div>'+
+        '<div class="frz-scn-row"><select id="frzScnUser" class="frz-scn-inp">'+userOpts+'</select></div>'+
+        '<div class="frz-scn-row" id="frzScnPodRow" style="display:none"><select id="frzScnPod" class="frz-scn-inp">'+podOpts+'</select></div>'+
+        '<div class="frz-scn-row"><input type="date" id="frzScnFrom" class="frz-scn-inp" value="'+s0+'"><span class="frz-scn-to">to</span><input type="date" id="frzScnTo" class="frz-scn-inp" value="'+s1+'"></div>'+
+        '<div class="frz-scn-row"><select id="frzScnType" class="frz-scn-inp">'+typeOpts+'</select><button class="frz-viewopt" id="frzScnMarkOut">Apply</button></div>'+
+      '</div>';
+    // Region 2: add item to sprint
+    var eligible = (backlogItems()||[]).filter(function(p){ return p.sprintId!==sprint.id; });
+    var addOpts = '<option value="">Add an item…</option>'+eligible.map(function(p){ return '<option value="'+p.id+'">'+esc((p.itemKey?p.itemKey+' · ':'')+(p.name||('#'+p.id)))+'</option>'; }).join('');
+    var addSec =
+      '<div class="frz-scn-sec"><div class="frz-scn-lbl">Add item to '+esc(sprint.name||'sprint')+'</div>'+
+        '<div class="frz-scn-row"><select id="frzScnAdd" class="frz-scn-inp">'+addOpts+'</select><button class="frz-viewopt" id="frzScnAddBtn">Add</button></div>'+
+      '</div>';
+    // Region 2b: current sprint members (scenario remove)
+    var members = sprintItems(sprint.id)||[];
+    var memHtml = members.length ? members.map(function(p){
+      return '<div class="frz-scn-mem"><span>'+esc((p.itemKey?p.itemKey+' · ':'')+(p.name||('#'+p.id)))+'</span><button class="frz-scn-x" data-scnremove="'+p.id+'" title="Remove (what-if)">×</button></div>';
+    }).join('') : '<div class="frz-scn-empty">No items in this sprint.</div>';
+    var memSec = '<div class="frz-scn-sec"><div class="frz-scn-lbl">In sprint</div>'+memHtml+'</div>';
+    // Region 3: changes list + per-pod deltas
+    var ops = _val('_scenarioOps', [])||[];
+    var opRows = ops.length ? ops.map(function(o){
+      var label;
+      if(o.kind==='markOut')      label = esc(displayName(o.username))+' ('+esc(o.owner)+') out '+esc(o.from)+' to '+esc(o.to);
+      else if(o.kind==='sprintAdd')    label = 'Added '+esc(_frzItemKey(o.itemId))+' to '+esc((sprintById(o.sprintId)||{}).name||'sprint');
+      else if(o.kind==='sprintRemove') label = 'Removed '+esc(_frzItemKey(o.itemId))+' from '+esc((sprintById(o.prevSprintId)||{}).name||'sprint');
+      else label = esc(o.kind);
+      return '<div class="frz-scn-op"><span>'+label+'</span><button class="frz-scn-x" data-scnop="'+o._seq+'" title="Undo this change">×</button></div>';
+    }).join('') : '<div class="frz-scn-empty">No changes yet. Use the levers above.</div>';
+    var after = _frzScnPodMap(sprint), base = _frzScenarioBaseline||{};
+    var affectedPods = Object.keys(after).filter(function(pod){
+      var b=base[pod]||{committed:0,available:0}; return Math.abs((after[pod].committed||0)-(b.committed||0))>0.001 || Math.abs((after[pod].available||0)-(b.available||0))>0.001;
+    });
+    var deltaHtml = affectedPods.length ? affectedPods.map(function(pod){
+      var a=after[pod], b=base[pod]||{committed:0,available:0};
+      var cls=_podHealthCls(a.committed, a.available);
+      return '<div class="frz-scn-delta"><span class="frz-scn-pod">'+esc(pod)+'</span>'+
+        '<span>committed '+_fmtW(b.committed)+'w → <b class="'+cls+'" style="padding:0 5px;border-radius:6px">'+_fmtW(a.committed)+'w</b> / '+_fmtW(a.available)+'w</span></div>';
+    }).join('') : '';
+    var changes = '<div class="frz-scn-sec"><div class="frz-scn-lbl">Changes</div>'+opRows+deltaHtml+'</div>';
+    return '<div class="frz-scn-hd">What-if scenario <span class="frz-scn-note">nothing is saved</span></div>'+markOut+addSec+memSec+changes;
+  }
+  function _frzItemKey(id){ var p=(_val('projects',[])||[]).filter(function(x){return x.id===id;})[0]; return p ? (p.itemKey||p.name||('#'+id)) : ('#'+id); }
+  function _frzWireScenarioPanel(panel, sprint){
+    var userSel=panel.querySelector('#frzScnUser'), podRow=panel.querySelector('#frzScnPodRow');
+    function syncPodRow(){
+      var u=(_val('users',[])||[]).filter(function(x){return x.username===userSel.value;})[0];
+      var pod=_frzScnUserPod(u);
+      if(podRow) podRow.style.display = (userSel.value && !pod) ? '' : 'none';   // need an explicit pod only when the user has none
+    }
+    if(userSel){ userSel.addEventListener('change', syncPodRow); syncPodRow(); }
+    var mo=panel.querySelector('#frzScnMarkOut');
+    if(mo) mo.addEventListener('click', function(){
+      var un=userSel.value; if(!un){ _call('showToast','Pick a person.','error'); return; }
+      var u=(_val('users',[])||[]).filter(function(x){return x.username===un;})[0];
+      var pod=_frzScnUserPod(u) || (panel.querySelector('#frzScnPod')||{}).value || '';
+      if(!pod){ _call('showToast','Pick a pod for this person.','error'); return; }
+      var typeId=(panel.querySelector('#frzScnType')||{}).value; if(!typeId){ _call('showToast','No impact assignment type configured.','error'); return; }
+      var from=(panel.querySelector('#frzScnFrom')||{}).value, to=(panel.querySelector('#frzScnTo')||{}).value;
+      if(!from||!to){ _call('showToast','Pick a date range.','error'); return; }
+      _call('scenarioMutate', {kind:'markOut', owner:pod, username:un, typeId:typeId, from:from, to:to});
+    });
+    var addBtn=panel.querySelector('#frzScnAddBtn'), addSel=panel.querySelector('#frzScnAdd');
+    if(addBtn) addBtn.addEventListener('click', function(){
+      var id=parseInt(addSel.value,10); if(!id){ _call('showToast','Pick an item to add.','error'); return; }
+      var p=(_val('projects',[])||[]).filter(function(x){return x.id===id;})[0]; if(!p) return;
+      _call('scenarioMutate', {kind:'sprintAdd', itemId:id, sprintId:sprint.id, prevSprintId:p.sprintId||null, assumedStart:(p.start||sprint.startDate||'')});
+    });
+    panel.querySelectorAll('[data-scnremove]').forEach(function(b){ b.addEventListener('click', function(){
+      _call('scenarioMutate', {kind:'sprintRemove', itemId:parseInt(b.getAttribute('data-scnremove'),10), prevSprintId:sprint.id});
+    }); });
+    panel.querySelectorAll('[data-scnop]').forEach(function(b){ b.addEventListener('click', function(){
+      _call('scenarioRemoveOp', parseInt(b.getAttribute('data-scnop'),10));
+    }); });
+  }
 
   function addToSprint(id){
     var sprint = currentSprint();
