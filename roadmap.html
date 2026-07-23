@@ -2137,7 +2137,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.55.0';
+const APP_VERSION = '4.56.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2321,19 +2321,25 @@ function _scenarioBuildCommitPlan(){
   });
   var ids = [];
   _scenarioOps.forEach(function(o){
-    if((o.kind === 'sprintAdd' || o.kind === 'sprintRemove') && ids.indexOf(o.itemId) < 0) ids.push(o.itemId);
+    // Phase 1c: reassign-only items also need a write (the 1b collector took sprint ops only).
+    if((o.kind === 'sprintAdd' || o.kind === 'sprintRemove' || o.kind === 'reassign') && ids.indexOf(o.itemId) < 0) ids.push(o.itemId);
   });
   var items = ids.map(function(id){
     var p = projects.find(function(x){ return x.id === id; });   // overlay item = net state
     if(!p) return null;
+    var touchedSprint = _scenarioOps.some(function(o){ return (o.kind === 'sprintAdd' || o.kind === 'sprintRemove') && o.itemId === id; });
+    var touchedOwner  = _scenarioOps.some(function(o){ return o.kind === 'reassign' && o.itemId === id; });
     var inSprint = p.sprintId != null && p.sprintId !== '';
     var sname = '';
     try { if(typeof window._frzSprintName === 'function') sname = window._frzSprintName(p.sprintId); } catch(e){}
+    var parts = [];
+    if(touchedSprint) parts.push(inSprint ? ('sprint ' + (sname || p.sprintId)) : 'removed from sprint');
+    if(touchedOwner)  parts.push('owner -> ' + (p.dev || '(none)'));
     return {
       id: id,
       blob: {...p},                            // full overlay blob; `due` untouched (FRAZ-221 boundary)
       baseTs: (p.updated_ts || null),          // enter-time stamp -> OCC contract
-      label: (p.itemKey || p.name || ('#' + id)) + (inSprint ? (' -> sprint ' + (sname || p.sprintId)) : ' -> removed from sprint')
+      label: (p.itemKey || p.name || ('#' + id)) + (parts.length ? (' -> ' + parts.join(' · ')) : '')
     };
   }).filter(Boolean);
   return { assignments: assignments, items: items };
@@ -2501,6 +2507,12 @@ function applyScenarioOp(op){
   } else if(op.kind === 'sprintRemove'){
     var q = projects.find(function(x){ return x.id === op.itemId; });
     if(q){ q.sprintId = null; }
+  } else if(op.kind === 'reassign'){
+    // Move the item to a different pod (owner). The gauge buckets by p.dev, so both the
+    // source and target pod loads recompute for free; assignments are untouched (no
+    // impact-map rebuild needed).
+    var r = projects.find(function(x){ return x.id === op.itemId; });
+    if(r){ r.dev = op.toOwner; }
   }
 }
 // Bottom-pinned, body-level banner (unscoped, like the @mention menu / manual).
@@ -16842,6 +16854,16 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-scn-empty { font-size:12px; color:var(--frz-text-muted); font-style:italic; padding:2px 0; }
   .frz-beta .frz-scn-delta { border-top:1px dashed var(--frz-border); margin-top:4px; padding-top:6px; }
   .frz-beta .frz-scn-pod { font-weight:700; }
+  /* Phase 1c: aggregate impact headline + reassign (owner-move) control */
+  .frz-beta .frz-scn-headline { border-radius:9px; padding:8px 11px; margin-bottom:9px; }
+  .frz-beta .frz-scn-headline.ok   { background:rgba(34,185,110,0.10); border:1px solid rgba(34,185,110,0.45); }
+  .frz-beta .frz-scn-headline.over { background:rgba(232,57,74,0.10);  border:1px solid rgba(232,57,74,0.50); }
+  .frz-beta .frz-scn-verdict { font-weight:800; font-size:13px; }
+  .frz-beta .frz-scn-headline.ok .frz-scn-verdict   { color:#178A52; }
+  .frz-beta .frz-scn-headline.over .frz-scn-verdict { color:#C0392B; }
+  .frz-beta .frz-scn-metrics { font-size:11.5px; color:var(--frz-text-muted); margin-top:2px; }
+  .frz-beta .frz-scn-move { padding:3px 6px; font:inherit; font-size:11.5px; border:1px solid var(--frz-border); border-radius:6px; background:var(--frz-bg-app); color:var(--frz-text); max-width:130px; }
+  .frz-beta .frz-scn-mem-nm { display:flex; align-items:center; gap:6px; min-width:0; }
   /* M2: Dashboard Maintenance & Operations (sprint-duty) */
   .frz-beta .frz-mo-wrap { display:flex; flex-direction:column; gap:6px; }
   .frz-beta .frz-mo-sprint, .frz-beta .frz-mo-row { background:var(--surface); border:1px solid var(--border); border-radius:10px; }
@@ -18459,14 +18481,19 @@ if ('serviceWorker' in navigator) {
   }
   function optHTML(o){
     var map = {
-      groupby:'Group by', legend:'Legend', capacity:'Capacity', whatif:'What-if',
+      groupby:'Group by', legend:'Legend', capacity:'Capacity', whatif:'Scenario',   // Phase 1c: renamed display "What-if" -> "Scenario" (opt id stays 'whatif')
       hideEmpty:'Hide empty columns', columns:'Columns', export:'Export', newSession:'New session', history:'History'
     };
     var label = map[o]||o;
     if (o==='groupby'){ var gb=document.getElementById('groupBy'); var cur=gb?(gb.options[gb.selectedIndex]||{}).text:'Owner'; label='Group by: '+(cur||'Owner'); }
     var activeStyle = (o==='hideEmpty' && _betaHideEmpty) || (o==='whatif' && _val('_scenarioActive',false))
       ? ' style="border-color:var(--frz-accent);color:var(--frz-accent);background:var(--frz-accent-soft)"' : '';
-    return '<button class="frz-viewopt" data-opt="'+o+'"'+activeStyle+'>'+esc(label)+'</button>';
+    // Phase 1c: decision-tree glyph + explanatory tooltip on the Scenario button only.
+    var titleAttr = (o==='whatif') ? ' title="Model plan changes without saving - see who\'s over-committed, then commit or discard."' : '';
+    var icon = (o==='whatif')
+      ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><path d="M6 8.2v3.3a2.5 2.5 0 0 0 2.5 2.5H15"/><path d="M18 8.2v1.6a4 4 0 0 1-4 4h-1"/></svg>'
+      : '';
+    return '<button class="frz-viewopt" data-opt="'+o+'"'+activeStyle+titleAttr+'>'+icon+esc(label)+'</button>';
   }
   // ── Gantt inline legend (space-permitting; popover button fallback) ──────────
   // Reuses the SAME swatch/glyph elements as the popover (cloned from #ganttLegend .leg-item),
@@ -21148,7 +21175,7 @@ if ('serviceWorker' in navigator) {
     _frzWireScenarioPanel(panel, sprint);
   }
   function _frzScenarioPanelHTML(sprint){
-    if(!sprint) return '<div class="frz-scn-hd">What-if</div><div class="frz-scn-empty">No sprint on this board to model against.</div>';
+    if(!sprint) return '<div class="frz-scn-hd">Scenario</div><div class="frz-scn-empty">No sprint on this board to model against.</div>';
     var users = (_val('users',[])||[]).filter(function(u){ return u && u.username; });
     var pods  = _val('developers',[])||[];
     var types = (_val('_assignmentTypes',[])||[]).filter(function(t){ return t && t.active!==false && (+t.capacity_impact||0)>0; });
@@ -21171,10 +21198,16 @@ if ('serviceWorker' in navigator) {
       '<div class="frz-scn-sec"><div class="frz-scn-lbl">Add item to '+esc(sprint.name||'sprint')+'</div>'+
         '<div class="frz-scn-row"><select id="frzScnAdd" class="frz-scn-inp">'+addOpts+'</select><button class="frz-viewopt" id="frzScnAddBtn">Add</button></div>'+
       '</div>';
-    // Region 2b: current sprint members (scenario remove)
+    // Region 2b: current sprint members (scenario remove + Phase 1c reassign)
     var members = sprintItems(sprint.id)||[];
     var memHtml = members.length ? members.map(function(p){
-      return '<div class="frz-scn-mem"><span>'+esc((p.itemKey?p.itemKey+' · ':'')+(p.name||('#'+p.id)))+'</span><button class="frz-scn-x" data-scnremove="'+p.id+'" title="Remove (what-if)">×</button></div>';
+      var cur = p.dev||'';
+      var moveOpts = '<option value="">Move to pod…</option>'+pods.filter(function(d){ return d!==cur; }).map(function(d){ return '<option value="'+escA(d)+'">'+esc(d)+'</option>'; }).join('');
+      return '<div class="frz-scn-mem">'+
+          '<span class="frz-scn-mem-nm">'+esc((p.itemKey?p.itemKey+' · ':'')+(p.name||('#'+p.id)))+(cur?' <span class="frz-scn-note">'+esc(cur)+'</span>':'')+'</span>'+
+          '<select class="frz-scn-move" data-scnmove="'+p.id+'" data-scnfrom="'+escA(cur)+'">'+moveOpts+'</select>'+
+          '<button class="frz-scn-x" data-scnremove="'+p.id+'" title="Remove (scenario)">×</button>'+
+        '</div>';
     }).join('') : '<div class="frz-scn-empty">No items in this sprint.</div>';
     var memSec = '<div class="frz-scn-sec"><div class="frz-scn-lbl">In sprint</div>'+memHtml+'</div>';
     // Region 3: changes list + per-pod deltas
@@ -21184,6 +21217,7 @@ if ('serviceWorker' in navigator) {
       if(o.kind==='markOut')      label = esc(displayName(o.username))+' ('+esc(o.owner)+') out '+esc(o.from)+' to '+esc(o.to);
       else if(o.kind==='sprintAdd')    label = 'Added '+esc(_frzItemKey(o.itemId))+' to '+esc((sprintById(o.sprintId)||{}).name||'sprint');
       else if(o.kind==='sprintRemove') label = 'Removed '+esc(_frzItemKey(o.itemId))+' from '+esc((sprintById(o.prevSprintId)||{}).name||'sprint');
+      else if(o.kind==='reassign')     label = 'Moved '+esc(_frzItemKey(o.itemId))+' to '+esc(o.toOwner);
       else label = esc(o.kind);
       return '<div class="frz-scn-op"><span>'+label+'</span><button class="frz-scn-x" data-scnop="'+o._seq+'" title="Undo this change">×</button></div>';
     }).join('') : '<div class="frz-scn-empty">No changes yet. Use the levers above.</div>';
@@ -21198,7 +21232,31 @@ if ('serviceWorker' in navigator) {
         '<span>committed '+_fmtW(b.committed)+'w → <b class="'+cls+'" style="padding:0 5px;border-radius:6px">'+_fmtW(a.committed)+'w</b> / '+_fmtW(a.available)+'w</span></div>';
     }).join('') : '';
     var changes = '<div class="frz-scn-sec"><div class="frz-scn-lbl">Changes</div>'+opRows+deltaHtml+'</div>';
-    return '<div class="frz-scn-hd">What-if scenario <span class="frz-scn-note">nothing is saved</span></div>'+markOut+addSec+memSec+changes;
+    // Phase 1c: aggregate impact headline - one verdict line + capacity metrics, diffed
+    // against the enter-time baseline. Capacity only in 1c (no delivery/date metric yet).
+    var headline = _frzScnHeadline(after, base);
+    return '<div class="frz-scn-hd">Scenario <span class="frz-scn-note">nothing is saved</span></div>'+headline+markOut+addSec+memSec+changes;
+  }
+  // Phase 1c: verdict + capacity metrics over the shown sprint's pods (scenario vs baseline).
+  function _frzScnHeadline(after, base){
+    var EPS=0.001;
+    var podsNow = Object.keys(after||{});
+    var overNow = podsNow.filter(function(pod){ return (after[pod].committed||0) > (after[pod].available||0)+EPS; });
+    var worst=null, worstOver=0;
+    overNow.forEach(function(pod){ var ov=(after[pod].committed||0)-(after[pod].available||0); if(ov>worstOver){ worstOver=ov; worst=pod; } });
+    var newlyOver = overNow.filter(function(pod){ var b=(base||{})[pod]||{committed:0,available:0}; return !((b.committed||0) > (b.available||0)+EPS); });
+    var sumNow  = podsNow.reduce(function(s,pod){ return s+(after[pod].committed||0); }, 0);
+    var sumBase = Object.keys(base||{}).reduce(function(s,pod){ return s+((base[pod].committed||0)); }, 0);
+    var totalDelta = sumNow - sumBase;
+    var nOps = (_val('_scenarioOps',[])||[]).length;
+    if(!overNow.length){
+      var okMetrics = nOps ? (nOps+' change'+(nOps===1?'':'s')) : 'No changes yet';
+      return '<div class="frz-scn-headline ok"><div class="frz-scn-verdict">Within capacity</div><div class="frz-scn-metrics">'+esc(okMetrics)+'</div></div>';
+    }
+    var m2 = overNow.length+' pod'+(overNow.length===1?'':'s')+' overcommitted';
+    if(Math.abs(totalDelta)>0.05) m2 += ' · '+(totalDelta>0?'+':'')+_fmtW(totalDelta)+'w committed';
+    if(newlyOver.length) m2 += ' · '+newlyOver.length+' newly over';
+    return '<div class="frz-scn-headline over"><div class="frz-scn-verdict">'+esc(worst)+' +'+_fmtW(worstOver)+'w over</div><div class="frz-scn-metrics">'+esc(m2)+'</div></div>';
   }
   function _frzItemKey(id){ var p=(_val('projects',[])||[]).filter(function(x){return x.id===id;})[0]; return p ? (p.itemKey||p.name||('#'+id)) : ('#'+id); }
   function _frzWireScenarioPanel(panel, sprint){
@@ -21228,6 +21286,11 @@ if ('serviceWorker' in navigator) {
     });
     panel.querySelectorAll('[data-scnremove]').forEach(function(b){ b.addEventListener('click', function(){
       _call('scenarioMutate', {kind:'sprintRemove', itemId:parseInt(b.getAttribute('data-scnremove'),10), prevSprintId:sprint.id});
+    }); });
+    // Phase 1c: reassign (owner-move) - move an in-sprint item to a different pod; both gauges recompute.
+    panel.querySelectorAll('[data-scnmove]').forEach(function(sel){ sel.addEventListener('change', function(){
+      var to=sel.value; if(!to) return;
+      _call('scenarioMutate', {kind:'reassign', itemId:parseInt(sel.getAttribute('data-scnmove'),10), fromOwner:(sel.getAttribute('data-scnfrom')||''), toOwner:to});
     }); });
     panel.querySelectorAll('[data-scnop]').forEach(function(b){ b.addEventListener('click', function(){
       _call('scenarioRemoveOp', parseInt(b.getAttribute('data-scnop'),10));
