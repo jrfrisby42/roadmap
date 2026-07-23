@@ -2137,7 +2137,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.54.0';
+const APP_VERSION = '4.55.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2271,6 +2271,7 @@ const API = {
 let _scenarioActive = false;
 let _scenarioBackup = null;   // deep clones of the five inputs
 let _scenarioOps    = [];     // mutation log (empty in P0; Phase 1 pushes DECLARATIVE {kind,target,from,to} ops - never closures, so Phase 3 can serialize them)
+let _scenarioCommitting = false;   // Phase 1b: scoped guard-lift - true ONLY during commit replay, so the write guard lets replay writes through
 function _scenarioClone(x){ try { return structuredClone(x); } catch(e){ return JSON.parse(JSON.stringify(x)); } }
 
 // The safety spine: while a scenario is active, the three MUTATING API methods never
@@ -2280,7 +2281,7 @@ function _scenarioClone(x){ try { return structuredClone(x); } catch(e){ return 
 ['post','put','del'].forEach(function(m){
   var _real = API[m].bind(API);
   API[m] = function(){
-    if(_scenarioActive){
+    if(_scenarioActive && !_scenarioCommitting){   // Phase 1b: the commit replay lifts the guard for its own window only
       try { if(typeof showToast==='function') showToast("Scenario mode - changes aren't saved. Exit to make real edits.", 'info'); } catch(e){}
       var err = new Error('scenario-blocked'); err.scenarioBlocked = true;
       return Promise.reject(err);
@@ -2306,10 +2307,127 @@ function enterScenario(){
   _scenarioRerender();
 }
 function discardScenario(){ _scenarioExit(true); }
-function commitScenario(){
-  // P0: no ops recorded, so commit == discard. Phase 1 replaces this with a replay of
-  // _scenarioOps through the real endpoints (temporarily lifting the guard), then reload.
-  _scenarioExit(true);
+// Phase 1b: build the full commit plan from the overlay BEFORE any write, so a mid-loop
+// projects reassignment (an Override reload) can't lose later payloads. The overlay item
+// already holds the NET of all ops -> one write per touched item, not one per op.
+function _scenarioBuildCommitPlan(){
+  var assignments = _scenarioOps.filter(function(o){ return o.kind === 'markOut'; }).map(function(o){
+    return {
+      payload: { type_id:o.typeId, owner:o.owner, username:o.username,
+                 start_date:o.from, end_date:o.to,
+                 description:'What-if', recurrence:'none', notes:'' },
+      label: displayName(o.username) + ' (' + o.owner + ') out ' + o.from + ' to ' + o.to
+    };
+  });
+  var ids = [];
+  _scenarioOps.forEach(function(o){
+    if((o.kind === 'sprintAdd' || o.kind === 'sprintRemove') && ids.indexOf(o.itemId) < 0) ids.push(o.itemId);
+  });
+  var items = ids.map(function(id){
+    var p = projects.find(function(x){ return x.id === id; });   // overlay item = net state
+    if(!p) return null;
+    var inSprint = p.sprintId != null && p.sprintId !== '';
+    var sname = '';
+    try { if(typeof window._frzSprintName === 'function') sname = window._frzSprintName(p.sprintId); } catch(e){}
+    return {
+      id: id,
+      blob: {...p},                            // full overlay blob; `due` untouched (FRAZ-221 boundary)
+      baseTs: (p.updated_ts || null),          // enter-time stamp -> OCC contract
+      label: (p.itemKey || p.name || ('#' + id)) + (inSprint ? (' -> sprint ' + (sname || p.sprintId)) : ' -> removed from sprint')
+    };
+  }).filter(Boolean);
+  return { assignments: assignments, items: items };
+}
+
+// Confirm-before-write modal. z-index 1200: above the 950 scenario banner, below the
+// 100000 conflict dialog. Resolves true on Commit, false on Cancel/backdrop/Escape.
+function _scenarioPreview(plan){
+  return new Promise(function(resolve){
+    var n = plan.assignments.length + plan.items.length;
+    var bg = document.createElement('div');
+    bg.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:1200;display:flex;align-items:center;justify-content:center;padding:20px';
+    var box = document.createElement('div');
+    box.style.cssText = 'background:var(--surface,#fff);color:var(--text,#111);max-width:520px;width:100%;max-height:80vh;overflow:auto;border-radius:12px;padding:20px 22px;box-shadow:0 14px 44px rgba(0,0,0,0.35);font-size:14px';
+    function grp(title, rows){
+      if(!rows.length) return '';
+      return '<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:var(--muted,#888);margin:12px 0 4px">' + esc(title) + '</div>'
+        + rows.map(function(r){ return '<div style="padding:5px 0;border-top:1px solid var(--border,#eee);font-size:13px">' + esc(r) + '</div>'; }).join('');
+    }
+    var html = '<div style="font-weight:800;font-size:15px;margin-bottom:6px">Commit ' + n + ' change' + (n === 1 ? '' : 's') + ' to the live board</div>'
+      + '<div style="color:var(--muted,#666);margin-bottom:6px;font-size:13px">This writes to the server. Nothing beyond what is listed below is changed.</div>'
+      + grp('Assignments to create', plan.assignments.map(function(a){ return a.label; }))
+      + grp('Item sprint changes', plan.items.map(function(i){ return i.label; }));
+    box.innerHTML = html;
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;margin-top:18px';
+    function mkBtn(label, primary){
+      var b = document.createElement('button');
+      b.textContent = label;
+      b.style.cssText = 'padding:7px 15px;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid var(--border,#ccc);'
+        + (primary ? 'background:var(--accent,#0059A9);color:#fff;border-color:transparent' : 'background:var(--surface,#fff);color:var(--text,#111)');
+      return b;
+    }
+    var cancelBtn = mkBtn('Cancel', false), commitBtn = mkBtn('Commit', true);
+    function done(v){ document.removeEventListener('keydown', onKey); bg.remove(); resolve(v); }
+    function onKey(e){ if(e.key === 'Escape') done(false); }
+    cancelBtn.addEventListener('click', function(){ done(false); });
+    commitBtn.addEventListener('click', function(){ done(true); });
+    bg.addEventListener('mousedown', function(e){ if(e.target === bg) done(false); });
+    document.addEventListener('keydown', onKey);
+    row.appendChild(cancelBtn); row.appendChild(commitBtn);
+    box.appendChild(row); bg.appendChild(box);
+    document.body.appendChild(bg);
+    commitBtn.focus();
+  });
+}
+
+// Phase 1b: replay the recorded ops through the real endpoints. Apply-the-rest-and-report;
+// per-item OCC via pre-captured payloads (not putItemGuarded, whose reload branch would
+// clobber the batch); then reload authoritative state and exit without restoring the
+// now-stale backup.
+async function commitScenario(){
+  if(!_scenarioActive) return;
+  var plan = _scenarioBuildCommitPlan();
+  if(!plan.assignments.length && !plan.items.length){ discardScenario(); return; }   // nothing concrete to write
+  var confirmed = await _scenarioPreview(plan);
+  if(!confirmed) return;                          // Cancel: no writes, scenario stays active with ops intact
+
+  var res = { written:0, skipped:0, failed:0, notes:[] };
+  _scenarioCommitting = true;
+  try {
+    for(const a of plan.assignments){
+      try { await API.post('/api/assignments', a.payload); res.written++; }
+      catch(e){ res.failed++; res.notes.push(a.label + ': ' + ((e && e.message) || 'failed')); }
+    }
+    for(const it of plan.items){
+      try {
+        var body = {...it.blob, _baseUpdatedTs: it.baseTs, _username: getUsername()};
+        try { await API.put('/api/projects/' + it.id, body); res.written++; }
+        catch(e){
+          if(e && e.status === 409){
+            var choice = await _conflictDialog();          // reuse the T3 Reload/Override dialog UI
+            if(choice === 'override'){
+              var b = {...body}; delete b._baseUpdatedTs;
+              await API.put('/api/projects/' + it.id, b); res.written++;
+            } else { res.skipped++; res.notes.push(it.label + ': skipped (changed since scenario start)'); }
+          } else throw e;
+        }
+      } catch(e){ res.failed++; res.notes.push(it.label + ': ' + ((e && e.message) || 'failed')); }
+    }
+  } finally {
+    _scenarioCommitting = false;
+  }
+
+  // Reload authoritative server state, then exit WITHOUT restoring the (now-stale) backup.
+  try { var fresh = await API.get('/api/all'); if(fresh && fresh.projects) projects = fresh.projects; } catch(_e){}
+  try { await loadAssignmentData(); } catch(_e){}
+  try { await loadAllCapOverrides(); } catch(_e){}
+  _scenarioExit(false);   // clears flags/banner/backup/ops, resumes timers, re-renders; no restore
+
+  var parts = [res.written + ' change' + (res.written === 1 ? '' : 's') + ' committed'];
+  if(res.skipped) parts.push(res.skipped + ' skipped');
+  if(res.failed)  parts.push(res.failed + ' failed');
+  try { showToast(parts.join(', '), res.failed ? 'error' : 'info'); } catch(_e){}
 }
 function _scenarioExit(restore){
   if(!_scenarioActive) return;
@@ -2399,7 +2517,7 @@ function _scenarioBanner(show){
     '<button class="sb-discard" id="sbDiscard">Discard</button>';
   el.querySelector('#sbDiscard').onclick = function(){ discardScenario(); };
   var cb = el.querySelector('#sbCommit');
-  cb.style.display = 'none';   // Phase 1a: ops exist but commit isn't built yet - keep Commit hidden so it can't silently discard. Phase 1b re-enables: _scenarioOps.length ? '' : 'none'
+  cb.style.display = _scenarioOps.length ? '' : 'none';   // Phase 1b: commit is built - show it once there's something to write
   cb.onclick = function(){ commitScenario(); };
 }
 
