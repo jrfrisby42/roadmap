@@ -62,17 +62,22 @@ def test_backfill_on_prefix_save(client, team, admin_headers):
     assert keys[p1] == "FRAZ-1" and keys[p2] == "FRAZ-2"
 
 
-def test_key_immutable_across_product_change(client, team, admin_headers):
+def test_key_rekeys_on_product_prefix_change(client, team, admin_headers):
+    # Behavior change (4.54.0): the key is no longer immutable across a product change -
+    # changing the product to one whose resolved prefix differs re-mints the key under the
+    # new prefix (prefix follows the product). See tests/test_item_key_rekey.py for the
+    # same-prefix / forge-protection cases.
     _set_products(client, admin_headers, [
         {"name": "Fraznet", "keyPrefix": "FRAZ"},
         {"name": "HubSpot", "keyPrefix": "HUB"},
     ])
     item = _mk(client, admin_headers, product="Fraznet")
     assert item["itemKey"] == "FRAZ-1"
-    # Move it to HubSpot — key must NOT change (immutable).
+    # Move it to HubSpot — key re-mints under HUB.
     r = client.put(f"/api/projects/{item['id']}",
                    json={**item, "product": "HubSpot"}, headers=admin_headers)
-    assert r.json()["itemKey"] == "FRAZ-1"
+    assert r.json()["itemKey"].startswith("HUB-")
+    assert r.json()["itemKey"] != "FRAZ-1"
 
 
 def test_key_survives_wholesale_put_without_itemkey(client, team, admin_headers):
