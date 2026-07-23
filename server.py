@@ -1267,7 +1267,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.53.0"
+APP_VERSION = "4.54.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3309,8 +3309,19 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
             merged["attachments"] = old_atts
         else:
             merged.pop("attachments", None)
-        if old.get("itemKey"):
-            merged["itemKey"] = old["itemKey"]
+        # itemKey is SERVER-OWNED (never trust a client-sent key). Normally immutable, BUT
+        # if the product changed to one whose resolved key PREFIX differs, re-mint the key
+        # under the new prefix (a fresh number from that prefix's counter). Moving to a
+        # product with the same prefix keeps the key. Keyless items fall through to backfill.
+        old_key = old.get("itemKey") or ""
+        if old_key:
+            old_prefix = old_key.split("-", 1)[0] if "-" in old_key else ""
+            new_prefix = _product_prefix(c, merged.get("product")) or DEFAULT_KEY_PREFIX
+            if new_prefix and new_prefix != old_prefix:
+                merged["itemKey"] = f"{new_prefix}-{_next_key_seq(c, new_prefix)}"
+                changes["itemKey"] = {"from": old_key, "to": merged["itemKey"]}   # audit trail for the re-key
+            else:
+                merged["itemKey"] = old_key
         else:
             merged.pop("itemKey", None)   # no old key → let backfill assign one; never persist a client blank
         # M1: server-owned fields are not editable through a client PUT. These are set

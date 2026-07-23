@@ -2137,7 +2137,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.53.0';
+const APP_VERSION = '4.54.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -13986,6 +13986,7 @@ function _ipFieldOptions(field){
   const o = (v,l)=>({value:v, label:l});
   if(field==='status')   return statuses.map(s=>o(s,s));
   if(field==='type')     return types.map(t=>o(t.name,t.name));
+  if(field==='product')  return products.map(pr=>{ var n=(pr&&pr.name)||pr; return o(n,n); });   // changing Project re-keys the item server-side (prefix follows the product)
   if(field==='dev')      return [o('','- Unassigned -'), ...developers.map(d=>o(d,d))];
   if(field==='assignee') return [o('','- Unassigned -'), ...users.map(u=>o(u.username, displayName(u.username)))];   // label=name, value=username
   if(field==='priority') return [o('','- None -'), o(1,'Urgent'), o(2,'High'), o(3,'Medium'), o(4,'Low')];
@@ -14482,7 +14483,7 @@ function renderItemPage(p){
     ipEditField('storyPoints','Story Points', (p.storyPoints==null||p.storyPoints==='') ? '' : String(p.storyPoints), 'number'),
     ipField('Sprint', p.sprintId ? esc(p.sprintId) : '', {always:true}),
     ipField('Key', p.itemKey ? `<span style="font-family:monospace">${esc(p.itemKey)}</span>` : '-', {bold:true}),
-    ipField('Project',       esc(p.product||'-')),
+    ipEditField('product',    'Project',       esc(p.product||''), 'select'),
     ipField('Reporter',      esc(p.reporter||'-')),
     ipField('Reporter Email', p.reporterEmail ? `<a href="mailto:${escA(p.reporterEmail)}" style="color:var(--accent);text-decoration:none">${esc(p.reporterEmail)}</a>` : ''),
     ipEditField('dueWeeks',          'Time Estimate',      p.dueWeeks ? fmtEstimate(p.dueWeeks) : '', 'number', {readonly:timeRO}),
