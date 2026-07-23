@@ -2137,7 +2137,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.52.0';
+const APP_VERSION = '4.52.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -23352,12 +23352,31 @@ if ('serviceWorker' in navigator) {
         '<li><b>Main content</b> - the current view.</li>'+
       '</ul>'+
       '<h3>Your role</h3>'+
-      '<p>What you can do depends on your role:</p>'+
-      '<table><thead><tr><th>Role</th><th>Can do</th></tr></thead><tbody>'+
-        '<tr><td><span class="frz-man-role">Viewer</span></td><td>Read-only. Sees Gantt, List, Calendar and Dashboard. Clicking an item opens its read-only <b>item page</b> (no edit modal). Planning and Kanban are hidden.</td></tr>'+
-        '<tr><td><span class="frz-man-role">Editor</span></td><td>Create and update items, add comments, plan sprints, set assignments. Time and date fields lock while an item is in an active status (use <b>Delay</b> to adjust). May be <b>owner-scoped</b> - limited to items for one owner pod, shown with a 📌 badge.</td></tr>'+
-        '<tr><td><span class="frz-man-role">Admin</span></td><td>Everything, plus configuration, user management, deletes, and Jira/portal setup.</td></tr>'+
+      '<p>What you can do depends on your role. The three roles build on each other - viewer, then editor, then admin - and the rules are enforced by the server, so a role can never do more than its level allows.</p>'+
+      '<table><thead><tr><th>Role</th><th>In one line</th></tr></thead><tbody>'+
+        '<tr><td><span class="frz-man-role">Viewer</span></td><td>Read-only. Look at everything and follow items; change nothing.</td></tr>'+
+        '<tr><td><span class="frz-man-role">Editor</span></td><td>Create and update items, comment, and plan - with a few guardrails.</td></tr>'+
+        '<tr><td><span class="frz-man-role">Admin</span></td><td>Everything, plus configuration, users, deletes, and integrations.</td></tr>'+
       '</tbody></table>'+
+
+      '<p><b><span class="frz-man-role">Viewer</span> - read-only.</b> A stakeholder who can see everything and follow work, but not change it.</p>'+
+      '<ul>'+
+        '<li><b>Can:</b> view the Gantt, List, Team Calendar, Dashboard and My Home; open an item’s full detail on its read-only <b>item page</b> (clicking a Gantt bar or any item opens the page, never the edit modal); <b>watch/unwatch</b> items and receive <b>notifications</b>; manage their own password and avatar.</li>'+
+        '<li><b>Cannot:</b> <b>Planning and Kanban are hidden</b> for viewers; no editing of any field; <b>no comments or attachments</b>; no creating, deleting, planning, or configuration.</li>'+
+      '</ul>'+
+
+      '<p><b><span class="frz-man-role">Editor</span> - create and update, with guardrails.</b> The day-to-day working role.</p>'+
+      '<ul>'+
+        '<li><b>Can:</b> create and update items across Gantt, Kanban, List and Planning; <b>comment</b> (with @mentions) and add/remove <b>attachments</b>; plan - run planning sessions, add/remove items to <b>sprints</b> and <b>releases</b>, set <b>capacity overrides</b>, and create <b>assignments</b> (PTO, training, on-call) on the Team Calendar; set an item’s status, owner, assignee, type, start date, time estimate, story points and sprint.</li>'+
+        '<li><b>Guardrails:</b> once an item is in an <b>active status, its time and date fields lock</b> - to move dates, use <b>Delay</b>, and an editor’s delay change is <b>sent to an admin for approval</b> rather than applied immediately. An editor also can’t move an item back out of an active status (that’s an admin action). A few fields are <b>admin-only</b> and don’t appear in the editor’s form: Priority, Parallel Resources, Recurrence, Ignore Conflicts, and Gantt visibility.</li>'+
+        '<li><b>Cannot:</b> change configuration, manage users, delete items, run Jira admin/imports, or edit another admin’s password.</li>'+
+        '<li><b>Owner-scoped editors:</b> an editor may be limited to one owner pod (a 📌 badge shows this) - their views focus on that pod’s items and the owner field is locked. This is a focus aid for the person, not a hard security boundary.</li>'+
+      '</ul>'+
+
+      '<p><b><span class="frz-man-role">Admin</span> - full control.</b> Everything an editor can do, plus <b>configuration</b> (statuses and their flags, types, projects, owners, departments, capacity, Jira mapping, the intake portal), <b>user management</b> (add, invite, reset), <b>deletes</b>, and <b>Jira/import</b> tools. Admins’ date changes on active items apply immediately (with a required change reason) instead of going to an approval queue. One special rule: only the original built-in admin can change <b>another admin’s</b> password.</p>'+
+
+      '<div class="frz-man-note"><b>The two editor guardrails to remember:</b> (1) an active item’s dates are locked - adjust them through <b>Delay</b>; and (2) an editor’s delay change waits for <b>admin approval</b>. Everything else an editor changes saves immediately.</div>'+
+
       '<h3>Dark mode, mobile &amp; installing</h3>'+
       '<p>Toggle <b>dark mode</b> from the menu; your choice is remembered. Flow is a <b>Progressive Web App</b>: your browser can <b>Install</b> it so it opens in its own window like a desktop app. On a phone, Flow shows a compact layout with a bottom tab bar and a New-item button; tapping an item opens its full page.</p>'+
     '</div>'+
