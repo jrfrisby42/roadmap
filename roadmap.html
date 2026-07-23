@@ -580,6 +580,21 @@
   /* MODALS */
   .modal-bg { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 200; align-items: center; justify-content: center; }
   .modal-bg.open { display: flex; }
+  /* What-if scenario banner (Phase 0) - body-level, unscoped. z-index 950: above the 900
+     modal tier (flagIssue/dueDateApproval) and the 200 slip-capture modal so it stays
+     visible during Gantt-bar slip capture, but below the 1000/1001 auth walls.
+     Known TODO: overlaps the mobile bottom nav; scenario planning is a desktop activity for now. */
+  #scenarioBanner{position:fixed;left:0;right:0;bottom:0;z-index:950;
+    display:flex;align-items:center;gap:10px;padding:9px 16px;background:#3a2f00;color:#ffe9a8;
+    font:13px 'Lato',sans-serif;box-shadow:0 -2px 10px rgba(0,0,0,.25)}
+  #scenarioBanner .sb-dot{width:9px;height:9px;border-radius:50%;background:#ffc107;box-shadow:0 0 0 3px rgba(255,193,7,.25)}
+  #scenarioBanner .sb-msg{font-weight:700}
+  #scenarioBanner .sb-sp{flex:1}
+  #scenarioBanner button{border:0;border-radius:7px;padding:6px 13px;font:inherit;font-weight:700;cursor:pointer}
+  #scenarioBanner .sb-discard{background:#5a4a00;color:#ffe9a8}
+  #scenarioBanner .sb-commit{background:#ffc107;color:#3a2f00}
+  /* Reserve room so the fixed bar never covers the last row of the scrolling content. */
+  body.scenario-active .frz-content{ padding-bottom:48px; }
   .modal { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 26px; width: 820px; max-width: 98vw; box-shadow: 0 12px 48px rgba(0,0,0,0.13); max-height: 95vh; overflow-y: auto; }
   .modal h2 { font-size: 16px; font-weight: 900; margin-bottom: 16px; }
   .form-row { margin-bottom: 10px; }
@@ -2122,7 +2137,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.51.0';
+const APP_VERSION = '4.52.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2137,8 +2152,8 @@ function applyJiraVisibility(){
   // Editor panel Jira row - always hidden for editors (they use jiraModalRow instead)
   const edJiraRow = document.getElementById('editorJiraInlineRow');
   if(edJiraRow) edJiraRow.style.display = (show && !isEditor) ? '' : 'none';
-  // Stop background sync if disabled
-  if(!show && _jiraSyncTimer){ clearInterval(_jiraSyncTimer); _jiraSyncTimer = null; }
+  // Stop background sync if disabled (routed through the named stopper - Step 0)
+  if(!show) _stopBackgroundJiraSync();
 }
 
 // ── DARK MODE ──────────────────────────────────────────────────────────────
@@ -2244,6 +2259,108 @@ const API = {
   async put(path,body)  { return this._check(await fetch(path,{method:'PUT',   headers:this._h(), body:JSON.stringify(body)})); },
   async del(path)       { return this._check(await fetch(path,{method:'DELETE',headers:this._authHeaders()})); },
 };
+
+// ── What-if scenario mode (Phase 0: substrate + safety spine) ─────────────────
+// A scenario is a snapshot-and-mutate-in-place of the five engine inputs (projects,
+// ownerCapacity, _capOverrides, _assignments, _assignmentImpacts). enterScenario
+// deep-clones them; discard restores. The engine keeps reading the same module vars, so
+// every capacity/commitment/conflict surface recomputes for free. No levers yet (P0).
+// BOUNDARY (Phase-2 concern): the overlay drives the IN-MEMORY surfaces (Gantt, Planning
+// gauge, Kanban, cap calendar, dashboard heatmap); the List view is server-paginated via
+// API.get and does NOT reflect the overlay - do not trust List inside a scenario.
+let _scenarioActive = false;
+let _scenarioBackup = null;   // deep clones of the five inputs
+let _scenarioOps    = [];     // mutation log (empty in P0; Phase 1 pushes DECLARATIVE {kind,target,from,to} ops - never closures, so Phase 3 can serialize them)
+function _scenarioClone(x){ try { return structuredClone(x); } catch(e){ return JSON.parse(JSON.stringify(x)); } }
+
+// The safety spine: while a scenario is active, the three MUTATING API methods never
+// issue a fetch. This is a backstop - Phase-1 levers mutate the overlay directly and do
+// not call API. GET stays allowed (the one GET that reassigns `projects`, in
+// putItemGuarded's reload path, sits behind a blocked put and never runs).
+['post','put','del'].forEach(function(m){
+  var _real = API[m].bind(API);
+  API[m] = function(){
+    if(_scenarioActive){
+      try { if(typeof showToast==='function') showToast("Scenario mode - changes aren't saved. Exit to make real edits.", 'info'); } catch(e){}
+      var err = new Error('scenario-blocked'); err.scenarioBlocked = true;
+      return Promise.reject(err);
+    }
+    return _real.apply(API, arguments);
+  };
+});
+
+function enterScenario(){
+  if(_scenarioActive) return;
+  _scenarioBackup = {
+    projects:           _scenarioClone(projects),
+    ownerCapacity:      _scenarioClone(ownerCapacity),
+    _capOverrides:      _scenarioClone(_capOverrides),
+    _assignments:       _scenarioClone(_assignments),
+    _assignmentImpacts: _scenarioClone(_assignmentImpacts),
+  };
+  _scenarioOps = [];
+  _scenarioPauseTimers();
+  _scenarioActive = true;                 // set BEFORE the rerender so the scheduler gate sees it
+  document.body.classList.add('scenario-active');
+  _scenarioBanner(true);
+  _scenarioRerender();
+}
+function discardScenario(){ _scenarioExit(true); }
+function commitScenario(){
+  // P0: no ops recorded, so commit == discard. Phase 1 replaces this with a replay of
+  // _scenarioOps through the real endpoints (temporarily lifting the guard), then reload.
+  _scenarioExit(true);
+}
+function _scenarioExit(restore){
+  if(!_scenarioActive) return;
+  if(restore && _scenarioBackup){
+    projects           = _scenarioBackup.projects;
+    ownerCapacity      = _scenarioBackup.ownerCapacity;
+    _capOverrides      = _scenarioBackup._capOverrides;
+    _assignments       = _scenarioBackup._assignments;
+    _assignmentImpacts = _scenarioBackup._assignmentImpacts;
+  }
+  _scenarioActive = false; _scenarioBackup = null; _scenarioOps = [];
+  document.body.classList.remove('scenario-active');
+  _scenarioBanner(false);
+  _scenarioResumeTimers();
+  _scenarioRerender();
+}
+// Pause the two background writers that write to the server and/or reassign `projects`
+// on a timer; re-arm via their named starters on exit. (runAutoNotifications is boot-only
+// - untouched. _notifTimer is a harmless GET poll - left running.) Re-arm is safe
+// unconditionally: the planning-autosave callback self-guards on _planningSession?.id,
+// and _startBackgroundJiraSync is enabled-aware.
+function _scenarioPauseTimers(){ _stopPlanningAutosave(); _stopBackgroundJiraSync(); }
+function _scenarioResumeTimers(){ _startPlanningAutosave(); _startBackgroundJiraSync(); }
+function _scenarioRerender(){
+  try { if(typeof renderCurrentView==='function') renderCurrentView(); } catch(e){}
+  try { if(document.body.classList.contains('frz-beta-active') && window._frzScenarioRefresh) window._frzScenarioRefresh(); } catch(e){}
+}
+// Phase-1 lever entry point (skeleton; declarative ops only, no closures).
+function scenarioMutate(op){
+  if(!_scenarioActive) return;
+  _scenarioOps.push(op);                   // op is pure data {kind,target,from,to}; Phase 1 adds applyScenarioOp(op) + buildAssignmentImpactMap() when _assignments change
+  _scenarioRerender();
+  _scenarioBanner(true);                   // refresh the "N changes" count
+}
+// Bottom-pinned, body-level banner (unscoped, like the @mention menu / manual).
+function _scenarioBanner(show){
+  var el = document.getElementById('scenarioBanner');
+  if(!show){ if(el) el.remove(); return; }
+  if(!el){ el = document.createElement('div'); el.id='scenarioBanner'; document.body.appendChild(el); }
+  el.innerHTML =
+    '<span class="sb-dot"></span>'+
+    '<span class="sb-msg">Scenario mode - nothing is saved'+
+      (_scenarioOps.length ? ' · '+_scenarioOps.length+' change'+(_scenarioOps.length===1?'':'s') : '')+'</span>'+
+    '<span class="sb-sp"></span>'+
+    '<button class="sb-commit" id="sbCommit">Commit…</button>'+
+    '<button class="sb-discard" id="sbDiscard">Discard</button>';
+  el.querySelector('#sbDiscard').onclick = function(){ discardScenario(); };
+  var cb = el.querySelector('#sbCommit');
+  cb.style.display = _scenarioOps.length ? '' : 'none';   // P0: always hidden (no ops)
+  cb.onclick = function(){ commitScenario(); };
+}
 
 // ── T3: guarded item save (optimistic concurrency) ───────────────────────────
 // Sends the item's last-known updated_ts as _baseUpdatedTs; on 409 (someone else
@@ -3175,6 +3292,7 @@ const getBlockedStatus  = () => statuses.find(s => statusIsBlocked[s])  || '';  
 // ── CONFLICT ENGINE ──────────────────────────────────────────────────────────
 let _capacityNotifDebounce = null;
 function scheduleCapacityConflictNotifications(){
+  if(_scenarioActive) return;              // What-if: never schedule/write against hypothetical data
   clearTimeout(_capacityNotifDebounce);
   _capacityNotifDebounce = setTimeout(()=>{
     if(activities.length) runCapacityConflictNotifications().catch(()=>{});
@@ -15430,8 +15548,19 @@ let _jiraSyncLastRun = null;
 
 function initJiraSyncConfig(cfg){
   _jiraSyncConfig = cfg || {};
+  _startBackgroundJiraSync();
+}
+// Named start/stop so scenario mode (and the Jira visibility toggle) can pause and
+// re-arm background sync without duplicating the interval logic. _start is
+// ENABLED-AWARE - a no-op when Jira sync is disabled - so re-arming on scenario exit
+// can never start sync in a disabled state. Re-derives cadence from _jiraSyncConfig,
+// so it re-arms with no arguments.
+function _stopBackgroundJiraSync(){
   if(_jiraSyncTimer){ clearInterval(_jiraSyncTimer); _jiraSyncTimer = null; }
-  if(_jiraSyncConfig.enabled && +_jiraSyncConfig.intervalMinutes > 0){
+}
+function _startBackgroundJiraSync(){
+  _stopBackgroundJiraSync();
+  if(_jiraSyncConfig && _jiraSyncConfig.enabled && +_jiraSyncConfig.intervalMinutes > 0){
     const ms = Math.max(2, +_jiraSyncConfig.intervalMinutes) * 60 * 1000;
     _jiraSyncTimer = setInterval(()=> runBackgroundJiraSync(), ms);
   }
@@ -17206,10 +17335,10 @@ if ('serviceWorker' in navigator) {
     assignee:{ label:'Assignee', panel:'assigneeDropPanel', get:function(){ return _g('getSelectedAssignees'); }, param:'assignee' }
   };
   var CFG = {
-    gantt:    { chips:['owner','assignee','type','status'], extra:[], opts:['groupby','legend','capacity'] },   // Stage 2: +Assignee (List's chip order)
+    gantt:    { chips:['owner','assignee','type','status'], extra:[], opts:['groupby','legend','capacity','whatif'] },   // Stage 2: +Assignee (List's chip order) · What-if (Phase 0)
     kanban:   { chips:['owner','assignee','type','status'], extra:['sprint'], opts:['hideEmpty'] },             // Stage 2: +Assignee +Status · Stage 3: +Sprint (optional, via + Filter)
     list:     { chips:['owner','assignee','type','status'], extra:[], opts:['columns','export'] },
-    planning: { chips:['owner','status'],                   extra:['type','assignee'], opts:[] },
+    planning: { chips:['owner','status'],                   extra:['type','assignee'], opts:['whatif'] },   // What-if (Phase 0)
     dashboard:{ chips:['owner','range'],                    extra:[], opts:[] },
     'my-home':{ chips:[],                                   extra:[], opts:[] },  // Stage 5: personal landing, no chips
     'admin':  { chips:[],                                   extra:[], opts:[] },  // Phase 0: Admin full page, no chips
@@ -18154,12 +18283,13 @@ if ('serviceWorker' in navigator) {
   }
   function optHTML(o){
     var map = {
-      groupby:'Group by', legend:'Legend', capacity:'Capacity',
+      groupby:'Group by', legend:'Legend', capacity:'Capacity', whatif:'What-if',
       hideEmpty:'Hide empty columns', columns:'Columns', export:'Export', newSession:'New session', history:'History'
     };
     var label = map[o]||o;
     if (o==='groupby'){ var gb=document.getElementById('groupBy'); var cur=gb?(gb.options[gb.selectedIndex]||{}).text:'Owner'; label='Group by: '+(cur||'Owner'); }
-    var activeStyle = (o==='hideEmpty' && _betaHideEmpty) ? ' style="border-color:var(--frz-accent);color:var(--frz-accent)"' : '';
+    var activeStyle = (o==='hideEmpty' && _betaHideEmpty) || (o==='whatif' && _val('_scenarioActive',false))
+      ? ' style="border-color:var(--frz-accent);color:var(--frz-accent);background:var(--frz-accent-soft)"' : '';
     return '<button class="frz-viewopt" data-opt="'+o+'"'+activeStyle+'>'+esc(label)+'</button>';
   }
   // ── Gantt inline legend (space-permitting; popover button fallback) ──────────
@@ -20022,6 +20152,9 @@ if ('serviceWorker' in navigator) {
     // Display fix: let the block-0 List Sprint column resolve id -> name via the Flow module's
     // sprints config. Returns '' for unknown/closed ids so the caller falls back to the raw id.
     window._frzSprintName = function(id){ var s=sprintById(id); return (s && s.name) ? s.name : ''; };
+    // What-if (Phase 0): let block-0 _scenarioRerender refresh the Flow toolbar so the
+    // "What-if" button's active highlight tracks enter/exit.
+    window._frzScenarioRefresh = function(){ try { renderBar(); } catch(e){} };
     document.getElementById('frzAdmin').addEventListener('click', function(){ navigate('/admin', false); });
     var av=document.getElementById('frzAvatar'), am=document.getElementById('frzAcctMenu');
     av.addEventListener('click', function(e){ e.stopPropagation(); am.hidden=!am.hidden; if(!am.hidden){ try { renderTeamSwitch(); } catch(_e){} } });
@@ -20083,6 +20216,7 @@ if ('serviceWorker' in navigator) {
     if (o==='groupby') return groupByMenu(anchor);
     if (o==='legend') return legendPop(anchor);
     if (o==='capacity') { _call('toggleCapacityView'); return; }
+    if (o==='whatif') { _call('enterScenario'); return; }   // What-if (Phase 0); exit via the banner
     if (o==='newSession'){ _call('openMyAccount'); /* placeholder: planning entry lives in classic */ _call('showToast','Use the Planning board controls'); return; }
     if (o==='history'){ _call('openActivityCenter'); return; }
     if (o==='hideEmpty'){
@@ -21823,6 +21957,13 @@ if ('serviceWorker' in navigator) {
   // Returns a Promise resolving to the attachment record {attId,key,name,...}
   // on success (null/throws on failure) so the inline-paste path can reference it.
   function uploadAttachment(p, file){
+    // What-if: the raw S3 PUT below (fetch, not API.*) must never fire mid-scenario.
+    // The presign is an API.post the guard would reject anyway, but guard here too so it
+    // never depends on call-ordering. (_scenarioActive is block-0; read via _val here.)
+    if(_val('_scenarioActive', false)){
+      try { _call('showToast','Scenario mode - attachments are disabled until you exit.','info'); } catch(e){}
+      return Promise.resolve(null);
+    }
     if(!file) return Promise.resolve(null);
     if(file.size>MAX_ATTACH_BYTES){ _call('showToast','"'+(file.name||'file')+'" exceeds the 50 MB limit.','error'); return Promise.resolve(null); }
     var name=file.name||('pasted-'+String(file.type||'image').replace('/','.'));
