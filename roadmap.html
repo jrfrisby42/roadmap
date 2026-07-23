@@ -2137,7 +2137,7 @@
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.56.0';
+const APP_VERSION = '4.57.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2335,9 +2335,22 @@ function _scenarioBuildCommitPlan(){
     var parts = [];
     if(touchedSprint) parts.push(inSprint ? ('sprint ' + (sname || p.sprintId)) : 'removed from sprint');
     if(touchedOwner)  parts.push('owner -> ' + (p.dev || '(none)'));
+    var blob = {...p};                          // full overlay blob; `due` untouched (FRAZ-221 boundary)
+    // Phase 2a (discard-only for dates): a committed item (sprint/owner) may also carry an
+    // exploratory dateShift in the overlay. Never write those - revert every dateShift-touched
+    // field to its pre-scenario (backup) value, so a scenario commit can NOT slip a date past
+    // the real delay/reason/approval flow. Only fields a dateShift actually changed are reverted
+    // (leaves sprintAdd's assumedStart intact for a blank-start item added to a sprint).
+    var dateFields = {};
+    _scenarioOps.forEach(function(o){ if(o.kind === 'dateShift' && o.itemId === id) dateFields[o.field] = true; });
+    var touchedDates = Object.keys(dateFields);
+    if(touchedDates.length){
+      var bk = ((_scenarioBackup && _scenarioBackup.projects) || []).find(function(x){ return x.id === id; });
+      touchedDates.forEach(function(f){ if(bk){ blob[f] = bk[f]; } else { delete blob[f]; } });
+    }
     return {
       id: id,
-      blob: {...p},                            // full overlay blob; `due` untouched (FRAZ-221 boundary)
+      blob: blob,
       baseTs: (p.updated_ts || null),          // enter-time stamp -> OCC contract
       label: (p.itemKey || p.name || ('#' + id)) + (parts.length ? (' -> ' + parts.join(' · ')) : '')
     };
@@ -2513,6 +2526,13 @@ function applyScenarioOp(op){
     // impact-map rebuild needed).
     var r = projects.find(function(x){ return x.id === op.itemId; });
     if(r){ r.dev = op.toOwner; }
+  } else if(op.kind === 'dateShift'){
+    // Phase 2a: write a schedule INPUT (start / dueWeeks / revised) to the overlay only.
+    // itemCapacityOnDay + computeItemDue recompute for free; the derived finish is NEVER
+    // materialized back into the blob (FRAZ-221 boundary). These are exploratory: the
+    // commit plan excludes them (dates route through the real delay/approval flow).
+    var it = projects.find(function(x){ return x.id === op.itemId; });
+    if(it){ it[op.field] = op.value; }
   }
 }
 // Bottom-pinned, body-level banner (unscoped, like the @mention menu / manual).
@@ -16864,6 +16884,17 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-scn-metrics { font-size:11.5px; color:var(--frz-text-muted); margin-top:2px; }
   .frz-beta .frz-scn-move { padding:3px 6px; font:inherit; font-size:11.5px; border:1px solid var(--frz-border); border-radius:6px; background:var(--frz-bg-app); color:var(--frz-text); max-width:130px; }
   .frz-beta .frz-scn-mem-nm { display:flex; align-items:center; gap:6px; min-width:0; }
+  /* Phase 2a: per-member date levers (start/estimate/delay) + finish/dependents readout */
+  .frz-beta .frz-scn-memwrap { border-bottom:1px solid var(--frz-border); padding-bottom:4px; }
+  .frz-beta .frz-scn-memwrap:last-child { border-bottom:0; }
+  .frz-beta .frz-scn-dates { margin:2px 0 4px; }
+  .frz-beta .frz-scn-dates > summary { cursor:pointer; font-size:11px; color:var(--frz-accent); list-style:none; padding:1px 0; }
+  .frz-beta .frz-scn-dates > summary::-webkit-details-marker { display:none; }
+  .frz-beta .frz-scn-drow { display:flex; gap:8px; flex-wrap:wrap; margin:4px 0; }
+  .frz-beta .frz-scn-drow label { display:flex; flex-direction:column; font-size:10px; color:var(--frz-text-muted); gap:2px; }
+  .frz-beta .frz-scn-din { padding:3px 6px; font:inherit; font-size:11.5px; border:1px solid var(--frz-border); border-radius:6px; background:var(--frz-bg-app); color:var(--frz-text); max-width:120px; }
+  .frz-beta .frz-scn-proj { font-size:11.5px; color:var(--frz-text); background:var(--frz-bg-app); border-radius:6px; padding:5px 8px; margin-top:2px; }
+  .frz-beta .frz-scn-exp { border-top:1px dashed var(--frz-border); margin-top:6px; padding-top:6px; }
   /* M2: Dashboard Maintenance & Operations (sprint-duty) */
   .frz-beta .frz-mo-wrap { display:flex; flex-direction:column; gap:6px; }
   .frz-beta .frz-mo-sprint, .frz-beta .frz-mo-row { background:var(--surface); border:1px solid var(--border); border-radius:10px; }
@@ -21149,6 +21180,7 @@ if ('serviceWorker' in navigator) {
   // Stage-4 _sprintPodLoad off the mutated overlay. Baseline (for before/after) is captured
   // lazily on the first render after enter (state == baseline, ops empty).
   var _frzScenarioBaseline = null;
+  var _frzScnOpenDates = {};   // Phase 2a: preserve which member's "Shift dates" panel is open across re-renders
   function _frzScnPodMap(sprint){
     var m={}; if(!sprint) return m;
     (_sprintPodLoad(sprint)||[]).forEach(function(x){ m[x.pod]={committed:x.committed, available:x.available}; });
@@ -21156,6 +21188,21 @@ if ('serviceWorker' in navigator) {
   }
   function _frzScnUserLabel(u){ return u.username ? (displayName(u.username)) : ''; }
   function _frzScnUserPod(u){ return ((u && u.ownerFilter) || '').trim(); }   // single-valued in this codebase
+  // Phase 2a date-projection helpers (display only - never written back; FRAZ-221 boundary).
+  // Effective finish = the later of the derived due (computeItemDue) and the delay date (revised);
+  // ISO YYYY-MM-DD compares lexicographically. The `revised` lever moves this even though it does
+  // not feed computeItemDue.
+  function _scnFinish(p){
+    if(!p) return '';
+    var d=''; try { d=_call('computeItemDue', p)||''; } catch(e){}
+    var rev=p.revised||'';
+    return (rev && (!d || rev>d)) ? rev : d;
+  }
+  function _scnDaysBetween(a, b){   // whole days b-a; blank -> 0
+    if(!a || !b) return 0;
+    return Math.round((new Date(b+'T00:00:00') - new Date(a+'T00:00:00'))/86400000);
+  }
+  function _scnBackupItem(id){ var bp=_val('_scenarioBackup', null); var arr=(bp && bp.projects)||[]; return arr.filter(function(x){ return x.id===id; })[0]||null; }
   function _frzRenderScenarioPanel(){
     var active = _val('_scenarioActive', false);
     var existing = document.getElementById('frzScenarioPanel');
@@ -21200,19 +21247,48 @@ if ('serviceWorker' in navigator) {
       '</div>';
     // Region 2b: current sprint members (scenario remove + Phase 1c reassign)
     var members = sprintItems(sprint.id)||[];
+    var scnOps = _val('_scenarioOps', [])||[];
     var memHtml = members.length ? members.map(function(p){
       var cur = p.dev||'';
       var moveOpts = '<option value="">Move to pod…</option>'+pods.filter(function(d){ return d!==cur; }).map(function(d){ return '<option value="'+escA(d)+'">'+esc(d)+'</option>'; }).join('');
-      return '<div class="frz-scn-mem">'+
-          '<span class="frz-scn-mem-nm">'+esc((p.itemKey?p.itemKey+' · ':'')+(p.name||('#'+p.id)))+(cur?' <span class="frz-scn-note">'+esc(cur)+'</span>':'')+'</span>'+
-          '<select class="frz-scn-move" data-scnmove="'+p.id+'" data-scnfrom="'+escA(cur)+'">'+moveOpts+'</select>'+
-          '<button class="frz-scn-x" data-scnremove="'+p.id+'" title="Remove (scenario)">×</button>'+
+      // Phase 2a: per-member date levers (start / estimate / delay) + finish + dependents readout.
+      var sv=escA(p.start||''), ev=escA(p.dueWeeks!=null?String(p.dueWeeks):''), rv=escA(p.revised||'');
+      var hasDate = scnOps.some(function(o){ return o.kind==='dateShift' && o.itemId===p.id; });
+      var readout='';
+      if(hasDate){
+        var bk=_scnBackupItem(p.id), bf=_scnFinish(bk||p), of=_scnFinish(p), slip=_scnDaysBetween(bf, of);
+        var finLine='Finishes '+esc(bf||'—')+' → '+esc(of||'—')+(slip ? (' ('+(slip>0?'+':'')+slip+'d)') : ' (no change)');
+        var deps=(_val('projects',[])||[]).filter(function(x){ return x.requires===p.id; });
+        var depLine='';
+        if(deps.length){
+          var names=deps.map(function(x){ return esc((x.itemKey||x.name||('#'+x.id)))+(x.parallel?'':' *'); }).join(', ');
+          depLine=deps.length+' depend'+(deps.length===1?'s':'')+' on this: '+names+' <span class="frz-scn-note">(* gated by finish; not auto-rescheduled)</span>';
+        }
+        readout='<div class="frz-scn-proj">'+finLine+(depLine?('<br>'+depLine):'')+'</div>';
+      }
+      var dates='<details class="frz-scn-dates" data-mem="'+p.id+'"'+(_frzScnOpenDates[p.id]?' open':'')+'>'+
+          '<summary>Shift dates</summary>'+
+          '<div class="frz-scn-drow">'+
+            '<label>Start<input type="date" class="frz-scn-din" data-scndate="'+p.id+'" data-field="start" value="'+sv+'"></label>'+
+            '<label>Est (w)<input type="number" step="0.25" min="0" class="frz-scn-din" data-scndate="'+p.id+'" data-field="dueWeeks" value="'+ev+'"></label>'+
+            '<label>Delay<input type="date" class="frz-scn-din" data-scndate="'+p.id+'" data-field="revised" value="'+rv+'"></label>'+
+          '</div>'+ readout +
+        '</details>';
+      return '<div class="frz-scn-memwrap">'+
+          '<div class="frz-scn-mem">'+
+            '<span class="frz-scn-mem-nm">'+esc((p.itemKey?p.itemKey+' · ':'')+(p.name||('#'+p.id)))+(cur?' <span class="frz-scn-note">'+esc(cur)+'</span>':'')+'</span>'+
+            '<select class="frz-scn-move" data-scnmove="'+p.id+'" data-scnfrom="'+escA(cur)+'">'+moveOpts+'</select>'+
+            '<button class="frz-scn-x" data-scnremove="'+p.id+'" title="Remove (scenario)">×</button>'+
+          '</div>'+ dates +
         '</div>';
     }).join('') : '<div class="frz-scn-empty">No items in this sprint.</div>';
     var memSec = '<div class="frz-scn-sec"><div class="frz-scn-lbl">In sprint</div>'+memHtml+'</div>';
     // Region 3: changes list + per-pod deltas
     var ops = _val('_scenarioOps', [])||[];
-    var opRows = ops.length ? ops.map(function(o){
+    // Phase 2a: split committable ops from exploratory date ops (the latter never write).
+    var normalOps = ops.filter(function(o){ return o.kind!=='dateShift'; });
+    var dateOps   = ops.filter(function(o){ return o.kind==='dateShift'; });
+    var opRows = normalOps.length ? normalOps.map(function(o){
       var label;
       if(o.kind==='markOut')      label = esc(displayName(o.username))+' ('+esc(o.owner)+') out '+esc(o.from)+' to '+esc(o.to);
       else if(o.kind==='sprintAdd')    label = 'Added '+esc(_frzItemKey(o.itemId))+' to '+esc((sprintById(o.sprintId)||{}).name||'sprint');
@@ -21220,7 +21296,13 @@ if ('serviceWorker' in navigator) {
       else if(o.kind==='reassign')     label = 'Moved '+esc(_frzItemKey(o.itemId))+' to '+esc(o.toOwner);
       else label = esc(o.kind);
       return '<div class="frz-scn-op"><span>'+label+'</span><button class="frz-scn-x" data-scnop="'+o._seq+'" title="Undo this change">×</button></div>';
-    }).join('') : '<div class="frz-scn-empty">No changes yet. Use the levers above.</div>';
+    }).join('') : (ops.length ? '' : '<div class="frz-scn-empty">No changes yet. Use the levers above.</div>');
+    var fieldLbl={start:'start', dueWeeks:'estimate', revised:'delay'};
+    var expRows = dateOps.map(function(o){
+      var lbl=esc(_frzItemKey(o.itemId))+' '+(fieldLbl[o.field]||o.field)+' '+esc(String(o.prev||'—'))+' → '+esc(String(o.value||'—'));
+      return '<div class="frz-scn-op"><span>'+lbl+'</span><button class="frz-scn-x" data-scnop="'+o._seq+'" title="Undo this change">×</button></div>';
+    }).join('');
+    var expGroup = dateOps.length ? '<div class="frz-scn-exp"><div class="frz-scn-lbl">Exploratory (not written)</div>'+expRows+'</div>' : '';
     var after = _frzScnPodMap(sprint), base = _frzScenarioBaseline||{};
     var affectedPods = Object.keys(after).filter(function(pod){
       var b=base[pod]||{committed:0,available:0}; return Math.abs((after[pod].committed||0)-(b.committed||0))>0.001 || Math.abs((after[pod].available||0)-(b.available||0))>0.001;
@@ -21231,15 +21313,28 @@ if ('serviceWorker' in navigator) {
       return '<div class="frz-scn-delta"><span class="frz-scn-pod">'+esc(pod)+'</span>'+
         '<span>committed '+_fmtW(b.committed)+'w → <b class="'+cls+'" style="padding:0 5px;border-radius:6px">'+_fmtW(a.committed)+'w</b> / '+_fmtW(a.available)+'w</span></div>';
     }).join('') : '';
-    var changes = '<div class="frz-scn-sec"><div class="frz-scn-lbl">Changes</div>'+opRows+deltaHtml+'</div>';
-    // Phase 1c: aggregate impact headline - one verdict line + capacity metrics, diffed
-    // against the enter-time baseline. Capacity only in 1c (no delivery/date metric yet).
-    var headline = _frzScnHeadline(after, base);
+    var changes = '<div class="frz-scn-sec"><div class="frz-scn-lbl">Changes</div>'+opRows+deltaHtml+expGroup+'</div>';
+    // Phase 2a: worst finish slip across shifted items -> the headline delivery line.
+    var delivery=null;
+    (function(){
+      var shifted=[]; dateOps.forEach(function(o){ if(shifted.indexOf(o.itemId)<0) shifted.push(o.itemId); });
+      var worstAbs=-1, worstDays=0, worstItem=null;
+      shifted.forEach(function(id){
+        var p=(_val('projects',[])||[]).filter(function(x){ return x.id===id; })[0]; if(!p) return;
+        var bk=_scnBackupItem(id), slip=_scnDaysBetween(_scnFinish(bk||p), _scnFinish(p));
+        if(Math.abs(slip)>worstAbs){ worstAbs=Math.abs(slip); worstDays=slip; worstItem=(p.itemKey||p.name||('#'+id)); }
+      });
+      if(worstItem!==null && worstAbs>0) delivery={item:worstItem, days:worstDays};
+    })();
+    // Phase 1c headline + Phase 2a delivery line (diffed against the enter-time baseline).
+    var headline = _frzScnHeadline(after, base, delivery);
     return '<div class="frz-scn-hd">Scenario <span class="frz-scn-note">nothing is saved</span></div>'+headline+markOut+addSec+memSec+changes;
   }
   // Phase 1c: verdict + capacity metrics over the shown sprint's pods (scenario vs baseline).
-  function _frzScnHeadline(after, base){
+  // Phase 2a: optional delivery line (worst finish slip) appended when a date lever is active.
+  function _frzScnHeadline(after, base, delivery){
     var EPS=0.001;
+    var deliveryLine = delivery ? ('<div class="frz-scn-metrics">Delivery: '+esc(delivery.item)+' '+(delivery.days>0?'+':'')+delivery.days+'d</div>') : '';
     var podsNow = Object.keys(after||{});
     var overNow = podsNow.filter(function(pod){ return (after[pod].committed||0) > (after[pod].available||0)+EPS; });
     var worst=null, worstOver=0;
@@ -21251,12 +21346,12 @@ if ('serviceWorker' in navigator) {
     var nOps = (_val('_scenarioOps',[])||[]).length;
     if(!overNow.length){
       var okMetrics = nOps ? (nOps+' change'+(nOps===1?'':'s')) : 'No changes yet';
-      return '<div class="frz-scn-headline ok"><div class="frz-scn-verdict">Within capacity</div><div class="frz-scn-metrics">'+esc(okMetrics)+'</div></div>';
+      return '<div class="frz-scn-headline ok"><div class="frz-scn-verdict">Within capacity</div><div class="frz-scn-metrics">'+esc(okMetrics)+'</div>'+deliveryLine+'</div>';
     }
     var m2 = overNow.length+' pod'+(overNow.length===1?'':'s')+' overcommitted';
     if(Math.abs(totalDelta)>0.05) m2 += ' · '+(totalDelta>0?'+':'')+_fmtW(totalDelta)+'w committed';
     if(newlyOver.length) m2 += ' · '+newlyOver.length+' newly over';
-    return '<div class="frz-scn-headline over"><div class="frz-scn-verdict">'+esc(worst)+' +'+_fmtW(worstOver)+'w over</div><div class="frz-scn-metrics">'+esc(m2)+'</div></div>';
+    return '<div class="frz-scn-headline over"><div class="frz-scn-verdict">'+esc(worst)+' +'+_fmtW(worstOver)+'w over</div><div class="frz-scn-metrics">'+esc(m2)+'</div>'+deliveryLine+'</div>';
   }
   function _frzItemKey(id){ var p=(_val('projects',[])||[]).filter(function(x){return x.id===id;})[0]; return p ? (p.itemKey||p.name||('#'+id)) : ('#'+id); }
   function _frzWireScenarioPanel(panel, sprint){
@@ -21294,6 +21389,24 @@ if ('serviceWorker' in navigator) {
     }); });
     panel.querySelectorAll('[data-scnop]').forEach(function(b){ b.addEventListener('click', function(){
       _call('scenarioRemoveOp', parseInt(b.getAttribute('data-scnop'),10));
+    }); });
+    // Phase 2a: date levers (start / estimate / delay) - overlay-only dateShift ops.
+    panel.querySelectorAll('[data-scndate]').forEach(function(inp){ inp.addEventListener('change', function(){
+      var id=parseInt(inp.getAttribute('data-scndate'),10), field=inp.getAttribute('data-field');
+      var p=(_val('projects',[])||[]).filter(function(x){ return x.id===id; })[0];
+      var prev = p ? (p[field]!=null?p[field]:'') : '';
+      var v = inp.value;
+      if(field==='dueWeeks'){
+        if(v===''){ _call('showToast','Estimate cannot be blank.','error'); inp.value=(prev===''?'':String(prev)); return; }
+        v = parseFloat(v);
+        if(isNaN(v) || v<0){ _call('showToast','Estimate must be a non-negative number.','error'); inp.value=(prev===''?'':String(prev)); return; }
+      }
+      _frzScnOpenDates[id] = true;   // keep this item's date panel open across the re-render
+      _call('scenarioMutate', {kind:'dateShift', itemId:id, field:field, value:v, prev:prev});
+    }); });
+    // Track which "Shift dates" panels are open so the re-render (fired by every mutate) preserves them.
+    panel.querySelectorAll('details.frz-scn-dates').forEach(function(d){ d.addEventListener('toggle', function(){
+      _frzScnOpenDates[+d.getAttribute('data-mem')] = d.open;
     }); });
   }
 
