@@ -1756,9 +1756,9 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
           <div id="fFeatureFlagList" style="display:flex;flex-wrap:wrap;gap:6px;min-height:22px"></div>
         </div>
 
-        <!-- Notes -->
+        <!-- Description (label was "Notes" pre-4.59.0; the box edits p.description) -->
         <div class="form-row" style="flex:1;display:flex;flex-direction:column;padding-top:2px">
-          <label>Notes</label>
+          <label>Description</label>
           <div id="fDesc" class="rte-box" contenteditable="true" spellcheck="true" style="flex:1;min-height:100px;max-height:130px"></div>
         </div>
 
@@ -2148,7 +2148,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.58.0';
+const APP_VERSION = '4.59.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -14167,6 +14167,8 @@ function _ipBeginEdit(cell){
     cell.innerHTML = `<input type="number" step="0.5" min="0" value="${escA(cur??'')}" style="${bs}">`;
   } else if(kind==='date'){
     cell.innerHTML = `<input type="date" value="${escA(cur||'')}" style="${bs}">`;
+  } else if(kind==='textarea'){
+    cell.innerHTML = `<textarea rows="4" style="${bs};resize:vertical;min-height:72px;line-height:1.5">${esc(cur??'')}</textarea>`;
   } else {
     cell.innerHTML = `<input type="text" value="${escA(cur??'')}" style="${bs}">`;
   }
@@ -14186,6 +14188,11 @@ function _ipBeginEdit(cell){
     saveItemPageField(field, v);
   };
   if(kind==='select'||kind==='date'){ ctrl.addEventListener('change', commit); ctrl.addEventListener('blur', cancel); }
+  else if(kind==='textarea'){
+    // Enter inserts a newline; commit on blur, Escape cancels.
+    ctrl.addEventListener('blur', commit);
+    ctrl.addEventListener('keydown', ev=>{ if(ev.key==='Escape'){ cancel(); } });
+  }
   else {
     ctrl.addEventListener('blur', commit);
     ctrl.addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); ctrl.blur(); } else if(ev.key==='Escape'){ cancel(); } });
@@ -14668,6 +14675,18 @@ function renderItemPage(p){
     ipEditField('releaseDate', 'Release Date',  fmtDate(relD)||'', 'date', {readonly:timeRO}),
     p.delay ? ipField('Delay Reason', esc(stripHtml(p.delay))) : '',
   ].join('') + lockNote;
+
+  // Notes + Resolution details - fixed-schema free text, item page only (not in the modal).
+  // Editable by admin/editor like the other inline fields (incl. terminal items - resolution
+  // is typically written after release); pre-wrap so line breaks render in the read view.
+  const _ipTxtVal = (v, placeholder) => (v && String(v).trim())
+    ? `<span style="white-space:pre-wrap">${esc(v)}</span>`
+    : ((isAdmin||isEditor) ? `<span style="color:var(--muted)">${placeholder}</span>` : '');
+  const txtEl = document.getElementById('ipTextFields');
+  if(txtEl) txtEl.innerHTML = [
+    ipEditField('notes',      'Notes',              _ipTxtVal(p.notes, 'Add notes'), 'textarea'),
+    ipEditField('resolution', 'Resolution details', _ipTxtVal(p.resolution, 'Add resolution details'), 'textarea'),
+  ].join('');
 
   // Notes
   const notesEl   = document.getElementById('ipNotes');
@@ -16293,6 +16312,11 @@ if ('serviceWorker' in navigator) {
             </div>
             <div id="ipNotes" class="rte-box" spellcheck="true" style="min-height:120px;max-height:none;border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-size:13px;line-height:1.6;color:var(--text);background:var(--surface);outline:none"></div>
           </div>
+        </div>
+
+        <!-- Notes + Resolution details card (fixed-schema free text, inline-editable) -->
+        <div id="ipTextFieldsCard" style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
+          <div id="ipTextFields" style="padding:16px;display:flex;flex-direction:column;gap:14px"></div>
         </div>
 
         <!-- Feature Flags card - unified: manual flags + Jira-sourced flags -->
