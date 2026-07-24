@@ -1267,7 +1267,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.58.0"
+APP_VERSION = "4.59.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3287,7 +3287,12 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
 
         changes = {k: {"from": old.get(k), "to": v}
                    for k, v in body.items()
-                   if old.get(k) != v and k not in {"jiraTickets","description"}}
+                   if old.get(k) != v and k not in {"jiraTickets","description","notes","resolution"}}
+        # Notes / Resolution details are free text like description - audit that they
+        # changed (compact marker), never the bodies.
+        for _txt_field in ("notes", "resolution"):
+            if _txt_field in body and old.get(_txt_field) != body.get(_txt_field):
+                changes[_txt_field] = "updated"
         # ── T1 (4.11.0): MERGE the client patch onto the existing blob - do NOT
         # replace it. update_project used to write the request body AS the entire
         # item blob, so every server-owned field the client OMITTED (sprintId,
