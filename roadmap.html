@@ -2148,7 +2148,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.59.1';
+const APP_VERSION = '4.59.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16464,7 +16464,7 @@ if ('serviceWorker' in navigator) {
   }
   .frz-beta.is-collapsed { grid-template-columns:var(--frz-rail-w-collapsed) 1fr; }
   .frz-beta :focus-visible { outline:2px solid var(--frz-accent); outline-offset:2px; border-radius:4px; }
-  .frz-beta svg.frz-ic { stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  .frz-beta svg.frz-ic { stroke:currentColor; fill:none; stroke-width:1.33; stroke-linecap:round; stroke-linejoin:round; }   /* frz-ic set is 16x16 viewBox: 1.33 here = stroke 2 on the 24x24 standard */
 
   /* Rail */
   .frz-beta .frz-rail { background:var(--frz-bg-rail); border-right:1px solid var(--frz-border); display:flex; flex-direction:column; overflow:hidden; min-width:0; }
@@ -16535,7 +16535,7 @@ if ('serviceWorker' in navigator) {
      Scoped + higher specificity than production, no !important. */
   .frz-beta .form-row input:focus, .frz-beta .form-row select:focus,
   .frz-beta .rte-box:focus, .frz-beta .add-dev-row input:focus { box-shadow:0 0 0 3px rgba(0,89,169,0.15); }
-  .frz-beta .frz-newitem svg { width:13px; height:13px; stroke-width:2; }
+  .frz-beta .frz-newitem svg { width:13px; height:13px; stroke-width:1.33; }
   .frz-beta .frz-acct-wrap { position:relative; }
   .frz-beta .frz-avatar { width:30px; height:30px; border-radius:50%; background:var(--frz-accent); color:#fff; font-size:12px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; text-align:center; box-sizing:border-box; padding:0; line-height:1; cursor:pointer; border:0; }
   /* Phase 0: Admin rendered as a full page inside #frzContent (not a modal) */
@@ -17018,7 +17018,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-bell-wrap { position:relative; }
   .frz-beta .frz-bell { position:relative; width:34px; height:34px; border:0; background:transparent; border-radius:8px; cursor:pointer; color:var(--frz-text-secondary); display:inline-flex; align-items:center; justify-content:center; }
   .frz-beta .frz-bell:hover { background:var(--frz-bg-app); color:var(--frz-accent); }
-  .frz-beta .frz-bell .frz-ic { width:24px; height:24px; min-width:24px; flex:0 0 auto; stroke-width:2; display:block; }   /* enlarge the notification bell; flex:0 0 auto stops the flex item from shrinking */
+  .frz-beta .frz-bell .frz-ic { width:24px; height:24px; min-width:24px; flex:0 0 auto; stroke-width:1.33; display:block; }   /* enlarge the notification bell; flex:0 0 auto stops the flex item from shrinking */
   .frz-beta .frz-bell-badge { position:absolute; top:1px; right:1px; min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:#e8394a; color:#fff; font-size:10px; font-weight:800; line-height:16px; text-align:center; }
   .frz-beta .frz-notif { position:absolute; top:calc(100% + 8px); right:0; width:340px; max-height:70vh; overflow:auto; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:12px; box-shadow:0 12px 30px rgba(20,40,63,.18); z-index:90; }
   .frz-beta .frz-notif-hd { display:flex; align-items:center; justify-content:space-between; padding:11px 14px; border-bottom:1px solid var(--frz-border); font-weight:800; font-size:13px; color:var(--frz-text); position:sticky; top:0; background:var(--frz-bg-surface); }
@@ -23768,7 +23768,7 @@ if ('serviceWorker' in navigator) {
     ".frz-man-doc th{background:#f0f5fa;font-weight:800}",
     ".frz-man-doc a{color:#0059A9;text-decoration:none}",
     ".frz-man-ic{display:inline-flex;width:15px;height:15px;vertical-align:-3px;color:#0059A9}",
-    ".frz-man-ic svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}",
+    ".frz-man-ic svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.33;stroke-linecap:round;stroke-linejoin:round}",
     ".frz-man-note{background:#eaf2fb;border-left:3px solid #0059A9;border-radius:0 8px 8px 0;padding:10px 14px;margin:14px 0;font-size:13px}",
     ".frz-man-role{display:inline-block;font-size:11px;font-weight:800;padding:1px 8px;border-radius:9px;background:#eaf2fb;color:#0059A9;margin-right:3px}",
     ".frz-man-cover{text-align:center;padding:70px 0 40px;border-bottom:1px solid #e4ebf2}",
