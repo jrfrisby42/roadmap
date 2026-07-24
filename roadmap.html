@@ -2148,7 +2148,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.59.2';
+const APP_VERSION = '4.59.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16314,11 +16314,6 @@ if ('serviceWorker' in navigator) {
           </div>
         </div>
 
-        <!-- Notes + Resolution details card (fixed-schema free text, inline-editable) -->
-        <div id="ipTextFieldsCard" style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
-          <div id="ipTextFields" style="padding:16px;display:flex;flex-direction:column;gap:14px"></div>
-        </div>
-
         <!-- Feature Flags card - unified: manual flags + Jira-sourced flags -->
         <div id="ipFeatureFlagsCard" style="display:none;border:1px solid var(--border);border-radius:10px;overflow:hidden">
           <div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;gap:6px">
@@ -16358,6 +16353,12 @@ if ('serviceWorker' in navigator) {
               <button onclick="postItemPageComment()" style="background:var(--accent);color:#fff;border:none;padding:7px 16px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Post</button>
             </div>
           </div>
+        </div>
+
+        <!-- Notes + Resolution details card (fixed-schema free text, inline-editable) -->
+        <div id="ipTextFieldsCard" style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
+          <div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px">Notes &amp; Resolution</div>
+          <div id="ipTextFields" style="padding:16px;display:flex;flex-direction:column;gap:14px"></div>
         </div>
 
       </div>
@@ -19803,10 +19804,11 @@ if ('serviceWorker' in navigator) {
     _frzMoveDescTools();
     function cardOf(id){ var e=document.getElementById(id); while(e && e.parentElement!==leftCol) e=e.parentElement; return (e&&e.parentElement===leftCol)?e:null; }
     // Description → Attachments → Activity (Comments|History) → Feature Flags →
-    // Subtasks → Dependencies → Sprint history.
+    // Subtasks → Dependencies → Sprint history → Notes & Resolution.
     [ cardOf('ipNotes'), document.getElementById('frzAttachCard'), document.getElementById('frzActivityCard'),
       document.getElementById('ipFeatureFlagsCard'), document.getElementById('ipSubtasksCard'),
-      document.getElementById('ipDepsCard'), document.getElementById('frzSprintHistCard')
+      document.getElementById('ipDepsCard'), document.getElementById('frzSprintHistCard'),
+      document.getElementById('ipTextFieldsCard')
     ].forEach(function(n){ if(n && n.parentElement===leftCol) leftCol.appendChild(n); });
     _debrandItem();
   }
