@@ -863,9 +863,11 @@ def init_team_db(team: str):
             # the terminal (done) status. No readiness-floor seed - the default set has no
             # "ready" gate; admins flag one in Admin → Statuses if wanted. Admin-editable.
             "statusIsTerminal": {"Released": True},
-            # statusIsOffFlow (5.0.1): statuses that are parking/flag states off the linear
-            # progression (e.g. Blocked). The default status set has none, so seed empty.
-            "statusIsOffFlow": {},
+            # NOTE: statusIsOffFlow is intentionally NOT seeded here. In 5.0.1 it was, as a
+            # literal {}, and this INSERT ran BEFORE _migrate_config_keys - so the migration's
+            # derive-from-statusIsBlocked step saw the key already present ({}) and skipped it,
+            # shipping the flag empty. _migrate_config_keys is now its SOLE creator and derives
+            # the value, so ordering can't make it land empty again. (5.0.2 fix.)
             # /beta rich-text editor (Tiptap) master switch. Default ON for the beta
             # surface; flipping to False reverts Description+Comments to the classic
             # lightweight editor with no redeploy. Classic root never reads this.
@@ -1001,11 +1003,20 @@ def _migrate_config_keys(team: str):
         # NOTE: Inactive is deliberately NOT seeded off-flow - keeping it ranked (position 0)
         # means a Contributor can move OUT of it but never INTO it, so shelving stays an
         # editor/planning decision. Do not add Inactive here.
-        if "statusIsOffFlow" not in existing:
+        #
+        # 5.0.2 fix: guard on an explicit marker ('statusIsOffFlowSeeded'), NOT on the key's
+        # absence/emptiness. 5.0.1 shipped this seed inert because init_team_db pre-created
+        # statusIsOffFlow as {} before this step, so an "absent" check skipped it. The marker
+        # lets the derive run ONCE - overwriting a stale {} left by 5.0.1 - then never again,
+        # so an admin who deliberately clears every off-flow status is not resurrected on the
+        # next restart (do NOT reseed on emptiness - that would resurrect their cleared value).
+        if not existing.get("statusIsOffFlowSeeded"):
             _offflow_seed = dict(existing.get("statusIsBlocked") or {})
             c.execute("INSERT INTO config(key,value) VALUES('statusIsOffFlow',?) "
-                      "ON CONFLICT(key) DO NOTHING", (json.dumps(_offflow_seed),))
-            print(f"[Migration] Seeded config key 'statusIsOffFlow' for team '{team}'")
+                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(_offflow_seed),))
+            c.execute("INSERT INTO config(key,value) VALUES('statusIsOffFlowSeeded',?) "
+                      "ON CONFLICT(key) DO NOTHING", (json.dumps(True),))
+            print(f"[Migration] Seeded config key 'statusIsOffFlow' for team '{team}' (derived from statusIsBlocked)")
         if "typeScheduled" not in existing:
             _types = existing.get("types") or []
             seeded = {}
@@ -1282,7 +1293,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.0.1"
+APP_VERSION = "5.0.2"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 

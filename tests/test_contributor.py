@@ -166,6 +166,49 @@ def test_contributor_can_move_out_of_inactive(client, team, admin_headers, contr
     assert r.json()["status"] == "New"
 
 
+# ── statusIsOffFlow config SEED (5.0.2) - assert the value ARRIVES, not just the rule ──
+def test_offflow_seed_derives_from_blocked_on_existing_team(client, team, admin_headers):
+    """The migration path 5.0.1 shipped inert: an existing team with a blocked status but
+    an empty statusIsOffFlow (and no seed marker) must have the flag derived on migration.
+    This is the case the 5.0.1 suite never covered (its fixtures set the flag explicitly)."""
+    # Simulate a pre-5.0.2 team: blocked status flagged, statusIsOffFlow empty (the bug),
+    # seed marker absent.
+    client.put("/api/config/statusIsBlocked", json={"Blocked": True}, headers=admin_headers)
+    with server.db(team) as c:
+        c.execute("INSERT INTO config(key,value) VALUES('statusIsOffFlow',?) "
+                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps({}),))
+        c.execute("DELETE FROM config WHERE key='statusIsOffFlowSeeded'")
+    # Re-run the migration as a fresh-process restart would.
+    server._migrated_teams.discard(team)
+    server._migrate_config_keys(team)
+    cfg = client.get("/api/all", headers=admin_headers).json()
+    assert cfg["statusIsOffFlow"] == {"Blocked": True}   # derived from statusIsBlocked, no hardcoded name
+
+
+def test_offflow_seed_empty_and_marked_on_fresh_team(client, team, admin_headers):
+    """A freshly created team (the fixture ran init + migration): the default status set has
+    no blocked status, so the derived off-flow map is empty AND the seed marker is set."""
+    with server.db(team) as c:
+        off  = c.execute("SELECT value FROM config WHERE key='statusIsOffFlow'").fetchone()
+        mark = c.execute("SELECT value FROM config WHERE key='statusIsOffFlowSeeded'").fetchone()
+    assert off is not None and json.loads(off["value"]) == {}
+    assert mark is not None and json.loads(mark["value"]) is True
+
+
+def test_offflow_not_resurrected_after_admin_clears(client, team, admin_headers):
+    """Guardrail: once seeded (marker set), an admin who clears every off-flow status is not
+    resurrected on the next restart - the marker, not emptiness, guards the one-time seed."""
+    client.put("/api/config/statusIsBlocked", json={"Blocked": True}, headers=admin_headers)
+    # Marker is already set by the fixture's init migration. Admin clears the map.
+    client.put("/api/config/statusIsOffFlow", json={}, headers=admin_headers)
+    # A restart re-runs migration; with the marker present it must NOT re-derive.
+    server._migrated_teams.discard(team)
+    server._migrate_config_keys(team)
+    with server.db(team) as c:
+        off = c.execute("SELECT value FROM config WHERE key='statusIsOffFlow'").fetchone()
+    assert json.loads(off["value"]) == {}   # stayed empty; Blocked was NOT resurrected
+
+
 # ── Excluded endpoints (admin/editor only; contributor 403) ─────────────────────
 def test_contributor_excluded_endpoints_403(client, team, admin_headers, contributor_headers):
     pid = _mk(client, admin_headers, assignee="contrib1")
