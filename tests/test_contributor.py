@@ -27,6 +27,17 @@ def _seed_status_flow(client, admin_headers):
     client.put("/api/config/statusIsReleased", json={"Released": True}, headers=admin_headers)
 
 
+def _seed_status_flow_with_offflow(client, admin_headers):
+    """The live-shaped flow: Blocked is a mid-list rank AND flagged off-flow; Inactive is
+    ranked at position 0 and NOT off-flow (shelving stays an editor decision)."""
+    client.put("/api/config/statuses",
+               json=["Inactive", "New", "In Progress", "Blocked", "In Testing", "Released"],
+               headers=admin_headers)
+    client.put("/api/config/statusIsTerminal", json={"Released": True}, headers=admin_headers)
+    client.put("/api/config/statusIsReleased", json={"Released": True}, headers=admin_headers)
+    client.put("/api/config/statusIsOffFlow", json={"Blocked": True}, headers=admin_headers)
+
+
 def _seed_contrib_pod(client, admin_headers, pod):
     """Give contrib1 an ownerFilter (pod) so pod-based scope resolves server-side."""
     client.put("/api/config/users",
@@ -108,6 +119,51 @@ def test_contributor_status_released_and_terminal_rejected(client, team, admin_h
     # Released is both the released trigger and terminal here - forbidden either way.
     r = client.put(f"/api/projects/{pid}", json={"status": "Released"}, headers=contributor_headers)
     assert r.status_code == 403
+
+
+# ── Off-flow (Blocked) - the 5.0.1 one-way-door fix ─────────────────────────────
+def test_contributor_can_enter_offflow_status(client, team, admin_headers, contributor_headers):
+    _seed_status_flow_with_offflow(client, admin_headers)
+    pid = _mk(client, admin_headers, assignee="contrib1", status="In Progress")
+    # In Progress (rank 2) -> Blocked (rank 3, off-flow): allowed as a flag.
+    r = client.put(f"/api/projects/{pid}", json={"status": "Blocked"}, headers=contributor_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "Blocked"
+
+
+def test_contributor_can_leave_offflow_status_backward(client, team, admin_headers, contributor_headers):
+    _seed_status_flow_with_offflow(client, admin_headers)
+    pid = _mk(client, admin_headers, assignee="contrib1", status="Blocked")
+    # Blocked (rank 3) -> In Progress (rank 2): a backward rank, but allowed because the
+    # current status is off-flow (returning from a flag is rank-exempt). This is the bug fix.
+    r = client.put(f"/api/projects/{pid}", json={"status": "In Progress"}, headers=contributor_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "In Progress"
+
+
+def test_contributor_offflow_still_cannot_reach_terminal(client, team, admin_headers, contributor_headers):
+    _seed_status_flow_with_offflow(client, admin_headers)
+    pid = _mk(client, admin_headers, assignee="contrib1", status="Blocked")
+    # Off-flow does not open a path to Released/terminal.
+    r = client.put(f"/api/projects/{pid}", json={"status": "Released"}, headers=contributor_headers)
+    assert r.status_code == 403
+
+
+def test_contributor_cannot_move_to_inactive(client, team, admin_headers, contributor_headers):
+    _seed_status_flow_with_offflow(client, admin_headers)
+    pid = _mk(client, admin_headers, assignee="contrib1", status="In Progress")
+    # Inactive is ranked at position 0 and NOT off-flow, so it is always a backward move.
+    r = client.put(f"/api/projects/{pid}", json={"status": "Inactive"}, headers=contributor_headers)
+    assert r.status_code == 403
+
+
+def test_contributor_can_move_out_of_inactive(client, team, admin_headers, contributor_headers):
+    _seed_status_flow_with_offflow(client, admin_headers)
+    pid = _mk(client, admin_headers, assignee="contrib1", status="Inactive")
+    # Inactive (rank 0) -> New (rank 1): a normal forward move, allowed.
+    r = client.put(f"/api/projects/{pid}", json={"status": "New"}, headers=contributor_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "New"
 
 
 # ── Excluded endpoints (admin/editor only; contributor 403) ─────────────────────

@@ -863,6 +863,9 @@ def init_team_db(team: str):
             # the terminal (done) status. No readiness-floor seed - the default set has no
             # "ready" gate; admins flag one in Admin → Statuses if wanted. Admin-editable.
             "statusIsTerminal": {"Released": True},
+            # statusIsOffFlow (5.0.1): statuses that are parking/flag states off the linear
+            # progression (e.g. Blocked). The default status set has none, so seed empty.
+            "statusIsOffFlow": {},
             # /beta rich-text editor (Tiptap) master switch. Default ON for the beta
             # surface; flipping to False reverts Description+Comments to the classic
             # lightweight editor with no redeploy. Classic root never reads this.
@@ -991,6 +994,18 @@ def _migrate_config_keys(team: str):
         # unchecks one. Seed only when MISSING - never overwrite admin choices.
         # (Types absent from the map still read as scheduled via isScheduledType,
         # so types added later default to scheduled too.)
+        # statusIsOffFlow (5.0.1): parking/flag statuses off the linear progression - a
+        # Contributor may enter and leave them from anywhere (rank-exempt), unlike ranked
+        # statuses. Seed from the existing blocked flag so a team's Blocked status becomes
+        # off-flow WITHOUT hardcoding a status name (rule 3: config-driven, never literal).
+        # NOTE: Inactive is deliberately NOT seeded off-flow - keeping it ranked (position 0)
+        # means a Contributor can move OUT of it but never INTO it, so shelving stays an
+        # editor/planning decision. Do not add Inactive here.
+        if "statusIsOffFlow" not in existing:
+            _offflow_seed = dict(existing.get("statusIsBlocked") or {})
+            c.execute("INSERT INTO config(key,value) VALUES('statusIsOffFlow',?) "
+                      "ON CONFLICT(key) DO NOTHING", (json.dumps(_offflow_seed),))
+            print(f"[Migration] Seeded config key 'statusIsOffFlow' for team '{team}'")
         if "typeScheduled" not in existing:
             _types = existing.get("types") or []
             seeded = {}
@@ -1267,7 +1282,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.0.0"
+APP_VERSION = "5.0.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2888,6 +2903,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "statusIsApproved": cfg("statusIsApproved") or {},
             "statusIsTesting": cfg("statusIsTesting") or {},
             "statusIsBlocked": cfg("statusIsBlocked") or {},
+            "statusIsOffFlow": cfg("statusIsOffFlow") or {},
             "changeReasons": cfg("changeReasons") or [],
             "deferReasons": cfg("deferReasons") or [],
             "departments": cfg("departments") or [],
@@ -3190,15 +3206,23 @@ def require_item_scope(c, auth: dict, item: dict):
         raise HTTPException(403, "Contributors can only modify items assigned to them or in their pod")
 
 def _enforce_contributor_status(current: str, target: str, all_statuses: list,
-                                terminal_map: dict, released_map: dict):
+                                terminal_map: dict, released_map: dict, offflow_map: dict):
     """Contributor status subset: forward-only on the configured order, never terminal
-    or Released, never an off-list status. Raises 403 on violation."""
+    or Released. Off-flow statuses (statusIsOffFlow, e.g. Blocked) are parking/flag states
+    that sit off the linear progression, so they are exempt from the rank comparison in
+    BOTH directions - a Contributor may flag their own item (enter an off-flow status from
+    anywhere) and return from it (leave to any non-terminal on-flow status). The terminal
+    and Released bars still apply. Raises 403 on violation."""
     if target not in all_statuses:
         raise HTTPException(403, f"Contributors cannot set status to {target!r}")
     if terminal_map.get(target):
         raise HTTPException(403, "Contributors cannot move an item to a terminal status")
     if released_map.get(target):
         raise HTTPException(403, "Contributors cannot move an item to the Released status")
+    if offflow_map.get(target):
+        return   # may flag: enter an off-flow (parking) status from anywhere
+    if offflow_map.get(current):
+        return   # may return from a flag to any non-terminal on-flow status
     if _status_rank(target, all_statuses) < _status_rank(current, all_statuses):
         raise HTTPException(403, "Contributors can only move an item's status forward")
 
@@ -3331,12 +3355,13 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
 
         cfg = {r["key"]: json.loads(r["value"]) for r in c.execute(
             "SELECT key, value FROM config WHERE key IN "
-            "('statusIsActive','statusIsReleased','statusIsBlocked','statusIsTerminal','statuses')"
+            "('statusIsActive','statusIsReleased','statusIsBlocked','statusIsTerminal','statusIsOffFlow','statuses')"
         ).fetchall()}
         active_map   = cfg.get("statusIsActive", {})
         released_map = cfg.get("statusIsReleased", {})
         blocked_map  = cfg.get("statusIsBlocked", {})
         terminal_map = cfg.get("statusIsTerminal", {})
+        offflow_map  = cfg.get("statusIsOffFlow", {})
         statuses_cfg = cfg.get("statuses", []) or []
         blocked_status = next((k for k, v in (blocked_map or {}).items() if v), "")
 
@@ -3355,7 +3380,7 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
                 raise HTTPException(403, f"Contributors may not edit these fields: {', '.join(sorted(illegal))}")
             if "status" in changed:
                 _enforce_contributor_status(old.get("status", ""), body.get("status", ""),
-                                            statuses_cfg, terminal_map, released_map)
+                                            statuses_cfg, terminal_map, released_map, offflow_map)
 
         # Validate: parallelResources cannot be changed while item is in an active status
         current_status = old.get("status", "")
@@ -3707,6 +3732,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "changeReasons","deferReasons","departments",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
+              "statusIsOffFlow",
               "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains","departmentMeta","maintenanceDutyTypeId"}
 
 @app.put("/api/config/{key}")

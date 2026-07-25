@@ -37,10 +37,21 @@ Custom HMAC-signed tokens. Not JWT.
 | Role | Can do |
 |---|---|
 | `viewer` | Read everything except Planning view (hidden). No state-changing endpoints. |
+| `contributor` | Scoped "editor-lite" (Phase A, 5.0.x). Acts only on **in-scope** items; see below. |
 | `editor` | Create/update items, planning sessions, capacity overrides, Jira sync. |
 | `admin` | Everything: config edits, user management, deletes, audit log. |
 
 **Important:** every state-changing endpoint MUST have a `require_role` dependency. Don't rely on the frontend to gate behavior.
+
+**Contributor (Phase A) - scoped write access, server-enforced.** A Contributor is Editor's *actions* restricted to the user's own items, enforced by `require_item_scope` (the UI is convenience only, never the gate).
+
+- **Scope (in-scope set):** items where `assignee == them` **OR** the item's owner pod (`dev`) equals their `ownerFilter`. Enforced on `PUT /api/projects/{id}`, comment add/delete, and attachment presign/add/delete. Out-of-scope → 403.
+- **Editable fields:** only `CONTRIBUTOR_EDITABLE_FIELDS` = **description, notes, resolution, status**. Any other changed field → 403.
+- **Status rule** (`_enforce_contributor_status`): never a terminal (`statusIsTerminal`) or Released (`statusIsReleased`) status; **off-flow** statuses (`statusIsOffFlow`, e.g. Blocked) are rank-exempt so a Contributor may flag from anywhere and return from a flag; otherwise **forward-only** on the `statuses` list order (`rank(target) >= rank(current)`). `Inactive` is intentionally left ranked (position 0), so a Contributor can move *out* of it but never *into* it (shelving stays a planning decision).
+- **Excluded (admin/editor only, Contributor 403):** create, delete, config, users, Jira actions, planning sessions, capacity/overrides, assignments, boards/sprints/releases, import.
+- **Capacity:** a Contributor's work counts toward its pod normally via the item's `dev` - no pseudo-owner, no exclusion.
+- **Reads are UNSCOPED in Phase A:** a Contributor sees every item (`/api/all`, `/api/items`) and edits only their in-scope slice. **Phase B** will scope reads - required before onboarding truly external/untrusted users.
+- **Authorization side effect for admins:** the `statuses` list *order* drives the Contributor forward-only ranking (as it already drives Jira sync). Reordering statuses in Admin → Statuses changes which transitions a Contributor may make. Marking a status **Off-Flow** exempts it from that ranking in both directions.
 
 **Password storage:** salted SHA-256 hashes. Legacy plaintext passwords are auto-upgraded on next successful login (`_migrate_passwords`).
 

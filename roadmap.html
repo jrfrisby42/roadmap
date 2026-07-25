@@ -2149,7 +2149,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.0.0';
+const APP_VERSION = '5.0.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2638,6 +2638,7 @@ let statusIsReleased = {}; // { [statusName]: bool } - exactly ONE true: marks t
 let statusIsApproved = {}; // { [statusName]: bool } - exactly ONE true: marks the Approved status
 let statusIsTesting  = {}; // { [statusName]: bool } - exactly ONE true: marks the Testing status
 let statusIsBlocked  = {}; // { [statusName]: bool } - optional, at most ONE true: the Blocked status (empty = feature off)
+let statusIsOffFlow  = {}; // { [statusName]: bool } - many: parking/flag states off the linear progression (e.g. Blocked); rank-exempt for the Contributor status rule
 let typeIgnoreConflicts = {};   // { [typeName]: bool }
 let typeScheduled = {};         // { [typeName]: bool } - scheduled types appear on the Gantt + consume capacity; missing = scheduled (fail-safe)
 let richTextEditor = true;      // /beta Tiptap editor master switch (config). Default ON; admin can flip false to revert Description+Comments to the classic editor with no redeploy. Classic root ignores this.
@@ -7116,6 +7117,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       if(data.statusIsApproved)      statusIsApproved      = data.statusIsApproved;
       if(data.statusIsTesting)       statusIsTesting        = data.statusIsTesting;
       if(data.statusIsBlocked)       statusIsBlocked        = data.statusIsBlocked;
+      if(data.statusIsOffFlow)       statusIsOffFlow        = data.statusIsOffFlow;
       if(data.statusIgnoreConflicts) statusIgnoreConflicts = data.statusIgnoreConflicts;
       if(data.typeIgnoreConflicts)   typeIgnoreConflicts   = data.typeIgnoreConflicts;
       if(data.typeScheduled)         typeScheduled         = data.typeScheduled;
@@ -7443,6 +7445,7 @@ function renderStatusList(){
     <span style="width:62px;text-align:center" title="Status used when item is approved (one only)">Approved</span>
     <span style="width:62px;text-align:center" title="Status used when item is in testing (one only)">Testing</span>
     <span style="width:60px;text-align:center" title="Optional: the status an item moves to when flagged Blocked (at most one; empty = feature off)">Blocked</span>
+    <span style="width:64px;text-align:center" title="Off-flow (parking/flag) status - sits off the linear progression, so it is not rank-ordered. Contributors may enter it from anywhere and return from it; reordering does not affect an off-flow status.">Off-Flow</span>
     <span style="width:54px"></span>
   </div>` + statuses.map((s,i) => {
     const cnt        = projects.filter(p=>p.status===s).length;
@@ -7462,11 +7465,12 @@ function renderStatusList(){
     const isApproved = !!statusIsApproved[s];
     const isTesting2 = !!statusIsTesting[s];
     const isBlocked2 = !!statusIsBlocked[s];
+    const isOffFlow  = !!statusIsOffFlow[s];
     const chk = (val, fn) => `<input type="checkbox" ${val?'checked':''} onchange="${fn}" style="accent-color:var(--accent);cursor:pointer;width:15px;height:15px">`;
     const radio = (val, fn, name) => `<input type="radio" name="${name}" ${val?'checked':''} onchange="${fn}" style="accent-color:var(--accent);cursor:pointer;width:15px;height:15px">`;
     return `<div class="dev-item" draggable="true" data-idx="${i}" style="gap:8px">
       <span class="drag-handle" title="Drag to reorder">⠿</span>
-      <span class="dev-nm" style="flex:1">${esc(s)}${tag}${isDef?` <span style="font-size:9px;background:rgba(0,89,169,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Default</span>`:''}${isDefer?` <span style="font-size:9px;background:rgba(232,160,0,0.12);color:#c06000;padding:1px 5px;border-radius:5px">Deferred</span>`:''}${isReleased?` <span style="font-size:9px;background:rgba(34,185,110,0.12);color:#22b96e;padding:1px 5px;border-radius:5px">Released</span>`:''}${isApproved?` <span style="font-size:9px;background:rgba(0,144,212,0.12);color:#0090d4;padding:1px 5px;border-radius:5px">Approved</span>`:''}${isTesting2?` <span style="font-size:9px;background:rgba(0,89,169,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Testing</span>`:''}${isBlocked2?` <span style="font-size:9px;background:rgba(232,57,74,0.12);color:#e8394a;padding:1px 5px;border-radius:5px">Blocked</span>`:''} <span style="font-size:10px;color:var(--muted);font-weight:400">(${cnt})</span></span>
+      <span class="dev-nm" style="flex:1">${esc(s)}${tag}${isDef?` <span style="font-size:9px;background:rgba(0,89,169,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Default</span>`:''}${isDefer?` <span style="font-size:9px;background:rgba(232,160,0,0.12);color:#c06000;padding:1px 5px;border-radius:5px">Deferred</span>`:''}${isReleased?` <span style="font-size:9px;background:rgba(34,185,110,0.12);color:#22b96e;padding:1px 5px;border-radius:5px">Released</span>`:''}${isApproved?` <span style="font-size:9px;background:rgba(0,144,212,0.12);color:#0090d4;padding:1px 5px;border-radius:5px">Approved</span>`:''}${isTesting2?` <span style="font-size:9px;background:rgba(0,89,169,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Testing</span>`:''}${isBlocked2?` <span style="font-size:9px;background:rgba(232,57,74,0.12);color:#e8394a;padding:1px 5px;border-radius:5px">Blocked</span>`:''}${isOffFlow?` <span style="font-size:9px;background:rgba(128,128,128,0.15);color:var(--muted);padding:1px 5px;border-radius:5px">Off-Flow</span>`:''} <span style="font-size:10px;color:var(--muted);font-weight:400">(${cnt})</span></span>
       <span style="width:56px;text-align:center">${chk(isActive,   `toggleStatusActive(${i},this.checked)`)}</span>
       <span style="width:60px;text-align:center">${chk(isTerm,     `toggleStatusTerminal(${i},this.checked)`)}</span>
       <span style="width:80px;text-align:center">${chk(ignored,    `toggleStatusIgnore(${i},this.checked)`)}</span>
@@ -7476,6 +7480,7 @@ function renderStatusList(){
       <span style="width:62px;text-align:center">${radio(isApproved,`setApprovedStatus(${i})`,  'statusApproved')}</span>
       <span style="width:62px;text-align:center">${radio(isTesting2,`setTestingStatus(${i})`,   'statusTesting')}</span>
       <span style="width:60px;text-align:center"><input type="radio" name="statusBlocked" ${isBlocked2?'checked':''} onclick="setBlockedStatus(${i})" title="Optional Blocked status - click again to clear" style="accent-color:#e8394a;cursor:pointer;width:15px;height:15px"></span>
+      <span style="width:64px;text-align:center">${chk(isOffFlow, `toggleStatusOffFlow(${i},this.checked)`)}</span>
       <button class="btn-ic" onclick="startEditStatus(${i})" title="Rename"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
       ${deleteBtn}
     </div>`;
@@ -7947,6 +7952,14 @@ function toggleStatusTerminal(i, val){
   statusIsTerminal[statuses[i]] = val;
   saveConfig('statusIsTerminal', statusIsTerminal);
   render();
+}
+
+// Off-flow (many): a parking/flag status off the linear progression. Rank-exempt for
+// the Contributor status rule (they may enter it from anywhere and return from it).
+function toggleStatusOffFlow(i, val){
+  statusIsOffFlow[statuses[i]] = val;
+  saveConfig('statusIsOffFlow', statusIsOffFlow);
+  renderStatusList();
 }
 
 function setDefaultStatus(i){
@@ -8533,14 +8546,22 @@ function itemInContributorScope(p){
 function contributorCanEditField(p, field){
   return isContributor && itemInContributorScope(p) && CONTRIBUTOR_FIELDS.has(field);
 }
-// Status targets a Contributor may pick on item `p` (mirrors the server subset:
-// forward-only on the `statuses` order, never terminal / Released). Always includes
-// the current status so the dropdown can show it.
+// Status targets a Contributor may pick on item `p`. Mirrors the server subset exactly
+// (_enforce_contributor_status): never terminal / Released; off-flow statuses (e.g.
+// Blocked) are rank-exempt so a contributor may flag from anywhere and, when currently on
+// an off-flow status, return to any on-flow status; otherwise forward-only on the
+// `statuses` order. Always includes the current status so the dropdown can show it.
 function contributorStatusOptions(p){
   const cur = (p && p.status) || '';
   const curRank = statuses.indexOf(cur);
-  return (statuses || []).filter(s =>
-    s === cur || (!statusIsTerminal[s] && !statusIsReleased[s] && statuses.indexOf(s) >= curRank));
+  const curOff = !!statusIsOffFlow[cur];
+  return (statuses || []).filter(s => {
+    if(s === cur) return true;
+    if(statusIsTerminal[s] || statusIsReleased[s]) return false;
+    if(statusIsOffFlow[s]) return true;      // may flag: enter an off-flow status from anywhere
+    if(curOff) return true;                  // may return from a flag to any on-flow status
+    return statuses.indexOf(s) >= curRank;   // otherwise forward-only
+  });
 }
 
 // ── Multi-team sessions (Option A: client-side team switcher) ─────────────────
@@ -15984,6 +16005,7 @@ async function boot(){
     statusIsApproved      = data.statusIsApproved      || {};
     statusIsTesting       = data.statusIsTesting       || {};
     statusIsBlocked       = data.statusIsBlocked       || {};
+    statusIsOffFlow       = data.statusIsOffFlow       || {};
 
     // Seed capacity override cache from any overrides stored with /api/all boot
     // (full per-owner loading happens lazily when calendar is opened)
@@ -20770,7 +20792,13 @@ if ('serviceWorker' in navigator) {
       + 'style="position:absolute;top:6px;right:7px;background:none;border:none;padding:1px;color:var(--frz-text-muted);line-height:1;cursor:pointer;z-index:1">'
       + '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>'
       + '</button>';
-    return '<div class="frz-bcard" draggable="true" data-id="'+p.id+'" onclick="openProjectModal('+p.id+')">'
+    // Contributor drag gating (convenience only; server is the gate): out-of-scope cards
+    // are not draggable and carry an explanatory tooltip. Admin/editor unchanged.
+    var _contribCard = _val('isContributor', false);
+    var _canDrag = !_contribCard || _call('itemInContributorScope', p);
+    var _dragAttr = _canDrag ? 'draggable="true"' : 'draggable="false"';
+    var _dragTitle = _canDrag ? '' : ' title="Not assigned to you or your pod"';
+    return '<div class="frz-bcard" '+_dragAttr+_dragTitle+' data-id="'+p.id+'" onclick="openProjectModal('+p.id+')">'
       + openBtn
       + (p.itemKey?'<div class="frz-bcard-key" style="display:flex;align-items:center;gap:4px;padding-right:18px">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></div>':'')
       + '<div class="frz-bcard-name" style="padding-right:16px">'+esc(p.name||'')+' '+(_call('getItemActivityIndicator', p.id)||'')+'</div>'
@@ -20839,6 +20867,14 @@ if ('serviceWorker' in navigator) {
   function betaBoardDrop(id, newStatus){
     var ps=_val('projects',[])||[]; var p=ps.filter(function(x){return x.id===id;})[0];
     if(!p || !newStatus || p.status===newStatus) return;
+    // Contributor drop gating (server-enforced regardless): out-of-scope items and any
+    // status outside the contributor's allowed subset are refused here so an allowed drag
+    // cannot land on a rejected column and no 403 round-trip is needed.
+    if(_val('isContributor',false)){
+      if(!_call('itemInContributorScope', p)){ _call('showToast','You can only move items assigned to you or your pod.','error'); return; }
+      var _allowed=_call('contributorStatusOptions', p)||[];
+      if(_allowed.indexOf(newStatus)<0){ _call('showToast','You cannot move this item to '+newStatus+'.','error'); return; }
+    }
     if(isTermStatus(newStatus) && !_val('isAdmin',false)){ _call('showToast','Only admins can move items to a terminal status.','error'); return; }
     if(!_val('isAdmin',false) && _call('isLockedActive',p) && !_call('isActiveStatus',newStatus) && !isTermStatus(newStatus)){ _call('showToast','You cannot regress an active item - contact an admin.','error'); return; }
     // Moving into an active status: fill in what's needed instead of blocking.
