@@ -38,7 +38,10 @@ def test_sprint_requires_id_and_name(client, team, admin_headers):
                       headers=admin_headers).status_code == 422
 
 
-def test_sprints_editable_by_any_authed_user(client, team, editor_headers, viewer_headers):
+def test_sprints_read_open_mutation_admin_editor(client, team, editor_headers, viewer_headers):
+    # A0 hardening (4.60.0): READ open to any authed user; MUTATION admin/editor only.
     assert client.put("/api/sprints", json={"sprints": [_sprint()]},
                       headers=editor_headers).status_code == 200
     assert client.get("/api/sprints", headers=viewer_headers).status_code == 200
+    assert client.put("/api/sprints", json={"sprints": [_sprint()]},
+                      headers=viewer_headers).status_code == 403
