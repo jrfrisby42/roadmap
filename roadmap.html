@@ -1965,6 +1965,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
         <select id="newUserRole" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-family:'Lato',sans-serif;outline:none;color:var(--text)">
           <option value="viewer">Viewer</option>
+          <option value="contributor">Contributor</option>
           <option value="editor">Editor</option>
           <option value="admin">Admin</option>
         </select>
@@ -2148,7 +2149,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '4.60.0';
+const APP_VERSION = '5.0.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -7226,6 +7227,7 @@ function startEditUser(i){
   const roleSelect = canChangeRole
     ? `<select class="dev-edit-inp" id="uei_role_${i}" style="padding:5px 8px" onchange="toggleOwnerSelect(${i})">
          <option value="viewer" ${role==='viewer'?'selected':''}>Viewer</option>
+         <option value="contributor" ${role==='contributor'?'selected':''}>Contributor</option>
          <option value="editor" ${role==='editor'?'selected':''}>Editor</option>
          <option value="admin"  ${role==='admin' ?'selected':''}>Admin</option>
        </select>`
@@ -8492,8 +8494,12 @@ function wireStatusDropdown(){
 let isAdmin = false;
 let isViewer = false;
 let isEditor = false;
+let isContributor = false;   // Phase A: scoped "editor-lite" - edits only in-scope items (server-enforced)
 let currentUser = '';
-let currentRole = '';   // 'admin' | 'editor' | 'viewer'
+let currentRole = '';   // 'admin' | 'editor' | 'viewer' | 'contributor'
+// Fields a Contributor may edit on an in-scope item (mirrors server CONTRIBUTOR_EDITABLE_FIELDS).
+// These UI gates are convenience only - the server is the real authorization.
+const CONTRIBUTOR_FIELDS = new Set(['description', 'notes', 'resolution', 'status']);
 
 function getUsername(){
   if(currentUser) return currentUser;
@@ -8505,6 +8511,36 @@ function getCurrentOwnerFilter(){
   if(!isEditor) return null;
   const me = users.find(u => u.username === getUsername());
   return me?.ownerFilter || null;
+}
+
+// ── Contributor scope (Phase A) - the current user's own pod + in-scope test ──
+// The server is the real gate (see require_item_scope); these mirror it for UI
+// affordances only. In-scope = they are the item's assignee OR the item's owner
+// pod (dev) matches their ownerFilter.
+function myOwnerPod(){
+  const me = users.find(u => u.username === getUsername());
+  return (me && me.ownerFilter) || '';
+}
+function itemInContributorScope(p){
+  if(!p) return false;
+  if(p.assignee && p.assignee === getUsername()) return true;
+  const pod = myOwnerPod();
+  return !!pod && p.dev === pod;
+}
+// May the current user edit `field` on item `p`? Admin/editor: yes (existing
+// terminal/lock gates still apply at the call site). Contributor: only an in-scope
+// item and only an allowed field. Everyone else: no.
+function contributorCanEditField(p, field){
+  return isContributor && itemInContributorScope(p) && CONTRIBUTOR_FIELDS.has(field);
+}
+// Status targets a Contributor may pick on item `p` (mirrors the server subset:
+// forward-only on the `statuses` order, never terminal / Released). Always includes
+// the current status so the dropdown can show it.
+function contributorStatusOptions(p){
+  const cur = (p && p.status) || '';
+  const curRank = statuses.indexOf(cur);
+  return (statuses || []).filter(s =>
+    s === cur || (!statusIsTerminal[s] && !statusIsReleased[s] && statuses.indexOf(s) >= curRank));
 }
 
 // ── Multi-team sessions (Option A: client-side team switcher) ─────────────────
@@ -8594,6 +8630,7 @@ function setAdminMode(on, username = '', role = 'admin'){
   isAdmin  = on && role === 'admin';
   isEditor = on && role === 'editor';
   isViewer = on && role === 'viewer';
+  isContributor = on && role === 'contributor';
   currentRole = on ? role : '';
 
   if(on && username){
@@ -14136,7 +14173,10 @@ function ipField(label, value, opts={}){
 
 // ── Inline-editable Item Page fields (inline-edit overhaul, Stage 1) ──
 function ipEditField(field, label, displayHtml, kind, opts={}){
-  const editable = (opts.adminOnly ? isAdmin : (isAdmin||isEditor)) && !opts.readonly;   // IP1: adminOnly for Recurrence (matches the modal's gating)
+  let editable = (opts.adminOnly ? isAdmin : (isAdmin||isEditor)) && !opts.readonly;   // IP1: adminOnly for Recurrence (matches the modal's gating)
+  // Contributor: only the allowed fields (notes/resolution/status) on an in-scope item.
+  // Server-enforced; this just shows/hides the click-to-edit affordance.
+  if(!editable && !opts.readonly && isContributor && contributorCanEditField(projects.find(x=>x.id===_itemPageId), field)) editable = true;
   const val = (displayHtml===''||displayHtml==null) ? '<span style="color:var(--muted)">-</span>' : displayHtml;
   const lbl = `<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">${label}</div>`;
   const vs  = `font-size:13px;font-weight:${opts.bold?'700':'400'};color:var(--text)`;
@@ -14145,7 +14185,11 @@ function ipEditField(field, label, displayHtml, kind, opts={}){
 }
 function _ipFieldOptions(field){
   const o = (v,l)=>({value:v, label:l});
-  if(field==='status')   return statuses.map(s=>o(s,s));
+  if(field==='status'){
+    // Contributors see only the forward-only, non-terminal, non-Released subset (mirrors server).
+    if(isContributor) return contributorStatusOptions(projects.find(x=>x.id===_itemPageId)).map(s=>o(s,s));
+    return statuses.map(s=>o(s,s));
+  }
   if(field==='type')     return types.map(t=>o(t.name,t.name));
   if(field==='product')  return products.map(pr=>{ var n=(pr&&pr.name)||pr; return o(n,n); });   // changing Project re-keys the item server-side (prefix follows the product)
   if(field==='dev')      return [o('','- Unassigned -'), ...developers.map(d=>o(d,d))];
@@ -14571,7 +14615,11 @@ function renderItemPage(p){
   const PRIO_LABELS = {1:'Urgent',2:'High',3:'Medium',4:'Low'};
   const isLocked    = isLockedActive(p);
   const isTerm      = isTerminalStatus(p.status);
-  const canEdit     = (isAdmin||isEditor) && !isTerm;
+  // In-scope Contributors get the description / notes / resolution / status affordances
+  // (server-gated). No !isTerm guard for them: writing resolution on a completed item is
+  // valid, and the status subset separately forbids terminal/backward targets.
+  const inContribScope = isContributor && itemInContributorScope(p);
+  const canEdit     = ((isAdmin||isEditor) && !isTerm) || inContribScope;
   const timeRO      = !isAdmin;               // inline schedule/date edits are admin-only - editors change
                                               // schedule via the modal, which has the approval workflow
   const prRO        = !isAdmin || isLocked;   // + locked for everyone while active (server 422)
@@ -14887,8 +14935,11 @@ async function renderItemPageComments(itemId){
   const el = document.getElementById('ipCommentsList');
   const inputWrap = document.getElementById('ipCommentInput');
   if(!el) return;
-  // Hide comment input for viewers
-  if(inputWrap) inputWrap.style.display = isViewer ? 'none' : 'flex';
+  // Hide comment input for viewers, and for Contributors on an out-of-scope item
+  // (the server 403s an out-of-scope comment regardless - this is the affordance).
+  const _cp = projects.find(x=>x.id===itemId);
+  const canComment = !isViewer && !(isContributor && !itemInContributorScope(_cp));
+  if(inputWrap) inputWrap.style.display = canComment ? 'flex' : 'none';
   try {
     const data = await API.get('/api/comments/'+itemId);
     // /beta (Stage 4): threaded render - top-level newest-first, replies nested +
@@ -22401,7 +22452,9 @@ if ('serviceWorker' in navigator) {
         +'</div>';
       anchor.parentNode.insertBefore(card, anchor.nextSibling);
     }
-    var canEdit=(_val('isAdmin',false)||_val('isEditor',false));
+    // In-scope Contributors may add/remove attachments (server-gated by require_item_scope).
+    var _inContribScope = _val('isContributor',false) && _call('itemInContributorScope', p);
+    var canEdit=(_val('isAdmin',false)||_val('isEditor',false)) || _inContribScope;
     var up=card.querySelector('#frzAttUp'), drop=card.querySelector('#frzAttDrop'), input=card.querySelector('#frzAttInput');
     up.style.display = canEdit?'inline-flex':'none';
     drop.style.display = canEdit?'block':'none';

@@ -1267,7 +1267,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.60.0"
+APP_VERSION = "5.0.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2840,6 +2840,10 @@ def export_team(auth: dict = Depends(require_role("admin"))):
 
 @app.get("/api/all")
 def get_all(auth: dict = Depends(require_auth)):
+    # PHASE B BOUNDARY: reads are NOT scoped for Contributors in Phase A - a Contributor
+    # sees every item and edits only their in-scope slice (writes are gated in
+    # update_project / comments / attachments). Phase B will filter this payload (and
+    # /api/items) to the Contributor's scope before onboarding truly external users.
     team = auth["team"]
     init_team_db(team)
     _migrate_config_keys(team)  # backfill any new keys added since team was created
@@ -3142,6 +3146,62 @@ def _pod_for_user(c, username: str) -> str:
             return (u.get("ownerFilter") or "").strip()
     return ""
 
+# ── Contributor role authorization (Phase A) ──────────────────────────────────
+# A Contributor is Editor's ACTIONS restricted to the user's own items, enforced
+# server-side (the UI is not the gate). In-scope = they are the item's assignee OR
+# the item's owner pod (`dev`) matches their `ownerFilter`. On an in-scope item a
+# Contributor may edit only these fields (the IT fixed-schema fields join here later
+# without touching authz), and may only advance status forward on the configured
+# order (never terminal / Released). Admin/editor bypass every check below.
+CONTRIBUTOR_EDITABLE_FIELDS = {"description", "notes", "resolution", "status"}
+
+def _status_rank(status: str, all_statuses: list) -> int:
+    """Rank a status by its position in the team's ordered `statuses` config list -
+    the single server-side ranking source (also used by the Jira forward-only sync).
+    A status not in the list ranks last (999): unknown / off-list statuses can never
+    satisfy a forward-only `>=` against a real status. NOTE on off-flow statuses:
+    'Inactive' (the non-terminal parking lot) IS a real, selectable status and so
+    carries its natural list-index rank like any other - it is not special-cased and
+    is never given the 999 sentinel; 999 is reserved for statuses absent from the
+    list. The Contributor status check additionally rejects any target not in the
+    list, so a Contributor can never move an item to an off-list status."""
+    try:
+        return all_statuses.index(status)
+    except ValueError:
+        return 999
+
+def _contributor_in_scope(c, auth: dict, item: dict) -> bool:
+    """True if `item` is in a Contributor's write scope: they are the assignee, or the
+    item's owner pod (`dev`) equals their `ownerFilter`. Consulted only for the
+    contributor role."""
+    username = (auth.get("username") or "").strip()
+    if username and item.get("assignee") == username:
+        return True
+    pod = _pod_for_user(c, username)
+    return bool(pod) and item.get("dev") == pod
+
+def require_item_scope(c, auth: dict, item: dict):
+    """Enforce Contributor per-item write scope. Admin/editor bypass. Raises 403 when a
+    Contributor targets an out-of-scope item. This guards MUTATIONS only - reads are
+    unscoped in Phase A (see the /api/all Phase B note)."""
+    if auth.get("role") != "contributor":
+        return
+    if not _contributor_in_scope(c, auth, item):
+        raise HTTPException(403, "Contributors can only modify items assigned to them or in their pod")
+
+def _enforce_contributor_status(current: str, target: str, all_statuses: list,
+                                terminal_map: dict, released_map: dict):
+    """Contributor status subset: forward-only on the configured order, never terminal
+    or Released, never an off-list status. Raises 403 on violation."""
+    if target not in all_statuses:
+        raise HTTPException(403, f"Contributors cannot set status to {target!r}")
+    if terminal_map.get(target):
+        raise HTTPException(403, "Contributors cannot move an item to a terminal status")
+    if released_map.get(target):
+        raise HTTPException(403, "Contributors cannot move an item to the Released status")
+    if _status_rank(target, all_statuses) < _status_rank(current, all_statuses):
+        raise HTTPException(403, "Contributors can only move an item's status forward")
+
 def _bucket_item_owner(c, item: dict, old: dict = None, client_owner_explicit: bool = False) -> bool:
     """Bucket an item (field 'dev' = owner pool) under its assignee's owner pod.
       - Fill a blank owner from the assignee's pod (create + update).
@@ -3235,7 +3295,7 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     return body
 
 @app.put("/api/projects/{pid}")
-def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admin", "editor"))):
+def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admin", "editor", "contributor"))):
     team = auth["team"]
     username = _audit_actor(body.pop("_username", None), auth)
     body.pop("id", None)
@@ -3270,12 +3330,32 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
             })
 
         cfg = {r["key"]: json.loads(r["value"]) for r in c.execute(
-            "SELECT key, value FROM config WHERE key IN ('statusIsActive','statusIsReleased','statusIsBlocked')"
+            "SELECT key, value FROM config WHERE key IN "
+            "('statusIsActive','statusIsReleased','statusIsBlocked','statusIsTerminal','statuses')"
         ).fetchall()}
         active_map   = cfg.get("statusIsActive", {})
         released_map = cfg.get("statusIsReleased", {})
         blocked_map  = cfg.get("statusIsBlocked", {})
+        terminal_map = cfg.get("statusIsTerminal", {})
+        statuses_cfg = cfg.get("statuses", []) or []
         blocked_status = next((k for k, v in (blocked_map or {}).items() if v), "")
+
+        # ── Contributor authorization (Phase A): scope + field subset + status subset.
+        # Admin/editor skip this entirely. The client mirrors these limits as edit
+        # affordances, but THIS is the enforcement - it holds even if the UI is bypassed.
+        if auth.get("role") == "contributor":
+            require_item_scope(c, auth, old)   # 403 if the stored item is out of scope
+            # Field subset: reject any content key the Contributor actually changed that
+            # is not allowed. Compare by value against the stored blob (the client may
+            # resend the whole item); ignore the updated_ts echo and transport keys.
+            changed = {k for k, v in body.items()
+                       if old.get(k) != v and k != "updated_ts" and not k.startswith("_")}
+            illegal = changed - CONTRIBUTOR_EDITABLE_FIELDS
+            if illegal:
+                raise HTTPException(403, f"Contributors may not edit these fields: {', '.join(sorted(illegal))}")
+            if "status" in changed:
+                _enforce_contributor_status(old.get("status", ""), body.get("status", ""),
+                                            statuses_cfg, terminal_map, released_map)
 
         # Validate: parallelResources cannot be changed while item is in an active status
         current_status = old.get("status", "")
@@ -3463,7 +3543,8 @@ def list_items(
     """Server-side query/search/paginate over the indexed item columns
     (JIRA-REPLACEMENT.md §3.2). Returns a page of full item blobs + total count.
     With counts=1, each item gets a `_childCount` (non-archived children) so the
-    tree view knows which rows are expandable. Read-only; any role may call it."""
+    tree view knows which rows are expandable. Read-only; any role may call it.
+    PHASE B BOUNDARY: not scoped for Contributors in Phase A (see /api/all)."""
     team = auth["team"]
     init_team_db(team)
 
@@ -4169,7 +4250,7 @@ def _get_item_blob(c, pid: int) -> dict:
 
 @app.post("/api/items/{pid}/attachments/presign")
 def presign_attachment(pid: int, body: dict = Body(...),
-                       auth: dict = Depends(require_role("admin", "editor"))):
+                       auth: dict = Depends(require_role("admin", "editor", "contributor"))):
     """Validate + return a short-lived presigned PUT URL. Records nothing yet."""
     team = auth["team"]
     filename = body.get("filename") or "file"
@@ -4182,7 +4263,9 @@ def presign_attachment(pid: int, body: dict = Body(...),
     if size > MAX_ATTACH_BYTES:
         raise HTTPException(413, f"File exceeds the 50 MB limit ({size} bytes).")
     with db(team) as c:
-        _get_item_blob(c, pid)  # 404 if the item doesn't exist
+        # Contributor scope MUST be enforced here: a presigned PUT is a live write
+        # capability for the object, so an out-of-scope item id can never be signed.
+        require_item_scope(c, auth, _get_item_blob(c, pid))  # 404 if the item doesn't exist
     att_id = _uuid.uuid4().hex
     key = _attachment_key(pid, att_id, filename)
     params = {"Bucket": ATTACH_BUCKET, "Key": key, "ContentType": content_type}
@@ -4206,7 +4289,7 @@ def presign_attachment(pid: int, body: dict = Body(...),
 
 @app.post("/api/items/{pid}/attachments")
 def add_attachment(pid: int, body: dict = Body(...),
-                   auth: dict = Depends(require_role("admin", "editor"))):
+                   auth: dict = Depends(require_role("admin", "editor", "contributor"))):
     """Record an attachment on the item blob after the browser's direct S3 PUT."""
     team = auth["team"]
     username = _audit_actor(body.get("_username"), auth)
@@ -4229,6 +4312,7 @@ def add_attachment(pid: int, body: dict = Body(...),
     }
     with db(team) as c:
         p = _get_item_blob(c, pid)
+        require_item_scope(c, auth, p)   # Contributor scope (admin/editor bypass)
         atts = p.get("attachments") or []
         atts.append(rec)
         p["attachments"] = atts
@@ -4266,11 +4350,12 @@ def list_attachments(pid: int, auth: dict = Depends(require_auth)):
 
 @app.delete("/api/items/{pid}/attachments/{att_id}")
 def delete_attachment(pid: int, att_id: str,
-                      auth: dict = Depends(require_role("admin", "editor"))):
+                      auth: dict = Depends(require_role("admin", "editor", "contributor"))):
     """Remove the object from S3 (server-side) and the metadata from the blob."""
     team = auth["team"]; username = auth["username"]
     with db(team) as c:
         p = _get_item_blob(c, pid)
+        require_item_scope(c, auth, p)   # Contributor scope (admin/editor bypass)
         atts = p.get("attachments") or []
         target = next((a for a in atts if a.get("id") == att_id), None)
         if not target:
@@ -5349,8 +5434,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
     all_statuses = cfg("statuses") or []
 
     def status_rank(s):
-        try: return all_statuses.index(s)
-        except ValueError: return 999
+        return _status_rank(s, all_statuses)   # extracted to a shared module helper (identical behavior)
 
     now_ts       = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     current_rank = status_rank(p.get("status", ""))
@@ -5723,7 +5807,7 @@ def get_comments(item_id: int, auth: dict = Depends(require_auth)):
     return [dict(r) for r in rows]
 
 @app.post("/api/comments")
-def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin", "editor"))):
+def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin", "editor", "contributor"))):
     team = auth["team"]
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     item_id = body.get("item_id")
@@ -5733,6 +5817,9 @@ def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin
     # a missing one (→ top-level). Guarantees at most one level regardless of client.
     parent_id = body.get("parent_id")
     with db(team) as c:
+        # Contributor scope: may only comment on an in-scope item (admin/editor bypass).
+        if auth.get("role") == "contributor":
+            require_item_scope(c, auth, _get_item_blob(c, item_id))
         if parent_id is not None:
             prow = c.execute("SELECT id,item_id,parent_id FROM comments WHERE id=?", (parent_id,)).fetchone()
             if not prow or prow["item_id"] != item_id:
@@ -5752,15 +5839,18 @@ def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin
     return dict(row)
 
 @app.delete("/api/comments/{cid}")
-def delete_comment(cid: int, auth: dict = Depends(require_role("admin", "editor"))):
+def delete_comment(cid: int, auth: dict = Depends(require_role("admin", "editor", "contributor"))):
     team = auth["team"]
     with db(team) as c:
         row = c.execute("SELECT id, item_id, author FROM comments WHERE id=?", (cid,)).fetchone()
         if not row:
             raise HTTPException(404, "Comment not found")
-        # Ownership: an editor may delete only their OWN comment; admins may delete any.
-        # (Deleting a top-level comment cascades to its replies - an admin-only power in
-        #  practice, but an editor deleting their own top-level comment still cascades.)
+        # Contributor scope: may only act on an in-scope item (admin/editor bypass).
+        if auth.get("role") == "contributor":
+            require_item_scope(c, auth, _get_item_blob(c, row["item_id"]))
+        # Ownership: a non-admin (editor OR contributor) may delete only their OWN comment;
+        # admins may delete any. (Deleting a top-level comment cascades to its replies - an
+        # admin-only power in practice, but a non-admin deleting their own still cascades.)
         if auth["role"] != "admin" and row["author"] != auth["username"]:
             raise HTTPException(403, "You can only delete your own comments")
         # Stage 4: cascade - deleting a top-level comment removes its replies too (no orphans).

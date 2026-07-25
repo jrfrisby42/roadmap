@@ -80,3 +80,10 @@ def editor_headers(team):
 @pytest.fixture
 def viewer_headers(team):
     return _headers(team, "viewer1", "viewer")
+
+
+@pytest.fixture
+def contributor_headers(team):
+    # Contributor "contrib1"; scope is assignee==contrib1 OR item.dev==their ownerFilter.
+    # Tests that need pod scope seed the users config with contrib1's ownerFilter.
+    return _headers(team, "contrib1", "contributor")
