@@ -1267,7 +1267,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "4.59.3"
+APP_VERSION = "4.60.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3729,7 +3729,7 @@ def get_boards(auth: dict = Depends(require_auth)):
     return {"boards": _read_boards(auth["team"])}
 
 @app.put("/api/boards")
-def put_boards(body = Body(...), auth: dict = Depends(require_auth)):
+def put_boards(body = Body(...), auth: dict = Depends(require_role("admin", "editor"))):
     team = auth["team"]
     boards = body.get("boards") if isinstance(body, dict) else body
     if not isinstance(boards, list):
@@ -3761,8 +3761,10 @@ def put_boards(body = Body(...), auth: dict = Depends(require_auth)):
 
 # ── Beta: Sprints (shared, global per team; single Active) ────────────────────
 # Additive, /beta-only. Sprints are stored in the config table under key 'sprints'.
-# Items reference a sprint via their existing sprintId field. Any logged-in user
-# may manage sprints for now (require_auth). Production is untouched.
+# Items reference a sprint via their existing sprintId field. READ is open to any
+# authed user (needed to render); MUTATION is admin/editor (A0 hardening 4.60.0 -
+# was require_auth, a hole that let viewers/contributors rewrite the shared list).
+# Production is untouched.
 _SPRINT_STATES = {"Planned", "Active", "Completed", "Discarded"}
 
 def _read_sprints(team: str):
@@ -3778,7 +3780,7 @@ def get_sprints(auth: dict = Depends(require_auth)):
     return {"sprints": _read_sprints(auth["team"])}
 
 @app.put("/api/sprints")
-def put_sprints(body = Body(...), auth: dict = Depends(require_auth)):
+def put_sprints(body = Body(...), auth: dict = Depends(require_role("admin", "editor"))):
     team = auth["team"]
     sprints = body.get("sprints") if isinstance(body, dict) else body
     if not isinstance(sprints, list):
@@ -3811,8 +3813,9 @@ def put_sprints(body = Body(...), auth: dict = Depends(require_auth)):
 
 # ── Beta: Releases (shared, global per team) ──────────────────────────────────
 # Additive, /beta-only. Releases are stored in the config table under key
-# 'releases'. Items reference a release via an optional `release` field. Any
-# logged-in user may manage releases for now (require_auth). Production untouched.
+# 'releases'. Items reference a release via an optional `release` field. READ is
+# open to any authed user (needed to render); MUTATION is admin/editor (A0
+# hardening 4.60.0 - was require_auth). Production untouched.
 _RELEASE_STATES = {"Unreleased", "Released"}
 
 def _read_releases(team: str):
@@ -3828,7 +3831,7 @@ def get_releases(auth: dict = Depends(require_auth)):
     return {"releases": _read_releases(auth["team"])}
 
 @app.put("/api/releases")
-def put_releases(body = Body(...), auth: dict = Depends(require_auth)):
+def put_releases(body = Body(...), auth: dict = Depends(require_role("admin", "editor"))):
     team = auth["team"]
     releases = body.get("releases") if isinstance(body, dict) else body
     if not isinstance(releases, list):

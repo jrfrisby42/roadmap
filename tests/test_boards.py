@@ -24,10 +24,12 @@ def test_boards_round_trip(client, team, admin_headers):
     assert got[0]["columns"][0]["statuses"] == ["Released", "TBD"]
 
 
-def test_boards_editable_by_any_authed_user(client, team, editor_headers, viewer_headers):
-    # spec: create/edit available to all users for now
+def test_boards_read_open_mutation_admin_editor(client, team, editor_headers, viewer_headers):
+    # A0 hardening (4.60.0): READ stays open to any authed user (needed to render);
+    # MUTATION (PUT) is admin/editor only. A viewer PUT is now 403.
     assert client.put("/api/boards", json={"boards": [_board()]}, headers=editor_headers).status_code == 200
     assert client.get("/api/boards", headers=viewer_headers).status_code == 200
+    assert client.put("/api/boards", json={"boards": [_board()]}, headers=viewer_headers).status_code == 403
 
 
 def test_board_status_in_two_columns_rejected(client, team, admin_headers):

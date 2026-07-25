@@ -31,7 +31,10 @@ def test_release_requires_id_and_name(client, team, admin_headers):
                       headers=admin_headers).status_code == 422
 
 
-def test_releases_editable_by_any_authed_user(client, team, editor_headers, viewer_headers):
+def test_releases_read_open_mutation_admin_editor(client, team, editor_headers, viewer_headers):
+    # A0 hardening (4.60.0): READ open to any authed user; MUTATION admin/editor only.
     assert client.put("/api/releases", json={"releases": [_rel()]},
                       headers=editor_headers).status_code == 200
     assert client.get("/api/releases", headers=viewer_headers).status_code == 200
+    assert client.put("/api/releases", json={"releases": [_rel()]},
+                      headers=viewer_headers).status_code == 403
