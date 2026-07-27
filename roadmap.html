@@ -2154,7 +2154,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.4.1';
+const APP_VERSION = '5.4.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -17749,7 +17749,7 @@ if ('serviceWorker' in navigator) {
     caret:'<svg class="frz-chip-caret" viewBox="0 0 12 12"><path d="M3 4.5l3 3 3-3"/></svg>'
   };
   var VIEW_KEYS = ['gantt','kanban','list','planning','dashboard'];
-  var VIEW_LABEL = { gantt:'Gantt', kanban:'Kanban', list:'List', planning:'Planning', dashboard:'Dashboard', 'my-home':'My Home', 'team-calendar':'Calendar', admin:'Admin' };
+  var VIEW_LABEL = { gantt:'Gantt', kanban:'Kanban', list:'List', planning:'Planning', dashboard:'Dashboard', reports:'Reports', 'my-home':'My Home', 'team-calendar':'Calendar', admin:'Admin' };
   // chip key -> production panel + selection getter + URL param
   var CHIPS = {
     owner:   { label:'Owner',    panel:'devDropPanel',      get:function(){ return _g('getSelectedDevs'); },      param:'owner' },
@@ -18213,11 +18213,13 @@ if ('serviceWorker' in navigator) {
     var sw = document.getElementById('searchWrap');
     if (sw) sw.style.display='none';
 
-    // Re-parent the five view containers + item overlay into the content host
+    // Re-parent the view containers + item overlay into the content host. reportsView is a
+    // static <body> child like the others (Ship C) and MUST be re-parented here too - without
+    // it the Reports page paints as a body-level sibling behind the shell content (5.4.1 bug).
     var content = document.getElementById('frzContent');
     var gantt = document.querySelector('.gantt-outer');
     if (gantt) content.appendChild(gantt);
-    ['kanbanBoard','listView','dashboardView','planningView','itemPageOverlay'].forEach(function(id){
+    ['kanbanBoard','listView','dashboardView','planningView','reportsView','itemPageOverlay'].forEach(function(id){
       var el = document.getElementById(id); if (el) content.appendChild(el);
     });
     // Stage 5: My Home - a beta-owned personal landing (absorbs the old My Work).
