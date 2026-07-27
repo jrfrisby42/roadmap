@@ -1155,6 +1155,11 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   <div id="dashboardBody"></div>
 </div>
 
+<!-- REPORTS VIEW (Flow shell, admin/editor) - Ship C section-structured reports page -->
+<div id="reportsView" style="display:none;padding:20px 24px;max-width:1500px;margin:0 auto">
+  <div id="reportsBody"></div>
+</div>
+
 <!-- PLANNING VIEW (admin only) -->
 <div id="planningView" style="display:none;height:calc(100vh - 100px);display:none;flex-direction:column">
   <!-- Session bar -->
@@ -2149,7 +2154,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.3.0';
+const APP_VERSION = '5.4.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16913,6 +16918,30 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-bchip-wk { background:var(--frz-accent-soft); color:var(--frz-accent); }
 
   /* ── Beta Planning (Feature B) ── */
+  /* Reports view (Ship C) */
+  .frz-beta #reportsView { color:var(--frz-text); }
+  .frz-beta .frz-rpt-head { margin-bottom:14px; }
+  .frz-beta .frz-rpt-title { font-size:20px; font-weight:900; margin:0; color:var(--frz-text); }
+  .frz-beta .frz-rpt-sub { font-size:12px; color:var(--frz-text-muted); margin-top:2px; }
+  .frz-beta .frz-rpt-sec { border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); overflow:hidden; margin-bottom:18px; }
+  .frz-beta .frz-rpt-sec-h { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-sunken); font-size:13px; font-weight:900; text-transform:uppercase; letter-spacing:.5px; }
+  .frz-beta .frz-rpt-filters { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; padding:12px 16px; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-rpt-filters label { display:flex; flex-direction:column; gap:3px; font-size:10px; font-weight:700; color:var(--frz-text-muted); text-transform:uppercase; letter-spacing:.4px; }
+  .frz-beta .frz-rpt-filters input, .frz-beta .frz-rpt-filters select { font:inherit; font-size:12.5px; padding:4px 7px; border:1px solid var(--frz-border); border-radius:6px; background:var(--frz-bg-app); color:var(--frz-text); }
+  .frz-beta .frz-rpt-total { margin-left:auto; font-size:12px; font-weight:700; color:var(--frz-text-muted); align-self:center; }
+  .frz-beta .frz-rpt-aggs { display:flex; flex-wrap:wrap; gap:12px; padding:14px 16px; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-rpt-agg { flex:1; min-width:170px; border:1px solid var(--frz-border); border-radius:8px; overflow:hidden; }
+  .frz-beta .frz-rpt-agg-h { padding:6px 10px; background:var(--frz-bg-sunken); font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); }
+  .frz-beta .frz-rpt-aggrow { display:flex; justify-content:space-between; gap:8px; padding:4px 10px; font-size:12px; border-top:1px solid var(--frz-border); }
+  .frz-beta .frz-rpt-aggn { font-weight:800; color:var(--frz-accent); }
+  .frz-beta .frz-rpt-tablewrap { overflow-x:auto; }
+  .frz-beta .frz-rpt-table { border-collapse:collapse; width:100%; font-size:12px; }
+  .frz-beta .frz-rpt-table th { text-align:left; padding:8px 10px; background:var(--frz-bg-sunken); border-bottom:2px solid var(--frz-border); font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); white-space:nowrap; position:sticky; top:0; }
+  .frz-beta .frz-rpt-table td { padding:7px 10px; border-bottom:1px solid var(--frz-border); vertical-align:top; }
+  .frz-beta .frz-rpt-key { font-family:monospace; font-weight:700; white-space:nowrap; }
+  .frz-beta .frz-rpt-num { text-align:right; white-space:nowrap; }
+  .frz-beta .frz-rpt-desc { max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .frz-beta .frz-rpt-na { color:var(--frz-text-muted); font-style:italic; }
   .frz-beta .frz-plan-tabs { display:flex; gap:4px; padding:10px 14px 0; flex-shrink:0; }
   .frz-beta .frz-plan-tab { border:0; background:none; cursor:pointer; font:inherit; font-size:13px; font-weight:600; color:var(--frz-text-secondary); padding:7px 14px; border-radius:8px 8px 0 0; border-bottom:2px solid transparent; }
   .frz-beta .frz-plan-tab:hover { color:var(--frz-text); }
@@ -17705,6 +17734,7 @@ if ('serviceWorker' in navigator) {
     list:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M5.5 3.5h9M5.5 8h9M5.5 12.5h9"/><circle cx="2.5" cy="3.5" r="1"/><circle cx="2.5" cy="8" r="1"/><circle cx="2.5" cy="12.5" r="1"/></svg>',
     planning:'<svg class="frz-ic" viewBox="0 0 16 16"><circle cx="8" cy="9" r="5"/><path d="M8 6.5V9l1.8 1.3"/><path d="M6.5 1.5h3"/></svg>',
     dashboard:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2" y="2" width="5.2" height="5.2" rx="1.2"/><rect x="8.8" y="2" width="5.2" height="5.2" rx="1.2"/><rect x="2" y="8.8" width="5.2" height="5.2" rx="1.2"/><rect x="8.8" y="8.8" width="5.2" height="5.2" rx="1.2"/></svg>',
+    reports:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M2 14h12"/><rect x="3" y="8" width="2.4" height="4" rx="0.4"/><rect x="6.8" y="4.5" width="2.4" height="7.5" rx="0.4"/><rect x="10.6" y="9.5" width="2.4" height="2.5" rx="0.4"/></svg>',
     mywork:'<svg class="frz-ic" viewBox="0 0 16 16"><circle cx="8" cy="5" r="2.6"/><path d="M3 13.2c0-2.4 2.2-3.8 5-3.8s5 1.4 5 3.8"/></svg>',
     home:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M2.5 7.5L8 2.5l5.5 5"/><path d="M3.8 7v6.2h8.4V7"/></svg>',
     bell:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M8 2a3.2 3.2 0 0 0-3.2 3.2c0 3-1.3 4-1.3 4h9s-1.3-1-1.3-4A3.2 3.2 0 0 0 8 2z"/><path d="M6.6 13a1.5 1.5 0 0 0 2.8 0"/></svg>',
@@ -17735,7 +17765,8 @@ if ('serviceWorker' in navigator) {
     dashboard:{ chips:['owner','range'],                    extra:[], opts:[] },
     'my-home':{ chips:[],                                   extra:[], opts:[] },  // Stage 5: personal landing, no chips
     'admin':  { chips:[],                                   extra:[], opts:[] },  // Phase 0: Admin full page, no chips
-    'team-calendar':{ chips:[],                             extra:[], opts:[] }   // Phase 2: Team Calendar (custom filters in 2c)
+    'team-calendar':{ chips:[],                             extra:[], opts:[] },  // Phase 2: Team Calendar (custom filters in 2c)
+    'reports':{ chips:[],                                   extra:[], opts:[] }   // Ship C: Reports full page, owns its own in-page filters
   };
   var PROJ_COLORS = ['#0059A9','#65B1E3','#2E8B6F','#C0700B','#8E4FB0','#C0392B','#0E7C86'];
   // Feature B: items eligible for sprint planning (single editable list).
@@ -18424,6 +18455,7 @@ if ('serviceWorker' in navigator) {
     nav.querySelectorAll('.frz-item').forEach(function(b){ b.remove(); });
     var admin = _val('isAdmin', false);
     var viewer = _val('isViewer', false);
+    var editor = _val('isEditor', false);   // Reports (Ship C) is admin/editor-only
     // Stage 5: My Home pinned at the top of the views section - a permanent
     // personal landing (always present, unlike the old My Work which hid when
     // empty). The count is the assigned-to-me open count (same single-source
@@ -18441,6 +18473,17 @@ if ('serviceWorker' in navigator) {
     cb.setAttribute('aria-current', String(state.view==='team-calendar' && !state.onItem));
     cb.title='Calendar';
     cb.innerHTML = IC.teamCalendar + '<span>Calendar</span>';
+    // Reports - Flow-owned view (Ship C). Sits directly BELOW Planning and ABOVE Dashboard
+    // (appended after 'planning' in the loop). Admin/editor only - hidden from viewers and
+    // contributors (so a contributor has no Reports/export path at all).
+    var rb = null;
+    if(admin || editor){
+      rb = document.createElement('button');
+      rb.className='frz-item'; rb.setAttribute('data-nav','view:reports');
+      rb.setAttribute('aria-current', String(state.view==='reports' && !state.onItem));
+      rb.title='Reports';
+      rb.innerHTML = IC.reports + '<span>Reports</span>';
+    }
     // Viewers can't see Kanban (CLAUDE.md role rule); Planning is admin-only.
     VIEW_KEYS.filter(function(v){ return (v!=='planning' || admin) && (v!=='kanban' || !viewer); }).forEach(function(v){
       var b = document.createElement('button');
@@ -18451,6 +18494,7 @@ if ('serviceWorker' in navigator) {
       b.innerHTML = IC[v] + '<span>'+VIEW_LABEL[v]+'</span>' + (c!=null ? '<span class="frz-count">'+c+'</span>' : '');
       nav.appendChild(b);
       if(v==='list') nav.appendChild(cb);   // Calendar directly after List (above Planning)
+      if(v==='planning' && rb) nav.appendChild(rb);   // Reports directly after Planning (above Dashboard)
     });
     // projects
     var pn = document.getElementById('frzProjNav');
@@ -18913,7 +18957,7 @@ if ('serviceWorker' in navigator) {
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     // hide every production view container (initViewSelect won't run for my-home)
     var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
-    ['kanbanBoard','listView','dashboardView','planningView','frzAdminPage','frzCalendar'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    ['kanbanBoard','listView','dashboardView','planningView','frzAdminPage','frzCalendar','reportsView'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
     var home=document.getElementById('frzHome'); if(home) home.style.display='';
     setProjectPanel();
     applyChromeHiding();
@@ -18931,7 +18975,7 @@ if ('serviceWorker' in navigator) {
     root.classList.remove('on-item'); root.classList.remove('frz-cal-active');
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
-    ['kanbanBoard','listView','dashboardView','planningView','frzCalendar'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    ['kanbanBoard','listView','dashboardView','planningView','frzCalendar','reportsView'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
     var home=document.getElementById('frzHome'); if(home) home.style.display='none';
     var ap=document.getElementById('frzAdminPage'); if(ap) ap.style.display='';
     setProjectPanel();
@@ -18949,7 +18993,7 @@ if ('serviceWorker' in navigator) {
     root.classList.remove('on-item');
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
-    ['kanbanBoard','listView','dashboardView','planningView','frzHome','frzAdminPage'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    ['kanbanBoard','listView','dashboardView','planningView','frzHome','frzAdminPage','reportsView'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
     var c=document.getElementById('frzCalendar'); if(c) c.style.display='flex';   // Stage 3.5: flex column for the fill-height month grid
     root.classList.add('frz-cal-active');   // Stage 3.5: scopes the filter-row padding trim to the calendar view only
     setProjectPanel();
@@ -18960,6 +19004,177 @@ if ('serviceWorker' in navigator) {
     renderRail();
     _frzSyncSearchMode();
     renderCalendar();
+  }
+  // ── Reports view (Ship C) - Flow-owned full page, admin/editor only ───────────
+  // Runs entirely over the in-memory `projects` array, which is already the CURRENT TEAM's
+  // set AND already contributor-read-scoped by Phase B - so team scope (C2.8) and export
+  // scope (C2.10) are inherited, no server endpoint needed. Section-structured so more
+  // report sections can be added later; section one is the service-desk ticket report.
+  function setReports(){
+    if(!(_val('isAdmin',false)||_val('isEditor',false))){ navigate('/gantt', true); return; }   // admin/editor only
+    state.onItem=false; state.itemId=null; state.view='reports';
+    root.classList.remove('on-item'); root.classList.remove('frz-cal-active');
+    var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
+    var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
+    ['kanbanBoard','listView','dashboardView','planningView','frzHome','frzAdminPage','frzCalendar'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    var rv=document.getElementById('reportsView'); if(rv) rv.style.display='';
+    setProjectPanel();
+    applyChromeHiding();
+    document.getElementById('frzLeft').innerHTML=_titleHtml('reports','Reports');
+    document.getElementById('frzBadges').innerHTML='';
+    document.getElementById('frzFilterBar').innerHTML='';   // Reports owns its own filter row inside the page
+    renderRail();
+    _frzSyncSearchMode();
+    renderReports();
+  }
+  var _rptFilters = { from:'', to:'', status:'', type:'', priority:'', dept:'', assignee:'' };
+  var _PRPL = {1:'Urgent',2:'High',3:'Medium',4:'Low'};
+  function _rptDays(aIso, bIso){   // whole days between two timestamps; null if either missing/invalid
+    if(!aIso || !bIso) return null;
+    var a=new Date(aIso), b=new Date(bIso);
+    if(isNaN(a.getTime())||isNaN(b.getTime())) return null;
+    return Math.max(0, Math.round((b.getTime()-a.getTime())/86400000));
+  }
+  function _rptComputed(){
+    // Returns {rows, all} where rows is the filtered+computed set and all is the unfiltered
+    // team set (for building filter option lists). Calculated metrics are null when their
+    // source timestamp is missing - NEVER 0 (rendered as "n/a", exported blank).
+    var all=(_val('projects',[])||[]).filter(function(p){ return !p.archived; });
+    var f=_rptFilters, nowIso=new Date().toISOString();
+    var rows=all.filter(function(p){
+      if(f.status && (p.status||'')!==f.status) return false;
+      if(f.type && (p.type||'')!==f.type) return false;
+      if(f.priority && String(p.priority||'')!==f.priority) return false;
+      if(f.dept && (p.departments||[]).indexOf(f.dept)<0) return false;
+      if(f.assignee && (p.assignee||'')!==f.assignee) return false;
+      if(f.from || f.to){                       // date-range over the Requested date (createdAt)
+        var d=(p.createdAt||'').slice(0,10);
+        if(!d) return false;                     // no createdAt = excluded when a range is set
+        if(f.from && d<f.from) return false;
+        if(f.to && d>f.to) return false;
+      }
+      return true;
+    }).map(function(p){
+      var closed=!!p.completedAt;
+      return {
+        _id:p.id,
+        key:p.itemKey||('#'+p.id),
+        status:p.status||'',
+        requested:(p.createdAt||'').slice(0,10),
+        requestedBy:p.reporter||p.reporterEmail||'',
+        start:(p.start||'').slice(0,10),
+        completion:(p.completedAt||'').slice(0,10),
+        type:p.type||'',
+        priorityNum:(p.priority||''),
+        priority:(p.priority && _PRPL[p.priority]) ? _PRPL[p.priority] : '',
+        dept:(p.departments||[]).join('; '),
+        assignee:p.assignee||'',
+        assigneeName:p.assignee ? (_call('displayName',p.assignee)||p.assignee) : '',
+        description:_call('stripHtml', p.description||'')||'',
+        notes:p.notes||'',
+        resolution:p.resolution||'',
+        jira:(p.jiraTickets||[]).join('; '),
+        attachCount:(p.attachments||[]).length,
+        // Calculated (null = not available):
+        age: closed ? _rptDays(p.createdAt, p.completedAt) : _rptDays(p.createdAt, nowIso),
+        resolutionTime: _rptDays(p.createdAt, p.completedAt),
+        responseTime: _rptDays(p.createdAt, p.firstResponseAt)
+      };
+    });
+    return { rows:rows, all:all };
+  }
+  function _rptCsvCell(v){ v=(v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+  function _rptExportCsv(){
+    var rows=_rptComputed().rows;
+    var cols=[
+      {h:'Ticket',k:'key'},{h:'Status',k:'status'},{h:'Requested',k:'requested'},
+      {h:'Requested By',k:'requestedBy'},{h:'Start',k:'start'},{h:'Completion',k:'completion'},
+      {h:'Type',k:'type'},{h:'Priority',k:'priority'},{h:'Department',k:'dept'},
+      {h:'Assignee',k:'assignee'},{h:'Assignee Name',k:'assigneeName'},{h:'Description',k:'description'},
+      {h:'Notes',k:'notes'},{h:'Resolution',k:'resolution'},{h:'Jira',k:'jira'},{h:'Attachments',k:'attachCount'},
+      {h:'Ticket Age (days)',k:'age'},{h:'Resolution Time (days)',k:'resolutionTime'},{h:'Response Time (days)',k:'responseTime'}
+    ];
+    var lines=[cols.map(function(c){ return c.h; }).join(',')];
+    rows.forEach(function(r){ lines.push(cols.map(function(c){ var v=r[c.k]; return _rptCsvCell(v==null?'':v); }).join(',')); });
+    var blob=new Blob(['﻿'+lines.join('\r\n')], {type:'text/csv;charset=utf-8'});
+    var a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download='tickets-'+new Date().toISOString().slice(0,10)+'.csv';
+    document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 0);
+  }
+  function _rptOpt(sel, val, label){ return '<option value="'+escA(val)+'"'+(sel===val?' selected':'')+'>'+esc(label)+'</option>'; }
+  function _rptCount(rows, keyFn){
+    var m={}; rows.forEach(function(r){ var k=keyFn(r)||'(none)'; m[k]=(m[k]||0)+1; });
+    return Object.keys(m).sort(function(a,b){ return m[b]-m[a]; }).map(function(k){ return {k:k,n:m[k]}; });
+  }
+  function _rptAggHtml(title, entries){
+    var body=entries.length ? entries.map(function(e){ return '<div class="frz-rpt-aggrow"><span>'+esc(e.k)+'</span><span class="frz-rpt-aggn">'+e.n+'</span></div>'; }).join('')
+                            : '<div class="frz-rpt-aggrow" style="color:var(--frz-text-muted)">No data</div>';
+    return '<div class="frz-rpt-agg"><div class="frz-rpt-agg-h">'+esc(title)+'</div>'+body+'</div>';
+  }
+  function renderReports(){
+    var host=document.getElementById('reportsBody'); if(!host) return;
+    var c=_rptComputed(), rows=c.rows, all=c.all, f=_rptFilters;
+    // Filter option lists come from config (unfiltered) so options don't vanish as you filter.
+    var statuses=_val('statuses',[])||[], types=(_val('types',[])||[]).map(function(t){ return t.name||t; });
+    var depts=_val('departments',[])||[], users=_val('users',[])||[];
+    // Assignees present on the team's items (+ any config users), unassigned handled in the aggregate.
+    var asgSet={}; all.forEach(function(p){ if(p.assignee) asgSet[p.assignee]=1; });
+    var asgList=Object.keys(asgSet).sort();
+    function cell(v, cls){ return '<td'+(cls?' class="'+cls+'"':'')+'>'+(v==null||v===''?'<span class="frz-rpt-na">n/a</span>':esc(String(v)))+'</td>'; }
+    function numCell(v){ return v==null ? '<td class="frz-rpt-num"><span class="frz-rpt-na">n/a</span></td>' : '<td class="frz-rpt-num">'+v+'</td>'; }
+    var tableRows=rows.map(function(r){
+      return '<tr>'
+        +'<td class="frz-rpt-key">'+esc(r.key)+'</td>'
+        +'<td>'+(r.status?'<span class="'+(_call('statusCls',r.status)||'')+'" style="padding:1px 8px;border-radius:9px;font-size:11px;font-weight:700">'+esc(r.status)+'</span>':'<span class="frz-rpt-na">n/a</span>')+'</td>'
+        +cell(r.requested)+cell(r.requestedBy)+cell(r.start)+cell(r.completion)
+        +cell(r.type)+cell(r.priority)+cell(r.dept)+cell(r.assigneeName)
+        +'<td class="frz-rpt-desc" title="'+escA(r.description)+'">'+(r.description?esc(r.description.slice(0,80)):'<span class="frz-rpt-na">n/a</span>')+'</td>'
+        +cell(r.notes)+cell(r.resolution)+cell(r.jira)
+        +'<td class="frz-rpt-num">'+r.attachCount+'</td>'
+        +numCell(r.age)+numCell(r.resolutionTime)+numCell(r.responseTime)
+        +'</tr>';
+    }).join('');
+    // Volume by technician - unassigned items grouped as (unassigned), not dropped.
+    var vol=_rptCount(rows, function(r){ return r.assignee ? (r.assigneeName||r.assignee) : '(unassigned)'; });
+    var byStatus=_rptCount(rows, function(r){ return r.status; });
+    var byType=_rptCount(rows, function(r){ return r.type; });
+    var byPrio=_rptCount(rows, function(r){ return r.priority; });
+    var byDept=_rptCount(rows, function(r){ return r.dept; });
+    host.innerHTML =
+      '<div class="frz-rpt-head"><h2 class="frz-rpt-title">Reports</h2>'
+        +'<div class="frz-rpt-sub">Current team only. Time-series trending is not included (it needs historical state reconstruction).</div></div>'
+      +'<section class="frz-rpt-sec">'
+        +'<div class="frz-rpt-sec-h"><span>Service Desk Tickets</span>'
+          +'<button class="frz-newitem" id="frzRptCsv">Export CSV</button></div>'
+        +'<div class="frz-rpt-filters">'
+          +'<label>Requested from<input type="date" id="frzRptFrom" value="'+escA(f.from)+'"></label>'
+          +'<label>to<input type="date" id="frzRptTo" value="'+escA(f.to)+'"></label>'
+          +'<label>Status<select id="frzRptStatus">'+_rptOpt(f.status,'','All')+statuses.map(function(s){ return _rptOpt(f.status,s,s); }).join('')+'</select></label>'
+          +'<label>Type<select id="frzRptType">'+_rptOpt(f.type,'','All')+types.map(function(t){ return _rptOpt(f.type,t,t); }).join('')+'</select></label>'
+          +'<label>Priority<select id="frzRptPriority">'+_rptOpt(f.priority,'','All')+[1,2,3,4].map(function(n){ return _rptOpt(f.priority,String(n),_PRPL[n]); }).join('')+'</select></label>'
+          +'<label>Department<select id="frzRptDept">'+_rptOpt(f.dept,'','All')+depts.map(function(d){ return _rptOpt(f.dept,d,d); }).join('')+'</select></label>'
+          +'<label>Assignee<select id="frzRptAssignee">'+_rptOpt(f.assignee,'','All')+asgList.map(function(a){ return _rptOpt(f.assignee,a,(_call('displayName',a)||a)); }).join('')+'</select></label>'
+          +'<span class="frz-rpt-total">'+rows.length+' ticket'+(rows.length===1?'':'s')+'</span>'
+        +'</div>'
+        +'<div class="frz-rpt-aggs">'
+          +_rptAggHtml('Volume by technician', vol)
+          +_rptAggHtml('By status (resolution = sum of terminal statuses)', byStatus)
+          +_rptAggHtml('By type', byType)
+          +_rptAggHtml('By priority', byPrio)
+          +_rptAggHtml('By department', byDept)
+        +'</div>'
+        +'<div class="frz-rpt-tablewrap"><table class="frz-rpt-table"><thead><tr>'
+          +'<th>Ticket</th><th>Status</th><th>Requested</th><th>Requested By</th><th>Start</th><th>Completion</th>'
+          +'<th>Type</th><th>Priority</th><th>Department</th><th>Assignee</th><th>Description</th><th>Notes</th>'
+          +'<th>Resolution</th><th>Jira</th><th>Attach</th><th>Age (d)</th><th>Resolution (d)</th><th>Response (d)</th>'
+        +'</tr></thead><tbody>'+(tableRows || '<tr><td colspan="18" style="padding:24px;text-align:center;color:var(--frz-text-muted)">No tickets match the current filters.</td></tr>')+'</tbody></table></div>'
+      +'</section>';
+    // Wire filters (re-render on change) + CSV.
+    function bindF(id, key, ev){ var el=document.getElementById(id); if(el) el.addEventListener(ev||'change', function(){ _rptFilters[key]=el.value; renderReports(); }); }
+    bindF('frzRptFrom','from'); bindF('frzRptTo','to');
+    bindF('frzRptStatus','status'); bindF('frzRptType','type'); bindF('frzRptPriority','priority');
+    bindF('frzRptDept','dept'); bindF('frzRptAssignee','assignee');
+    var csv=document.getElementById('frzRptCsv'); if(csv) csv.addEventListener('click', _rptExportCsv);
   }
   // ── Team Calendar render (Phase 2a: Month view - Owner -> Users -> chips) ──────
   function _calShortD(ymd){ if(!ymd) return ''; var p=String(ymd).split('-'); if(p.length!==3) return ymd; return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString(undefined,{month:'short',day:'numeric'}); }
@@ -19653,12 +19868,14 @@ if ('serviceWorker' in navigator) {
     if(view==='my-home'){ return setHome(state.homeTab); }
     if(view==='admin'){ return setAdmin(); }
     if(view==='team-calendar'){ return setCalendar(state.calTab); }
+    if(view==='reports'){ return setReports(); }
     if(view==='kanban' && _val('isViewer', false)) view='gantt';   // viewers never see Kanban (safety net; callers also redirect)
     state.onItem=false; state.itemId=null;
     root.classList.remove('on-item');
     var _mw=document.getElementById('frzHome'); if(_mw) _mw.style.display='none';
     var _ap=document.getElementById('frzAdminPage'); if(_ap) _ap.style.display='none';   // hide the Admin page when switching to a production view
     var _cal=document.getElementById('frzCalendar'); if(_cal) _cal.style.display='none';   // Stage 3.5: setView never hid the calendar (only setHome/setAdmin did) - a pre-existing lingering that the fill-height min-height:100% turned into a full-height ghost below production views
+    var _rv=document.getElementById('reportsView'); if(_rv) _rv.style.display='none';   // hide Reports when switching to a production view
     root.classList.remove('frz-cal-active');
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     state.view = view;
@@ -19983,7 +20200,7 @@ if ('serviceWorker' in navigator) {
     // view containers must be hidden or they render alongside/over it.
     // applyViewMode() restores them when we navigate back to a view.
     var _gv=document.querySelector('.gantt-outer'); if(_gv) _gv.style.display='none';
-    ['kanbanBoard','listView','dashboardView','planningView'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    ['kanbanBoard','listView','dashboardView','planningView','reportsView','frzCalendar','frzHome','frzAdminPage'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
     var _mw=document.getElementById('frzHome'); if(_mw) _mw.style.display='none';
     // Render content via the ORIGINAL openItemPage (avoid recursing our override); we own history
     if (_origOpenItemPage) _origOpenItemPage(id, {push:false}); else _call('openItemPage', id, {push:false});
@@ -20051,7 +20268,7 @@ if ('serviceWorker' in navigator) {
     var m = path.match(/^\/item\/(\d+)/);
     if (m){ state.itemFromApp = !replace; openItem(parseInt(m[1],10), {push:!replace}); return; }
     if (/^\/my-work(\/|$)/.test(path)){ navigate('/my-home', replace); return; }   // Stage 5: My Work absorbed into My Home
-    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home|admin|team-calendar)/);
+    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar)/);
     var view = vm ? vm[1] : (lastView()||'gantt');
     if (view==='kanban' && _val('isViewer', false)){ navigate('/gantt', replace); return; }   // viewers can't see Kanban
     if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
@@ -20061,7 +20278,7 @@ if ('serviceWorker' in navigator) {
     setView(view);
     if (replace) history.replaceState({frzView:view},'',url); else history.pushState({frzView:view},'',url);
     lset('frazil_beta_lastview_'+uname(), view);
-    if (view!=='my-home' && view!=='admin' && view!=='team-calendar') rerender();   // My Home + Admin + Team Calendar render themselves; skip the production view render
+    if (view!=='my-home' && view!=='admin' && view!=='team-calendar' && view!=='reports') rerender();   // these Flow-owned views render themselves; skip the production view render
     syncURL(true); // normalize URL to current filter state
   }
   function lastView(){ return ls('frazil_beta_lastview_'+uname()); }
@@ -20083,7 +20300,7 @@ if ('serviceWorker' in navigator) {
       history.replaceState({frzView:v2},'','/'+v2); state.itemFromApp=true; openItem(parseInt(qItem,10), {push:true}); return;
     }
     if (/^\/my-work(\/|$)/.test(path)){ navigate('/my-home', true); return; }   // Stage 5: absorbed into My Home
-    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home|admin|team-calendar)/);
+    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar)/);
     if (!vm){ // /beta -> last used (default gantt)
       var lv = lastView()||'gantt';
       applyDefaultCollapse(lv);
@@ -20102,7 +20319,7 @@ if ('serviceWorker' in navigator) {
     applyURLToFilters(vm[1], new URLSearchParams(location.search));
     setView(vm[1]);
     lset('frazil_beta_lastview_'+uname(), vm[1]);
-    if (vm[1]!=='my-home' && vm[1]!=='admin' && vm[1]!=='team-calendar') rerender();   // My Home + Admin + Team Calendar render themselves
+    if (vm[1]!=='my-home' && vm[1]!=='admin' && vm[1]!=='team-calendar' && vm[1]!=='reports') rerender();   // these Flow-owned views render themselves
     _frzSeedActiveFromURL();   // Fix 1: cold load - seed the saved-filter anchor from URL-match (single, most-specific)
     _frzSyncPanelFromURL();   // List detail panel: restore BEFORE syncURL so the emit preserves ?panel= on cold load
                               // (frzOpenPanel({fromURL}) sets state.panelId without writing the URL). Was after syncURL → stripped.
@@ -20115,7 +20332,7 @@ if ('serviceWorker' in navigator) {
     if (st.frzItem){ state.itemFromApp=true; openItem(st.frzItem, {push:false}); }
     else {
       var path = location.pathname.replace(/\/+$/,'');
-      var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|my-home|admin|team-calendar)/);
+      var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar)/);
       var view = vm? vm[1] : (st.frzView || state.view);
       if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
         state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }   // Stage 1b: seed before rerender (popstate doesn't syncURL, but keep symmetric + avoids a stale-expand flash)
@@ -20123,7 +20340,7 @@ if ('serviceWorker' in navigator) {
     if (view==='team-calendar'){ var _psp=new URLSearchParams(location.search); state.calTab = _calTabFromURL(path, _psp); _calSeedDateFromURL(_psp); _calSeedFiltersFromURL(_psp); }   // Stage 2c/5a: tab + period + filters on back/forward
       applyURLToFilters(view, new URLSearchParams(location.search));
       setView(view);
-      if (view!=='my-home' && view!=='admin') rerender();   // My Home + Admin render themselves
+      if (view!=='my-home' && view!=='admin' && view!=='team-calendar' && view!=='reports') rerender();   // these Flow-owned views render themselves
       _frzSeedActiveFromURL();   // Fix 1: back/forward is a cold landing - reseed the anchor from the URL
       _frzRefreshActiveSaved();  // apply the reseeded highlight/crumb (popstate doesn't run syncURL)
       _frzSyncPanelFromURL();   // List detail panel: open/close to match ?panel on back/forward (no new listener)
