@@ -2149,7 +2149,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.2.1';
+const APP_VERSION = '5.2.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -14745,7 +14745,7 @@ function renderItemPage(p){
     ipEditField('dev',        'Owner (Pod)',  esc(p.dev||''),    'select', {bold:true}),
     ipEditField('assignee',   'Assignee',     esc(p.assignee ? displayName(p.assignee) : ''), 'select'),
     ipEditField('type',       'Type',         esc(p.type||''),   'select'),
-    ipEditField('priority',   'Priority',     p.priority ? `<span style="color:${PRIO_COLORS[p.priority]};font-weight:700">${esc(PRIO_LABELS[p.priority])}</span>` : '', 'select'),
+    ipEditField('priority',   'Priority',     p.priority ? `<span style="background:${PRIO_COLORS[p.priority]}22;color:${PRIO_COLORS[p.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[p.priority])}</span>` : '', 'select'),   // pill treatment: reuse the production priority badge from List view (canonical) - same PRIO_COLORS, unmodified
     ipEditField('storyPoints','Story Points', (p.storyPoints==null||p.storyPoints==='') ? '' : String(p.storyPoints), 'number'),
     ipField('Sprint', p.sprintId ? esc(p.sprintId) : '', {always:true}),
     ipField('Key', p.itemKey ? `<span style="font-family:monospace">${esc(p.itemKey)}</span>` : '-', {bold:true}),
@@ -16396,14 +16396,14 @@ if ('serviceWorker' in navigator) {
     </div>
 
   <div style="max-width:1100px;margin:0 auto;padding:0 0 60px">
-    <!-- Item title -->
-    <div style="padding:28px 28px 0">
+    <!-- Item title (header tightened: chip row + standalone key removed, padding reduced) -->
+    <div style="padding:16px 28px 0">
       <h1 id="ipTitle" style="font-size:24px;font-weight:900;color:var(--text);margin:0 0 4px;line-height:1.2"></h1>
       <div id="ipMeta" style="font-size:13px;color:var(--muted);margin-bottom:0"></div>
     </div>
 
     <!-- Main content grid -->
-    <div style="padding:20px 28px;display:grid;grid-template-columns:1fr 340px;gap:24px;align-items:start">
+    <div style="padding:12px 28px 20px;display:grid;grid-template-columns:1fr 340px;gap:24px;align-items:start">
 
       <!-- LEFT: core fields + notes + activity + dependencies -->
       <div style="display:flex;flex-direction:column;gap:20px">
@@ -17343,8 +17343,6 @@ if ('serviceWorker' in navigator) {
     background:var(--frz-header-tint) !important; color:var(--frz-accent) !important;
     font-size:12px !important; font-weight:700 !important; letter-spacing:.4px !important;
   }
-  .frz-beta #frzRailStatus { border:0; overflow:visible; }                        /* status control sits bare; overflow:visible so the pill isn't clipped by the base .frz-rail-group overflow:hidden */
-  .frz-beta #frzRailStatus .frz-rail-gbody { padding:2px 2px; }
 
   /* ── Stage 1: top-bar GLOBAL search (jump to any item; not a per-view filter) ── */
   .frz-beta .frz-search { position:relative; display:inline-flex; align-items:center; width:230px; height:32px; background:var(--frz-bg-surface); border:1px solid var(--frz-border-strong); border-radius:7px; box-sizing:border-box; }
@@ -19712,16 +19710,13 @@ if ('serviceWorker' in navigator) {
     return null;
   }
   function _frzEnsureRailGroups(rightCol){
-    if(document.getElementById('frzRailStatus')) return;
+    if(document.getElementById('frzRailDetails')) return;   // Details is now the first rail group (the bare #frzRailStatus group was removed - status lives inside Details)
     function grp(id,title){
       var c=document.createElement('div'); c.className='frz-rail-group';
       c.innerHTML='<div class="frz-rail-ghead">'+title+'</div><div class="frz-rail-gbody" id="'+id+'Body"></div>';
       return c;
     }
     var frag=document.createDocumentFragment();
-    var st=document.createElement('div'); st.id='frzRailStatus'; st.className='frz-rail-group frz-rail-status';
-    st.innerHTML='<div class="frz-rail-gbody" id="frzRailStatusBody"></div>';
-    frag.appendChild(st);
     var det=grp('frzRailDetails','Details');
     // Admin-only item-actions (⋯) menu on the Details header - currently: Delete Item.
     if(_val('isAdmin', false)){
@@ -19825,18 +19820,19 @@ if ('serviceWorker' in navigator) {
     var fields=document.getElementById('ipFields'), sched=document.getElementById('ipSchedule');
     if(!_frzFieldByLabel(fields,'Status')) return;   // source not freshly rendered - don't wipe the rail
     _frzEnsureRailGroups(rightCol);
-    var sBody=document.getElementById('frzRailStatusBody'), dBody=document.getElementById('frzRailDetailsBody'), cBody=document.getElementById('frzRailScheduleBody');
-    if(sBody) sBody.innerHTML=''; if(dBody) dBody.innerHTML=''; if(cBody) cBody.innerHTML='';
+    var dBody=document.getElementById('frzRailDetailsBody'), cBody=document.getElementById('frzRailScheduleBody');
+    if(dBody) dBody.innerHTML=''; if(cBody) cBody.innerHTML='';
     if(p){ injectReleaseField(p); injectDepartments(p); }   // (re)create the beta-only Release + Departments controls in ipFields
     function mv(body, node){ if(body && node) body.appendChild(node); }
     var _DETAIL_AFTER_TYPE=['Story Points','Sprint','Reporter','Key','Project'];
-    mv(sBody, _frzFieldByLabel(fields,'Status'));
-    // Status → a colored status pill + caret (drop the "Status" label). The pill
-    // reuses the production status-badge color (statusCls) untouched; clearing the
-    // span's inline background:none reveals the filled badge.
-    var stWrap=sBody.firstElementChild;
+    // Status = the FIRST row of the Details card (it used to sit in a bare #frzRailStatus
+    // group floating ABOVE Details; that group is gone). Keep the uppercase STATUS label like
+    // every other Details row; the VALUE stays the production status pill (statusCls, untouched)
+    // + caret, and the inline-edit dropdown is unchanged. Clearing the span's inline
+    // background:none reveals the filled badge.
+    mv(dBody, _frzFieldByLabel(fields,'Status'));
+    var stWrap=dBody.firstElementChild;
     if(stWrap){
-      if(stWrap.firstElementChild) stWrap.firstElementChild.style.display='none';
       var stVal=stWrap.querySelector('.ip-edit') || stWrap.children[1];
       var stSpan=stVal && stVal.querySelector('span');
       if(stSpan){ stSpan.style.background=''; stSpan.style.border=''; stSpan.style.padding='3px 12px'; stSpan.style.borderRadius='12px'; stSpan.style.fontWeight='700'; stSpan.style.display='inline-flex'; stSpan.style.alignItems='center'; }
@@ -19941,28 +19937,17 @@ if ('serviceWorker' in navigator) {
   }
   // Full pass - only from the renderItemPage wrapper (source is fresh there).
   function _frzItemLayout(p){ _frzConsolidateRail(p); _frzOrderMain(); _frzItemHeader(p); }
-  // Stage 1: anchor the page header - item KEY above the title + status/priority
-  // DISPLAY chips below it (relocated from the top-bar corner). The status chip
-  // uses statusCls (same dynamic source as the badges) = the status color anchor.
-  // The rail remains the single EDITABLE status. Idempotent; runs on every render
-  // so the chips track edits.
+  // Item-page header: the standalone item key and the chip row are BOTH gone now.
+  //  - The key (frz-ip-key) duplicated the breadcrumb string 62px above it, so it was removed
+  //    (the breadcrumb keeps the key).
+  //  - The chip row (frz-ip-headchips) held only the priority chip, which now renders as a pill
+  //    inside the Details card, so the whole row is removed (no empty container left behind).
+  // This leaves just the breadcrumb + title above the first card. Defensive: strip any stale
+  // nodes a reused overlay might still carry so nothing lingers above the title.
   function _frzItemHeader(p){
     if(!p) return;
-    var title=document.getElementById('ipTitle'); if(!title) return;
-    var block=title.parentElement; if(!block) return;
-    var key=document.getElementById('frzIpKey');
-    if(!key){ key=document.createElement('div'); key.id='frzIpKey'; key.className='frz-ip-key'; block.insertBefore(key, title); }
-    key.textContent = p.itemKey || ''; key.style.display = p.itemKey ? '' : 'none';
-    // UI polish (item 1): status is NOT shown under the title anymore - it lived here AND in the
-    // Details panel (its editable first row). The Flow item-page header is not sticky (the sticky
-    // top strip is hidden in the shell), so per the dedup rule the Details-panel instance survives
-    // and this under-title duplicate is dropped. Priority stays (it has no editable Details peer
-    // that this replaces). Badge colors unchanged.
-    var PL={1:'Urgent',2:'High',3:'Medium',4:'Low'}, PC={1:'#e8394a',2:'#e87000',3:'#e8c000',4:'#22b96e'};
-    var pr = (p.priority && PL[p.priority]) ? '<span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;background:'+PC[p.priority]+'22;color:'+PC[p.priority]+'">'+PL[p.priority]+'</span>' : '';
-    var row=document.getElementById('frzIpHeadChips');
-    if(!row){ row=document.createElement('div'); row.id='frzIpHeadChips'; row.className='frz-ip-headchips'; block.appendChild(row); }
-    row.innerHTML = pr; row.style.display = pr ? '' : 'none';
+    var key=document.getElementById('frzIpKey'); if(key && key.parentElement) key.parentElement.removeChild(key);
+    var chips=document.getElementById('frzIpHeadChips'); if(chips && chips.parentElement) chips.parentElement.removeChild(chips);
   }
 
   function openItem(id, opts){
