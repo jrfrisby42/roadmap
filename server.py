@@ -1306,7 +1306,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.1.0"
+APP_VERSION = "5.1.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3781,9 +3781,19 @@ def list_items(
         if counts and items:
             ids = [it["id"] for it in items]
             qmarks = ",".join("?" * len(ids))
-            cc = {row["parent_id"]: row["n"] for row in c.execute(
-                f"SELECT parent_id, COUNT(*) AS n FROM projects "
-                f"WHERE parent_id IN ({qmarks}) AND archived=0 GROUP BY parent_id", ids).fetchall()}
+            # PHASE B (5.1.1): _childCount is a per-item SERVER aggregate, so it must carry the
+            # same scope as the rows themselves. Unscoped it leaks the existence + cardinality
+            # of children a Contributor cannot see ("this parent has 3 children"), and the caret
+            # promises rows the (already-scoped) expansion won't deliver. Counting only VISIBLE
+            # children makes the count and the expansion agree - closing the leak and the caret
+            # mismatch in one move. Admin/editor/viewer: no clause added, count is unchanged.
+            ccq = f"SELECT parent_id, COUNT(*) AS n FROM projects WHERE parent_id IN ({qmarks}) AND archived=0"
+            ccp = list(ids)
+            if auth.get("role") == "contributor":
+                _cfrag, _cparams = _contributor_scope_sql(c, auth)
+                ccq += f" AND {_cfrag}"; ccp.extend(_cparams)
+            ccq += " GROUP BY parent_id"
+            cc = {row["parent_id"]: row["n"] for row in c.execute(ccq, ccp).fetchall()}
             for it in items:
                 it["_childCount"] = cc.get(it["id"], 0)
     return {"items": items, "total": total, "page": page, "page_size": page_size,
