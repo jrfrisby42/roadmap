@@ -2154,7 +2154,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.4.0';
+const APP_VERSION = '5.4.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -19039,7 +19039,11 @@ if ('serviceWorker' in navigator) {
     // Returns {rows, all} where rows is the filtered+computed set and all is the unfiltered
     // team set (for building filter option lists). Calculated metrics are null when their
     // source timestamp is missing - NEVER 0 (rendered as "n/a", exported blank).
-    var all=(_val('projects',[])||[]).filter(function(p){ return !p.archived; });
+    // Exclude archived AND hidden (hidden = the Gantt-visibility flag, used for non-ticket /
+    // utility rows) so they don't pollute the report. Child items (p.parent set) are NOT
+    // excluded: unlike the Planning backlog, a genuine sub-task can be a real ticket, and
+    // dropping them would under-report. Flip this if IT adopts heavy parent/child nesting.
+    var all=(_val('projects',[])||[]).filter(function(p){ return !p.archived && !p.hidden; });
     var f=_rptFilters, nowIso=new Date().toISOString();
     var rows=all.filter(function(p){
       if(f.status && (p.status||'')!==f.status) return false;
