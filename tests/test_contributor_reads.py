@@ -153,6 +153,25 @@ def test_admin_editor_viewer_reads_unchanged(client, team, admin_headers, editor
         assert client.get("/api/items", headers=hdr).json()["total"] == 3
 
 
+# ── 5.1.1: _childCount is a server aggregate and must be scoped (existence/cardinality leak) ──
+def test_child_count_scoped_to_visible_children(client, team, admin_headers, contributor_headers):
+    parent = _mk(client, admin_headers, assignee="contrib1")
+    visible = _mk(client, admin_headers, parent=parent, assignee="contrib1")
+    _mk(client, admin_headers, parent=parent, assignee="other", dev="OtherPod")   # hidden
+    _mk(client, admin_headers, parent=parent, assignee="other2", dev="OtherPod")  # hidden
+    # Contributor: the count reflects only the 1 visible child, not 3.
+    res = client.get("/api/items?parent_id=none&counts=1", headers=contributor_headers).json()
+    prow = next(it for it in res["items"] if it["id"] == parent)
+    assert prow["_childCount"] == 1
+    # ...and expansion delivers exactly that 1 - count and expansion agree (no broken caret).
+    kids = client.get(f"/api/items?parent_id={parent}&counts=1", headers=contributor_headers).json()
+    assert kids["total"] == 1 and {k["id"] for k in kids["items"]} == {visible}
+    # Admin is unchanged: sees all 3.
+    ares = client.get("/api/items?parent_id=none&counts=1", headers=admin_headers).json()
+    aprow = next(it for it in ares["items"] if it["id"] == parent)
+    assert aprow["_childCount"] == 3
+
+
 # ── B1 acceptance #8: Phase A writes still enforced (sanity) ──────────────────────
 def test_phase_a_write_scope_still_enforced(client, team, admin_headers, contributor_headers):
     theirs = _mk(client, admin_headers, assignee="other", dev="OtherPod")
