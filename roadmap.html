@@ -2149,7 +2149,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.2.3';
+const APP_VERSION = '5.2.4';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16445,7 +16445,7 @@ if ('serviceWorker' in navigator) {
         <div id="ipSubtasksCard" style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
           <div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;justify-content:space-between">
             <span>Subtasks <span id="ipSubtaskRollup" style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;font-size:11px"></span></span>
-            <button id="ipAddSubtaskBtn" onclick="ipShowAddSubtask()" style="display:none;background:none;border:1px solid var(--border);color:var(--accent);padding:3px 10px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Add subtask</button>
+            <button id="ipAddSubtaskBtn" onclick="ipShowAddSubtask()" style="display:none;background:none;border:1px solid var(--border);color:var(--accent);padding:0 10px;height:24px;line-height:22px;margin:-4px 0;box-sizing:border-box;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Add subtask</button>
           </div>
           <div id="ipSubtasks" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px"></div>
         </div>
@@ -17105,7 +17105,10 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-prog-txt { font-size:11px; color:var(--frz-text-muted); white-space:nowrap; }
   .frz-beta .frz-rel-row .frz-tbl-detail { grid-column:1 / -1; margin:6px -14px -11px; }
   /* Stage 2a - Attachments (item page, beta-injected) */
-  .frz-beta .frz-att-upbtn { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); color:var(--frz-accent); font-weight:700; font-size:12px; border-radius:7px; padding:5px 12px; cursor:pointer; }
+  /* height + negative vertical margin so this header action button does not stretch the flex
+     header past the 36px text-line height the other section headers use (5.2.4). Renders 24px,
+     contributes 16px to the header's flex line (24 - 2*4px margin), centered with clearance. */
+  .frz-beta .frz-att-upbtn { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); color:var(--frz-accent); font-weight:700; font-size:12px; border-radius:7px; padding:0 12px; height:24px; line-height:22px; margin:-4px 0; box-sizing:border-box; cursor:pointer; }
   .frz-beta .frz-att-upbtn:hover { background:var(--frz-accent-soft); }
   .frz-beta .frz-att-drop { border:1.5px dashed var(--frz-border-strong); border-radius:8px; padding:14px; text-align:center; font-size:12.5px; color:var(--frz-text-muted); cursor:pointer; transition:border-color .1s, background .1s, color .1s; }
   .frz-beta .frz-att-drop:hover, .frz-beta .frz-att-drop.frz-drag { border-color:var(--frz-accent); background:var(--frz-accent-soft); color:var(--frz-accent); }
