@@ -2149,7 +2149,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.2.2';
+const APP_VERSION = '5.2.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16410,13 +16410,13 @@ if ('serviceWorker' in navigator) {
 
         <!-- Core fields card -->
         <div id="ipFieldsCard" style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
-          <div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px">Details</div>
+          <div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px">Details</div>
           <div id="ipFields" style="padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:12px"></div>
         </div>
 
         <!-- Notes card -->
         <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
-          <div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;justify-content:space-between">
+          <div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;justify-content:space-between">
             Description
             <button id="ipNotesCancelBtn" onclick="cancelItemPageNotes()" style="display:none;background:var(--surface);color:var(--text);border:1px solid var(--border);padding:4px 12px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">Cancel</button>
             <button id="ipNotesSaveBtn" onclick="saveItemPageNotes()" style="display:none;background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">Save</button>
@@ -16433,7 +16433,7 @@ if ('serviceWorker' in navigator) {
 
         <!-- Feature Flags card - unified: manual flags + Jira-sourced flags -->
         <div id="ipFeatureFlagsCard" style="display:none;border:1px solid var(--border);border-radius:10px;overflow:hidden">
-          <div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;gap:6px">
+          <div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;gap:6px">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
             Feature Flags
             <span id="ipFeatureFlagsCount" style="font-size:10px;font-weight:400;color:var(--muted)"></span>
@@ -16443,7 +16443,7 @@ if ('serviceWorker' in navigator) {
 
         <!-- Subtasks card -->
         <div id="ipSubtasksCard" style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
-          <div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;justify-content:space-between">
+          <div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;justify-content:space-between">
             <span>Subtasks <span id="ipSubtaskRollup" style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;font-size:11px"></span></span>
             <button id="ipAddSubtaskBtn" onclick="ipShowAddSubtask()" style="display:none;background:none;border:1px solid var(--border);color:var(--accent);padding:3px 10px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Add subtask</button>
           </div>
@@ -16452,13 +16452,13 @@ if ('serviceWorker' in navigator) {
 
         <!-- Dependencies card -->
         <div id="ipDepsCard" style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
-          <div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px">Dependencies &amp; Relationships</div>
+          <div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px">Dependencies &amp; Relationships</div>
           <div id="ipDeps" style="padding:16px;display:flex;flex-direction:column;gap:8px"></div>
         </div>
 
         <!-- Activity / History card -->
         <div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
-          <div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px">Activity &amp; History</div>
+          <div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px">Activity &amp; History</div>
           <div id="ipActivity" style="padding:0"></div>
           <!-- Comments -->
           <div style="border-top:1px solid var(--border);padding:14px 16px">
@@ -16474,7 +16474,7 @@ if ('serviceWorker' in navigator) {
 
         <!-- Notes + Resolution details card (fixed-schema free text, inline-editable) -->
         <div id="ipTextFieldsCard" style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
-          <div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px">Notes &amp; Resolution</div>
+          <div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px">Notes &amp; Resolution</div>
           <div id="ipTextFields" style="padding:16px;display:flex;flex-direction:column;gap:14px"></div>
         </div>
 
@@ -19845,6 +19845,23 @@ if ('serviceWorker' in navigator) {
       }
     }
     ['Assignee','Owner (Pod)','Priority','Type'].forEach(function(l){ mv(dBody, _frzFieldByLabel(fields,l)); });
+    // Priority: converge its pill GEOMETRY on the status pill (same height/padding/radius/caret)
+    // so the two triage fields read alike. COLORS are untouched - the badge keeps its own
+    // PRIO_COLORS from the ipEditField display; only size + the editable-caret change here. The
+    // caret is gated on .ip-edit (present only for roles that can edit), exactly like status.
+    var prWrap=_frzFieldByLabel(dBody,'Priority');
+    if(prWrap){
+      var prVal=prWrap.querySelector('.ip-edit') || prWrap.children[1];
+      var prSpan=prVal && prVal.querySelector('span');
+      if(prSpan){ prSpan.style.padding='3px 12px'; prSpan.style.borderRadius='12px'; prSpan.style.fontSize='13px'; prSpan.style.fontWeight='700'; prSpan.style.display='inline-flex'; prSpan.style.alignItems='center'; }
+      if(prVal && prVal.classList.contains('ip-edit')){
+        prVal.style.cssText += ';cursor:pointer';
+        if(prSpan && !prSpan.querySelector('.frz-st-caret')){
+          var pcar=document.createElement('span'); pcar.className='frz-st-caret'; pcar.textContent='▾';
+          pcar.style.cssText='margin-left:6px;font-size:10px;line-height:1;opacity:.85'; prSpan.appendChild(pcar);
+        }
+      }
+    }
     mv(dBody, document.getElementById('frzDeptField'));   // Departments - after Type
     _DETAIL_AFTER_TYPE.forEach(function(l){ mv(dBody, _frzFieldByLabel(fields,l)); });
     mv(dBody, document.getElementById('frzReleaseField'));
@@ -22529,7 +22546,7 @@ if ('serviceWorker' in navigator) {
       card=document.createElement('div'); card.id='frzAttachCard';
       card.style.cssText='border:1px solid var(--border);border-radius:10px;overflow:hidden';
       card.innerHTML=''
-        +'<div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between">'
+        +'<div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between">'
           +'Attachments<button type="button" class="frz-att-upbtn" id="frzAttUp" style="display:none">+ Upload</button>'
         +'</div>'
         +'<div style="padding:14px 16px">'
@@ -23858,7 +23875,7 @@ if ('serviceWorker' in navigator) {
       return '<div class="frz-sh-row"><span class="frz-sh-nm">'+esc(nm)+'</span> '+when+'<span class="frz-sh-oc '+m.cls+'">'+esc(m.label)+'</span></div>';
     }).join('');
     card.innerHTML=''
-      +'<div style="padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px">Sprint history</div>'
+      +'<div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px">Sprint history</div>'
       +'<div style="padding:10px 16px">'+rows+'</div>';
   }
 
