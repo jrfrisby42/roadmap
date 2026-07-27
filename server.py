@@ -1306,7 +1306,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.1.1"
+APP_VERSION = "5.2.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2901,12 +2901,35 @@ def get_all(auth: dict = Depends(require_auth)):
     # grants). Config, statuses, types, developers/pods and the users list stay unfiltered
     # (the client needs them to render; accepted as non-sensitive). Activities/notifications/
     # watchers are filtered at their own endpoints. Admin/editor/viewer are unaffected.
+    related_stubs = []
     if auth.get("role") == "contributor":
         with db(team) as c:
             pod = _pod_for_user(c, auth["username"])
             grant_ids = _contributor_grant_ids(c, auth["username"])
             projects = [p for p in projects
                         if _contributor_in_scope(c, auth, p, pod) or p["id"] in grant_ids]
+            # PHASE B2: relationship stubs. An in-scope item may point OUTWARD to a parent or a
+            # `requires` (depends-on) item that is out of scope. So the relationship renders as a
+            # read-only stub (key/name/status only, not clickable) instead of silently vanishing,
+            # provide minimal data for exactly those referenced ids - computed from the
+            # Contributor's OWN items, so there is no enumeration. Children/dependents (INBOUND
+            # refs) are deliberately NOT stubbed: that would re-open the existence leak the 5.1.1
+            # _childCount fix closed (out-of-scope children stay hidden; count == expansion).
+            scoped_ids = {p["id"] for p in projects}
+            ref_ids = set()
+            for p in projects:
+                for _k in ("parent", "requires"):
+                    v = p.get(_k)
+                    if v not in (None, ""):
+                        try: ref_ids.add(int(v))
+                        except (TypeError, ValueError): pass
+            ref_ids -= scoped_ids
+            if ref_ids:
+                _qm = ",".join("?" * len(ref_ids))
+                for r in c.execute(f"SELECT id, data FROM projects WHERE id IN ({_qm})", tuple(ref_ids)).fetchall():
+                    d = json.loads(r["data"])
+                    related_stubs.append({"id": r["id"], "itemKey": d.get("itemKey", ""),
+                                          "name": d.get("name", ""), "status": d.get("status", "")})
     cfg_map = {r["key"]: json.loads(r["value"]) for r in config_rows}
     def cfg(k):
         return cfg_map.get(k, [])
@@ -2955,7 +2978,10 @@ def get_all(auth: dict = Depends(require_auth)):
             "intakeProjectEmails": cfg_map.get("intakeProjectEmails", {}),
             "intakeDomains": cfg_map.get("intakeDomains", []),
             "departmentMeta": cfg_map.get("departmentMeta", {}),
-            "maintenanceDutyTypeId": cfg_map.get("maintenanceDutyTypeId", "")}
+            "maintenanceDutyTypeId": cfg_map.get("maintenanceDutyTypeId", ""),
+            # PHASE B2: minimal read-only stubs for out-of-scope items a Contributor's own items
+            # reference (parent / requires). Empty for admin/editor/viewer.
+            "relatedStubs": related_stubs}
 
 
 # ── Force-seed config keys (idempotent, for migration/repair) ─────────────────

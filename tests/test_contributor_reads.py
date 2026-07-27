@@ -172,6 +172,30 @@ def test_child_count_scoped_to_visible_children(client, team, admin_headers, con
     assert aprow["_childCount"] == 3
 
 
+# ── B2: relationship stubs for out-of-scope parent/requires ─────────────────────
+def test_related_stubs_for_out_of_scope_parent_and_requires(client, team, admin_headers, contributor_headers):
+    parent = _mk(client, admin_headers, name="Epic Parent", assignee="other", dev="OtherPod")   # out of scope
+    dep    = _mk(client, admin_headers, name="Blocker Dep", assignee="other", dev="OtherPod")    # out of scope
+    # In-scope items that reference the out-of-scope ones.
+    _mk(client, admin_headers, assignee="contrib1", parent=parent)
+    _mk(client, admin_headers, assignee="contrib1", requires=dep)
+    got = client.get("/api/all", headers=contributor_headers).json()
+    stubs = {s["id"]: s for s in got.get("relatedStubs", [])}
+    # The referenced out-of-scope items appear as minimal stubs (key/name/status only)...
+    assert parent in stubs and dep in stubs
+    assert stubs[parent]["name"] == "Epic Parent" and "status" in stubs[parent]
+    assert set(stubs[parent].keys()) == {"id", "itemKey", "name", "status"}   # no other field leaks
+    # ...but never as full items in the scoped payload.
+    assert parent not in {p["id"] for p in got["projects"]}
+
+
+def test_related_stubs_empty_for_admin(client, team, admin_headers):
+    parent = _mk(client, admin_headers, assignee="other", dev="OtherPod")
+    _mk(client, admin_headers, assignee="contrib1", parent=parent)
+    got = client.get("/api/all", headers=admin_headers).json()
+    assert got.get("relatedStubs", []) == []   # admins see full items, no stub payload
+
+
 # ── B1 acceptance #8: Phase A writes still enforced (sanity) ──────────────────────
 def test_phase_a_write_scope_still_enforced(client, team, admin_headers, contributor_headers):
     theirs = _mk(client, admin_headers, assignee="other", dev="OtherPod")
