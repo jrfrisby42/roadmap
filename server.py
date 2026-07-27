@@ -1306,7 +1306,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.2.4"
+APP_VERSION = "5.3.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3075,10 +3075,33 @@ def _reindex_project(c, pid: int, data: dict, ts: str = None):
 
 def _insert_project(c, data: dict, ts: str = None) -> int:
     """INSERT an item and populate its indexed columns. Returns the new id."""
+    # C1 (5.3.0): stamp createdAt at the SINGLE creation chokepoint so every creation path
+    # (manual create, intake portal, CSV/HubSpot import, recurrence spawn, Jira-sourced
+    # children) records it uniformly - this is the fix for createdAt being 3/197 (only the
+    # intake portal set it before). Set only when absent so a caller-supplied value (the
+    # portal's) is preserved. Forward-only: existing rows are never touched.
+    if not data.get("createdAt"):
+        data["createdAt"] = datetime.now(timezone.utc).isoformat()
     cur = c.execute("INSERT INTO projects(data) VALUES(?)", (json.dumps(data),))
     pid = cur.lastrowid
     _reindex_project(c, pid, data, ts)
     return pid
+
+# C1 (5.3.0): derived service-desk measurement timestamps, captured server-side on the item
+# write path so every route (UI, Kanban drag, readiness/planning commit, scenario commit,
+# intake, sync) records them uniformly. Set-once, never overwritten, never backfilled, and
+# never a user-editable input (kept out of CONTRIBUTOR_EDITABLE_FIELDS; forced server-owned in
+# update_project). Does NOT touch any existing date field (never calls computeItemDue).
+#   completedAt     - first entry into a statusIsTerminal status ("first completion wins").
+#   firstResponseAt - assignment branch: first time an assignee is set. The comment branch
+#                     (first non-reporter comment) lives in add_comment. Whichever fires first
+#                     wins, per L1 as clarified in C1.2.
+def _stamp_measurement_ts(old: dict, merged: dict, terminal_map: dict, now_iso: str):
+    ns = merged.get("status", "")
+    if ns and terminal_map.get(ns) and not merged.get("completedAt"):
+        merged["completedAt"] = now_iso
+    if merged.get("assignee") and not (old.get("assignee") or "") and not merged.get("firstResponseAt"):
+        merged["firstResponseAt"] = now_iso
 
 def _save_project(c, pid: int, data: dict, ts: str = None):
     """UPDATE an item's blob AND its indexed columns together (no drift)."""
@@ -3568,7 +3591,8 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
         # assignee, archived, deferred, storyPoints, rank, parent/requires - are NOT here.)
         for _srv in ("reporter", "reporterEmail", "source", "createdAt", "sprintHistory",
                      "jiraLastKnownStatus", "jiraSyncSkipped", "jiraFeatureFlags",
-                     "recurrence_parent", "hubspotId"):
+                     "recurrence_parent", "hubspotId",
+                     "completedAt", "firstResponseAt"):   # C1: derived measurement fields - server-owned, client cannot forge/clear
             if _srv in old:
                 merged[_srv] = old[_srv]
             else:
@@ -3585,6 +3609,7 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
         if _bucket_item_owner(c, merged, old, _client_owner_explicit):
             changes["dev"] = {"from": old.get("dev"), "to": merged.get("dev")}
         now_ts = datetime.now(timezone.utc).isoformat()
+        _stamp_measurement_ts(old, merged, terminal_map, now_ts)   # C1: completedAt (first terminal) + firstResponseAt (first assignment)
         _save_project(c, pid, merged, now_ts)
         # Return the fresh token so the client's cached copy is current for its NEXT
         # edit (else the next save would 409 with a stale base token).
@@ -6047,6 +6072,18 @@ def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin
             (item_id, author, body.get("body",""), ts, parent_id)
         )
         row = c.execute("SELECT * FROM comments WHERE id=?", (cur.lastrowid,)).fetchone()
+        # C1: first-response = first comment by a non-reporter (L1). Set once, server-owned,
+        # never overwritten, no backfill. The assignment branch lives in update_project;
+        # whichever fires first wins. Best-effort - never fail the comment insert.
+        try:
+            irow = c.execute("SELECT data FROM projects WHERE id=?", (item_id,)).fetchone()
+            if irow:
+                _item = json.loads(irow["data"])
+                if author != (_item.get("reporter") or "") and not _item.get("firstResponseAt"):
+                    _item["firstResponseAt"] = datetime.now(timezone.utc).isoformat()
+                    _save_project(c, item_id, _item)
+        except Exception as e:
+            log.warning(f"[Measure] first-response stamp failed for item {item_id}: {e}")
     # Stage 3b/4: mention + watcher (+ reply-to parent author) notifications (post-commit, best-effort)
     try:
         _notify_on_comment(team, item_id, author, body.get("body", ""), parent_id)
@@ -6744,7 +6781,12 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
 
     # ── Atomic DB write: save all changed projects + activities + session ──────
     committed_ts = datetime.now(timezone.utc).isoformat()
+    # C1: a Release commit sets items to the Released (terminal) status, so capture the
+    # completion timestamp here too - the same set-once rule as update_project. to_save
+    # carries each item's full current blob, so the guard never overwrites an existing value.
     with db(team) as c:
+        _tr = c.execute("SELECT value FROM config WHERE key='statusIsTerminal'").fetchone()
+        _commit_terminal = json.loads(_tr["value"]) if _tr else {}
         # A session commits exactly ONCE. If it's already committed (a retry, a
         # double-click, or two workers), abort BEFORE re-applying changes or
         # re-inserting activity rows. Also refuse if another user holds the advisory
@@ -6757,6 +6799,9 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
         if _srow and _srow["locked_by"] and _srow["locked_by"] != auth["username"]:
             raise HTTPException(409, f"This planning session is locked by {_srow['locked_by']}.")
         for item_id, updated in to_save.items():
+            _cs = updated.get("status", "")
+            if _cs and _commit_terminal.get(_cs) and not updated.get("completedAt"):
+                updated["completedAt"] = committed_ts   # C1: first completion wins
             _save_project(c, item_id, updated)
         for act in activities:
             act.setdefault("created_ts", committed_ts)
