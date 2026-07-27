@@ -2149,7 +2149,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.1.1';
+const APP_VERSION = '5.2.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2624,6 +2624,10 @@ const DEFAULT_TYPES = [
 
 // Global state (loaded from server on boot)
 let projects = [], developers = [], statuses = [], delayReasons = [], products = [], users = [], types = [], nextId = 1;
+// Phase B2: read-only stubs {id: {id,itemKey,name,status}} for out-of-scope items a
+// Contributor's own items reference (parent/requires). Empty for other roles. Lets the
+// relationship render as a non-clickable stub instead of silently vanishing.
+let _relatedStubs = {};
 let changeReasons = []; // admin-managed timeline change reasons
 let deferReasons  = []; // admin-managed defer reasons
 let departments   = []; // shared master list of departments (free-text, grows on item save)
@@ -4106,7 +4110,7 @@ function render(){
   const emptyRow = !lRows && searchQ
     ? `<div style="padding:24px 16px;color:var(--muted);font-size:13px;font-style:italic">No items match "<strong>${esc(searchQ)}</strong>"</div>`
     : !lRows
-    ? `<div style="padding:24px 16px;color:var(--muted);font-size:13px">No items match the current filters.</div>`
+    ? `<div style="padding:24px 16px;color:var(--muted);font-size:13px">${contributorEmptyMsg() || 'No items match the current filters.'}</div>`
     : '';
   document.getElementById('leftPanel').innerHTML =
     lHdr + `<div class="left-rows-clip"><div class="left-inner">${lRows || emptyRow}</div></div>`;
@@ -7118,6 +7122,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       if(data.statusIsTesting)       statusIsTesting        = data.statusIsTesting;
       if(data.statusIsBlocked)       statusIsBlocked        = data.statusIsBlocked;
       if(data.statusIsOffFlow)       statusIsOffFlow        = data.statusIsOffFlow;
+      _relatedStubs = {}; (data.relatedStubs||[]).forEach(s=>{ _relatedStubs[s.id]=s; });
       if(data.statusIgnoreConflicts) statusIgnoreConflicts = data.statusIgnoreConflicts;
       if(data.typeIgnoreConflicts)   typeIgnoreConflicts   = data.typeIgnoreConflicts;
       if(data.typeScheduled)         typeScheduled         = data.typeScheduled;
@@ -8551,6 +8556,15 @@ function contributorCanEditField(p, field){
 // Blocked) are rank-exempt so a contributor may flag from anywhere and, when currently on
 // an off-flow status, return to any on-flow status; otherwise forward-only on the
 // `statuses` order. Always includes the current status so the dropdown can show it.
+// Phase B2: a zero-scope Contributor sees empty views. Their emptiness is a scope fact,
+// not a filter miss, so give them an honest message. Returns '' for other roles (so their
+// existing "no matching items" text is untouched).
+function contributorEmptyMsg(){
+  // Only when their WHOLE scoped set is empty (projects is already the scoped set post-B1).
+  // If they have items but a filter/search excluded them, fall through to the filter message.
+  if(!isContributor || projects.length) return '';
+  return 'No items are assigned to you or your pod yet.';
+}
 function contributorStatusOptions(p){
   const cur = (p && p.status) || '';
   const curRank = statuses.indexOf(cur);
@@ -10094,7 +10108,7 @@ async function renderList(){
   if(countEl) countEl.textContent = `${data.total} ${tree?'top-level ':''}item${data.total!==1?'s':''}`;
   body.innerHTML = items.length
     ? items.map(it => _listRowHtml(it, 0)).join('')
-    : `<tr><td colspan="${colspan}" style="padding:24px;text-align:center;color:var(--muted)">No matching items.</td></tr>`;
+    : `<tr><td colspan="${colspan}" style="padding:24px;text-align:center;color:var(--muted)">${contributorEmptyMsg() || 'No matching items.'}</td></tr>`;
   const sa = document.getElementById('listSelectAll'); if(sa) sa.checked = false;
   _updateSortIndicators();
   updateBulkBar();
@@ -10360,7 +10374,7 @@ function renderDashboard(){
   if(!items.length){
     body.innerHTML = `<div style="text-align:center;padding:60px;color:var(--muted)">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:0 auto 12px"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-      <strong>No items match the current filters</strong></div>`;
+      <strong>${contributorEmptyMsg() || 'No items match the current filters'}</strong></div>`;
     return;
   }
 
@@ -14595,7 +14609,12 @@ function ipChangeTypedLinkType(id, type){
 
 function openItemPage(id, opts={}){
   const p = projects.find(x=>x.id===id);
-  if(!p) return;
+  if(!p){
+    // Phase B2: a Contributor deep-linking an out-of-scope id has no blob in the scoped
+    // payload. Give a clean "no access" toast instead of silently doing nothing.
+    if(isContributor && typeof showToast==='function') showToast('That item is not assigned to you or your pod.','error');
+    return;
+  }
   _itemPageId = id;
   const push = opts.push !== false;
   if(push){ try { history.pushState({itemPage:id}, '', `${location.pathname}?item=${id}`); } catch(e){} }
@@ -14777,6 +14796,16 @@ function renderItemPage(p){
   const depsEl = document.getElementById('ipDeps');
   const depCanEdit = (isAdmin||isEditor);
   const depRows = [];
+  // Phase B2: an out-of-scope parent/requires (Contributor read scoping) has no entry in
+  // `projects`. Render a read-only stub from _relatedStubs (key + name + status, not clickable)
+  // so the relationship is honest instead of silently vanishing. No other field is exposed.
+  const _relStub = id => {
+    const s = _relatedStubs[id]; if(!s) return '';
+    return `<span style="font-family:monospace;font-size:11px;color:var(--muted)">${s.itemKey?esc(s.itemKey)+' ':''}</span>`
+      + `<span style="font-size:13px;font-weight:700;color:var(--text)">${esc(s.name||('#'+id))}</span>`
+      + `${s.status?`<span style="font-size:11px;color:var(--muted);margin-left:auto">${esc(s.status)}</span>`:''}`
+      + `<span style="font-size:10px;color:var(--muted);font-style:italic;margin-left:6px">(not in your items)</span>`;
+  };
   if(p.requires){
     const req = projects.find(x=>x.id===p.requires);
     if(req) depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
@@ -14787,6 +14816,8 @@ function renderItemPage(p){
            <button onclick="ipUnlinkRequires()" title="Remove link" style="background:none;border:none;color:var(--accent2);cursor:pointer;font-size:14px;padding:0 2px;line-height:1">✕</button>`
         : `<span style="font-size:11px;color:var(--muted);margin-left:auto">${p.parallel?'Parallel':'Sequential'}</span>`}
     </div>`);
+    else if(_relatedStubs[p.requires]) depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
+      <span style="font-size:10px;font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Depends On</span>${_relStub(p.requires)}</div>`);
   }
   if(p.parent){
     const par = projects.find(x=>x.id===p.parent);
@@ -14794,6 +14825,8 @@ function renderItemPage(p){
       <span style="font-size:10px;font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Parent</span>
       <button onclick="openItemPage(${par.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0">${esc(par.name)}</button>
     </div>`);
+    else if(_relatedStubs[p.parent]) depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
+      <span style="font-size:10px;font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Parent</span>${_relStub(p.parent)}</div>`);
   }
   // Children now render in their own Subtasks card (renderItemPageSubtasks).
   // Ignore conflicts pairs
@@ -16006,6 +16039,7 @@ async function boot(){
     statusIsTesting       = data.statusIsTesting       || {};
     statusIsBlocked       = data.statusIsBlocked       || {};
     statusIsOffFlow       = data.statusIsOffFlow       || {};
+    _relatedStubs = {}; (data.relatedStubs||[]).forEach(s=>{ _relatedStubs[s.id]=s; });
 
     // Seed capacity override cache from any overrides stored with /api/all boot
     // (full per-owner loading happens lazily when calendar is opened)
@@ -20846,7 +20880,7 @@ if ('serviceWorker' in navigator) {
         + '<div class="frz-board-zone" data-drop="'+escA(col.dropStatus)+'">'+cards+'</div>'
         + '</div>';
     }).join('');
-    if(!shown.length){ inner.innerHTML='<div style="padding:40px;color:var(--frz-text-muted);font-size:13px;text-align:center">No columns to show'+(_betaHideEmpty?' (empty columns hidden).':'.')+'</div>'; }
+    if(!shown.length){ inner.innerHTML='<div style="padding:40px;color:var(--frz-text-muted);font-size:13px;text-align:center">'+(_call('contributorEmptyMsg')||('No columns to show'+(_betaHideEmpty?' (empty columns hidden).':'.')))+'</div>'; }
     wireBetaKanbanDrag();
   }
   function wireBetaKanbanDrag(){
