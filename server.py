@@ -757,6 +757,19 @@ def init_team_db(team: str):
             username    TEXT NOT NULL,
             PRIMARY KEY(item_id, username)
         );
+        -- Phase B: explicit read-access grants. An insider (editor/admin) @mentions a
+        -- Contributor on an item outside their pod → a grant lets them open it (and the
+        -- notification link resolves). Records granted_by, so it is an act by SOMEONE ELSE
+        -- (never a self-grant; watching is deliberately NOT a grant source). Assignment
+        -- grants read via the item's `assignee` field, not this table.
+        CREATE TABLE IF NOT EXISTS item_access_grants (
+            item_id     INTEGER NOT NULL,
+            username    TEXT NOT NULL,
+            reason      TEXT NOT NULL DEFAULT 'mention',   -- 'mention' | 'assignment'
+            granted_by  TEXT,
+            created_at  TEXT,
+            PRIMARY KEY(item_id, username)
+        );
         -- Stage 6: per-user "viewed" trail (feeds the beta My Home → Recent merge).
         -- One row per (user, item); the timestamp is upserted on each open.
         CREATE TABLE IF NOT EXISTS recent_views (
@@ -1293,7 +1306,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.0.2"
+APP_VERSION = "5.1.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2884,6 +2897,16 @@ def get_all(auth: dict = Depends(require_auth)):
         # on edit; update_project 409s if the item changed since the client loaded it.
         p["updated_ts"] = r["updated_ts"]
         projects.append(p)
+    # PHASE B: scope the items array for Contributors to their read set (assignee/pod +
+    # grants). Config, statuses, types, developers/pods and the users list stay unfiltered
+    # (the client needs them to render; accepted as non-sensitive). Activities/notifications/
+    # watchers are filtered at their own endpoints. Admin/editor/viewer are unaffected.
+    if auth.get("role") == "contributor":
+        with db(team) as c:
+            pod = _pod_for_user(c, auth["username"])
+            grant_ids = _contributor_grant_ids(c, auth["username"])
+            projects = [p for p in projects
+                        if _contributor_in_scope(c, auth, p, pod) or p["id"] in grant_ids]
     cfg_map = {r["key"]: json.loads(r["value"]) for r in config_rows}
     def cfg(k):
         return cfg_map.get(k, [])
@@ -3197,15 +3220,79 @@ def _status_rank(status: str, all_statuses: list) -> int:
     except ValueError:
         return 999
 
-def _contributor_in_scope(c, auth: dict, item: dict) -> bool:
-    """True if `item` is in a Contributor's write scope: they are the assignee, or the
-    item's owner pod (`dev`) equals their `ownerFilter`. Consulted only for the
-    contributor role."""
+def _contributor_in_scope(c, auth: dict, item: dict, pod=None) -> bool:
+    """True if `item` is in a Contributor's scope: they are the assignee, or the item's
+    owner pod (`dev`) equals their `ownerFilter`. Consulted only for the contributor role.
+    Phase B reuses this for READ scope too (extended by grants - see _contributor_read_ok).
+    `pod` may be pre-resolved by a caller filtering a list (avoids a per-item config read);
+    when None it is looked up. CRITICAL: an empty `ownerFilter` (pod == '') means
+    assignee-ONLY - never "sees everything" (that is the editor semantic, not the
+    contributor one). `bool(pod)` enforces this in both the assignee and pod branches."""
     username = (auth.get("username") or "").strip()
     if username and item.get("assignee") == username:
         return True
-    pod = _pod_for_user(c, username)
+    if pod is None:
+        pod = _pod_for_user(c, username)
     return bool(pod) and item.get("dev") == pod
+
+# ── Contributor READ scope (Phase B) - read set = write scope + explicit grants ──
+def _contributor_grant_ids(c, username: str) -> set:
+    """Item ids a Contributor has been explicitly granted read access to (via a mention
+    by an insider). Never a self-grant - see item_access_grants."""
+    rows = c.execute("SELECT item_id FROM item_access_grants WHERE username=?", (username,)).fetchall()
+    return {r["item_id"] for r in rows}
+
+def _grant_item_access(team: str, item_id, usernames, reason: str, granted_by: str):
+    """Record read-access grants (best-effort, from the mention hooks). Idempotent per
+    (item, user); refreshes reason/granter. Written for ALL mentioned users (inert for
+    non-contributors) so a grant persists even if a user's role later becomes contributor."""
+    us = [u for u in dict.fromkeys(usernames or []) if u and u != granted_by]
+    if not item_id or not us:
+        return
+    ts = datetime.now(timezone.utc).isoformat()
+    with db(team) as c:
+        for u in us:
+            c.execute("INSERT INTO item_access_grants(item_id,username,reason,granted_by,created_at) "
+                      "VALUES(?,?,?,?,?) ON CONFLICT(item_id,username) DO UPDATE SET "
+                      "reason=excluded.reason, granted_by=excluded.granted_by", (item_id, u, reason, granted_by, ts))
+
+def _contributor_scope_sql(c, auth: dict):
+    """(sql_fragment, params) selecting a Contributor's readable items over the projects
+    INDEXED columns - the SQL projection of _contributor_in_scope + grants (one rule, two
+    forms: this for queries, the Python predicate for in-memory blobs). Empty pod =>
+    assignee-only (the owner branch is omitted entirely, never matches blank-owner items)."""
+    me = auth["username"]
+    pod = _pod_for_user(c, me)
+    frag = ["projects.assignee=?"]; params = [me]
+    if pod:
+        frag.append("projects.owner=?"); params.append(pod)
+    gids = _contributor_grant_ids(c, me)
+    if gids:
+        frag.append(f"projects.id IN ({','.join('?' * len(gids))})"); params.extend(gids)
+    return "(" + " OR ".join(frag) + ")", params
+
+def _contributor_readable_ids(c, auth: dict) -> set:
+    """The set of item ids a Contributor may read (assignee/pod scope + grants). Used to
+    filter row-bearing feeds (activities, notifications, watch/recent lists). Empty pod =>
+    assignee-only. Only call for role == 'contributor'."""
+    frag, params = _contributor_scope_sql(c, auth)
+    rows = c.execute(f"SELECT id FROM projects WHERE {frag}", params).fetchall()
+    return {r["id"] for r in rows}
+
+def require_item_read(auth: dict, team: str, pid: int):
+    """404 for a Contributor reading an out-of-scope item; admin/editor/viewer bypass.
+    Read set = write scope (assignee/pod) + grants. Uses 404 (not 403) so an out-of-scope
+    id is not confirmed to exist. Opens its own connection so read endpoints can call it
+    as a one-line guard before their own work."""
+    if auth.get("role") != "contributor":
+        return
+    with db(team) as c:
+        row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+        if row:
+            item = json.loads(row["data"])
+            if _contributor_in_scope(c, auth, item) or pid in _contributor_grant_ids(c, auth["username"]):
+                return
+    raise HTTPException(404, "Not found")
 
 def require_item_scope(c, auth: dict, item: dict):
     """Enforce Contributor per-item write scope. Admin/editor bypass. Raises 403 when a
@@ -3601,6 +3688,14 @@ def list_items(
     eq("owner", owner)
     eq("assignee", assignee)
     eq("sprint_id", sprint)
+
+    # PHASE B: a Contributor sees only their read set. Added to `where`, so it constrains
+    # BOTH the COUNT(*) (scoped total) and the page query - pagination can't report rows
+    # that do not exist for this user. Empty ownerFilter => assignee-only (never all).
+    if auth.get("role") == "contributor":
+        with db(team) as c:
+            _scope_frag, _scope_params = _contributor_scope_sql(c, auth)
+        where.append(_scope_frag); params.extend(_scope_params)
 
     # parent_id: an integer, or 'none'/'null' for top-level items.
     if parent_id not in (None, ""):
@@ -4361,6 +4456,7 @@ def add_attachment(pid: int, body: dict = Body(...),
 def list_attachments(pid: int, auth: dict = Depends(require_auth)):
     """List attachments, each with a short-lived presigned GET URL (orig name + type)."""
     team = auth["team"]
+    require_item_read(auth, team, pid)   # Phase B: the download URLs are gated on read scope
     with db(team) as c:
         p = _get_item_blob(c, pid)
     atts = p.get("attachments") or []
@@ -4478,6 +4574,7 @@ def _notify_item_update(team, pid, old, new, actor):
         if new_m:
             _add_watchers(team, pid, list(new_m))
             _notify(team, list(new_m), "mention", pid, name, f"{actor} mentioned you in {name or 'an item'}", actor)
+            _grant_item_access(team, pid, list(new_m), "mention", actor)   # Phase B: mention grants read access
 
 def _notify_on_comment(team, item_id, author, text, parent_id=None):
     if not item_id:
@@ -4488,6 +4585,7 @@ def _notify_on_comment(team, item_id, author, text, parent_id=None):
     _add_watchers(team, item_id, [author] + list(mentioned))   # commenter + mentioned auto-watch
     if mentioned:
         _notify(team, list(mentioned), "mention", item_id, name, f"{author} mentioned you in a comment", author)
+        _grant_item_access(team, item_id, list(mentioned), "mention", author)   # Phase B: mention grants read access
     # Stage 4: a reply notifies the parent comment's author (unless self / already mentioned).
     notified = set(mentioned)
     if parent_id is not None:
@@ -4567,6 +4665,14 @@ def list_notifications(auth: dict = Depends(require_auth)):
     with db(team) as c:
         rows = c.execute("SELECT * FROM notifications WHERE username=? ORDER BY id DESC LIMIT 100", (me,)).fetchall()
         unread = c.execute("SELECT COUNT(*) FROM notifications WHERE username=? AND read=0", (me,)).fetchone()[0]
+        # PHASE B: drop notifications naming items the Contributor can no longer read (stale
+        # rows from the Phase A window, or now out-of-scope) so no title leaks and no link
+        # 404s. item_id NULL = system-wide notice, kept. Do not delete - filter at read time.
+        if auth.get("role") == "contributor":
+            readable = _contributor_readable_ids(c, auth)
+            kept = [r for r in rows if r["item_id"] is None or r["item_id"] in readable]
+            unread = sum(1 for r in kept if not r["read"])
+            rows = kept
     return {"notifications": [dict(r) for r in rows], "unread": unread}
 
 @app.post("/api/notifications/read")
@@ -4582,11 +4688,13 @@ def mark_notifications_read(body: dict = Body({}), auth: dict = Depends(require_
 
 @app.get("/api/items/{pid}/watchers")
 def get_item_watchers(pid: int, auth: dict = Depends(require_auth)):
+    require_item_read(auth, auth["team"], pid)   # Phase B: 404 for a Contributor out of read scope
     w = _get_watchers(auth["team"], pid)
     return {"watchers": sorted(w), "watching": auth["username"] in w}
 
 @app.post("/api/items/{pid}/watch")
 def watch_item(pid: int, auth: dict = Depends(require_auth)):
+    require_item_read(auth, auth["team"], pid)   # Phase B: cannot watch what you cannot read
     _add_watchers(auth["team"], pid, [auth["username"]])
     return {"watching": True}
 
@@ -4624,7 +4732,13 @@ def my_watching(auth: dict = Depends(require_auth)):
         rows = c.execute(
             "SELECT w.item_id FROM watchers w JOIN projects p ON p.id=w.item_id "
             "WHERE w.username=? AND p.archived=0", (me,)).fetchall()
-    return {"items": [r["item_id"] for r in rows]}
+        ids = [r["item_id"] for r in rows]
+        # PHASE B: a Contributor's pre-existing watches on now-invisible items must not
+        # surface (and never granted read - see item_access_grants). Filter to read set.
+        if auth.get("role") == "contributor":
+            readable = _contributor_readable_ids(c, auth)
+            ids = [i for i in ids if i in readable]
+    return {"items": ids}
 
 @app.get("/api/my/recent")
 def my_recent(auth: dict = Depends(require_auth)):
@@ -4654,6 +4768,12 @@ def my_recent(auth: dict = Depends(require_auth)):
         _merge(r["item_id"], r["ts"], "worked")
     for r in viewed:
         _merge(r["item_id"], r["ts"], "viewed")
+    # PHASE B: a Contributor could have VIEWED any item during Phase A. Filter the merged
+    # trail to their read set so no out-of-scope item resurfaces in Recent.
+    if auth.get("role") == "contributor":
+        with db(team) as c:
+            readable = _contributor_readable_ids(c, auth)
+        merged = {i: v for i, v in merged.items() if i in readable}
     items = sorted(merged.values(), key=lambda x: x["lastTouched"] or "", reverse=True)[:50]
     return {"items": items}
 
@@ -4939,6 +5059,12 @@ def get_activities(auth: dict = Depends(require_auth)):
     team = auth["team"]
     with db(team) as c:
         rows = c.execute("SELECT * FROM activities ORDER BY id DESC LIMIT 500").fetchall()
+        # PHASE B: activity rows carry item_name/owner/project, so unscoped they leak titles
+        # of work a Contributor cannot see. Filter to their read set; rows with no item_id
+        # (system-wide notices) are kept - they name no specific item.
+        if auth.get("role") == "contributor":
+            readable = _contributor_readable_ids(c, auth)
+            rows = [r for r in rows if r["item_id"] is None or r["item_id"] in readable]
     return [dict(r) for r in rows]
 
 @app.post("/api/activities")
@@ -5158,6 +5284,22 @@ def test_jira_connection(auth: dict = Depends(require_role("admin"))):
 @app.get("/api/jira/issue/{key}")
 def get_jira_issue(key: str, auth: dict = Depends(require_auth)):
     """Fetch full Jira issue details for Item Page display."""
+    # PHASE B: a Contributor may only read a Jira key that is linked to an item in their
+    # read set - otherwise the roadmap's Jira proxy would let them enumerate any ticket.
+    if auth.get("role") == "contributor":
+        with db(auth["team"]) as c:
+            ids = _contributor_readable_ids(c, auth)
+            ok = False
+            if ids:
+                qm = ",".join("?" * len(ids))
+                for r in c.execute(f"SELECT data FROM projects WHERE id IN ({qm})", tuple(ids)).fetchall():
+                    try:
+                        if key in (json.loads(r["data"]).get("jiraTickets") or []):
+                            ok = True; break
+                    except Exception:
+                        pass
+            if not ok:
+                raise HTTPException(404, "Not found")
     if not jira_configured(): raise HTTPException(503, "Jira not configured")
     fields = "summary,status,issuetype,project,assignee,priority,description"
     data = _jira_req("GET", f"/rest/api/3/issue/{key}?fields={fields}")
@@ -5839,6 +5981,7 @@ def jira_pull_all(body: dict = Body({}), x_team: Optional[str] = Header(None),
 @app.get("/api/comments/{item_id}")
 def get_comments(item_id: int, auth: dict = Depends(require_auth)):
     team = auth["team"]
+    require_item_read(auth, team, item_id)   # Phase B: 404 for a Contributor out of read scope
     with db(team) as c:
         rows = c.execute("SELECT * FROM comments WHERE item_id=? ORDER BY id ASC", (item_id,)).fetchall()
     return [dict(r) for r in rows]
