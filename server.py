@@ -3172,6 +3172,12 @@ RECURRENCE_SKIP_KEYS = {
     "sprintId", "sprintHistory", "release", "releaseNumber", "releaseNotes",
     "deferred", "deferReason", "deferNote", "deferRevisit", "preBlockStatus",
     "externalRefs",   # AssetHub integration (PR1): a new occurrence is a new ticket, no link
+    # Stripped AND then explicitly re-set to the spawning parent's id in spawn_recurrence.
+    # Belt-and-suspenders on purpose: stripping removes the order dependency on that assignment
+    # landing immediately after the copy. If it were only inherited, a copy that survived an
+    # edit inserted before the overwrite would carry the GRANDPARENT id and silently break the
+    # recurrence chain with no error. Dropped here, the field is simply absent until re-set.
+    "recurrence_parent",
     # 5.4.4: Ship C measurement fields. Absent from this blocklist until now, so every
     # occurrence inherited the parent's timestamps. completedAt was the serious one -
     # _stamp_measurement_ts only ever SETS, never clears, so an inherited completedAt made the
@@ -3184,9 +3190,6 @@ RECURRENCE_SKIP_KEYS = {
 # new occurrence is a new ticket. NOTE: the two FLAGGED entries below were surfaced by the
 # invariant and are REPORTED for their own decisions, not silently accepted.
 RECURRENCE_INHERITED = {
-    # Not truly inherited: spawn_recurrence OVERWRITES this with the spawning parent's id right
-    # after the blocklist copy, so any copied value is immediately replaced.
-    "recurrence_parent",
     # Origin/identity of the recurring series: a spawned occurrence has no new human creator,
     # so it keeps who reported the series and where it came from (provenance).
     "reporter", "source",
@@ -7285,7 +7288,7 @@ def spawn_recurrence(pid: int, body: dict = Body({}), auth: dict = Depends(requi
     new_item["status"]             = default_status
     new_item["recurrence"]         = recurrence
     new_item["syncChildren"]       = p.get("syncChildren", False)
-    new_item["recurrence_parent"]  = pid
+    new_item["recurrence_parent"]  = pid   # stripped in RECURRENCE_SKIP_KEYS, so this is the sole source - order-independent
 
     with db(team) as c:
         _assign_item_key(c, new_item)   # fresh per-product key - never inherit the parent's (unique index)
