@@ -2154,7 +2154,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.4.5';
+const APP_VERSION = '5.5.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -18249,6 +18249,20 @@ if ('serviceWorker' in navigator) {
     content.appendChild(adminPage);
     var _adminBox = document.querySelector('#adminModalBg .admin-modal');
     if (_adminBox) adminPage.appendChild(_adminBox);   // move (not copy) - tab listeners are on the same nodes
+    // FLOW-0: admin-only AssetHub connection-health widget. Calls /api/assethub/health (one
+    // whoami per press - no background poll, no loop). Never shows the key. Server-gated to
+    // admins; this page is admin-only too.
+    var ahBox = document.createElement('div');
+    ahBox.id = 'frzAssetHubHealth';
+    ahBox.style.cssText = 'margin:16px auto;max-width:760px;border:1px solid var(--border);border-radius:10px;overflow:hidden';
+    ahBox.innerHTML =
+      '<div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between">'+
+        'AssetHub connection'+
+        '<button type="button" id="frzAhTest" style="height:28px;border:1px solid var(--frz-accent);background:var(--frz-accent);color:#fff;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;padding:0 12px">Test connection</button>'+
+      '</div>'+
+      '<div id="frzAhResult" style="padding:14px 16px;font-size:13px;color:var(--text)"><span style="color:var(--muted)">Not run yet.</span></div>';
+    adminPage.appendChild(ahBox);
+    ahBox.querySelector('#frzAhTest').addEventListener('click', _frzAssetHubHealthCheck);
     // Team Calendar (Phase 2): Flow-owned view, Month/Week/Timeline sub-tabs.
     var cal = document.createElement('div');
     cal.id = 'frzCalendar'; cal.style.display = 'none';
@@ -20162,6 +20176,29 @@ if ('serviceWorker' in navigator) {
   }
   // MAIN-COLUMN order - idempotent; safe to call after async injects (Attachments,
   // Sprint history) without disturbing the rail.
+  // FLOW-0: AssetHub connection-health surface (admin page). One call per explicit press.
+  function _frzAssetHubHealthCheck(){
+    var out = document.getElementById('frzAhResult'); if(!out) return;
+    out.innerHTML = '<span style="color:var(--muted)">Checking...</span>';
+    API.get('/api/assethub/health').then(function(r){ out.innerHTML = _frzAssetHubHealthHtml(r); })
+      .catch(function(e){ out.innerHTML = '<div style="color:#e8394a;font-weight:700">Could not run the check'+((e&&e.message)?': '+esc(String(e.message)):'')+'</div>'; });
+  }
+  function _frzAssetHubHealthHtml(r){
+    r = r||{};
+    function row(k,v){ return (v==null||v==='') ? '' : '<div style="display:flex;gap:12px;padding:2px 0"><span style="min-width:150px;color:var(--muted)">'+esc(k)+'</span><span style="font-weight:600">'+esc(String(v))+'</span></div>'; }
+    if(r.status==='not_configured') return '<span style="color:var(--muted)">Not configured'+(r.detail?' - '+esc(r.detail):'')+'.</span>';
+    if(r.status==='ok') return '<div style="color:#1f9d55;font-weight:800;margin-bottom:6px">Connected</div>'+
+      row('Connection', r.displayName)+row('Connection id', r.connectionId)+row('Provider', r.provider)+
+      row('Environment', r.providerEnvironment)+row('External team', r.externalTeamReference)+
+      row('AssetHub team', r.assethubTeam)+row('Scopes', (r.scopes||[]).join(', '))+
+      row('Credential id', r.credentialId)+row('Credential version', r.credentialVersion)+
+      row('Credential expires', r.credentialExpiresAt||'no expiry')+row('Correlation id', r.correlationId);
+    if(r.status==='identity_mismatch') return '<div style="color:#e8394a;font-weight:800;margin-bottom:6px">Identity mismatch - not proceeding to asset calls</div>'+
+      '<ul style="margin:0 0 6px 18px">'+(r.mismatches||[]).map(function(m){return '<li>'+esc(m)+'</li>';}).join('')+'</ul>'+
+      row('Connection id', r.connectionId)+row('Correlation id', r.correlationId);
+    return '<div style="color:#e8394a;font-weight:800;margin-bottom:6px">'+esc(r.message||('Error: '+(r.code||'unknown')))+'</div>'+
+      row('Error code', r.code)+row('Correlation id', r.correlationId);
+  }
   function _frzOrderMain(){
     var deps=document.getElementById('ipDepsCard'); if(!deps || !deps.parentElement) return;
     var leftCol=deps.parentElement;

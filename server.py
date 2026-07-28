@@ -176,6 +176,13 @@ JIRA_BASE  = os.environ.get("JIRA_BASE_URL", "https://freezingpointllc.atlassian
 JIRA_EMAIL = os.environ.get("JIRA_EMAIL", "")
 JIRA_TOKEN = os.environ.get("JIRA_API_TOKEN", "")
 
+# ── AssetHub config (FLOW-0) ────────────────────────────────────────────────────
+# The AssetHub read-only API base URL (single instance). The per-team CREDENTIAL is NOT here -
+# it lives in .env as ASSETHUB_API_KEY_<TEAM> and is read only inside the outbound client, so it
+# never reaches team config (which /api/all hands to every authed user, including Contributors).
+# Changing any ASSETHUB_* value in .env requires a service restart to take effect.
+ASSETHUB_BASE_URL = os.environ.get("ASSETHUB_BASE_URL", "").rstrip("/")
+
 def _jira_auth_header():
     return "Basic " + base64.b64encode(f"{JIRA_EMAIL}:{JIRA_TOKEN}".encode()).decode()
 
@@ -905,6 +912,14 @@ def init_team_db(team: str):
             # the connection determines the AssetHub team; a client-supplied team could only
             # broaden scope, which the contract forbids. Per-team here matches per-team there.
             "externalRequestCategories": {},
+            # AssetHub outbound connection MAPPING (FLOW-0), NOT the credential (that is in .env).
+            # Non-secret Flow-team -> AssetHub-team identity: {provider, providerEnvironment,
+            # externalTenantReference, externalTeamReference, assethubTeam, displayName}. Seeded
+            # EMPTY for every team - only the team that actually integrates (initially `it`) gets
+            # a value, set via the config API at enablement. The credential is per-team in .env
+            # (ASSETHUB_API_KEY_<TEAM>); the `assethubConfigured` flag is true only when BOTH a
+            # mapping and a credential are present.
+            "assethubConnection": {},
             # Team Calendar (Phase 1): assignment types (config-backed collection, like
             # boards - edited via /api/assignment-types, NOT the generic config route).
             "assignmentTypes": _DEFAULT_ASSIGNMENT_TYPES,
@@ -986,11 +1001,12 @@ def _migrate_config_keys(team: str):
         "assignmentTypes": _DEFAULT_ASSIGNMENT_TYPES,
         "maintenanceDutyTypeId": "",
         "externalRequestCategories": {},   # AssetHub integration (PR1): see init_team_db defaults for shape/rationale
+        "assethubConnection": {},          # AssetHub outbound mapping (FLOW-0): see init_team_db defaults; credential lives in .env
     }
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
     # an admin who deletes all types isn't re-seeded on next boot.)
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -1315,7 +1331,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.4.5"
+APP_VERSION = "5.5.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2994,6 +3010,12 @@ def get_all(auth: dict = Depends(require_auth)):
             "departmentMeta": cfg_map.get("departmentMeta", {}),
             "maintenanceDutyTypeId": cfg_map.get("maintenanceDutyTypeId", ""),
             "externalRequestCategories": cfg_map.get("externalRequestCategories", {}),   # AssetHub integration (PR1)
+            # AssetHub outbound (FLOW-0): the mapping is non-secret so it is safe to return; the
+            # CREDENTIAL is never here (it lives in .env, read only in the client). assethubConfigured
+            # is a server-DERIVED boolean - true iff BOTH a mapping and a per-team .env credential
+            # exist - and carries no token/base-URL/key fragment. FLOW-1 will gate asset display on it.
+            "assethubConnection": cfg_map.get("assethubConnection", {}),
+            "assethubConfigured": bool(cfg_map.get("assethubConnection")) and bool(_assethub_api_key(team)),
             # PHASE B2: minimal read-only stubs for out-of-scope items a Contributor's own items
             # reference (parent / requires). Empty for admin/editor/viewer.
             "relatedStubs": related_stubs}
@@ -4069,7 +4091,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow",
               "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains","departmentMeta","maintenanceDutyTypeId",
-              "externalRequestCategories"}
+              "externalRequestCategories","assethubConnection"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",
@@ -5451,6 +5473,292 @@ def _jira_req_multipart(path: str, filename: str, content_type: str, data: bytes
         raise HTTPException(e.code, msg)
     except URLError as e:
         raise HTTPException(503, str(e.reason))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AssetHub outbound client (FLOW-0)
+# ══════════════════════════════════════════════════════════════════════════════
+# The SINGLE path for every AssetHub call. Do not scatter urllib/fetch across endpoints.
+# Contract: docs/openapi-v1-foundation-contract.md v1.1 (authoritative for external behavior).
+#
+# Enforceable request limiting is WAIVED for this first-party single-client read-only phase,
+# so the bounds below (bounded retry count, exponential backoff with jitter, no-retry on
+# terminal statuses, NO background/timer calls, and the Part-7 fan-out prohibition) ARE the
+# mitigation for a runaway first-party client, not hygiene. Treat them as load-bearing.
+import random as _random
+
+_ASSETHUB_TIMEOUT       = 10          # seconds, per request (Part 3.1)
+_ASSETHUB_MAX_RETRIES   = 2           # retries AFTER the first attempt -> at most 3 attempts total (bounded)
+_ASSETHUB_BACKOFF_BASE  = 0.5         # seconds
+_ASSETHUB_BACKOFF_CAP   = 8.0         # seconds
+# Terminal HTTP statuses: never retried unchanged (Part 3.2 / contract 14.2). A 401 after a
+# rotation means the key was retired/revoked, not a transient failure - surfaced, not retried.
+_ASSETHUB_NO_RETRY = frozenset({401, 403, 404, 405, 422})
+_ASSETHUB_RETRY    = frozenset({500, 502, 503})
+
+_ASSETHUB_PLAIN = {
+    "not_configured":        "No AssetHub credential/mapping configured for this team.",
+    "invalid_credential":    "The credential was rejected (invalid, expired, retired, or revoked).",
+    "connection_inactive":   "The AssetHub connection is not active.",
+    "missing_scope":         "The credential is missing a required scope.",
+    "not_found":             "Endpoint not found (check the base URL and path).",
+    "method_not_allowed":    "That method is not allowed for this endpoint.",
+    "validation_error":      "The request was rejected as invalid.",
+    "unreachable":           "AssetHub could not be reached (network error or timeout).",
+    "bad_response":          "AssetHub returned an unreadable response.",
+    "contributor_forbidden": "Contributors cannot originate an AssetHub call.",
+    "internal_error":        "AssetHub reported an internal error.",
+}
+def _assethub_plain(code: str) -> str:
+    return _ASSETHUB_PLAIN.get(code, f"Unexpected error ({code}).")
+
+def _assethub_api_key(team: str) -> str:
+    """Per-team AssetHub credential from .env: ASSETHUB_API_KEY_<TEAM> (slug uppercased,
+    non-alphanumerics stripped). Absent = the team simply has no AssetHub integration - a
+    NORMAL, non-error condition, not a failure. Rotation = replace the .env value + restart the
+    service; no code change. NEVER read into team config (which /api/all returns to every authed
+    user, Contributors included) - only the outbound client reads it, and it is never logged."""
+    slug = re.sub(r"[^A-Za-z0-9]", "", (team or "")).upper()
+    return os.environ.get("ASSETHUB_API_KEY_" + slug, "").strip() if slug else ""
+
+def _assethub_correlation_id() -> str:
+    """A fresh X-Correlation-ID per request. uuid4 hex is 32 chars, all within the contract's
+    charset [A-Za-z0-9._:-] and well under the 128 limit."""
+    return _uuid.uuid4().hex
+
+def _assethub_backoff_delay(attempt: int, rand=None) -> float:
+    """Exponential backoff WITH jitter (never fixed-interval). `attempt` is the 1-based retry
+    index. rand is injectable for tests."""
+    r = (rand or _random.random)()
+    step = min(_ASSETHUB_BACKOFF_CAP, _ASSETHUB_BACKOFF_BASE * (2 ** (attempt - 1)))
+    return step + r * _ASSETHUB_BACKOFF_BASE   # jitter in [0, base) added on top of the step
+
+def _assethub_ci_get(headers, name):
+    """Case-insensitive header lookup that works for both an http.client message (real) and a
+    plain dict (test transport)."""
+    if not headers:
+        return None
+    getter = getattr(headers, "get", None)
+    if getter:
+        v = getter(name)
+        if v is not None:
+            return v
+    try:
+        items = headers.items()
+    except Exception:
+        return None
+    low = name.lower()
+    for k, v in items:
+        if str(k).lower() == low:
+            return v
+    return None
+
+class AssetHubError(Exception):
+    """A surfaced AssetHub failure. Carries the contract error CODE (the stable interface),
+    the HTTP status when there was one, and the correlation id for cross-system tracing.
+    Never carries the key or the Authorization header."""
+    def __init__(self, code, message="", *, status=None, correlation_id=None, retryable=False):
+        super().__init__(message or code)
+        self.code = code
+        self.message = message or code
+        self.status = status
+        self.correlation_id = correlation_id
+        self.retryable = retryable
+
+class AssetHubClient:
+    """Single outbound path to AssetHub. Bounded, no background/timer use, one call per explicit
+    action (no fan-out - see Part 7). Refuses any Contributor-initiated call at this one entry
+    point so a forgetful caller cannot bypass the gate (Part 6)."""
+    def __init__(self, team, role, *, base_url=None, api_key=None, transport=None, sleep=None):
+        self.team = team
+        self.role = (role or "").lower()
+        self.base_url = (ASSETHUB_BASE_URL if base_url is None else base_url).rstrip("/")
+        self._key = _assethub_api_key(team) if api_key is None else api_key
+        self._transport = transport            # test seam: (method, url, headers) -> (status, body_bytes, headers)
+        self._sleep = sleep or time.sleep
+
+    def whoami(self):
+        return self._request("GET", "/api/v1/whoami")
+
+    def get(self, path, params=None):
+        return self._request("GET", path, params=params)
+
+    # ── internals ──
+    def _require_allowed_actor(self):
+        # Part 6: Contributors are external contractors and must NEVER originate an AssetHub call.
+        # Role check on the outbound path itself; the field-subset check elsewhere is a second layer.
+        if self.role == "contributor":
+            raise AssetHubError("contributor_forbidden", _assethub_plain("contributor_forbidden"))
+
+    def _build_url(self, path, params):
+        # Exact path, NO trailing slash (AssetHub disables slash redirects -> 404, not a 3xx).
+        url = self.base_url + path
+        if params:
+            # scalar params, once each, sorted (contract B.5 rejects repeats / multi-value)
+            url += "?" + "&".join(f"{_urlq(str(k))}={_urlq(str(v))}"
+                                  for k, v in sorted(params.items()) if v is not None)
+        return url
+
+    def _perform(self, method, url, headers):
+        if self._transport is not None:
+            return self._transport(method, url, headers)
+        req = Request(url, headers=headers, method=method)   # Authorization set by caller; no body this sprint
+        try:
+            with urlopen(req, timeout=_ASSETHUB_TIMEOUT) as r:
+                return r.status, r.read(), r.headers
+        except HTTPError as e:
+            return e.code, (e.read() or b""), (e.headers or {})   # 4xx/5xx carry the JSON error envelope
+
+    def _request(self, method, path, params=None):
+        self._require_allowed_actor()
+        if not self._key or not self.base_url:
+            # Not an error condition - the team simply has no AssetHub integration.
+            raise AssetHubError("not_configured", _assethub_plain("not_configured"))
+        url = self._build_url(path, params)
+        attempt = 0
+        while True:
+            corr = _assethub_correlation_id()
+            headers = {
+                "Authorization":   "Bearer " + self._key,   # ONLY the bearer header - never query/cookie/custom
+                "Accept":          "application/json",
+                "X-Correlation-ID": corr,
+            }
+            try:
+                status, body, resp_headers = self._perform(method, url, headers)
+            except (URLError, TimeoutError, OSError) as e:
+                # transport failure / timeout: surfaced rather than hung; retry within the bound
+                if attempt >= _ASSETHUB_MAX_RETRIES:
+                    log.warning(f"[AssetHub] {method} {path} unreachable corr={corr} ({type(e).__name__})")
+                    raise AssetHubError("unreachable", _assethub_plain("unreachable"), retryable=True) from None
+                attempt += 1
+                self._sleep(_assethub_backoff_delay(attempt))
+                continue
+            echoed = _assethub_ci_get(resp_headers, "X-Correlation-ID") or corr
+            log.info(f"[AssetHub] {method} {path} -> {status} corr={echoed}")   # correlation id logged; key NEVER logged
+            if 200 <= status < 300:
+                return self._parse_success(body, echoed)
+            err = self._parse_error(body, status, echoed)
+            if status in _ASSETHUB_NO_RETRY:
+                raise err                                     # terminal - never retry unchanged
+            if status in _ASSETHUB_RETRY and attempt < _ASSETHUB_MAX_RETRIES:
+                attempt += 1
+                ra = self._retry_after(resp_headers)          # honor Retry-After if a future edge control supplies it
+                self._sleep(ra if ra is not None else _assethub_backoff_delay(attempt))
+                continue
+            raise err
+
+    def _retry_after(self, headers):
+        v = _assethub_ci_get(headers, "Retry-After")
+        try:
+            return max(0.0, float(str(v).strip())) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _parse_success(self, body, corr):
+        try:
+            payload = json.loads(body or b"{}")
+        except Exception:
+            raise AssetHubError("bad_response", _assethub_plain("bad_response"), correlation_id=corr)
+        # data + correlation_id (+ page/links on collections) are SIBLINGS, never nested.
+        # Unrecognized top-level fields are tolerated (contract permits additive changes).
+        return {
+            "data":           payload.get("data") if isinstance(payload, dict) else None,
+            "correlation_id": (payload.get("correlation_id") if isinstance(payload, dict) else None) or corr,
+            "page":           payload.get("page") if isinstance(payload, dict) else None,
+            "links":          payload.get("links") if isinstance(payload, dict) else None,
+        }
+
+    def _parse_error(self, body, status, corr):
+        code = None; message = ""; retryable = False; env_corr = None
+        try:
+            payload = json.loads(body or b"{}")
+            if isinstance(payload, dict):
+                err = payload.get("error") or {}
+                code = err.get("code"); message = err.get("message") or ""
+                retryable = bool(payload.get("retryable"))
+                env_corr = payload.get("correlation_id")
+        except Exception:
+            pass
+        if not code:
+            # No/decoded envelope: derive a generic code from the status (contract 13.5). An
+            # UNRECOGNIZED envelope code is kept verbatim and degrades gracefully upstream.
+            code = {401: "invalid_credential", 403: "connection_inactive", 404: "not_found",
+                    405: "method_not_allowed", 422: "validation_error", 500: "internal_error"}.get(status)
+            if not code:
+                code = "client_error" if 400 <= status < 500 else "internal_error"
+        return AssetHubError(code, message or _assethub_plain(code), status=status,
+                             correlation_id=env_corr or corr, retryable=retryable)
+
+def _assethub_validate_whoami(data, team, mapping):
+    """Validate the whoami payload (contract Section 11.4) against the configured mapping
+    (FLOW-0 Part 4). Returns (ok, mismatches, info). On ANY mismatch the caller STOPS: it does
+    not proceed to asset calls and does not retry - a mismatch means the credential is pointed at
+    the wrong connection/team, exactly the runaway the waiver cannot absorb."""
+    d = data or {}
+    conn = d.get("connection") or {}
+    team_obj = d.get("team") or {}
+    cred = d.get("credential") or {}
+    scopes = d.get("scopes") or []
+    env = mapping.get("providerEnvironment") or ""
+    ahteam = mapping.get("assethubTeam") or ""
+    checks = [
+        ("connection.provider",                   conn.get("provider"),                    "flow"),
+        ("connection.provider_environment",       conn.get("provider_environment"),        env),
+        ("connection.external_tenant_reference",  conn.get("external_tenant_reference"),   "default"),
+        ("connection.external_team_reference",    conn.get("external_team_reference"),     team),
+        ("team.name",                             team_obj.get("name"),                    ahteam),
+    ]
+    mism = [f"{name}: expected {exp!r}, got {got!r}" for name, got, exp in checks if got != exp]
+    for req_scope in ("identity.read", "assets.read"):
+        if req_scope not in scopes:
+            mism.append(f"scopes: missing {req_scope!r}")
+    info = {
+        "connectionId":        conn.get("id"),          # immutable public id - record for support
+        "credentialExpiresAt": cred.get("expires_at"),  # informational; agnostic to null vs a timestamp
+    }
+    return (not mism), mism, info
+
+@app.get("/api/assethub/health")
+def assethub_health(auth: dict = Depends(require_role("admin"))):
+    """Admin-visible connection-health check: calls whoami once and reports the result in plain
+    language. Never displays the key or any fragment of it. A team with no credential/mapping
+    reads 'not configured' rather than an error. This is one whoami call per explicit press -
+    no loop, no background poll."""
+    team = auth["team"]
+    mapping = _cfg_val(team, "assethubConnection", {}) or {}
+    key_present = bool(_assethub_api_key(team))
+    if not mapping or not key_present:
+        return {"status": "not_configured",
+                "detail": ("no AssetHub mapping configured for this team" if not mapping
+                           else "no AssetHub credential configured for this team")}
+    client = AssetHubClient(team, auth.get("role"))
+    try:
+        res = client.whoami()
+    except AssetHubError as e:
+        return {"status": "error", "code": e.code, "message": _assethub_plain(e.code),
+                "correlationId": e.correlation_id}
+    d = res.get("data") or {}
+    ok, mism, info = _assethub_validate_whoami(d, team, mapping)
+    conn = d.get("connection") or {}
+    cred = d.get("credential") or {}
+    if not ok:
+        # Stop - do not proceed to asset calls (Part 4). Surface what did not match.
+        return {"status": "identity_mismatch", "mismatches": mism,
+                "connectionId": conn.get("id"), "correlationId": res.get("correlation_id")}
+    return {
+        "status":               "ok",
+        "connectionId":         conn.get("id"),
+        "displayName":          conn.get("display_name"),
+        "provider":             conn.get("provider"),
+        "providerEnvironment":  conn.get("provider_environment"),
+        "externalTeamReference": conn.get("external_team_reference"),
+        "assethubTeam":         (d.get("team") or {}).get("name"),
+        "scopes":               d.get("scopes") or [],
+        "credentialId":         cred.get("id"),
+        "credentialVersion":    cred.get("version"),
+        "credentialExpiresAt":  cred.get("expires_at"),
+        "correlationId":        res.get("correlation_id"),
+    }
 
 def _get_all_jira_tickets(team: str) -> dict:
     """Return {ticket_key: item_id} for all items with jiraTickets."""
