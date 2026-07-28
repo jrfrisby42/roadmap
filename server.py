@@ -1315,7 +1315,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.4.4"
+APP_VERSION = "5.4.5"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3088,6 +3088,49 @@ def _reindex_project(c, pid: int, data: dict, ts: str = None):
     c.execute(f"UPDATE projects SET {assignments} WHERE id=?", (*cols.values(), pid))
     _fts_sync(c, pid, data)
 
+def _team_from_conn(c) -> str:
+    """Best-effort team slug from the connection's DB file path
+    (/.../tenants/{team}/roadmap.db) - used only in log messages."""
+    try:
+        for r in c.execute("PRAGMA database_list").fetchall():
+            if r["name"] == "main" and r["file"]:
+                return os.path.basename(os.path.dirname(r["file"])) or "?"
+    except Exception:
+        pass
+    return "?"
+
+def _resolve_default_status(c) -> str:
+    """Default status for a NEW item, resolved through the statusIsDefault flag map - NEVER a
+    hardcoded status name (spawn_recurrence once hardcoded one and broke on teams whose
+    statuses differed). Config-edge ladder, defensive because 'exactly one default' is enforced
+    only in the admin status editor:
+      1. exactly one flagged -> use it
+      2. several flagged     -> first in `statuses` order, warn (do not fail the create)
+      3. none flagged        -> first in `statuses`, warn
+      4. `statuses` empty    -> fail the create; a broken team config has no sane default, and
+                                storing a status-less item is the exact defect this prevents."""
+    def _cfg(key, dflt):
+        row = c.execute("SELECT value FROM config WHERE key=?", (key,)).fetchone()
+        try:
+            return json.loads(row["value"]) if row else dflt
+        except Exception:
+            return dflt
+    statuses = _cfg("statuses", []) or []
+    if not statuses:
+        raise HTTPException(500, "Team has no statuses configured - cannot assign a default "
+                                 "status. Set up statuses in Admin -> Statuses first.")
+    default_map = _cfg("statusIsDefault", {}) or {}
+    flagged = [s for s in statuses if default_map.get(s)]   # kept in `statuses` order
+    if len(flagged) == 1:
+        return flagged[0]
+    if len(flagged) > 1:
+        log.warning(f"[Status] team {_team_from_conn(c)!r}: multiple statusIsDefault flags "
+                    f"{flagged!r}; using {flagged[0]!r} (first in statuses order).")
+        return flagged[0]
+    log.warning(f"[Status] team {_team_from_conn(c)!r}: no valid statusIsDefault flag; "
+                f"falling back to first status {statuses[0]!r}.")
+    return statuses[0]
+
 def _insert_project(c, data: dict, ts: str = None) -> int:
     """INSERT an item and populate its indexed columns. Returns the new id."""
     # C1 (5.3.0): stamp createdAt at the SINGLE creation chokepoint so every creation path
@@ -3097,6 +3140,15 @@ def _insert_project(c, data: dict, ts: str = None) -> int:
     # portal's) is preserved. Forward-only: existing rows are never touched.
     if not data.get("createdAt"):
         data["createdAt"] = datetime.now(timezone.utc).isoformat()
+    # Default status at the SINGLE creation chokepoint (mirrors the createdAt pattern above),
+    # set ONLY when absent so any path that legitimately supplies a status - the client edit
+    # modal, Jira status mapping in sync-children, admin import, a planning commit - is never
+    # overridden. Empty string / whitespace-only counts as absent. Config-resolved through the
+    # statusIsDefault flag map, NEVER a literal (see _resolve_default_status for the cardinality
+    # ladder). Fixes create_project having no server-side default; also covers bulk_import and
+    # any future programmatic path (intake, AssetHub) at one place instead of per endpoint.
+    if not (data.get("status") or "").strip():
+        data["status"] = _resolve_default_status(c)
     cur = c.execute("INSERT INTO projects(data) VALUES(?)", (json.dumps(data),))
     pid = cur.lastrowid
     _reindex_project(c, pid, data, ts)
