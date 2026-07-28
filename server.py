@@ -897,6 +897,14 @@ def init_team_db(team: str):
             "intakeProjectEmails": {},  # optional per-project notify override {product: email}; falls back to intakeNotifyEmail
             "intakeDomains": [],   # allowed reporter email domains (empty = allow any)
             "departmentMeta": {},  # per-department {name: {color, emails}} - pill color + notify list
+            # AssetHub integration (contract-independent plumbing, PR1): the curated set
+            # of external-system categories a Flow-originated request may target, keyed by
+            # system: {"assethub": [{"id": <opaque>, "label": str}]}. The `id` is whatever
+            # AssetHub exposes as the category's stable external identifier (code or public
+            # id - format still open, so seeded EMPTY, never invented here). No `team` field:
+            # the connection determines the AssetHub team; a client-supplied team could only
+            # broaden scope, which the contract forbids. Per-team here matches per-team there.
+            "externalRequestCategories": {},
             # Team Calendar (Phase 1): assignment types (config-backed collection, like
             # boards - edited via /api/assignment-types, NOT the generic config route).
             "assignmentTypes": _DEFAULT_ASSIGNMENT_TYPES,
@@ -977,11 +985,12 @@ def _migrate_config_keys(team: str):
         "departmentMeta": {},
         "assignmentTypes": _DEFAULT_ASSIGNMENT_TYPES,
         "maintenanceDutyTypeId": "",
+        "externalRequestCategories": {},   # AssetHub integration (PR1): see init_team_db defaults for shape/rationale
     }
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
     # an admin who deletes all types isn't re-seeded on next boot.)
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -1306,7 +1315,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.4.2"
+APP_VERSION = "5.4.3"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1710,6 +1719,11 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     def_map = _cfg_val(team, "statusIsDefault", {}) or {}
     default_status = next((s for s, v in def_map.items() if v), "") \
         or ((_cfg_val(team, "statuses", []) or ["New"])[0])
+    # NOTE (AssetHub integration): this blob is built field-by-field from named, validated
+    # inputs and never merges the request body wholesale, so an anonymous submitter cannot
+    # seed a server-owned field (e.g. externalRefs) here. This is the ONE untrusted creation
+    # path, so its safety is by construction, not by the create_project strip. Do not switch
+    # this to a body spread.
     item = {
         "name": title, "description": desc, "type": ttype or "",
         "priority": prio, "product": product, "departments": departments,
@@ -2979,6 +2993,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "intakeDomains": cfg_map.get("intakeDomains", []),
             "departmentMeta": cfg_map.get("departmentMeta", {}),
             "maintenanceDutyTypeId": cfg_map.get("maintenanceDutyTypeId", ""),
+            "externalRequestCategories": cfg_map.get("externalRequestCategories", {}),   # AssetHub integration (PR1)
             # PHASE B2: minimal read-only stubs for out-of-scope items a Contributor's own items
             # reference (parent / requires). Empty for admin/editor/viewer.
             "relatedStubs": related_stubs}
@@ -3102,6 +3117,29 @@ def _stamp_measurement_ts(old: dict, merged: dict, terminal_map: dict, now_iso: 
         merged["completedAt"] = now_iso
     if merged.get("assignee") and not (old.get("assignee") or "") and not merged.get("firstResponseAt"):
         merged["firstResponseAt"] = now_iso
+
+def _append_external_ref(item: dict, entry: dict) -> dict:
+    """SINGLE mutation path for the server-owned `externalRefs` link list (AssetHub etc.).
+
+    `externalRefs` is server-owned in BOTH flavors this codebase uses, and both must go
+    through here so they cannot diverge:
+      1. Set by a dedicated endpoint (attachment style): the future technician-initiated
+         request-creation action reads the blob, calls this, and _save_project()s directly.
+         It CANNOT route through update_project's body - the force-restore loop there pops
+         externalRefs from any client body and restores `old`, so a PUT can neither forge
+         nor set it.
+      2. Computed inside update_project (measurement-timestamp style, see _stamp_measurement_ts):
+         a later in-request hook (e.g. service-event-on-close) must call this AFTER the
+         server-owned force-restore loop and BEFORE _save_project, exactly where the
+         timestamp stamp runs, or the append is clobbered by the restore pass.
+
+    Nothing in PR1 calls this - `externalRefs` is inert until a later PR populates it.
+    Entry shape (only id/number/url may be absent, and only on a non-'linked' status):
+      {system, kind, id?, number?, url?, status, at[, operationRef]}."""
+    if not isinstance(item.get("externalRefs"), list):
+        item["externalRefs"] = []
+    item["externalRefs"].append(entry)
+    return item
 
 def _save_project(c, pid: int, data: dict, ts: str = None):
     """UPDATE an item's blob AND its indexed columns together (no drift)."""
@@ -3446,6 +3484,15 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
         body["parallelResources"] = round_up_to_quarter(body["parallelResources"])
     if "departments" in body:
         body["departments"] = _normalize_departments(body.get("departments"))
+    # externalRefs is server-owned (AssetHub integration): a client may NEVER seed it on
+    # create - only a server-side hook sets it, via _append_external_ref. Strip it BEFORE
+    # the insert so the stored blob AND the returned body are clean. (The other creation
+    # paths are safe without this: intake_submit builds its blob field-by-field from named
+    # inputs - verified, and it is the only untrusted creator; recurrence spawn strips it via
+    # skip_keys; _do_sync_children builds children field-by-field. create_project is the one
+    # path that inserts a raw client body wholesale, so the strip lives here, not in the
+    # shared _insert_project chokepoint that trusted server builders also use.)
+    body.pop("externalRefs", None)
     with db(team) as c:
         _bucket_item_owner(c, body)   # owner bucketing: fill a blank owner from the assignee's pod
         _assign_item_key(c, body)
@@ -3589,10 +3636,18 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
         # Force each back from the stored blob regardless of what the client sent.
         # (Manually-editable fields - jiraTickets, featureFlags, release, sprintId,
         # assignee, archived, deferred, storyPoints, rank, parent/requires - are NOT here.)
+        # externalRefs (AssetHub integration): server-owned link list. A client PUT can
+        # neither forge nor wipe it - it is popped from the client body and restored from
+        # old here. NOTE the two-flavor ownership (see _append_external_ref): the eventual
+        # technician request-creation action sets it from a DEDICATED endpoint (read blob,
+        # append, _save_project - never through this PUT); any in-request hook that appends
+        # it (e.g. service-event-on-close) must run AFTER this loop, like _stamp_measurement_ts
+        # below, or the restore here clobbers the append.
         for _srv in ("reporter", "reporterEmail", "source", "createdAt", "sprintHistory",
                      "jiraLastKnownStatus", "jiraSyncSkipped", "jiraFeatureFlags",
                      "recurrence_parent", "hubspotId",
-                     "completedAt", "firstResponseAt"):   # C1: derived measurement fields - server-owned, client cannot forge/clear
+                     "completedAt", "firstResponseAt",   # C1: derived measurement fields - server-owned, client cannot forge/clear
+                     "externalRefs"):                    # AssetHub integration (PR1) - server-owned, client cannot forge/clear
             if _srv in old:
                 merged[_srv] = old[_srv]
             else:
@@ -3900,7 +3955,8 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow",
-              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains","departmentMeta","maintenanceDutyTypeId"}
+              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains","departmentMeta","maintenanceDutyTypeId",
+              "externalRequestCategories"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",
@@ -4847,6 +4903,11 @@ def bulk_import(body: dict = Body(...), auth: dict = Depends(require_role("admin
         c.execute("DELETE FROM projects")
         for p in body.get("projects", []):
             p.pop("id", None)
+            # externalRefs (AssetHub integration) intentionally ROUND-TRIPS through
+            # export/import: this is admin-trusted JSON (destructive reload), a data-
+            # management path, not a client forgery surface. Blobs insert verbatim, so an
+            # export that carried integration links restores them - dropping them would make
+            # linked items look unlinked after a restore. No strip here, by decision.
             _insert_project(c, p)
     for key in VALID_KEYS:
         if key in body and body[key]:
@@ -7155,11 +7216,17 @@ def spawn_recurrence(pid: int, body: dict = Body({}), auth: dict = Depends(requi
     # below. Also strip instance-specific / hazardous fields: attachments (their S3
     # keys embed the OLD pid - a shared object would break both items on delete),
     # sprint + release membership, and planning-session outcomes.
+    # externalRefs (AssetHub integration): a new occurrence is a NEW ticket and must NOT
+    # inherit the parent's AssetHub link. This spawn is a BLOCKLIST COPY of the parent blob
+    # (below), so unlike the field-by-field creators it is NOT safe by omission - externalRefs
+    # would be copied unless it is in skip_keys. (Any future handoff hook must likewise
+    # early-return on a spawned/hidden/archived item.)
     skip_keys = {"id","itemKey","status","delay","revised","expected","releaseDate",
                  "jiraTickets","jiraCache","jiraLastSync","jiraLastKnownStatus",
                  "jiraSyncSkipped","jiraFeatureFlags","revokedAt","attachments",
                  "sprintId","sprintHistory","release","releaseNumber","releaseNotes",
-                 "deferred","deferReason","deferNote","deferRevisit","preBlockStatus"}
+                 "deferred","deferReason","deferNote","deferRevisit","preBlockStatus",
+                 "externalRefs"}
     new_item = {k: v for k, v in p.items() if k not in skip_keys}
     new_item["start"]              = new_start_str
     new_item["due"]                = new_due
