@@ -427,6 +427,13 @@ Pushing notes to Jira goes through `PUT /api/jira/issue/{key}` with `{ fields: {
 4. If the rule is "exactly one true" (like Default/Deferred/Released), enforce it in the admin status editor and on save.
 5. Use the flag map everywhere, never the literal status name.
 
+### Registration lists (keep in sync when adding a view or an item field)
+
+Some behaviors are driven by lists that must be updated together, and the trap is that they do not all have the same default. Two kinds:
+
+- **Allowlists (default = EXCLUDE).** Forgetting one means a thing silently does not appear / is not handled. Adding a **view** touches several: `IC` (icons), `CFG`, `VIEW_LABEL`, the rail entry, the route regex + `setView` dispatch + self-render exclusions in `navigate`/`routeFromLocation`/`popstate`, the view hide-lists, and the **`#frzContent` re-parent list** (a static `<body>`-child view container that is not re-parented paints *behind* the shell - see the Reports 5.4.2 fix). Adding a **config key** touches the five sites in "Add a new config key" above. Adding an **item-page card** touches `_frzOrderMain`.
+- **Blocklists (default = INHERIT/INCLUDE) - the dangerous kind.** `spawn_recurrence`'s **`RECURRENCE_SKIP_KEYS`** (server.py) drops fields when copying a parent blob into a new occurrence; anything *not* listed is silently carried into every recurrence child. This is the opposite default from `update_project`'s **`SERVER_OWNED_FIELDS`** force-restore allowlist, and the two lived far apart, which is how Ship C's measurement timestamps ended up in one but not the other (fixed 5.4.4). A new **server-owned item field** must be decided for BOTH: added to `SERVER_OWNED_FIELDS` (so a client PUT can't forge/wipe it) AND either dropped in `RECURRENCE_SKIP_KEYS` or justified on `RECURRENCE_INHERITED`. The `test_recurrence_inheritance` invariant enforces exactly this, so the omission fails a test instead of shipping.
+
 ### Modify items (server-side)
 
 Items are JSON blobs in `projects.data`. The pattern is always:

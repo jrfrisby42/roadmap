@@ -1315,7 +1315,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.4.3"
+APP_VERSION = "5.4.4"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3141,6 +3141,71 @@ def _append_external_ref(item: dict, entry: dict) -> dict:
     item["externalRefs"].append(entry)
     return item
 
+# ── Server-owned fields <-> recurrence inheritance (invariant: test_recurrence_inheritance) ──
+# These two sets have OPPOSITE defaults and historically lived ~3,600 lines apart in two
+# different functions, which is how Ship C's measurement fields landed in one but not the
+# other. They are lifted to module scope so a single invariant test can hold them in agreement.
+#
+#   SERVER_OWNED_FIELDS  - update_project force-RESTORES these from the stored blob, so a
+#                          client PUT can neither forge nor wipe them. ALLOWLIST: default is
+#                          the client's value is DROPPED.
+#   RECURRENCE_SKIP_KEYS - spawn_recurrence DROPS these when copying the parent blob into a new
+#                          occurrence. BLOCKLIST: default is the parent's value is INHERITED.
+#                          This is the dangerous default - a field forgotten here is silently
+#                          carried into every recurrence child.
+#   RECURRENCE_INHERITED - server-owned fields DELIBERATELY not stripped on spawn. Every
+#                          SERVER_OWNED_FIELDS member must be in RECURRENCE_SKIP_KEYS or here;
+#                          the invariant test enforces it, so the next person adding a
+#                          server-owned field is forced to make the drop-or-inherit decision.
+SERVER_OWNED_FIELDS = ("reporter", "reporterEmail", "source", "createdAt", "sprintHistory",
+                       "jiraLastKnownStatus", "jiraSyncSkipped", "jiraFeatureFlags",
+                       "recurrence_parent", "hubspotId",
+                       "completedAt", "firstResponseAt",
+                       "externalRefs")
+
+RECURRENCE_SKIP_KEYS = {
+    # instance-specific / per-cycle fields a new occurrence starts fresh (incl. itemKey, which
+    # MUST be stripped: inheriting the parent's key trips the unique item_key index -> 500)
+    "id", "itemKey", "status", "delay", "revised", "expected", "releaseDate",
+    "jiraTickets", "jiraCache", "jiraLastSync", "jiraLastKnownStatus",
+    "jiraSyncSkipped", "jiraFeatureFlags", "revokedAt", "attachments",
+    "sprintId", "sprintHistory", "release", "releaseNumber", "releaseNotes",
+    "deferred", "deferReason", "deferNote", "deferRevisit", "preBlockStatus",
+    "externalRefs",   # AssetHub integration (PR1): a new occurrence is a new ticket, no link
+    # Stripped AND then explicitly re-set to the spawning parent's id in spawn_recurrence.
+    # Belt-and-suspenders on purpose: stripping removes the order dependency on that assignment
+    # landing immediately after the copy. If it were only inherited, a copy that survived an
+    # edit inserted before the overwrite would carry the GRANDPARENT id and silently break the
+    # recurrence chain with no error. Dropped here, the field is simply absent until re-set.
+    "recurrence_parent",
+    # 5.4.4: Ship C measurement fields. Absent from this blocklist until now, so every
+    # occurrence inherited the parent's timestamps. completedAt was the serious one -
+    # _stamp_measurement_ts only ever SETS, never clears, so an inherited completedAt made the
+    # child's real completion time permanently unrecordable. Stripped now: _insert_project mints
+    # a fresh createdAt and the other two begin absent so the child records its OWN values.
+    "createdAt", "completedAt", "firstResponseAt",
+}
+
+# Server-owned fields a recurrence occurrence deliberately KEEPS. Kept intentionally small - a
+# new occurrence is a new ticket. NOTE: the two FLAGGED entries below were surfaced by the
+# invariant and are REPORTED for their own decisions, not silently accepted.
+RECURRENCE_INHERITED = {
+    # Origin/identity of the recurring series: a spawned occurrence has no new human creator,
+    # so it keeps who reported the series and where it came from (provenance).
+    "reporter", "source",
+    # Same series-identity rationale, but FLAGGED: for a PORTAL-originated recurring ticket,
+    # inheriting reporterEmail means the child's completion/deferral status emails go to the
+    # original reporter. Plausibly intended for a recurring service request; confirm before
+    # recurrence is used for portal tickets.
+    "reporterEmail",
+    # FLAGGED: the HubSpot CSV dedup key. A child sharing the parent's key is a minor
+    # data-integrity smell (one key should map to one item); low impact today (import dedups by
+    # name+hubspotId, would skip not duplicate, and recurring items are rarely HubSpot-sourced).
+    # Arguably should be STRIPPED, but that is a skip_keys change outside this fix's scope, so it
+    # is parked here and reported rather than silently accepted.
+    "hubspotId",
+}
+
 def _save_project(c, pid: int, data: dict, ts: str = None):
     """UPDATE an item's blob AND its indexed columns together (no drift)."""
     c.execute("UPDATE projects SET data=? WHERE id=?", (json.dumps(data), pid))
@@ -3643,11 +3708,7 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
         # append, _save_project - never through this PUT); any in-request hook that appends
         # it (e.g. service-event-on-close) must run AFTER this loop, like _stamp_measurement_ts
         # below, or the restore here clobbers the append.
-        for _srv in ("reporter", "reporterEmail", "source", "createdAt", "sprintHistory",
-                     "jiraLastKnownStatus", "jiraSyncSkipped", "jiraFeatureFlags",
-                     "recurrence_parent", "hubspotId",
-                     "completedAt", "firstResponseAt",   # C1: derived measurement fields - server-owned, client cannot forge/clear
-                     "externalRefs"):                    # AssetHub integration (PR1) - server-owned, client cannot forge/clear
+        for _srv in SERVER_OWNED_FIELDS:   # module constant; membership is held in sync with the recurrence blocklist by test_recurrence_inheritance
             if _srv in old:
                 merged[_srv] = old[_srv]
             else:
@@ -7209,25 +7270,14 @@ def spawn_recurrence(pid: int, body: dict = Body({}), auth: dict = Depends(requi
         dueWeeks = 2
     new_due = (new_start + timedelta(weeks=dueWeeks)).isoformat()
 
-    # Build new item - strip per-cycle fields, carry forward config fields.
-    # CRITICAL (4.10.3): itemKey MUST be stripped - inheriting the parent's key
-    # trips the unique item_key index in _reindex_project → IntegrityError → 500
-    # (recurrence spawn was failing for every keyed item). We assign a FRESH key
-    # below. Also strip instance-specific / hazardous fields: attachments (their S3
-    # keys embed the OLD pid - a shared object would break both items on delete),
-    # sprint + release membership, and planning-session outcomes.
-    # externalRefs (AssetHub integration): a new occurrence is a NEW ticket and must NOT
-    # inherit the parent's AssetHub link. This spawn is a BLOCKLIST COPY of the parent blob
-    # (below), so unlike the field-by-field creators it is NOT safe by omission - externalRefs
-    # would be copied unless it is in skip_keys. (Any future handoff hook must likewise
-    # early-return on a spawned/hidden/archived item.)
-    skip_keys = {"id","itemKey","status","delay","revised","expected","releaseDate",
-                 "jiraTickets","jiraCache","jiraLastSync","jiraLastKnownStatus",
-                 "jiraSyncSkipped","jiraFeatureFlags","revokedAt","attachments",
-                 "sprintId","sprintHistory","release","releaseNumber","releaseNotes",
-                 "deferred","deferReason","deferNote","deferRevisit","preBlockStatus",
-                 "externalRefs"}
-    new_item = {k: v for k, v in p.items() if k not in skip_keys}
+    # Build new item as a BLOCKLIST COPY of the parent blob, so its default is to INHERIT every
+    # field not explicitly dropped. The drop set is the module constant RECURRENCE_SKIP_KEYS
+    # (defined next to update_project's force-restore list). Every server-owned field must be
+    # dropped there or listed on RECURRENCE_INHERITED - enforced by test_recurrence_inheritance.
+    # Add new server-owned fields to the constant, NOT here. (itemKey is dropped there because
+    # inheriting the parent's key trips the unique item_key index -> 500; a fresh key is minted
+    # below. attachments are dropped because their S3 keys embed the OLD pid.)
+    new_item = {k: v for k, v in p.items() if k not in RECURRENCE_SKIP_KEYS}
     new_item["start"]              = new_start_str
     new_item["due"]                = new_due
     # Use the team's configured default status (e.g. "New") not hardcoded "Planned"
@@ -7238,7 +7288,7 @@ def spawn_recurrence(pid: int, body: dict = Body({}), auth: dict = Depends(requi
     new_item["status"]             = default_status
     new_item["recurrence"]         = recurrence
     new_item["syncChildren"]       = p.get("syncChildren", False)
-    new_item["recurrence_parent"]  = pid
+    new_item["recurrence_parent"]  = pid   # stripped in RECURRENCE_SKIP_KEYS, so this is the sole source - order-independent
 
     with db(team) as c:
         _assign_item_key(c, new_item)   # fresh per-product key - never inherit the parent's (unique index)
