@@ -806,6 +806,20 @@ def init_team_db(team: str):
         );
         CREATE INDEX IF NOT EXISTS idx_assign_owner ON assignments(owner, start_date, end_date);
         CREATE INDEX IF NOT EXISTS idx_assign_user  ON assignments(username, start_date, end_date);
+        -- FLOW-1: reverse-lookup index of Flow-item <-> AssetHub-asset links. DERIVED from the
+        -- item blob's `assetLinks` (the authoritative record) and re-synced from it on every save
+        -- via _reindex_project, so there is ONE write path and no drift. asset_public_id is the
+        -- AssetHub public UUID (identity) - NEVER the mutable asset tag, never an integer. Enables
+        -- a future "which tickets touched asset X" view (not built this sprint).
+        CREATE TABLE IF NOT EXISTS item_assets (
+            item_id          INTEGER NOT NULL,
+            asset_public_id  TEXT    NOT NULL,
+            role             TEXT,
+            linked_at        TEXT,
+            linked_by        TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_item_assets_asset ON item_assets(asset_public_id);
+        CREATE INDEX IF NOT EXISTS idx_item_assets_item  ON item_assets(item_id);
         """)
         # ── Live migrations: add new columns if they don't exist yet ─────────────
         for _col, _defn in [
@@ -3102,13 +3116,34 @@ def _project_index_cols(data: dict) -> dict:
         "archived":     1 if data.get("archived") else 0,
     }
 
+def _sync_item_assets(c, pid: int, data: dict):
+    """FLOW-1: re-derive the item_assets reverse-lookup rows from the blob's `assetLinks` (the
+    authoritative record). Full replace for this item so link/unlink/relink always leave the
+    table matching the blob - one write path, no drift (mirrors _fts_sync). Best-effort: never
+    let index upkeep block a write (e.g. an older DB before init_team_db created the table)."""
+    try:
+        c.execute("DELETE FROM item_assets WHERE item_id=?", (pid,))
+        for link in (data.get("assetLinks") or []):
+            if not isinstance(link, dict):
+                continue
+            pubid = str(link.get("publicId") or "").strip()
+            if not pubid:
+                continue
+            c.execute("INSERT INTO item_assets(item_id, asset_public_id, role, linked_at, linked_by) "
+                      "VALUES(?,?,?,?,?)",
+                      (pid, pubid, link.get("role") or "", link.get("linkedAt") or "", link.get("linkedBy") or ""))
+    except Exception:
+        pass
+
 def _reindex_project(c, pid: int, data: dict, ts: str = None):
-    """Mirror an item's blob fields into its indexed columns (+ updated_ts) and FTS."""
+    """Mirror an item's blob fields into its indexed columns (+ updated_ts), FTS, and the
+    item_assets reverse-lookup index."""
     cols = _project_index_cols(data)
     cols["updated_ts"] = ts or datetime.now(timezone.utc).isoformat()
     assignments = ", ".join(f"{k}=?" for k in cols)
     c.execute(f"UPDATE projects SET {assignments} WHERE id=?", (*cols.values(), pid))
     _fts_sync(c, pid, data)
+    _sync_item_assets(c, pid, data)
 
 def _team_from_conn(c) -> str:
     """Best-effort team slug from the connection's DB file path
@@ -3235,7 +3270,8 @@ SERVER_OWNED_FIELDS = ("reporter", "reporterEmail", "source", "createdAt", "spri
                        "jiraLastKnownStatus", "jiraSyncSkipped", "jiraFeatureFlags",
                        "recurrence_parent", "hubspotId",
                        "completedAt", "firstResponseAt",
-                       "externalRefs")
+                       "externalRefs",
+                       "assetLinks", "assetCache")   # FLOW-1: server-owned asset links + display cache
 
 RECURRENCE_SKIP_KEYS = {
     # instance-specific / per-cycle fields a new occurrence starts fresh (incl. itemKey, which
@@ -3258,6 +3294,10 @@ RECURRENCE_SKIP_KEYS = {
     # child's real completion time permanently unrecordable. Stripped now: _insert_project mints
     # a fresh createdAt and the other two begin absent so the child records its OWN values.
     "createdAt", "completedAt", "firstResponseAt",
+    # FLOW-1: asset links + display cache. A new occurrence is a new ticket and inherits no asset
+    # relationships (same rationale as externalRefs). Both are in SERVER_OWNED_FIELDS, so the
+    # recurrence-inheritance invariant requires them here (dropped) or on RECURRENCE_INHERITED.
+    "assetLinks", "assetCache",
 }
 
 # Server-owned fields a recurrence occurrence deliberately KEEPS. Kept intentionally small - a
@@ -3632,6 +3672,10 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     # path that inserts a raw client body wholesale, so the strip lives here, not in the
     # shared _insert_project chokepoint that trusted server builders also use.)
     body.pop("externalRefs", None)
+    # FLOW-1: assetLinks / assetCache are server-owned too - only the asset-link endpoints set
+    # them. Strip on create for the same reason as externalRefs (raw client body).
+    body.pop("assetLinks", None)
+    body.pop("assetCache", None)
     with db(team) as c:
         _bucket_item_owner(c, body)   # owner bucketing: fill a blank owner from the assignee's pod
         _assign_item_key(c, body)
@@ -3878,6 +3922,7 @@ def delete_project(pid: int, username: str = "",
         # Item 10: Cascade delete orphaned comments and activities
         c.execute("DELETE FROM comments WHERE item_id=?", (pid,))
         c.execute("DELETE FROM activities WHERE item_id=?", (pid,))
+        c.execute("DELETE FROM item_assets WHERE item_id=?", (pid,))   # FLOW-1: drop reverse-lookup rows
         c.execute("DELETE FROM projects WHERE id=?", (pid,))
         _fts_delete(c, pid)
     write_audit(team, "delete", username, pid, name)
@@ -5759,6 +5804,141 @@ def assethub_health(auth: dict = Depends(require_role("admin"))):
         "credentialExpiresAt":  cred.get("expires_at"),
         "correlationId":        res.get("correlation_id"),
     }
+
+# ── FLOW-1: asset linking + context (read-only against AssetHub) ─────────────────
+_ASSET_LINK_CAP = 10                     # matches the jiraTickets limit
+_ASSET_ROLES    = {"primary", "related"} # 'replacement' is RESERVED for a future workflow; NOT offered here
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+def _is_uuid(s) -> bool:
+    return bool(_UUID_RE.match(str(s or "")))
+
+def _assethub_configured(team) -> bool:
+    return bool(_cfg_val(team, "assethubConnection", {})) and bool(_assethub_api_key(team))
+
+def _require_assethub(team):
+    if not _assethub_configured(team):
+        raise HTTPException(400, "AssetHub is not configured for this team.")
+
+def _load_linkable_item(c, pid):
+    row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Item not found")
+    p = json.loads(row["data"])
+    # Hidden = Jira-sourced sub-issue children / utility rows, not tickets: they never carry links.
+    if p.get("hidden") or p.get("archived"):
+        raise HTTPException(400, "This item cannot be linked to assets.")
+    return p
+
+@app.get("/api/assethub/assets/search")
+def assethub_asset_search(q: str = "", auth: dict = Depends(require_role("admin", "editor"))):
+    """Picker search: ONE AssetHub call per (debounced, min-length) search. Empty / whitespace-only
+    q makes NO call. Returns the AssetResponse list VERBATIM so a subsequent link caches the chosen
+    result directly and costs zero extra AssetHub calls (all three routes share one shape)."""
+    team = auth["team"]
+    _require_assethub(team)
+    q = (q or "").strip()
+    if not q:
+        return {"results": []}                      # never call AssetHub on an empty query
+    client = AssetHubClient(team, auth.get("role"))
+    try:
+        res = client.get("/api/v1/assets", {"q": q[:200], "per_page": 10})
+    except AssetHubError as e:
+        return {"results": [], "error": {"code": e.code, "message": _assethub_plain(e.code),
+                                         "correlationId": e.correlation_id}}
+    return {"results": res.get("data") or []}
+
+@app.post("/api/items/{pid}/asset-links")
+def link_asset(pid: int, body: dict = Body(...), auth: dict = Depends(require_role("admin", "editor"))):
+    """Link the item to an asset. `asset` is the AssetResponse the client already received from the
+    search endpoint - cached VERBATIM here, so linking makes ZERO AssetHub calls (safe because all
+    three routes return the identical shape). Never changes custody: Flow records a relationship,
+    it does not assert ownership."""
+    team = auth["team"]
+    _require_assethub(team)
+    username = _audit_actor(body.get("_username"), auth)
+    asset = body.get("asset") if isinstance(body.get("asset"), dict) else {}
+    role = (body.get("role") or "related").strip()
+    if role not in _ASSET_ROLES:
+        raise HTTPException(422, f"Invalid role. Use one of: {', '.join(sorted(_ASSET_ROLES))}")
+    pubid = str(asset.get("id") or body.get("publicId") or "").strip()
+    if not _is_uuid(pubid):
+        raise HTTPException(422, "A valid asset public id (UUID) is required.")
+    if str(asset.get("id") or "") != pubid:
+        raise HTTPException(422, "The asset payload does not match the supplied public id.")
+    now = datetime.now(timezone.utc).isoformat()
+    with db(team) as c:
+        p = _load_linkable_item(c, pid)
+        links = p.get("assetLinks") or []
+        if any(l.get("publicId") == pubid for l in links if isinstance(l, dict)):
+            raise HTTPException(409, "This asset is already linked to the item.")
+        if len(links) >= _ASSET_LINK_CAP:
+            raise HTTPException(422, f"An item can link at most {_ASSET_LINK_CAP} assets.")
+        links.append({"publicId": pubid, "role": role, "linkedAt": now, "linkedBy": username})
+        cache = p.get("assetCache") or {}
+        cache[pubid] = {"fetchedAt": now, "asset": asset, "state": "ok"}   # cached from the search result, no re-fetch
+        p["assetLinks"] = links
+        p["assetCache"] = cache
+        _save_project(c, pid, p)                                          # re-syncs item_assets from assetLinks
+    write_audit(team, "asset-link", username, pid, p.get("name", ""),
+                changes={"asset": pubid, "tag": asset.get("asset_tag"), "role": role})
+    return {"ok": True, "assetLinks": p["assetLinks"], "assetCache": p["assetCache"]}
+
+@app.delete("/api/items/{pid}/asset-links/{public_id}")
+def unlink_asset(pid: int, public_id: str, username: str = "",
+                 auth: dict = Depends(require_role("admin", "editor"))):
+    """Unlink an asset. No AssetHub call; never changes custody."""
+    team = auth["team"]
+    _require_assethub(team)
+    username = _audit_actor(username, auth)
+    with db(team) as c:
+        p = _load_linkable_item(c, pid)
+        links = p.get("assetLinks") or []
+        kept = [l for l in links if not (isinstance(l, dict) and l.get("publicId") == public_id)]
+        if len(kept) == len(links):
+            raise HTTPException(404, "That asset is not linked to this item.")
+        cache = p.get("assetCache") or {}
+        cache.pop(public_id, None)
+        p["assetLinks"] = kept
+        p["assetCache"] = cache
+        _save_project(c, pid, p)
+    write_audit(team, "asset-unlink", username, pid, p.get("name", ""), changes={"asset": public_id})
+    return {"ok": True, "assetLinks": kept, "assetCache": p.get("assetCache") or {}}
+
+@app.post("/api/items/{pid}/asset-links/refresh")
+def refresh_asset_links(pid: int, auth: dict = Depends(require_role("admin", "editor"))):
+    """Explicit per-press refresh: ONE AssetHub detail call per linked asset, bounded by the cap of
+    10. No timer, no cron, no refresh-on-render. A per-asset failure updates THAT asset's cache
+    state (not_found / error) and is surfaced; the link is NEVER dropped. A connection-wide failure
+    (401/403) stops the loop (the rest would fail identically) rather than making 10 dead calls."""
+    team = auth["team"]
+    _require_assethub(team)
+    client = AssetHubClient(team, auth.get("role"))
+    now = datetime.now(timezone.utc).isoformat()
+    conn_error = None
+    with db(team) as c:
+        p = _load_linkable_item(c, pid)
+        cache = p.get("assetCache") or {}
+        for l in (p.get("assetLinks") or [])[:_ASSET_LINK_CAP]:
+            pubid = l.get("publicId") if isinstance(l, dict) else None
+            if not pubid:
+                continue
+            prev_asset = (cache.get(pubid) or {}).get("asset")
+            try:
+                res = client.get("/api/v1/assets/" + _urlq(str(pubid), safe=""))
+                cache[pubid] = {"fetchedAt": now, "asset": res.get("data"), "state": "ok"}
+            except AssetHubError as e:
+                if e.code == "unreachable":
+                    continue   # transient: leave the existing cache entry intact, do not clear it
+                state = "not_found" if e.code == "not_found" else "error"
+                cache[pubid] = {"fetchedAt": now, "asset": prev_asset, "state": state,
+                                "error": {"code": e.code, "correlationId": e.correlation_id}}
+                if e.code in ("invalid_credential", "connection_inactive", "missing_scope"):
+                    conn_error = {"code": e.code, "message": _assethub_plain(e.code),
+                                  "correlationId": e.correlation_id}
+                    break      # connection-wide problem; stop rather than repeat it per asset
+        p["assetCache"] = cache
+        _save_project(c, pid, p)
+    return {"ok": True, "assetCache": p.get("assetCache") or {}, "connectionError": conn_error}
 
 def _get_all_jira_tickets(team: str) -> dict:
     """Return {ticket_key: item_id} for all items with jiraTickets."""

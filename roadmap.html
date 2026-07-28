@@ -2652,6 +2652,7 @@ let typeScheduled = {};         // { [typeName]: bool } - scheduled types appear
 let richTextEditor = true;      // /beta Tiptap editor master switch (config). Default ON; admin can flip false to revert Description+Comments to the classic editor with no redeploy. Classic root ignores this.
 let maintenanceDutyTypeId = ''; // M1: assignment type the Maintenance Duty rotation uses ('' = auto-detect by name "maintenance duty")
 let intakeEnabled = false;      // public /report portal: is this team exposed? (config)
+let assethubConfigured = false; // FLOW-1: server-derived - true only when this team has BOTH an AssetHub mapping and a .env credential. Gates all asset UI. Never carries the token.
 let intakeProjects = [];        // which Projects (products) the portal offers (empty = all). (config)
 let intakeNotifyEmail = '';     // team inbox that gets a copy of each portal ticket. (config)
 let intakeTypes = [];           // which item Types the portal offers (empty = all). (config)
@@ -7133,6 +7134,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       if(data.richTextEditor !== undefined) richTextEditor  = data.richTextEditor !== false;
       if(data.maintenanceDutyTypeId !== undefined) maintenanceDutyTypeId = data.maintenanceDutyTypeId || '';
       intakeEnabled = data.intakeEnabled === true;
+      assethubConfigured = data.assethubConfigured === true;   // FLOW-1 gate
       intakeProjects = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];
       intakeNotifyEmail = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : '';
       intakeTypes   = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];
@@ -16064,6 +16066,7 @@ async function boot(){
     richTextEditor        = data.richTextEditor !== false;   // default ON; only an explicit false reverts to the classic editor
     maintenanceDutyTypeId = data.maintenanceDutyTypeId || '';   // M1: Maintenance Duty assignment-type mapping
     intakeEnabled         = data.intakeEnabled === true;                                              // public /report portal exposed?
+    assethubConfigured    = data.assethubConfigured === true;                                         // FLOW-1: gates all asset UI (mapping + .env credential present)
     intakeProjects        = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];            // offered Projects (empty = all)
     intakeTypes           = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];                  // offered Types (empty = all)
     intakeNotifyEmail     = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : ''; // team inbox copy
@@ -20206,9 +20209,12 @@ if ('serviceWorker' in navigator) {
     _frzEnsureActivityTabs(leftCol);
     _frzMoveDescTools();
     function cardOf(id){ var e=document.getElementById(id); while(e && e.parentElement!==leftCol) e=e.parentElement; return (e&&e.parentElement===leftCol)?e:null; }
-    // Description → Attachments → Linked Records → Activity (Comments|History) → Feature
-    // Flags → Subtasks → Dependencies → Sprint history → Notes & Resolution.
+    // Description → Attachments → Linked Records → Linked Assets → Activity (Comments|History)
+    // → Feature Flags → Subtasks → Dependencies → Sprint history → Notes & Resolution. Linked
+    // Assets sits with the other cross-system reference cards (Attachments / Linked Records),
+    // above the item's own Activity, since it is authoritative-elsewhere context, not item state.
     [ cardOf('ipNotes'), document.getElementById('frzAttachCard'), document.getElementById('frzExtRefsCard'),
+      document.getElementById('frzAssetCard'),
       document.getElementById('frzActivityCard'),
       document.getElementById('ipFeatureFlagsCard'), document.getElementById('ipSubtasksCard'),
       document.getElementById('ipDepsCard'), document.getElementById('frzSprintHistCard'),
@@ -20280,9 +20286,9 @@ if ('serviceWorker' in navigator) {
     // Stage 2: inject Attachments + Sprint-history sections (beta-only; idempotent).
     // Release is now (re)placed by _frzItemLayout, which also consolidates the rail
     // and reorders the main column.
-    injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); injectFlag(p);
+    injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); injectAssetLinks(p); injectFlag(p);
     _frzOrderMain();   // rail is consolidated by the renderItemPage wrapper; here we only (re)order the main column for the just-injected cards
-    setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); injectFlag(p); _frzOrderMain(); }, 500);
+    setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); injectAssetLinks(p); injectFlag(p); _frzOrderMain(); }, 500);
     // Render-then-edit: set the description's beta read-styling + edit bridge NOW (no mount on
     // load → no flash); the comment composer still mounts its editor deferred (out of scope here).
     frzInitDescription(p);
@@ -22915,6 +22921,136 @@ if ('serviceWorker' in navigator) {
     }
     var list = card.querySelector('#frzExtRefsList'); if(!list) return;
     list.innerHTML = refs.map(_frzExtRefRowHtml).join('');
+  }
+  // ── FLOW-1: linked AssetHub assets (item page), read-only against AssetHub ──────
+  // Rendered from the cached AssetResponse (assetCache) - NO AssetHub call on render or item
+  // open (that would be the fan-out storm FLOW-0 Part 7 prohibits). Gated: only when
+  // assethubConfigured, never for Contributors, never for hidden/archived items. Picker / link /
+  // unlink / refresh are admin/editor (server-gated too); viewers see the card read-only.
+  var _FRZ_ASSET_DEBOUNCE_MS = 300;   // picker debounce
+  var _FRZ_ASSET_MIN_Q = 2;           // minimum query length before any search call
+  var _frzAssetSearchTimer = null;
+
+  function _frzCanSeeAssets(p){
+    return _val('assethubConfigured', false) && !_val('isContributor', false)
+           && !!p && !p.hidden && !p.archived;
+  }
+  function _frzCanEditAssets(){ return _val('isAdmin', false) || _val('isEditor', false); }
+
+  function _frzAssetAge(iso){
+    if(!iso) return 'never';
+    var then = Date.parse(iso); if(isNaN(then)) return 'unknown';
+    var s = Math.max(0, Math.floor((Date.now()-then)/1000));
+    if(s < 90) return 'just now';
+    var m = Math.floor(s/60); if(m < 90) return m+' min ago';
+    var h = Math.floor(m/60); if(h < 36) return h+' hr ago';
+    var d = Math.floor(h/24);  return d+' day'+(d===1?'':'s')+' ago';
+  }
+  function _frzAssetCond(cond){
+    cond = cond || {};
+    if(cond.tracking === 'not_tracked') return 'Condition not tracked';       // category does not track it
+    if(cond.tracking === 'tracked' && (cond.value==null || cond.value==='')) return 'Condition not recorded';  // tracked, nothing yet
+    return cond.label ? esc(String(cond.label)) : (cond.value ? esc(String(cond.value)) : 'Condition not recorded');
+  }
+  function _frzAssetRowHtml(link, entry, canEdit){
+    link = link||{}; entry = entry||{};
+    var a = entry.asset || {};
+    var pubid = link.publicId || a.id || '';
+    var unlinkBtn = canEdit ? '<button type="button" class="frz-asset-unlink" data-pubid="'+escA(pubid)+'" style="border:none;background:none;color:var(--muted);cursor:pointer;font-size:12px;text-decoration:underline">Unlink</button>' : '';
+    var head = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'+
+      '<div style="font-weight:800;color:var(--text)">'+esc(a.asset_tag||'(unknown tag)')+
+        (link.role==='primary'?' <span style="font-weight:700;font-size:10px;color:var(--frz-accent);border:1px solid var(--frz-accent);border-radius:4px;padding:1px 5px">PRIMARY</span>':'')+'</div>'+unlinkBtn+'</div>';
+    var box = 'border:1px solid var(--border);border-radius:8px;padding:10px 12px';
+    // Broken / errored states: shown plainly, the link is NOT dropped.
+    if(entry.state === 'not_found') return '<div style="'+box+'">'+head+'<div style="color:#e8394a;font-weight:700;margin-top:4px">No longer available in AssetHub (deleted or out of scope).</div><div style="color:var(--muted);font-size:11px;margin-top:4px">Checked '+esc(_frzAssetAge(entry.fetchedAt))+'</div></div>';
+    if(entry.state === 'error')     return '<div style="'+box+'">'+head+'<div style="color:#e8394a;font-weight:700;margin-top:4px">Could not read this asset ('+esc((entry.error||{}).code||'error')+').</div><div style="color:var(--muted);font-size:11px;margin-top:4px">Checked '+esc(_frzAssetAge(entry.fetchedAt))+'</div></div>';
+    if(!a || !a.id)                 return '<div style="'+box+'">'+head+'<div style="color:var(--muted);margin-top:4px">No cached detail yet - press Refresh.</div></div>';
+    function f(label,val){ return (val==null||val==='')?'':'<div style="display:flex;gap:10px;padding:1px 0"><span style="min-width:120px;color:var(--muted);font-size:12px">'+esc(label)+'</span><span style="font-size:12px">'+esc(String(val))+'</span></div>'; }
+    var cat=a.category||{}, st=a.status||{}, loc=a.location;
+    var rows = f('Name', a.name)+f('Serial', a.serial_number)+f('Category', cat.name||cat.code)+f('Status', st.label||st.value)+
+      '<div style="display:flex;gap:10px;padding:1px 0"><span style="min-width:120px;color:var(--muted);font-size:12px">Condition</span><span style="font-size:12px">'+_frzAssetCond(a.operational_condition)+'</span></div>'+
+      f('Location', loc ? (loc.path||loc.name) : 'No location')+f('Warranty until', a.warranty_until)+f('Replacement due', a.replacement_due)+
+      ((a.retirement && a.retirement.retired) ? f('Retired', (a.retirement.retired_date||'yes')+(a.retirement.reason?(' - '+a.retirement.reason):'')) : '');
+    return '<div style="'+box+'">'+head+'<div style="margin-top:6px">'+rows+'</div>'+
+      '<div style="color:var(--muted);font-size:11px;margin-top:6px">Cached '+esc(_frzAssetAge(entry.fetchedAt))+' - live values may have changed since</div></div>';
+  }
+  function _frzAssetPickerHtml(){
+    return '<div id="frzAssetPicker" style="border-top:1px solid var(--border);padding-top:10px">'+
+      '<input type="text" id="frzAssetSearch" placeholder="Search assets by tag, name, or serial..." style="width:100%;box-sizing:border-box;height:32px;padding:0 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px">'+
+      '<div id="frzAssetResults" style="margin-top:6px;display:flex;flex-direction:column;gap:4px"></div></div>';
+  }
+  function _frzAssetCardHtml(p){
+    var links = Array.isArray(p.assetLinks) ? p.assetLinks : [];
+    var cache = p.assetCache || {};
+    var canEdit = _frzCanEditAssets();
+    var head = '<div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between">'+
+      'Linked assets'+(canEdit && links.length ? '<button type="button" id="frzAssetRefresh" style="height:26px;border:1px solid var(--border);background:transparent;color:var(--text);border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;padding:0 10px">Refresh</button>':'')+'</div>';
+    var rows = links.length ? links.map(function(l){ return _frzAssetRowHtml(l, cache[l.publicId], canEdit); }).join('') : '<div style="color:var(--muted)">No linked assets.</div>';
+    return head + '<div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">'+rows+(canEdit?_frzAssetPickerHtml():'')+'</div>';
+  }
+  function injectAssetLinks(p){
+    if(!p) return;
+    var existing = document.getElementById('frzAssetCard');
+    if(!_frzCanSeeAssets(p)){ if(existing && existing.parentNode) existing.parentNode.removeChild(existing); return; }
+    var card = existing;
+    if(!card){
+      var anchor = document.getElementById('frzExtRefsCard') || document.getElementById('frzAttachCard')
+        || (function(){ var n=document.getElementById('ipNotes'); return n?n.parentElement.parentElement:document.getElementById('ipFieldsCard'); })();
+      if(!anchor || !anchor.parentNode) return;
+      card = document.createElement('div'); card.id='frzAssetCard';
+      card.style.cssText='border:1px solid var(--border);border-radius:10px;overflow:hidden';
+      anchor.parentNode.insertBefore(card, anchor.nextSibling);   // final placement by _frzOrderMain
+    }
+    card.innerHTML = _frzAssetCardHtml(p);
+    _frzWireAssetCard(card, p);
+  }
+  function _frzWireAssetCard(card, p){
+    var rb = card.querySelector('#frzAssetRefresh'); if(rb) rb.addEventListener('click', function(){ _frzAssetRefresh(p); });
+    card.querySelectorAll('.frz-asset-unlink').forEach(function(b){ b.addEventListener('click', function(){ _frzAssetUnlink(p, b.getAttribute('data-pubid')); }); });
+    var inp = card.querySelector('#frzAssetSearch'), results = card.querySelector('#frzAssetResults');
+    if(inp) inp.addEventListener('input', function(){
+      var q = (inp.value||'').trim();
+      if(_frzAssetSearchTimer) clearTimeout(_frzAssetSearchTimer);
+      if(q.length < _FRZ_ASSET_MIN_Q){ if(results) results.innerHTML = q ? '<div style="color:var(--muted);font-size:12px">Type at least '+_FRZ_ASSET_MIN_Q+' characters...</div>' : ''; return; }  // no call below min length or on empty
+      _frzAssetSearchTimer = setTimeout(function(){ _frzAssetSearch(q, p, results); }, _FRZ_ASSET_DEBOUNCE_MS);   // debounced: one call per settle
+    });
+  }
+  function _frzAssetSearch(q, p, resultsEl){
+    if(!resultsEl) return;
+    resultsEl.innerHTML = '<div style="color:var(--muted);font-size:12px">Searching...</div>';
+    API.get('/api/assethub/assets/search?q='+encodeURIComponent(q)).then(function(r){
+      if(r && r.error){ resultsEl.innerHTML = '<div style="color:#e8394a;font-size:12px">'+esc(r.error.message||r.error.code||'search failed')+'</div>'; return; }
+      var hits = (r && r.results) || [];
+      if(!hits.length){ resultsEl.innerHTML = '<div style="color:var(--muted);font-size:12px">No matches.</div>'; return; }
+      var linked = {}; (p.assetLinks||[]).forEach(function(l){ linked[l.publicId]=1; });
+      resultsEl._frzHits = {}; hits.forEach(function(a){ resultsEl._frzHits[a.id] = a; });   // stash verbatim so link caches with zero extra calls
+      resultsEl.innerHTML = hits.map(function(a){
+        var cat=a.category||{}, st=a.status||{}, sub=[a.serial_number, cat.name||cat.code, st.label||st.value].filter(Boolean).join(' - ');
+        return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid var(--border);border-radius:6px;padding:6px 10px">'+
+          '<div style="min-width:0"><div style="font-weight:700;color:var(--text)">'+esc(a.asset_tag||'')+' <span style="font-weight:400;color:var(--muted)">'+esc(a.name||'')+'</span></div><div style="color:var(--muted);font-size:11px">'+esc(sub)+'</div></div>'+
+          (linked[a.id]?'<span style="color:var(--muted);font-size:11px">Linked</span>':'<button type="button" class="frz-asset-add" data-id="'+escA(a.id)+'" style="height:26px;border:1px solid var(--frz-accent);background:var(--frz-accent);color:#fff;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;padding:0 10px">Link</button>')+'</div>';
+      }).join('');
+      resultsEl.querySelectorAll('.frz-asset-add').forEach(function(b){ b.addEventListener('click', function(){ _frzAssetLink(p, resultsEl._frzHits[b.getAttribute('data-id')]); }); });
+    }).catch(function(e){ resultsEl.innerHTML = '<div style="color:#e8394a;font-size:12px">'+esc((e&&e.message)||'search failed')+'</div>'; });
+  }
+  function _frzAssetLink(p, asset){
+    if(!asset) return;
+    API.post('/api/items/'+p.id+'/asset-links', {asset: asset, role: 'related'}).then(function(r){   // 0 AssetHub calls: cached from the search result
+      p.assetLinks = r.assetLinks; p.assetCache = r.assetCache; injectAssetLinks(p);
+    }).catch(function(e){ _call('showToast', (e&&e.message)||'Could not link asset'); });
+  }
+  function _frzAssetUnlink(p, pubid){
+    if(!pubid) return;
+    API.del('/api/items/'+p.id+'/asset-links/'+encodeURIComponent(pubid)).then(function(r){
+      p.assetLinks = r.assetLinks; p.assetCache = r.assetCache; injectAssetLinks(p);
+    }).catch(function(e){ _call('showToast', (e&&e.message)||'Could not unlink asset'); });
+  }
+  function _frzAssetRefresh(p){
+    var btn = document.getElementById('frzAssetRefresh'); if(btn){ btn.disabled=true; btn.textContent='Refreshing...'; }
+    API.post('/api/items/'+p.id+'/asset-links/refresh', {}).then(function(r){   // one call per linked asset, capped at 10
+      p.assetCache = r.assetCache; injectAssetLinks(p);
+      if(r.connectionError) _call('showToast', 'AssetHub: '+(r.connectionError.message||r.connectionError.code));
+    }).catch(function(e){ _call('showToast', (e&&e.message)||'Refresh failed'); if(btn){ btn.disabled=false; btn.textContent='Refresh'; } });
   }
   function loadAttachments(p){
     var list=document.getElementById('frzAttList'); if(!list) return;
