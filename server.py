@@ -5807,7 +5807,12 @@ def assethub_health(auth: dict = Depends(require_role("admin"))):
 
 # ── FLOW-1: asset linking + context (read-only against AssetHub) ─────────────────
 _ASSET_LINK_CAP = 10                     # matches the jiraTickets limit
-_ASSET_ROLES    = {"primary", "related"} # 'replacement' is RESERVED for a future workflow; NOT offered here
+# role vocabulary is VESTIGIAL in this release (FLOW-1 follow-up item 3, Option A): the picker
+# only ever sends 'related', NOTHING reads role yet, and 'primary' is reserved for a future
+# multi-asset case ("this ticket is about laptop X and also touched dock Y"). 'replacement' stays
+# reserved for a replacement workflow that does not exist. Kept so the blob/column shape is
+# future-ready; do not infer meaning from the stored value until something actually reads it.
+_ASSET_ROLES    = {"primary", "related"}
 _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 def _is_uuid(s) -> bool:
     return bool(_UUID_RE.match(str(s or "")))
@@ -5847,24 +5852,48 @@ def assethub_asset_search(q: str = "", auth: dict = Depends(require_role("admin"
                                          "correlationId": e.correlation_id}}
     return {"results": res.get("data") or []}
 
+def _assethub_fetch_asset(client, pubid):
+    """The single server-side asset-fetch site (detail route), reused by link AND refresh. Returns
+    the AssetResponse dict; raises AssetHubError on any failure."""
+    res = client.get("/api/v1/assets/" + _urlq(str(pubid), safe=""))
+    return res.get("data")
+
 @app.post("/api/items/{pid}/asset-links")
 def link_asset(pid: int, body: dict = Body(...), auth: dict = Depends(require_role("admin", "editor"))):
-    """Link the item to an asset. `asset` is the AssetResponse the client already received from the
-    search endpoint - cached VERBATIM here, so linking makes ZERO AssetHub calls (safe because all
-    three routes return the identical shape). Never changes custody: Flow records a relationship,
-    it does not assert ownership."""
+    """Link the item to an asset. The SERVER fetches the AssetResponse by public id through
+    AssetHubClient (the same path refresh uses) and caches THAT, so assetCache always reflects the
+    authoritative record - never client-asserted content. Any `asset` object in the request body
+    is IGNORED (validating a value the client chose cannot establish provenance; an older cached
+    frontend may still send one, so ignore rather than reject to avoid mid-deploy failures). Costs
+    ONE AssetHub call. Never changes custody: Flow records a relationship, not ownership."""
     team = auth["team"]
     _require_assethub(team)
     username = _audit_actor(body.get("_username"), auth)
-    asset = body.get("asset") if isinstance(body.get("asset"), dict) else {}
-    role = (body.get("role") or "related").strip()
+    role = (body.get("role") or "related").strip()   # role is vestigial (see _ASSET_ROLES); only 'related' arrives today
     if role not in _ASSET_ROLES:
         raise HTTPException(422, f"Invalid role. Use one of: {', '.join(sorted(_ASSET_ROLES))}")
-    pubid = str(asset.get("id") or body.get("publicId") or "").strip()
+    pubid = str(body.get("publicId") or "").strip()
     if not _is_uuid(pubid):
-        raise HTTPException(422, "A valid asset public id (UUID) is required.")
-    if str(asset.get("id") or "") != pubid:
-        raise HTTPException(422, "The asset payload does not match the supplied public id.")
+        raise HTTPException(422, "A valid asset public id (UUID) is required.")   # reject BEFORE any AssetHub call
+    # A stray body['asset'] from an older frontend is intentionally IGNORED - never validated, never cached.
+    # Pre-check the item is linkable + not a duplicate/over-cap BEFORE spending an AssetHub call.
+    with db(team) as c:
+        pre = _load_linkable_item(c, pid)
+        pre_links = pre.get("assetLinks") or []
+        if any(l.get("publicId") == pubid for l in pre_links if isinstance(l, dict)):
+            raise HTTPException(409, "This asset is already linked to the item.")
+        if len(pre_links) >= _ASSET_LINK_CAP:
+            raise HTTPException(422, f"An item can link at most {_ASSET_LINK_CAP} assets.")
+    # SERVER-side fetch (authoritative). On ANY failure do NOT create the link; surface it plainly
+    # and distinctly; never retry (the client already enforces no-retry on terminal statuses).
+    client = AssetHubClient(team, auth.get("role"))
+    try:
+        asset = _assethub_fetch_asset(client, pubid)
+    except AssetHubError as e:
+        # 404 = asset does not exist / outside the team's scope -> no link created (a behavior fix:
+        # a nonexistent UUID used to link successfully). 500/401/403/unreachable surfaced too.
+        return {"ok": False, "error": {"code": e.code, "message": _assethub_plain(e.code),
+                                       "correlationId": e.correlation_id}}
     now = datetime.now(timezone.utc).isoformat()
     with db(team) as c:
         p = _load_linkable_item(c, pid)
@@ -5875,12 +5904,12 @@ def link_asset(pid: int, body: dict = Body(...), auth: dict = Depends(require_ro
             raise HTTPException(422, f"An item can link at most {_ASSET_LINK_CAP} assets.")
         links.append({"publicId": pubid, "role": role, "linkedAt": now, "linkedBy": username})
         cache = p.get("assetCache") or {}
-        cache[pubid] = {"fetchedAt": now, "asset": asset, "state": "ok"}   # cached from the search result, no re-fetch
+        cache[pubid] = {"fetchedAt": now, "asset": asset, "state": "ok"}   # the SERVER-fetched asset, not client input
         p["assetLinks"] = links
         p["assetCache"] = cache
         _save_project(c, pid, p)                                          # re-syncs item_assets from assetLinks
     write_audit(team, "asset-link", username, pid, p.get("name", ""),
-                changes={"asset": pubid, "tag": asset.get("asset_tag"), "role": role})
+                changes={"asset": pubid, "tag": (asset or {}).get("asset_tag"), "role": role})
     return {"ok": True, "assetLinks": p["assetLinks"], "assetCache": p["assetCache"]}
 
 @app.delete("/api/items/{pid}/asset-links/{public_id}")
@@ -5924,8 +5953,7 @@ def refresh_asset_links(pid: int, auth: dict = Depends(require_role("admin", "ed
                 continue
             prev_asset = (cache.get(pubid) or {}).get("asset")
             try:
-                res = client.get("/api/v1/assets/" + _urlq(str(pubid), safe=""))
-                cache[pubid] = {"fetchedAt": now, "asset": res.get("data"), "state": "ok"}
+                cache[pubid] = {"fetchedAt": now, "asset": _assethub_fetch_asset(client, pubid), "state": "ok"}
             except AssetHubError as e:
                 if e.code == "unreachable":
                     continue   # transient: leave the existing cache entry intact, do not clear it

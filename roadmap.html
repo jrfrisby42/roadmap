@@ -23034,8 +23034,14 @@ if ('serviceWorker' in navigator) {
     }).catch(function(e){ resultsEl.innerHTML = '<div style="color:#e8394a;font-size:12px">'+esc((e&&e.message)||'search failed')+'</div>'; });
   }
   function _frzAssetLink(p, asset){
-    if(!asset) return;
-    API.post('/api/items/'+p.id+'/asset-links', {asset: asset, role: 'related'}).then(function(r){   // 0 AssetHub calls: cached from the search result
+    if(!asset || !asset.id) return;
+    // Send only the identifier - the SERVER fetches the authoritative asset by public id (the
+    // client no longer supplies asset data into a server-owned field). role:'related' is the only
+    // role the picker sets; it is vestigial today (nothing reads it; 'primary' is reserved for a
+    // future multi-asset case). On an AssetHub fetch failure the server returns {ok:false} and no
+    // link is created; surface it and do not retry.
+    API.post('/api/items/'+p.id+'/asset-links', {publicId: asset.id, role: 'related'}).then(function(r){
+      if(r && r.ok === false){ _call('showToast', 'Could not link: '+((r.error && r.error.message) || (r.error && r.error.code) || 'AssetHub error')); return; }
       p.assetLinks = r.assetLinks; p.assetCache = r.assetCache; injectAssetLinks(p);
     }).catch(function(e){ _call('showToast', (e&&e.message)||'Could not link asset'); });
   }
