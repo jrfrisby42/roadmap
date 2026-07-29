@@ -2,9 +2,9 @@
 
 assetLinks (authoritative) and assetCache (display) are server-owned blob fields; item_assets is
 a reverse-lookup index DERIVED from assetLinks on every save. AssetHub calls are permitted only
-on a picker search and an explicit refresh - never on link (cached from the search result),
-unlink, item render, or list render. All AssetHub interaction is mocked; AssetHub is real and
-the live path was proven at the FLOW-0 enablement gate.
+on a picker search, an explicit refresh, and a LINK (5.6.1: the server fetches the asset by
+public id and caches THAT - the client no longer supplies asset content into a server-owned
+field). Never on item render or list render. All AssetHub interaction is mocked.
 """
 import json
 
@@ -21,11 +21,6 @@ def _set_cfg(team, key, val):
     with server.db(team) as c:
         c.execute("INSERT INTO config(key,value) VALUES(?,?) "
                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, json.dumps(val)))
-
-
-def _enable(team, monkeypatch):
-    monkeypatch.setenv("ASSETHUB_API_KEY_" + team.upper(), KEY)
-    _set_cfg(team, "assethubConnection", {"providerEnvironment": "production", "assethubTeam": "IT"})
 
 
 def _create(client, headers, **fields):
@@ -54,9 +49,14 @@ def _asset(uid=UUID1, tag="IT-1"):
             "updated_at": "2026-01-01T00:00:00Z"}
 
 
-def _install_client(monkeypatch, handler=None, forbid=False):
-    """Replace server.AssetHubClient. forbid=True asserts it is never even constructed (proves a
-    render path made no call). Otherwise .get(path,params) delegates to handler and records calls."""
+def _enable(team, monkeypatch):
+    monkeypatch.setenv("ASSETHUB_API_KEY_" + team.upper(), KEY)
+    _set_cfg(team, "assethubConnection", {"providerEnvironment": "production", "assethubTeam": "IT"})
+
+
+def _install(monkeypatch, handler=None, forbid=False):
+    """Replace server.AssetHubClient. forbid=True asserts it is never even constructed. Otherwise
+    .get(path,params) delegates to handler and records calls."""
     calls = []
     class Fake:
         def __init__(self, team, role, **kw):
@@ -69,8 +69,23 @@ def _install_client(monkeypatch, handler=None, forbid=False):
     return calls
 
 
-def _link(client, headers, pid, asset, role="related"):
-    return client.post(f"/api/items/{pid}/asset-links", json={"asset": asset, "role": role}, headers=headers)
+def _detail_ok(path, params):
+    """Default detail handler: synthesize an AssetResponse from the requested public id."""
+    pubid = path.rsplit("/", 1)[-1]
+    return {"data": _asset(pubid, "TAG-" + pubid[:4]), "correlation_id": "c"}
+
+
+def _enable_linkable(team, monkeypatch, handler=_detail_ok):
+    """Enable the team AND install a client whose detail fetch succeeds, so link() works."""
+    _enable(team, monkeypatch)
+    return _install(monkeypatch, handler=handler)
+
+
+def _link(client, headers, pid, pubid=UUID1, role="related", extra=None):
+    body = {"publicId": pubid, "role": role}
+    if extra:
+        body.update(extra)
+    return client.post(f"/api/items/{pid}/asset-links", json=body, headers=headers)
 
 
 # ── server-owned blob fields ─────────────────────────────────────────────────────
@@ -88,9 +103,9 @@ def test_client_put_cannot_forge_asset_fields(client, team, admin_headers):
 
 
 def test_put_omitting_does_not_wipe(client, team, admin_headers, monkeypatch):
-    _enable(team, monkeypatch)
+    _enable_linkable(team, monkeypatch)
     pid = _create(client, admin_headers).json()["id"]
-    _link(client, admin_headers, pid, _asset())
+    _link(client, admin_headers, pid)
     client.put(f"/api/projects/{pid}", json={"name": "Renamed", "status": "Planned"}, headers=admin_headers)
     stored = _stored(team, pid)
     assert [l["publicId"] for l in stored["assetLinks"]] == [UUID1]
@@ -104,9 +119,9 @@ def test_stripped_on_create(client, team, admin_headers):
 
 
 def test_survive_two_save_reload_cycles(client, team, admin_headers, monkeypatch):
-    _enable(team, monkeypatch)
+    _enable_linkable(team, monkeypatch)
     pid = _create(client, admin_headers).json()["id"]
-    _link(client, admin_headers, pid, _asset())
+    _link(client, admin_headers, pid)
     for i in range(2):
         client.put(f"/api/projects/{pid}", json={"name": f"E{i}", "status": "Planned"}, headers=admin_headers)
     all_ = client.get("/api/all", headers=admin_headers).json()
@@ -116,9 +131,9 @@ def test_survive_two_save_reload_cycles(client, team, admin_headers, monkeypatch
 
 
 def test_recurrence_does_not_inherit(client, team, admin_headers, monkeypatch):
-    _enable(team, monkeypatch)
+    _enable_linkable(team, monkeypatch)
     pid = _create(client, admin_headers, recurrence="weekly", start="2026-01-01", dueWeeks=2).json()["id"]
-    _link(client, admin_headers, pid, _asset())
+    _link(client, admin_headers, pid)
     child = client.post(f"/api/projects/{pid}/recur", json={}, headers=admin_headers).json()
     cs = _stored(team, child["id"])
     assert "assetLinks" not in cs and "assetCache" not in cs
@@ -128,78 +143,122 @@ def test_recurrence_does_not_inherit(client, team, admin_headers, monkeypatch):
 def test_recurrence_invariant_holds_with_asset_fields():
     unhandled = [f for f in server.SERVER_OWNED_FIELDS
                  if f not in server.RECURRENCE_SKIP_KEYS and f not in server.RECURRENCE_INHERITED]
-    assert not unhandled                                   # FLOW-0-era invariant still satisfied
+    assert not unhandled
     assert "assetLinks" in server.RECURRENCE_SKIP_KEYS and "assetCache" in server.RECURRENCE_SKIP_KEYS
 
 
 # ── item_assets reverse-lookup index ─────────────────────────────────────────────
 
 def test_item_assets_resyncs_on_link_unlink_relink(client, team, admin_headers, monkeypatch):
-    _enable(team, monkeypatch)
+    _enable_linkable(team, monkeypatch)
     pid = _create(client, admin_headers).json()["id"]
-    _link(client, admin_headers, pid, _asset(UUID1, "IT-1"), role="primary")
-    _link(client, admin_headers, pid, _asset(UUID2, "IT-2"))
+    _link(client, admin_headers, pid, UUID1, role="primary")
+    _link(client, admin_headers, pid, UUID2)
     assert [r["asset_public_id"] for r in _rows(team, pid)] == sorted([UUID1, UUID2])
-    client.request("DELETE", f"/api/items/{pid}/asset-links/{UUID1}", headers=admin_headers)
+    client.delete(f"/api/items/{pid}/asset-links/{UUID1}", headers=admin_headers)
     assert [r["asset_public_id"] for r in _rows(team, pid)] == [UUID2]
-    _link(client, admin_headers, pid, _asset(UUID1, "IT-1"))         # relink
-    assert [r["asset_public_id"] for r in _rows(team, pid)] == sorted([UUID1, UUID2])
-    # table matches the blob exactly
+    _link(client, admin_headers, pid, UUID1)                        # relink
     blob_ids = sorted(l["publicId"] for l in _stored(team, pid)["assetLinks"])
     assert [r["asset_public_id"] for r in _rows(team, pid)] == blob_ids
 
 
 def test_delete_item_removes_item_assets_rows(client, team, admin_headers, monkeypatch):
-    _enable(team, monkeypatch)
+    _enable_linkable(team, monkeypatch)
     pid = _create(client, admin_headers).json()["id"]
-    _link(client, admin_headers, pid, _asset())
+    _link(client, admin_headers, pid)
     assert _rows(team, pid)
-    client.request("DELETE", f"/api/projects/{pid}", headers=admin_headers)
+    client.delete(f"/api/projects/{pid}", headers=admin_headers)
     assert _rows(team, pid) == []
 
 
 def test_asset_public_id_stored_is_the_uuid(client, team, admin_headers, monkeypatch):
-    _enable(team, monkeypatch)
+    _enable_linkable(team, monkeypatch)
     pid = _create(client, admin_headers).json()["id"]
-    _link(client, admin_headers, pid, _asset(UUID1, "SOME-TAG-not-id"))
-    rows = _rows(team, pid)
-    assert rows[0]["asset_public_id"] == UUID1                       # the UUID, never the tag
+    _link(client, admin_headers, pid, UUID1)
+    assert _rows(team, pid)[0]["asset_public_id"] == UUID1          # the UUID, never the tag
 
 
 # ── link rules ───────────────────────────────────────────────────────────────────
 
 def test_duplicate_link_rejected(client, team, admin_headers, monkeypatch):
-    _enable(team, monkeypatch)
+    _enable_linkable(team, monkeypatch)
     pid = _create(client, admin_headers).json()["id"]
-    assert _link(client, admin_headers, pid, _asset()).status_code == 200
-    assert _link(client, admin_headers, pid, _asset()).status_code == 409
+    assert _link(client, admin_headers, pid).status_code == 200
+    assert _link(client, admin_headers, pid).status_code == 409
 
 
 def test_cap_of_ten_enforced(client, team, admin_headers, monkeypatch):
-    _enable(team, monkeypatch)
+    _enable_linkable(team, monkeypatch)
     pid = _create(client, admin_headers).json()["id"]
     for i in range(10):
-        uid = f"{i:08d}-1111-4111-8111-111111111111"
-        assert _link(client, admin_headers, pid, _asset(uid, f"IT-{i}")).status_code == 200
-    over = _link(client, admin_headers, pid, _asset("99999999-1111-4111-8111-111111111111", "IT-x"))
-    assert over.status_code == 422
+        assert _link(client, admin_headers, pid, f"{i:08d}-1111-4111-8111-111111111111").status_code == 200
+    assert _link(client, admin_headers, pid, "99999999-1111-4111-8111-111111111111").status_code == 422
 
 
-def test_link_makes_zero_assethub_calls(client, team, admin_headers, monkeypatch):
+# ── Item 1 (5.6.1): the SERVER fetches; the client cannot inject cache content ───
+
+def test_link_makes_exactly_one_assethub_call(client, team, admin_headers, monkeypatch):
     _enable(team, monkeypatch)
-    calls = _install_client(monkeypatch, forbid=True)   # constructing the client at all would fail
+    calls = _install(monkeypatch, handler=_detail_ok)
     pid = _create(client, admin_headers).json()["id"]
-    assert _link(client, admin_headers, pid, _asset()).status_code == 200
-    assert calls == []                                  # cached from the search result, no re-fetch
+    assert _link(client, admin_headers, pid).status_code == 200
+    assert len(calls) == 1                                          # one detail fetch, not zero
+
+
+def test_link_ignores_client_asset_and_caches_server_fetch(client, team, admin_headers, monkeypatch):
+    _enable(team, monkeypatch)
+    # server fetch returns the REAL asset; the request also carries a FABRICATED asset payload.
+    _install(monkeypatch, handler=lambda path, params: {"data": _asset(UUID1, "REAL-TAG")})
+    pid = _create(client, admin_headers).json()["id"]
+    fabricated = _asset(UUID1, "FAKE-TAG"); fabricated["name"] = "Fabricated Name"
+    r = _link(client, admin_headers, pid, UUID1, extra={"asset": fabricated})
+    assert r.status_code == 200
+    cached = _stored(team, pid)["assetCache"][UUID1]["asset"]
+    assert cached["asset_tag"] == "REAL-TAG"                        # from the server fetch...
+    assert cached["name"] == "Dev Laptop"                          # ...not the fabricated payload
+
+
+def test_link_forged_uuid_404_creates_no_link(client, team, admin_headers, monkeypatch):
+    _enable(team, monkeypatch)
+    _install(monkeypatch, handler=_raise("not_found", 404))
+    pid = _create(client, admin_headers).json()["id"]
+    r = _link(client, admin_headers, pid, "12345678-1111-4111-8111-111111111111")
+    assert r.status_code == 200 and r.json()["ok"] is False and r.json()["error"]["code"] == "not_found"
+    assert not (_stored(team, pid).get("assetLinks"))              # no link created
+    assert _rows(team, pid) == []
+
+
+def test_link_malformed_uuid_rejected_before_any_call(client, team, admin_headers, monkeypatch):
+    _enable(team, monkeypatch)
+    _install(monkeypatch, forbid=True)                             # constructing the client would fail
+    pid = _create(client, admin_headers).json()["id"]
+    assert _link(client, admin_headers, pid, "not-a-uuid").status_code == 422
+
+
+def _raise(code, status):
+    def h(path, params):
+        raise server.AssetHubError(code, status=status, correlation_id="c1")
+    return h
+
+
+@pytest.mark.parametrize("code,status", [("internal_error", 500), ("invalid_credential", 401),
+                                         ("connection_inactive", 403), ("unreachable", None)])
+def test_link_error_cases_create_no_link(client, team, admin_headers, monkeypatch, code, status):
+    _enable(team, monkeypatch)
+    _install(monkeypatch, handler=_raise(code, status))
+    pid = _create(client, admin_headers).json()["id"]
+    r = _link(client, admin_headers, pid).json()
+    assert r["ok"] is False and r["error"]["code"] == code
+    assert not (_stored(team, pid).get("assetLinks"))
 
 
 # ── no AssetHub call on any render path ──────────────────────────────────────────
 
 def test_render_paths_make_no_assethub_call(client, team, admin_headers, monkeypatch):
-    _enable(team, monkeypatch)
+    _enable_linkable(team, monkeypatch)                            # ok stub for the setup link
     pid = _create(client, admin_headers).json()["id"]
-    _link(client, admin_headers, pid, _asset())
-    _install_client(monkeypatch, forbid=True)           # any construction now raises
+    _link(client, admin_headers, pid)
+    _install(monkeypatch, forbid=True)                            # now any construction raises
     assert client.get("/api/all", headers=admin_headers).status_code == 200
     assert client.get("/api/items", headers=admin_headers).status_code == 200
     assert client.post(f"/api/items/{pid}/view", json={}, headers=admin_headers).status_code == 200
@@ -209,15 +268,14 @@ def test_render_paths_make_no_assethub_call(client, team, admin_headers, monkeyp
 
 def test_search_empty_query_makes_no_call(client, team, admin_headers, monkeypatch):
     _enable(team, monkeypatch)
-    calls = _install_client(monkeypatch, forbid=True)
+    _install(monkeypatch, forbid=True)
     r = client.get("/api/assethub/assets/search?q=%20%20", headers=admin_headers)
     assert r.status_code == 200 and r.json()["results"] == []
-    assert calls == []
 
 
 def test_search_calls_once_with_q(client, team, admin_headers, monkeypatch):
     _enable(team, monkeypatch)
-    calls = _install_client(monkeypatch, handler=lambda path, params: {"data": [_asset()]})
+    calls = _install(monkeypatch, handler=lambda path, params: {"data": [_asset()]})
     r = client.get("/api/assethub/assets/search?q=lap", headers=admin_headers)
     assert r.status_code == 200 and len(r.json()["results"]) == 1
     assert len(calls) == 1 and calls[0]["params"]["q"] == "lap"
@@ -226,74 +284,67 @@ def test_search_calls_once_with_q(client, team, admin_headers, monkeypatch):
 # ── refresh ────────────────────────────────────────────────────────────────────
 
 def test_refresh_one_call_per_linked_asset(client, team, admin_headers, monkeypatch):
-    _enable(team, monkeypatch)
+    _enable_linkable(team, monkeypatch)
     pid = _create(client, admin_headers).json()["id"]
-    _link(client, admin_headers, pid, _asset(UUID1, "IT-1"))
-    _link(client, admin_headers, pid, _asset(UUID2, "IT-2"))
-    calls = _install_client(monkeypatch, handler=lambda path, params: {"data": _asset(path.rsplit("/", 1)[-1])})
+    _link(client, admin_headers, pid, UUID1)
+    _link(client, admin_headers, pid, UUID2)
+    calls = _install(monkeypatch, handler=_detail_ok)             # fresh counter for refresh only
     r = client.post(f"/api/items/{pid}/asset-links/refresh", json={}, headers=admin_headers)
-    assert r.status_code == 200
-    assert len(calls) == 2                              # exactly one per linked asset
+    assert r.status_code == 200 and len(calls) == 2               # exactly one per linked asset
 
 
 def test_refresh_404_keeps_link_and_sets_not_found(client, team, admin_headers, monkeypatch):
-    _enable(team, monkeypatch)
+    _enable_linkable(team, monkeypatch)
     pid = _create(client, admin_headers).json()["id"]
-    _link(client, admin_headers, pid, _asset())
-    def h(path, params):
-        raise server.AssetHubError("not_found", status=404, correlation_id="c1")
-    _install_client(monkeypatch, handler=h)
+    _link(client, admin_headers, pid)
+    _install(monkeypatch, handler=_raise("not_found", 404))
     r = client.post(f"/api/items/{pid}/asset-links/refresh", json={}, headers=admin_headers).json()
     assert r["assetCache"][UUID1]["state"] == "not_found"
     assert [l["publicId"] for l in _stored(team, pid)["assetLinks"]] == [UUID1]   # link NOT dropped
 
 
 def test_refresh_500_sets_error(client, team, admin_headers, monkeypatch):
-    _enable(team, monkeypatch)
+    _enable_linkable(team, monkeypatch)
     pid = _create(client, admin_headers).json()["id"]
-    _link(client, admin_headers, pid, _asset())
-    def h(path, params):
-        raise server.AssetHubError("internal_error", status=500, correlation_id="c1")
-    _install_client(monkeypatch, handler=h)
+    _link(client, admin_headers, pid)
+    _install(monkeypatch, handler=_raise("internal_error", 500))
     r = client.post(f"/api/items/{pid}/asset-links/refresh", json={}, headers=admin_headers).json()
     assert r["assetCache"][UUID1]["state"] == "error"
 
 
 def test_refresh_401_surfaces_connection_error_and_stops(client, team, admin_headers, monkeypatch):
-    _enable(team, monkeypatch)
+    _enable_linkable(team, monkeypatch)
     pid = _create(client, admin_headers).json()["id"]
-    _link(client, admin_headers, pid, _asset(UUID1, "IT-1"))
-    _link(client, admin_headers, pid, _asset(UUID2, "IT-2"))
-    def h(path, params):
-        raise server.AssetHubError("invalid_credential", status=401, correlation_id="c1")
-    calls = _install_client(monkeypatch, handler=h)
+    _link(client, admin_headers, pid, UUID1)
+    _link(client, admin_headers, pid, UUID2)
+    calls = _install(monkeypatch, handler=_raise("invalid_credential", 401))
     r = client.post(f"/api/items/{pid}/asset-links/refresh", json={}, headers=admin_headers).json()
     assert r["connectionError"]["code"] == "invalid_credential"
-    assert len(calls) == 1                              # stopped after the connection-wide failure
+    assert len(calls) == 1                                        # stopped after the connection-wide failure
 
 
 # ── gating ─────────────────────────────────────────────────────────────────────
 
 def test_not_configured_refuses_link(client, team, admin_headers, monkeypatch):
-    monkeypatch.delenv("ASSETHUB_API_KEY_" + team.upper(), raising=False)   # no credential
+    monkeypatch.delenv("ASSETHUB_API_KEY_" + team.upper(), raising=False)
     _set_cfg(team, "assethubConnection", {})
     pid = _create(client, admin_headers).json()["id"]
-    assert _link(client, admin_headers, pid, _asset()).status_code == 400
+    assert _link(client, admin_headers, pid).status_code == 400
 
 
 def test_hidden_item_refuses_link(client, team, admin_headers, monkeypatch):
-    _enable(team, monkeypatch)
+    _enable_linkable(team, monkeypatch)
     pid = _create(client, admin_headers, hidden=True).json()["id"]
-    assert _link(client, admin_headers, pid, _asset()).status_code == 400
+    assert _link(client, admin_headers, pid).status_code == 400
 
 
 def test_viewer_cannot_link(client, team, viewer_headers, admin_headers, monkeypatch):
     _enable(team, monkeypatch)
     pid = _create(client, admin_headers).json()["id"]
-    assert _link(client, viewer_headers, pid, _asset()).status_code in (401, 403)
+    assert _link(client, viewer_headers, pid).status_code in (401, 403)
 
 
 def test_contributor_cannot_link(client, team, contributor_headers, admin_headers, monkeypatch):
     _enable(team, monkeypatch)
     pid = _create(client, admin_headers).json()["id"]
-    assert _link(client, contributor_headers, pid, _asset()).status_code in (401, 403)
+    assert _link(client, contributor_headers, pid).status_code in (401, 403)
