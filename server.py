@@ -3030,6 +3030,7 @@ def get_all(auth: dict = Depends(require_auth)):
             # exist - and carries no token/base-URL/key fragment. FLOW-1 will gate asset display on it.
             "assethubConnection": cfg_map.get("assethubConnection", {}),
             "assethubConfigured": bool(cfg_map.get("assethubConnection")) and bool(_assethub_api_key(team)),
+            "assethubBaseUrl": ASSETHUB_BASE_URL,   # FLOW-1 item B: non-secret host for the asset-tag deep link (credential stays in .env)
             # PHASE B2: minimal read-only stubs for out-of-scope items a Contributor's own items
             # reference (parent / requires). Empty for admin/editor/viewer.
             "relatedStubs": related_stubs}
