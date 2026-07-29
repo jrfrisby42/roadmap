@@ -2154,7 +2154,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.7.0';
+const APP_VERSION = '5.7.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2653,6 +2653,7 @@ let richTextEditor = true;      // /beta Tiptap editor master switch (config). D
 let maintenanceDutyTypeId = ''; // M1: assignment type the Maintenance Duty rotation uses ('' = auto-detect by name "maintenance duty")
 let intakeEnabled = false;      // public /report portal: is this team exposed? (config)
 let assethubConfigured = false; // FLOW-1: server-derived - true only when this team has BOTH an AssetHub mapping and a .env credential. Gates all asset UI. Never carries the token.
+let assethubBaseUrl = '';       // FLOW-1 item B: AssetHub host (non-secret) for the asset-tag deep link. Never the credential.
 let intakeProjects = [];        // which Projects (products) the portal offers (empty = all). (config)
 let intakeNotifyEmail = '';     // team inbox that gets a copy of each portal ticket. (config)
 let intakeTypes = [];           // which item Types the portal offers (empty = all). (config)
@@ -7135,6 +7136,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       if(data.maintenanceDutyTypeId !== undefined) maintenanceDutyTypeId = data.maintenanceDutyTypeId || '';
       intakeEnabled = data.intakeEnabled === true;
       assethubConfigured = data.assethubConfigured === true;   // FLOW-1 gate
+      assethubBaseUrl = data.assethubBaseUrl || '';            // FLOW-1 item B
       intakeProjects = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];
       intakeNotifyEmail = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : '';
       intakeTypes   = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];
@@ -14253,7 +14255,15 @@ function _ipBeginEdit(cell){
   } else if(kind==='date'){
     cell.innerHTML = `<input type="date" value="${escA(cur||'')}" style="${bs}">`;
   } else if(kind==='textarea'){
-    cell.innerHTML = `<textarea rows="4" style="${bs};resize:vertical;min-height:72px;line-height:1.5">${esc(cur??'')}</textarea>`;
+    // Notes / Resolution (item C): a bigger editor with an explicit Save + a save-state
+    // indicator. Blur still commits (kept, consistent with every other inline field), but a
+    // deliberate Save is now possible and feedback is visible; a FAILED save keeps the editor and
+    // the user's text (never discarded) so it can be retried.
+    cell.innerHTML = `<textarea rows="4" style="${bs};resize:vertical;min-height:72px;line-height:1.5">${esc(cur??'')}</textarea>`
+      + `<div style="display:flex;align-items:center;gap:10px;margin-top:6px">`
+      +   `<button type="button" class="ip-txt-save" style="height:26px;border:1px solid var(--frz-accent,#0059A9);background:var(--frz-accent,#0059A9);color:#fff;border-radius:6px;font-weight:700;font-size:12px;padding:0 12px;cursor:pointer">Save</button>`
+      +   `<span class="ip-txt-state" style="font-size:12px;color:var(--muted)"></span>`
+      + `</div>`;
   } else {
     cell.innerHTML = `<input type="text" value="${escA(cur??'')}" style="${bs}">`;
   }
@@ -14274,9 +14284,42 @@ function _ipBeginEdit(cell){
   };
   if(kind==='select'||kind==='date'){ ctrl.addEventListener('change', commit); ctrl.addEventListener('blur', cancel); }
   else if(kind==='textarea'){
-    // Enter inserts a newline; commit on blur, Escape cancels.
-    ctrl.addEventListener('blur', commit);
-    ctrl.addEventListener('keydown', ev=>{ if(ev.key==='Escape'){ cancel(); } });
+    // Item C: Notes/Resolution save flow. Routes through the SAME guarded save (putItemGuarded) -
+    // no second save path. Enter inserts a newline. Escape reverts to the last saved value.
+    // Save button = deliberate save, editor stays open showing "Saved" so the user can keep
+    // typing. Blur = commit-and-close (unchanged mechanic). A failed save NEVER discards the text.
+    const saveBtn = cell.querySelector('.ip-txt-save');
+    const stateEl = cell.querySelector('.ip-txt-state');
+    let orig = String(cur ?? ''), committing = false, finished = false;
+    const dirty = ()=> ctrl.value !== orig;
+    const setState = (txt, color)=>{ if(stateEl){ stateEl.textContent = txt; stateEl.style.color = color || 'var(--muted)'; } };
+    const closeDisplay = (pp)=>{ if(finished) return; finished = true; if(pp) renderItemPage(pp); };
+    async function doSave(closeOnSuccess){
+      if(committing || finished) return;
+      if(!dirty()){ if(closeOnSuccess) closeDisplay(fresh()); return; }
+      committing = true; if(saveBtn) saveBtn.disabled = true; setState('Saving...', 'var(--muted)');
+      const fr = fresh(); if(!fr){ committing = false; if(saveBtn) saveBtn.disabled = false; return; }
+      const updated = {...fr, [field]: ctrl.value, _username: getUsername()};
+      try {
+        const saved = await putItemGuarded(updated.id, updated);
+        if(!saved){ committing = false; return; }   // T3 conflict: putItemGuarded re-rendered the page
+        const idx = projects.findIndex(x=>x.id===updated.id);
+        if(idx>=0) projects[idx] = {...updated, ...(typeof saved==='object'?saved:{}), id:updated.id};
+        committing = false;
+        if(closeOnSuccess){ if(typeof showToast==='function') showToast('Saved','success'); closeDisplay(idx>=0?projects[idx]:updated); }
+        else { orig = ctrl.value; if(saveBtn) saveBtn.disabled = false; setState('Saved', '#1f9d55'); }   // stay open; keep editing
+      } catch(e){
+        // FAILED SAVE: keep the editor AND the user's text; surface the error; allow retry.
+        committing = false; if(saveBtn) saveBtn.disabled = false;
+        setState('Save failed - click Save to retry', '#e8394a');
+        if(typeof showToast==='function') showToast('Save failed: '+(e.message||e),'error');
+        try { ctrl.focus(); } catch(_){}
+      }
+    }
+    ctrl.addEventListener('input', ()=>{ if(!committing) setState(dirty()?'Unsaved changes':'', 'var(--muted)'); });
+    if(saveBtn) saveBtn.addEventListener('mousedown', ev=>{ ev.preventDefault(); doSave(false); });   // mousedown keeps textarea focus; save-and-stay
+    ctrl.addEventListener('blur', ()=>{ setTimeout(()=>doSave(true), 0); });   // blur = commit-and-close (a Save mousedown wins the race via committing/finished guards)
+    ctrl.addEventListener('keydown', ev=>{ if(ev.key==='Escape'){ closeDisplay(fresh()); } });
   }
   else {
     ctrl.addEventListener('blur', commit);
@@ -16067,6 +16110,7 @@ async function boot(){
     maintenanceDutyTypeId = data.maintenanceDutyTypeId || '';   // M1: Maintenance Duty assignment-type mapping
     intakeEnabled         = data.intakeEnabled === true;                                              // public /report portal exposed?
     assethubConfigured    = data.assethubConfigured === true;                                         // FLOW-1: gates all asset UI (mapping + .env credential present)
+    assethubBaseUrl       = data.assethubBaseUrl || '';                                               // FLOW-1 item B: host for the asset-tag deep link
     intakeProjects        = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];            // offered Projects (empty = all)
     intakeTypes           = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];                  // offered Types (empty = all)
     intakeNotifyEmail     = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : ''; // team inbox copy
@@ -17140,8 +17184,12 @@ if ('serviceWorker' in navigator) {
   /* height + negative vertical margin so this header action button does not stretch the flex
      header past the 36px text-line height the other section headers use (5.2.4). Renders 24px,
      contributes 16px to the header's flex line (24 - 2*4px margin), centered with clearance. */
-  .frz-beta .frz-att-upbtn { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); color:var(--frz-accent); font-weight:700; font-size:12px; border-radius:7px; padding:0 12px; height:24px; line-height:22px; margin:-4px 0; box-sizing:border-box; cursor:pointer; }
-  .frz-beta .frz-att-upbtn:hover { background:var(--frz-accent-soft); }
+  /* Shared card-header action button (Attachments +Upload, Linked Assets Refresh, ...). The
+     fixed height + margin:-4px 0 keep it from inflating the header band, so every card header
+     band stays the same height (item A root-cause fix). Use this class, never a one-off inline
+     button, on any card-header action - that is what prevents the band heights drifting apart. */
+  .frz-beta .frz-cardh-btn { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); color:var(--frz-accent); font-weight:700; font-size:12px; border-radius:7px; padding:0 12px; height:24px; line-height:22px; margin:-4px 0; box-sizing:border-box; cursor:pointer; }
+  .frz-beta .frz-cardh-btn:hover { background:var(--frz-accent-soft); }
   .frz-beta .frz-att-drop { border:1.5px dashed var(--frz-border-strong); border-radius:8px; padding:14px; text-align:center; font-size:12.5px; color:var(--frz-text-muted); cursor:pointer; transition:border-color .1s, background .1s, color .1s; }
   .frz-beta .frz-att-drop:hover, .frz-beta .frz-att-drop.frz-drag { border-color:var(--frz-accent); background:var(--frz-accent-soft); color:var(--frz-accent); }
   .frz-beta .frz-att-grid { display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; }
@@ -19100,7 +19148,7 @@ if ('serviceWorker' in navigator) {
       if(f.status && (p.status||'')!==f.status) return false;
       if(f.type && (p.type||'')!==f.type) return false;
       if(f.priority && String(p.priority||'')!==f.priority) return false;
-      if(f.product && (p.product||'')!==f.product) return false;
+      if(state.project && state.project!=='__all__' && (p.product||'')!==state.project) return false;   // follow the rail project scope (left menu) - single source of truth
       if(f.owner && (p.dev||'')!==f.owner) return false;
       if(f.dept && (p.departments||[]).indexOf(f.dept)<0) return false;
       if(f.assignee && (p.assignee||'')!==f.assignee) return false;
@@ -19120,7 +19168,7 @@ if ('serviceWorker' in navigator) {
   var _RPT_COLS = [
     {h:'Item',           k:'key',            always:true, kind:'key'},
     {h:'Status',         k:'status',         always:true, kind:'status'},
-    {h:'Product',        k:'product'},
+    {h:'Project',        k:'product'},   // 'products' config = the app's Projects (Fraznet/HubSpot/...); labelled Project to match the rail
     {h:'Type',           k:'type',           always:true},
     {h:'Priority',       k:'priority'},
     {h:'Owner',          k:'owner'},
@@ -19199,7 +19247,7 @@ if ('serviceWorker' in navigator) {
     var tableRows=rows.map(function(r){ return '<tr>'+cols.map(function(col){ return renderCell(col,r); }).join('')+'</tr>'; }).join('');
     // ── team-aware aggregates: only for dimensions the team populates ──
     var aggs=[];
-    if(has('product'))      aggs.push(_rptAggHtml('By product', _rptCount(rows, function(r){ return r.product; })));
+    if(has('product'))      aggs.push(_rptAggHtml('By project', _rptCount(rows, function(r){ return r.product; })));
     if(has('owner'))        aggs.push(_rptAggHtml('By owner',   _rptCount(rows, function(r){ return r.owner || '(no owner)'; })));
     if(has('assigneeName')) aggs.push(_rptAggHtml('Volume by technician', _rptCount(rows, function(r){ return r.assignee ? (r.assigneeName||r.assignee) : '(unassigned)'; })));
     aggs.push(_rptAggHtml('By status', _rptCount(rows, function(r){ return r.status; })));
@@ -19216,16 +19264,17 @@ if ('serviceWorker' in navigator) {
       +'<label>to<input type="date" id="frzRptTo" value="'+escA(f.to)+'"></label>'
       +'<label>Status<select id="frzRptStatus">'+_rptOpt(f.status,'','All')+statuses.map(function(s){ return _rptOpt(f.status,s,s); }).join('')+'</select></label>'
       +'<label>Type<select id="frzRptType">'+_rptOpt(f.type,'','All')+types.map(function(t){ return _rptOpt(f.type,t,t); }).join('')+'</select></label>';
-    if(has('product')) filters+='<label>Product<select id="frzRptProduct">'+_rptOpt(f.product,'','All')+productList.map(function(pp){ return _rptOpt(f.product,pp,pp); }).join('')+'</select></label>';
+    // Project filter mirrors the rail project scope (state.project) so the two are never
+    // contradictory; changing it drives setProject, which re-scopes the rail, URL, and report.
+    var projSel=(state.project && state.project!=='__all__') ? state.project : '';
+    if(productList.length) filters+='<label>Project<select id="frzRptProject">'+_rptOpt(projSel,'','All projects')+productList.map(function(pp){ return _rptOpt(projSel,pp,pp); }).join('')+'</select></label>';
     if(has('owner'))   filters+='<label>Owner<select id="frzRptOwner">'+_rptOpt(f.owner,'','All')+ownerList.map(function(o){ return _rptOpt(f.owner,o,o); }).join('')+'</select></label>';
     if(has('priority'))filters+='<label>Priority<select id="frzRptPriority">'+_rptOpt(f.priority,'','All')+[1,2,3,4].map(function(n){ return _rptOpt(f.priority,String(n),_PRPL[n]); }).join('')+'</select></label>';
     if(has('dept'))    filters+='<label>Department<select id="frzRptDept">'+_rptOpt(f.dept,'','All')+depts.map(function(d){ return _rptOpt(f.dept,d,d); }).join('')+'</select></label>';
     if(has('assigneeName')) filters+='<label>Assignee<select id="frzRptAssignee">'+_rptOpt(f.assignee,'','All')+asgList.map(function(a){ return _rptOpt(f.assignee,a,(_call('displayName',a)||a)); }).join('')+'</select></label>';
     filters+='<span class="frz-rpt-total">'+rows.length+' item'+(rows.length===1?'':'s')+'</span>';
     host.innerHTML =
-      '<div class="frz-rpt-head"><h2 class="frz-rpt-title">Reports</h2>'
-        +'<div class="frz-rpt-sub">Current team only. Columns and breakdowns reflect the fields this team uses. Time-series trending is not included yet.</div></div>'
-      +'<section class="frz-rpt-sec">'
+      '<section class="frz-rpt-sec">'   // top-bar already reads "Reports"; no redundant page heading
         +'<div class="frz-rpt-sec-h"><span>Work Items</span>'
           +'<button class="frz-newitem" id="frzRptCsv">Export CSV</button></div>'
         +'<div class="frz-rpt-filters">'+filters+'</div>'
@@ -19238,7 +19287,10 @@ if ('serviceWorker' in navigator) {
     bindF('frzRptFrom','from'); bindF('frzRptTo','to');
     bindF('frzRptStatus','status'); bindF('frzRptType','type'); bindF('frzRptPriority','priority');
     bindF('frzRptDept','dept'); bindF('frzRptAssignee','assignee');
-    bindF('frzRptProduct','product'); bindF('frzRptOwner','owner');
+    bindF('frzRptOwner','owner');
+    // Project drives the shared rail scope (not a report-local filter), so the left menu and the
+    // report stay in lockstep. setProject re-scopes + renderRail + syncURL, and (below) re-renders Reports.
+    var pj=document.getElementById('frzRptProject'); if(pj) pj.addEventListener('change', function(){ setProject(pj.value || '__all__'); });
     var csv=document.getElementById('frzRptCsv'); if(csv) csv.addEventListener('click', _rptExportCsv);
   }
   // ── Team Calendar render (Phase 2a: Month view - Owner -> Users -> chips) ──────
@@ -21095,6 +21147,7 @@ if ('serviceWorker' in navigator) {
     syncURL(true);                                  // Stage 1: project rides in the URL (replace; no-op on the item page via syncURL's onItem guard)
     setProjectPanel(); rerender();
     if (state.view==='team-calendar') renderCalendar();   // Stage 3.5.1: rerender() only repaints production views; re-scope the Flow-owned calendar too
+    if (state.view==='reports') renderReports();           // Reports is Flow-owned too; re-scope it on a project change (rail or its own Project dropdown)
     // refresh crumbs + counts (Stage 3: _frzCrumbText = project + active saved-filter name)
     if (!state.onItem){ var c=document.querySelector('#frzLeft .frz-crumbs'); if(c) c.textContent=_frzCrumbText(); }
     renderRail();
@@ -22859,7 +22912,7 @@ if ('serviceWorker' in navigator) {
       card.style.cssText='border:1px solid var(--border);border-radius:10px;overflow:hidden';
       card.innerHTML=''
         +'<div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between">'
-          +'Attachments<button type="button" class="frz-att-upbtn" id="frzAttUp" style="display:none">+ Upload</button>'
+          +'Attachments<button type="button" class="frz-cardh-btn" id="frzAttUp" style="display:none">+ Upload</button>'
         +'</div>'
         +'<div style="padding:14px 16px">'
           +'<div class="frz-att-drop" id="frzAttDrop" style="display:none">Drop files here, click to browse, or paste a screenshot</div>'
@@ -22999,8 +23052,20 @@ if ('serviceWorker' in navigator) {
     var a = entry.asset || {};
     var pubid = link.publicId || a.id || '';
     var unlinkBtn = canEdit ? '<button type="button" class="frz-asset-unlink" data-pubid="'+escA(pubid)+'" style="border:none;background:none;color:var(--muted);cursor:pointer;font-size:12px;text-decoration:underline">Unlink</button>' : '';
+    // FLOW-1 item B: the asset tag deep-links to AssetHub's inventory list FILTERED BY the tag
+    // (base URL from assethubBaseUrl, never hardcoded; q= is AssetHub's verified search param; the
+    // tag is URL-encoded because tags may contain a slash). NOTES: (1) asset_tag is a MUTABLE
+    // business value, not identity - fine for navigation, must never be used as a key; identity is
+    // the public_id already stored. (2) INTERIM: Flow holds only public_id and AssetHub exposes no
+    // public-id resolver route, so a direct asset-page URL is not constructible today; the durable
+    // fix is AssetHub-side (a public_id resolver, or a web_url field in AssetResponse at contract
+    // 1.2). AssetHub is session-gated, so a logged-out tech gets a login redirect - expected.
+    var tag = a.asset_tag || '';
+    var tagHtml = (tag && assethubBaseUrl)
+      ? '<a href="'+escA(assethubBaseUrl+'/inventory?q='+encodeURIComponent(tag))+'" target="_blank" rel="noopener" style="color:var(--frz-accent);text-decoration:none">'+esc(tag)+' ↗</a>'
+      : esc(tag || '(unknown tag)');
     var head = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'+
-      '<div style="font-weight:800;color:var(--text)">'+esc(a.asset_tag||'(unknown tag)')+
+      '<div style="font-weight:800;color:var(--text)">'+tagHtml+
         (link.role==='primary'?' <span style="font-weight:700;font-size:10px;color:var(--frz-accent);border:1px solid var(--frz-accent);border-radius:4px;padding:1px 5px">PRIMARY</span>':'')+'</div>'+unlinkBtn+'</div>';
     var box = 'border:1px solid var(--border);border-radius:8px;padding:10px 12px';
     // Broken / errored states: shown plainly, the link is NOT dropped.
@@ -23026,7 +23091,7 @@ if ('serviceWorker' in navigator) {
     var cache = p.assetCache || {};
     var canEdit = _frzCanEditAssets();
     var head = '<div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between">'+
-      'Linked assets'+(canEdit && links.length ? '<button type="button" id="frzAssetRefresh" style="height:26px;border:1px solid var(--border);background:transparent;color:var(--text);border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;padding:0 10px">Refresh</button>':'')+'</div>';
+      'Linked assets'+(canEdit && links.length ? '<button type="button" id="frzAssetRefresh" class="frz-cardh-btn">Refresh</button>':'')+'</div>';   // shared card-header button so the band matches other cards (item A)
     var rows = links.length ? links.map(function(l){ return _frzAssetRowHtml(l, cache[l.publicId], canEdit); }).join('') : '<div style="color:var(--muted)">No linked assets.</div>';
     return head + '<div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">'+rows+(canEdit?_frzAssetPickerHtml():'')+'</div>';
   }

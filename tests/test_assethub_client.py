@@ -95,6 +95,16 @@ def test_credential_plus_mapping_makes_flag_true(client, team, admin_headers, mo
     assert r["assethubConfigured"] is True
 
 
+def test_assethub_base_url_exposed_in_api_all(client, team, admin_headers, monkeypatch):
+    # FLOW-1 item B: the non-secret host is exposed for the asset-tag deep link; the key never is.
+    monkeypatch.setattr(server, "ASSETHUB_BASE_URL", "https://ah.example")
+    monkeypatch.setenv("ASSETHUB_API_KEY_" + team.upper(), KEY)
+    raw = client.get("/api/all", headers=admin_headers).text
+    payload = __import__("json").loads(raw)
+    assert payload["assethubBaseUrl"] == "https://ah.example"
+    assert KEY not in raw and "ahk_" not in raw     # host yes, credential never
+
+
 def test_token_never_appears_in_api_all(client, team, admin_headers, monkeypatch):
     monkeypatch.setenv("ASSETHUB_API_KEY_" + team.upper(), KEY)
     _set_cfg(team, "assethubConnection", IT_MAPPING)
