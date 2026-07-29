@@ -2154,7 +2154,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.6.1';
+const APP_VERSION = '5.7.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -19046,7 +19046,7 @@ if ('serviceWorker' in navigator) {
     _frzSyncSearchMode();
     renderReports();
   }
-  var _rptFilters = { from:'', to:'', status:'', type:'', priority:'', dept:'', assignee:'' };
+  var _rptFilters = { from:'', to:'', status:'', type:'', priority:'', dept:'', assignee:'', product:'', owner:'' };
   var _PRPL = {1:'Urgent',2:'High',3:'Medium',4:'Low'};
   function _rptDays(aIso, bIso){   // whole days between two timestamps; null if either missing/invalid
     if(!aIso || !bIso) return null;
@@ -19055,37 +19055,27 @@ if ('serviceWorker' in navigator) {
     return Math.max(0, Math.round((b.getTime()-a.getTime())/86400000));
   }
   function _rptComputed(){
-    // Returns {rows, all} where rows is the filtered+computed set and all is the unfiltered
-    // team set (for building filter option lists). Calculated metrics are null when their
-    // source timestamp is missing - NEVER 0 (rendered as "n/a", exported blank).
-    // Exclude archived AND hidden (hidden = the Gantt-visibility flag, used for non-ticket /
-    // utility rows) so they don't pollute the report. Child items (p.parent set) are NOT
-    // excluded: unlike the Planning backlog, a genuine sub-task can be a real ticket, and
-    // dropping them would under-report. Flip this if IT adopts heavy parent/child nesting.
+    // Returns {rows, all, allRows}: rows = filtered+computed set; all = raw unfiltered team set
+    // (for filter option lists); allRows = computed set over ALL items (for team-aware column
+    // detection, so columns don't appear/disappear as you filter). Calculated metrics are null
+    // when their source timestamp is missing - NEVER 0 (rendered "n/a", exported blank).
+    // Exclude archived AND hidden (hidden = the Gantt-visibility flag / utility rows).
     var all=(_val('projects',[])||[]).filter(function(p){ return !p.archived && !p.hidden; });
-    var f=_rptFilters, nowIso=new Date().toISOString();
-    var rows=all.filter(function(p){
-      if(f.status && (p.status||'')!==f.status) return false;
-      if(f.type && (p.type||'')!==f.type) return false;
-      if(f.priority && String(p.priority||'')!==f.priority) return false;
-      if(f.dept && (p.departments||[]).indexOf(f.dept)<0) return false;
-      if(f.assignee && (p.assignee||'')!==f.assignee) return false;
-      if(f.from || f.to){                       // date-range over the Requested date (createdAt)
-        var d=(p.createdAt||'').slice(0,10);
-        if(!d) return false;                     // no createdAt = excluded when a range is set
-        if(f.from && d<f.from) return false;
-        if(f.to && d>f.to) return false;
-      }
-      return true;
-    }).map(function(p){
-      var closed=!!p.completedAt;
+    var f=_rptFilters, nowIso=new Date().toISOString(), today=nowIso.slice(0,10);
+    var termMap=_val('statusIsTerminal',{})||{};   // for overdue: past-due AND not terminal
+    function row(p){
+      var closed=!!p.completedAt, due=(p.due||'').slice(0,10);
       return {
         _id:p.id,
         key:p.itemKey||('#'+p.id),
         status:p.status||'',
+        product:p.product||'',                                  // item 2: primary axis for delivery teams
+        owner:p.dev||'',                                        // item 1: owner/pod (dev), not assignee
         requested:(p.createdAt||'').slice(0,10),
         requestedBy:p.reporter||p.reporterEmail||'',
         start:(p.start||'').slice(0,10),
+        due:due,
+        revised:(p.revised||'').slice(0,10),
         completion:(p.completedAt||'').slice(0,10),
         type:p.type||'',
         priorityNum:(p.priority||''),
@@ -19098,30 +19088,79 @@ if ('serviceWorker' in navigator) {
         resolution:p.resolution||'',
         jira:(p.jiraTickets||[]).join('; '),
         attachCount:(p.attachments||[]).length,
+        overdue: !!(due && due < today && !termMap[p.status||'']),
+        open: !termMap[p.status||''],
         // Calculated (null = not available):
         age: closed ? _rptDays(p.createdAt, p.completedAt) : _rptDays(p.createdAt, nowIso),
         resolutionTime: _rptDays(p.createdAt, p.completedAt),
         responseTime: _rptDays(p.createdAt, p.firstResponseAt)
       };
+    }
+    var rows=all.filter(function(p){
+      if(f.status && (p.status||'')!==f.status) return false;
+      if(f.type && (p.type||'')!==f.type) return false;
+      if(f.priority && String(p.priority||'')!==f.priority) return false;
+      if(f.product && (p.product||'')!==f.product) return false;
+      if(f.owner && (p.dev||'')!==f.owner) return false;
+      if(f.dept && (p.departments||[]).indexOf(f.dept)<0) return false;
+      if(f.assignee && (p.assignee||'')!==f.assignee) return false;
+      if(f.from || f.to){                       // date-range over the Requested date (createdAt)
+        var d=(p.createdAt||'').slice(0,10);
+        if(!d) return false;                     // no createdAt = excluded when a range is set
+        if(f.from && d<f.from) return false;
+        if(f.to && d>f.to) return false;
+      }
+      return true;
+    }).map(row);
+    return { rows:rows, all:all, allRows:all.map(row) };
+  }
+  // Ordered column spec. `always` columns always render; the rest render only when the team
+  // actually populates them (item 3: team-aware), detected over the full team set so columns
+  // are stable under filtering. csvk overrides the export field when it differs from the key.
+  var _RPT_COLS = [
+    {h:'Item',           k:'key',            always:true, kind:'key'},
+    {h:'Status',         k:'status',         always:true, kind:'status'},
+    {h:'Product',        k:'product'},
+    {h:'Type',           k:'type',           always:true},
+    {h:'Priority',       k:'priority'},
+    {h:'Owner',          k:'owner'},
+    {h:'Assignee',       k:'assigneeName'},
+    {h:'Department',     k:'dept'},
+    {h:'Requested By',   k:'requestedBy'},
+    {h:'Requested',      k:'requested',      always:true},
+    {h:'Start',          k:'start'},
+    {h:'Due',            k:'due',            kind:'due'},
+    {h:'Revised',        k:'revised'},
+    {h:'Completion',     k:'completion'},
+    {h:'Description',    k:'description',    always:true, kind:'desc'},
+    {h:'Notes',          k:'notes'},
+    {h:'Resolution',     k:'resolution'},
+    {h:'Jira',           k:'jira'},
+    {h:'Attach',         k:'attachCount',    kind:'num'},
+    {h:'Age (d)',        k:'age',            always:true, kind:'num'},
+    {h:'Resolution (d)', k:'resolutionTime', kind:'num'},
+    {h:'Response (d)',   k:'responseTime',   kind:'num'}
+  ];
+  function _rptHas(allRows, col){
+    return allRows.some(function(r){
+      var v=r[col.k];
+      if(v==null || v==='') return false;
+      if(col.k==='attachCount') return v>0;   // hide an all-zero attachments column
+      return true;                            // strings + numbers (incl 0 age/times) count as present
     });
-    return { rows:rows, all:all };
+  }
+  function _rptVisibleCols(allRows){
+    return _RPT_COLS.filter(function(c){ return c.always || _rptHas(allRows, c); });
   }
   function _rptCsvCell(v){ v=(v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
   function _rptExportCsv(){
-    var rows=_rptComputed().rows;
-    var cols=[
-      {h:'Ticket',k:'key'},{h:'Status',k:'status'},{h:'Requested',k:'requested'},
-      {h:'Requested By',k:'requestedBy'},{h:'Start',k:'start'},{h:'Completion',k:'completion'},
-      {h:'Type',k:'type'},{h:'Priority',k:'priority'},{h:'Department',k:'dept'},
-      {h:'Assignee',k:'assignee'},{h:'Assignee Name',k:'assigneeName'},{h:'Description',k:'description'},
-      {h:'Notes',k:'notes'},{h:'Resolution',k:'resolution'},{h:'Jira',k:'jira'},{h:'Attachments',k:'attachCount'},
-      {h:'Ticket Age (days)',k:'age'},{h:'Resolution Time (days)',k:'resolutionTime'},{h:'Response Time (days)',k:'responseTime'}
-    ];
-    var lines=[cols.map(function(c){ return c.h; }).join(',')];
-    rows.forEach(function(r){ lines.push(cols.map(function(c){ var v=r[c.k]; return _rptCsvCell(v==null?'':v); }).join(',')); });
+    // Export follows the SAME team-aware visible columns as the on-screen table.
+    var c=_rptComputed(), rows=c.rows, cols=_rptVisibleCols(c.allRows);
+    var lines=[cols.map(function(col){ return _rptCsvCell(col.h); }).join(',')];
+    rows.forEach(function(r){ lines.push(cols.map(function(col){ var v=r[col.csvk||col.k]; return _rptCsvCell(v==null?'':v); }).join(',')); });
     var blob=new Blob(['﻿'+lines.join('\r\n')], {type:'text/csv;charset=utf-8'});
     var a=document.createElement('a'); a.href=URL.createObjectURL(blob);
-    a.download='tickets-'+new Date().toISOString().slice(0,10)+'.csv';
+    a.download='report-'+new Date().toISOString().slice(0,10)+'.csv';
     document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 0);
   }
   function _rptOpt(sel, val, label){ return '<option value="'+escA(val)+'"'+(sel===val?' selected':'')+'>'+esc(label)+'</option>'; }
@@ -19136,67 +19175,70 @@ if ('serviceWorker' in navigator) {
   }
   function renderReports(){
     var host=document.getElementById('reportsBody'); if(!host) return;
-    var c=_rptComputed(), rows=c.rows, all=c.all, f=_rptFilters;
-    // Filter option lists come from config (unfiltered) so options don't vanish as you filter.
+    var c=_rptComputed(), rows=c.rows, all=c.all, allRows=c.allRows, f=_rptFilters;
+    var cols=_rptVisibleCols(allRows);                       // team-aware: only populated dimensions
+    function has(k){ return _rptHas(allRows, {k:k}); }
+    // Filter option lists come from config / the team set (unfiltered) so options don't vanish.
     var statuses=_val('statuses',[])||[], types=(_val('types',[])||[]).map(function(t){ return t.name||t; });
-    var depts=_val('departments',[])||[], users=_val('users',[])||[];
-    // Assignees present on the team's items (+ any config users), unassigned handled in the aggregate.
-    var asgSet={}; all.forEach(function(p){ if(p.assignee) asgSet[p.assignee]=1; });
-    var asgList=Object.keys(asgSet).sort();
-    function cell(v, cls){ return '<td'+(cls?' class="'+cls+'"':'')+'>'+(v==null||v===''?'<span class="frz-rpt-na">n/a</span>':esc(String(v)))+'</td>'; }
-    function numCell(v){ return v==null ? '<td class="frz-rpt-num"><span class="frz-rpt-na">n/a</span></td>' : '<td class="frz-rpt-num">'+v+'</td>'; }
-    var tableRows=rows.map(function(r){
-      return '<tr>'
-        +'<td class="frz-rpt-key">'+esc(r.key)+'</td>'
-        +'<td>'+(r.status?'<span class="'+(_call('statusCls',r.status)||'')+'" style="padding:1px 8px;border-radius:9px;font-size:11px;font-weight:700">'+esc(r.status)+'</span>':'<span class="frz-rpt-na">n/a</span>')+'</td>'
-        +cell(r.requested)+cell(r.requestedBy)+cell(r.start)+cell(r.completion)
-        +cell(r.type)+cell(r.priority)+cell(r.dept)+cell(r.assigneeName)
-        +'<td class="frz-rpt-desc" title="'+escA(r.description)+'">'+(r.description?esc(r.description.slice(0,80)):'<span class="frz-rpt-na">n/a</span>')+'</td>'
-        +cell(r.notes)+cell(r.resolution)+cell(r.jira)
-        +'<td class="frz-rpt-num">'+r.attachCount+'</td>'
-        +numCell(r.age)+numCell(r.resolutionTime)+numCell(r.responseTime)
-        +'</tr>';
-    }).join('');
-    // Volume by technician - unassigned items grouped as (unassigned), not dropped.
-    var vol=_rptCount(rows, function(r){ return r.assignee ? (r.assigneeName||r.assignee) : '(unassigned)'; });
-    var byStatus=_rptCount(rows, function(r){ return r.status; });
-    var byType=_rptCount(rows, function(r){ return r.type; });
-    var byPrio=_rptCount(rows, function(r){ return r.priority; });
-    var byDept=_rptCount(rows, function(r){ return r.dept; });
+    var depts=_val('departments',[])||[];
+    var productList=(_val('products',[])||[]).map(function(pp){ return pp.name||pp; });
+    var ownerSet={}, asgSet={};
+    all.forEach(function(p){ if(p.dev) ownerSet[p.dev]=1; if(p.assignee) asgSet[p.assignee]=1; });
+    var ownerList=Object.keys(ownerSet).sort(), asgList=Object.keys(asgSet).sort();
+    // ── one cell, keyed by the column's kind ──
+    function renderCell(col, r){
+      var v=r[col.k];
+      if(col.kind==='key')    return '<td class="frz-rpt-key">'+esc(String(v))+'</td>';
+      if(col.kind==='status') return '<td>'+(v?'<span class="'+(_call('statusCls',v)||'')+'" style="padding:1px 8px;border-radius:9px;font-size:11px;font-weight:700">'+esc(String(v))+'</span>':'<span class="frz-rpt-na">n/a</span>')+'</td>';
+      if(col.kind==='desc')   return '<td class="frz-rpt-desc" title="'+escA(String(v||''))+'">'+(v?esc(String(v).slice(0,80)):'<span class="frz-rpt-na">n/a</span>')+'</td>';
+      if(col.kind==='num')    return v==null ? '<td class="frz-rpt-num"><span class="frz-rpt-na">n/a</span></td>' : '<td class="frz-rpt-num">'+v+'</td>';
+      if(col.kind==='due')    return '<td'+(r.overdue?' style="color:#e8394a;font-weight:700"':'')+'>'+(v?esc(String(v)):'<span class="frz-rpt-na">n/a</span>')+'</td>';
+      return '<td>'+(v==null||v===''?'<span class="frz-rpt-na">n/a</span>':esc(String(v)))+'</td>';
+    }
+    var thead=cols.map(function(col){ return '<th>'+esc(col.h)+'</th>'; }).join('');
+    var tableRows=rows.map(function(r){ return '<tr>'+cols.map(function(col){ return renderCell(col,r); }).join('')+'</tr>'; }).join('');
+    // ── team-aware aggregates: only for dimensions the team populates ──
+    var aggs=[];
+    if(has('product'))      aggs.push(_rptAggHtml('By product', _rptCount(rows, function(r){ return r.product; })));
+    if(has('owner'))        aggs.push(_rptAggHtml('By owner',   _rptCount(rows, function(r){ return r.owner || '(no owner)'; })));
+    if(has('assigneeName')) aggs.push(_rptAggHtml('Volume by technician', _rptCount(rows, function(r){ return r.assignee ? (r.assigneeName||r.assignee) : '(unassigned)'; })));
+    aggs.push(_rptAggHtml('By status', _rptCount(rows, function(r){ return r.status; })));
+    aggs.push(_rptAggHtml('By type',   _rptCount(rows, function(r){ return r.type; })));
+    if(has('priority'))     aggs.push(_rptAggHtml('By priority', _rptCount(rows, function(r){ return r.priority; })));
+    if(has('dept'))         aggs.push(_rptAggHtml('By department', _rptCount(rows, function(r){ return r.dept; })));
+    if(has('due')){
+      var openN=rows.filter(function(r){ return r.open; }).length;
+      var overdueN=rows.filter(function(r){ return r.overdue; }).length;
+      aggs.push(_rptAggHtml('Schedule', [{k:'Open',n:openN},{k:'Open & overdue',n:overdueN}]));
+    }
+    // ── team-aware filters: show a control only when that dimension is in use ──
+    var filters='<label>Requested from<input type="date" id="frzRptFrom" value="'+escA(f.from)+'"></label>'
+      +'<label>to<input type="date" id="frzRptTo" value="'+escA(f.to)+'"></label>'
+      +'<label>Status<select id="frzRptStatus">'+_rptOpt(f.status,'','All')+statuses.map(function(s){ return _rptOpt(f.status,s,s); }).join('')+'</select></label>'
+      +'<label>Type<select id="frzRptType">'+_rptOpt(f.type,'','All')+types.map(function(t){ return _rptOpt(f.type,t,t); }).join('')+'</select></label>';
+    if(has('product')) filters+='<label>Product<select id="frzRptProduct">'+_rptOpt(f.product,'','All')+productList.map(function(pp){ return _rptOpt(f.product,pp,pp); }).join('')+'</select></label>';
+    if(has('owner'))   filters+='<label>Owner<select id="frzRptOwner">'+_rptOpt(f.owner,'','All')+ownerList.map(function(o){ return _rptOpt(f.owner,o,o); }).join('')+'</select></label>';
+    if(has('priority'))filters+='<label>Priority<select id="frzRptPriority">'+_rptOpt(f.priority,'','All')+[1,2,3,4].map(function(n){ return _rptOpt(f.priority,String(n),_PRPL[n]); }).join('')+'</select></label>';
+    if(has('dept'))    filters+='<label>Department<select id="frzRptDept">'+_rptOpt(f.dept,'','All')+depts.map(function(d){ return _rptOpt(f.dept,d,d); }).join('')+'</select></label>';
+    if(has('assigneeName')) filters+='<label>Assignee<select id="frzRptAssignee">'+_rptOpt(f.assignee,'','All')+asgList.map(function(a){ return _rptOpt(f.assignee,a,(_call('displayName',a)||a)); }).join('')+'</select></label>';
+    filters+='<span class="frz-rpt-total">'+rows.length+' item'+(rows.length===1?'':'s')+'</span>';
     host.innerHTML =
       '<div class="frz-rpt-head"><h2 class="frz-rpt-title">Reports</h2>'
-        +'<div class="frz-rpt-sub">Current team only. Time-series trending is not included (it needs historical state reconstruction).</div></div>'
+        +'<div class="frz-rpt-sub">Current team only. Columns and breakdowns reflect the fields this team uses. Time-series trending is not included yet.</div></div>'
       +'<section class="frz-rpt-sec">'
-        +'<div class="frz-rpt-sec-h"><span>Service Desk Tickets</span>'
+        +'<div class="frz-rpt-sec-h"><span>Work Items</span>'
           +'<button class="frz-newitem" id="frzRptCsv">Export CSV</button></div>'
-        +'<div class="frz-rpt-filters">'
-          +'<label>Requested from<input type="date" id="frzRptFrom" value="'+escA(f.from)+'"></label>'
-          +'<label>to<input type="date" id="frzRptTo" value="'+escA(f.to)+'"></label>'
-          +'<label>Status<select id="frzRptStatus">'+_rptOpt(f.status,'','All')+statuses.map(function(s){ return _rptOpt(f.status,s,s); }).join('')+'</select></label>'
-          +'<label>Type<select id="frzRptType">'+_rptOpt(f.type,'','All')+types.map(function(t){ return _rptOpt(f.type,t,t); }).join('')+'</select></label>'
-          +'<label>Priority<select id="frzRptPriority">'+_rptOpt(f.priority,'','All')+[1,2,3,4].map(function(n){ return _rptOpt(f.priority,String(n),_PRPL[n]); }).join('')+'</select></label>'
-          +'<label>Department<select id="frzRptDept">'+_rptOpt(f.dept,'','All')+depts.map(function(d){ return _rptOpt(f.dept,d,d); }).join('')+'</select></label>'
-          +'<label>Assignee<select id="frzRptAssignee">'+_rptOpt(f.assignee,'','All')+asgList.map(function(a){ return _rptOpt(f.assignee,a,(_call('displayName',a)||a)); }).join('')+'</select></label>'
-          +'<span class="frz-rpt-total">'+rows.length+' ticket'+(rows.length===1?'':'s')+'</span>'
-        +'</div>'
-        +'<div class="frz-rpt-aggs">'
-          +_rptAggHtml('Volume by technician', vol)
-          +_rptAggHtml('By status (resolution = sum of terminal statuses)', byStatus)
-          +_rptAggHtml('By type', byType)
-          +_rptAggHtml('By priority', byPrio)
-          +_rptAggHtml('By department', byDept)
-        +'</div>'
-        +'<div class="frz-rpt-tablewrap"><table class="frz-rpt-table"><thead><tr>'
-          +'<th>Ticket</th><th>Status</th><th>Requested</th><th>Requested By</th><th>Start</th><th>Completion</th>'
-          +'<th>Type</th><th>Priority</th><th>Department</th><th>Assignee</th><th>Description</th><th>Notes</th>'
-          +'<th>Resolution</th><th>Jira</th><th>Attach</th><th>Age (d)</th><th>Resolution (d)</th><th>Response (d)</th>'
-        +'</tr></thead><tbody>'+(tableRows || '<tr><td colspan="18" style="padding:24px;text-align:center;color:var(--frz-text-muted)">No tickets match the current filters.</td></tr>')+'</tbody></table></div>'
+        +'<div class="frz-rpt-filters">'+filters+'</div>'
+        +'<div class="frz-rpt-aggs">'+aggs.join('')+'</div>'
+        +'<div class="frz-rpt-tablewrap"><table class="frz-rpt-table"><thead><tr>'+thead+'</tr></thead>'
+          +'<tbody>'+(tableRows || '<tr><td colspan="'+cols.length+'" style="padding:24px;text-align:center;color:var(--frz-text-muted)">No items match the current filters.</td></tr>')+'</tbody></table></div>'
       +'</section>';
-    // Wire filters (re-render on change) + CSV.
+    // Wire filters (re-render on change) + CSV. Each binder no-ops when its control is hidden.
     function bindF(id, key, ev){ var el=document.getElementById(id); if(el) el.addEventListener(ev||'change', function(){ _rptFilters[key]=el.value; renderReports(); }); }
     bindF('frzRptFrom','from'); bindF('frzRptTo','to');
     bindF('frzRptStatus','status'); bindF('frzRptType','type'); bindF('frzRptPriority','priority');
     bindF('frzRptDept','dept'); bindF('frzRptAssignee','assignee');
+    bindF('frzRptProduct','product'); bindF('frzRptOwner','owner');
     var csv=document.getElementById('frzRptCsv'); if(csv) csv.addEventListener('click', _rptExportCsv);
   }
   // ── Team Calendar render (Phase 2a: Month view - Owner -> Users -> chips) ──────
