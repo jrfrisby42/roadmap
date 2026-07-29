@@ -1749,6 +1749,10 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
           <div id="jiraList" style="display:grid;gap:4px;margin-bottom:6px"></div>
         </div>
 
+        <!-- Linked Assets (EDIT modal only; needs a saved item id, like the Jira +Create guard).
+             Reuses the item-page asset card via window._frzRenderAssetCard - one implementation. -->
+        <div class="form-row" id="modalAssetRow" style="display:none"><div id="modalAssetSection"></div></div>
+
         <!-- Feature Flags - above Notes -->
         <div class="form-row" id="featureFlagsRow" style="padding-bottom:4px">
           <label>Feature Flags</label>
@@ -2657,6 +2661,7 @@ let assethubBaseUrl = '';       // FLOW-1 item B: AssetHub host (non-secret) for
 let assethubConnection = {};    // Team Admin: the AssetHub mapping ({providerEnvironment, assethubTeam}). Non-secret.
 let assethubCredentialPresent = false;   // Team Admin: whether a .env credential exists for this team (presence bool, never the key).
 let enabledViews = null;        // Team Admin: per-team view allowlist (null = all enabled). admin + my-home always on.
+let jiraFeatureEnabled = true;  // Team Admin (Jira gate): the per-team jiraEnabled flag. Already ANDed into jiraConfigured at boot; surfaced here for the admin toggle. Default true = unchanged for configured teams.
 let intakeProjects = [];        // which Projects (products) the portal offers (empty = all). (config)
 let intakeNotifyEmail = '';     // team inbox that gets a copy of each portal ticket. (config)
 let intakeTypes = [];           // which item Types the portal offers (empty = all). (config)
@@ -5333,6 +5338,21 @@ function openProjectModal(id){
   if(featureFlagsRow) featureFlagsRow.style.display = showJira ? '' : 'none';
   const jiraCreateBtn = document.getElementById('jiraCreateBtn');
   if(jiraCreateBtn) jiraCreateBtn.style.display = (id && showJira && !jiraTickets.length) ? '' : 'none';
+  // Item 1: Linked Assets in the EDIT modal only. Like createJiraIssueFromModal's `if(!editingId)
+  // return;`, asset linking needs a saved item id, so there is NO picker in the CREATE modal
+  // (create defers, matching the locked Story-Points/Sprint post-creation decision) - an inert
+  // "Link assets after saving" line stands in. In EDIT mode it reuses the item-page asset card via
+  // window._frzRenderAssetCard (one implementation, no fork; same gating: assethubConfigured,
+  // not-hidden, not-Contributor). Zero AssetHub calls on modal open.
+  const _assetRow = document.getElementById('modalAssetRow');
+  const _assetSec = document.getElementById('modalAssetSection');
+  if(_assetRow && _assetSec){
+    const _canModalAssets = id && p && typeof window._frzRenderAssetCard==='function'
+      && typeof window._frzCanSeeAssets==='function' && window._frzCanSeeAssets(p);
+    if(_canModalAssets){ _assetRow.style.display=''; window._frzRenderAssetCard(_assetSec, p); }
+    else if(!id){ _assetRow.style.display=''; _assetSec.innerHTML='<div style="font-size:12px;color:var(--muted);padding:2px 0">Link assets after saving.</div>'; }   // create defers (no control)
+    else { _assetRow.style.display='none'; _assetSec.innerHTML=''; }   // edit but not configured / hidden item / contributor
+  }
   // Apply locking rules based on status flags
   applyModalLocking(p);
   // Recurrence field (admin only)
@@ -16148,9 +16168,23 @@ async function boot(){
   // Check Jira configuration (non-blocking - don't delay boot)
   try {
     const jira = await API.get('/api/jira/status');
-    jiraConfigured = jira.configured && (jira.enabled !== false);
+    jiraFeatureEnabled = (jira.enabled !== false);   // Team Admin gate: the per-team permission flag (jiraEnabled)
+    jiraConfigured = jira.configured && jiraFeatureEnabled;   // jiraConfigured already LAYERS the permission over configured - gates all 29 UI sites
     applyJiraVisibility();
   } catch(e){ jiraConfigured = false; applyJiraVisibility(); }
+  // Team Admin: toggle the per-team Jira permission (jiraEnabled) from the admin page. Re-fetches
+  // status so jiraConfigured recomputes correctly in BOTH directions (the old save handler only
+  // handled turning it off), then re-applies visibility across all Jira UI. Classic fn so it can
+  // set the classic globals; called from the beta admin panel via _call.
+  window.setJiraFeatureEnabled = async function(on){
+    await API.put('/api/config/jiraEnabled', on);
+    try {
+      const s = await API.get('/api/jira/status');
+      jiraFeatureEnabled = (s.enabled !== false);
+      jiraConfigured = s.configured && jiraFeatureEnabled;
+    } catch(e){ jiraFeatureEnabled = on; }
+    applyJiraVisibility();
+  };
 
   // Restore session or show login wall
   const _wasLoggedIn = (() => { try { return localStorage.getItem(SK.session) === '1'; } catch(e){ return false; } })();
@@ -20341,7 +20375,18 @@ if ('serviceWorker' in navigator) {
         + '<div style="color:var(--muted);font-size:12px;margin-bottom:8px">Which views this team sees. My Home and Admin are always available.</div>'
         + rows
       + '</div></div>';
-    return ah + vv;
+    // Jira integration gate: reuses the EXISTING per-team jiraEnabled flag (already ANDed into
+    // jiraConfigured, which gates all 29 Jira UI sites) - surfaced here as the "permitted to use
+    // Jira" toggle rather than adding a redundant parallel flag. Layered on jiraConfigured, never
+    // a replacement. UI-level gate (deferred-API caveat below), same shape as view visibility.
+    var jiraOn = _val('jiraFeatureEnabled', true);
+    var jira = '<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:18px">'
+      + _tsCardHead('Jira integration')
+      + '<div style="padding:14px 16px;font-size:13px;color:var(--text)">'
+        + '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="tsJiraGate"'+(jiraOn?' checked':'')+'> Allow this team to use the Jira integration</label>'
+        + '<div style="color:var(--muted);font-size:12px;margin-top:8px">When off, the Jira UI is hidden for this team even when Jira is configured. This gate is UI-level - the underlying Jira endpoints and sync are not gated by it (acceptable for internal use; must be closed before it is a commercial entitlement boundary).</div>'
+      + '</div></div>';
+    return ah + jira + vv;
   }
   function _frzWireTeamSettings(host){
     var save=host.querySelector('#tsAhSave');
@@ -20355,6 +20400,13 @@ if ('serviceWorker' in navigator) {
       }).catch(function(e){ _call('showToast', (e&&e.message)||'Save failed'); });
     });
     var test=host.querySelector('#frzAhTest'); if(test) test.addEventListener('click', _frzAssetHubHealthCheck);   // one call per press (moved here)
+    var jg=host.querySelector('#tsJiraGate');
+    if(jg) jg.addEventListener('change', function(){
+      var on=jg.checked;
+      Promise.resolve(_call('setJiraFeatureEnabled', on)).then(function(){
+        _call('showToast','Jira '+(on?'enabled':'disabled')+' for this team','success'); renderTeamSettings();
+      }).catch(function(e){ _call('showToast',(e&&e.message)||'Save failed'); jg.checked=!on; });
+    });
     var vsave=host.querySelector('#tsViewsSave');
     if(vsave) vsave.addEventListener('click', function(){
       var picked=[].slice.call(host.querySelectorAll('.ts-view')).filter(function(c){return c.checked;}).map(function(c){return c.getAttribute('data-view');});
@@ -23215,21 +23267,30 @@ if ('serviceWorker' in navigator) {
       card.style.cssText='border:1px solid var(--border);border-radius:10px;overflow:hidden';
       anchor.parentNode.insertBefore(card, anchor.nextSibling);   // final placement by _frzOrderMain
     }
-    card.innerHTML = _frzAssetCardHtml(p);
-    _frzWireAssetCard(card, p);
+    _frzRenderAssetCard(card, p);
   }
+  // Render the asset card into ANY container + wire it. The single entry point both the item page
+  // (injectAssetLinks) and the edit modal (window._frzRenderAssetCard) use - no fork, so the 5.6.1
+  // server-fetch provenance fix and everything else lives in one place.
+  function _frzRenderAssetCard(container, p){
+    container.innerHTML = _frzAssetCardHtml(p);
+    _frzWireAssetCard(container, p);
+  }
+  window._frzRenderAssetCard = _frzRenderAssetCard;   // reused by the classic edit modal
+  window._frzCanSeeAssets = function(p){ return _frzCanSeeAssets(p); };
   function _frzWireAssetCard(card, p){
-    var rb = card.querySelector('#frzAssetRefresh'); if(rb) rb.addEventListener('click', function(){ _frzAssetRefresh(p); });
-    card.querySelectorAll('.frz-asset-unlink').forEach(function(b){ b.addEventListener('click', function(){ _frzAssetUnlink(p, b.getAttribute('data-pubid')); }); });
+    var rr = function(){ _frzRenderAssetCard(card, p); };   // re-render THIS container (item page OR edit modal) after an action
+    var rb = card.querySelector('#frzAssetRefresh'); if(rb) rb.addEventListener('click', function(){ _frzAssetRefresh(p, rr, rb); });
+    card.querySelectorAll('.frz-asset-unlink').forEach(function(b){ b.addEventListener('click', function(){ _frzAssetUnlink(p, b.getAttribute('data-pubid'), rr); }); });
     var inp = card.querySelector('#frzAssetSearch'), results = card.querySelector('#frzAssetResults');
     if(inp) inp.addEventListener('input', function(){
       var q = (inp.value||'').trim();
       if(_frzAssetSearchTimer) clearTimeout(_frzAssetSearchTimer);
       if(q.length < _FRZ_ASSET_MIN_Q){ if(results) results.innerHTML = q ? '<div style="color:var(--muted);font-size:12px">Type at least '+_FRZ_ASSET_MIN_Q+' characters...</div>' : ''; return; }  // no call below min length or on empty
-      _frzAssetSearchTimer = setTimeout(function(){ _frzAssetSearch(q, p, results); }, _FRZ_ASSET_DEBOUNCE_MS);   // debounced: one call per settle
+      _frzAssetSearchTimer = setTimeout(function(){ _frzAssetSearch(q, p, results, rr); }, _FRZ_ASSET_DEBOUNCE_MS);   // debounced: one call per settle
     });
   }
-  function _frzAssetSearch(q, p, resultsEl){
+  function _frzAssetSearch(q, p, resultsEl, rr){
     if(!resultsEl) return;
     resultsEl.innerHTML = '<div style="color:var(--muted);font-size:12px">Searching...</div>';
     API.get('/api/assethub/assets/search?q='+encodeURIComponent(q)).then(function(r){
@@ -23244,10 +23305,11 @@ if ('serviceWorker' in navigator) {
           '<div style="min-width:0"><div style="font-weight:700;color:var(--text)">'+esc(a.asset_tag||'')+' <span style="font-weight:400;color:var(--muted)">'+esc(a.name||'')+'</span></div><div style="color:var(--muted);font-size:11px">'+esc(sub)+'</div></div>'+
           (linked[a.id]?'<span style="color:var(--muted);font-size:11px">Linked</span>':'<button type="button" class="frz-asset-add" data-id="'+escA(a.id)+'" style="height:26px;border:1px solid var(--frz-accent);background:var(--frz-accent);color:#fff;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;padding:0 10px">Link</button>')+'</div>';
       }).join('');
-      resultsEl.querySelectorAll('.frz-asset-add').forEach(function(b){ b.addEventListener('click', function(){ _frzAssetLink(p, resultsEl._frzHits[b.getAttribute('data-id')]); }); });
+      resultsEl.querySelectorAll('.frz-asset-add').forEach(function(b){ b.addEventListener('click', function(){ _frzAssetLink(p, resultsEl._frzHits[b.getAttribute('data-id')], rr); }); });
     }).catch(function(e){ resultsEl.innerHTML = '<div style="color:#e8394a;font-size:12px">'+esc((e&&e.message)||'search failed')+'</div>'; });
   }
-  function _frzAssetLink(p, asset){
+  function _frzRerenderAssets(p, rr){ if(typeof rr==='function') rr(); else injectAssetLinks(p); }   // rr re-renders the origin container (page or modal); fallback = item page
+  function _frzAssetLink(p, asset, rr){
     if(!asset || !asset.id) return;
     // Send only the identifier - the SERVER fetches the authoritative asset by public id (the
     // client no longer supplies asset data into a server-owned field). role:'related' is the only
@@ -23256,19 +23318,19 @@ if ('serviceWorker' in navigator) {
     // link is created; surface it and do not retry.
     API.post('/api/items/'+p.id+'/asset-links', {publicId: asset.id, role: 'related'}).then(function(r){
       if(r && r.ok === false){ _call('showToast', 'Could not link: '+((r.error && r.error.message) || (r.error && r.error.code) || 'AssetHub error')); return; }
-      p.assetLinks = r.assetLinks; p.assetCache = r.assetCache; injectAssetLinks(p);
+      p.assetLinks = r.assetLinks; p.assetCache = r.assetCache; _frzRerenderAssets(p, rr);
     }).catch(function(e){ _call('showToast', (e&&e.message)||'Could not link asset'); });
   }
-  function _frzAssetUnlink(p, pubid){
+  function _frzAssetUnlink(p, pubid, rr){
     if(!pubid) return;
     API.del('/api/items/'+p.id+'/asset-links/'+encodeURIComponent(pubid)).then(function(r){
-      p.assetLinks = r.assetLinks; p.assetCache = r.assetCache; injectAssetLinks(p);
+      p.assetLinks = r.assetLinks; p.assetCache = r.assetCache; _frzRerenderAssets(p, rr);
     }).catch(function(e){ _call('showToast', (e&&e.message)||'Could not unlink asset'); });
   }
-  function _frzAssetRefresh(p){
-    var btn = document.getElementById('frzAssetRefresh'); if(btn){ btn.disabled=true; btn.textContent='Refreshing...'; }
+  function _frzAssetRefresh(p, rr, btn){
+    if(btn){ btn.disabled=true; btn.textContent='Refreshing...'; }
     API.post('/api/items/'+p.id+'/asset-links/refresh', {}).then(function(r){   // one call per linked asset, capped at 10
-      p.assetCache = r.assetCache; injectAssetLinks(p);
+      p.assetCache = r.assetCache; _frzRerenderAssets(p, rr);
       if(r.connectionError) _call('showToast', 'AssetHub: '+(r.connectionError.message||r.connectionError.code));
     }).catch(function(e){ _call('showToast', (e&&e.message)||'Refresh failed'); if(btn){ btn.disabled=false; btn.textContent='Refresh'; } });
   }
