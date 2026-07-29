@@ -2654,6 +2654,9 @@ let maintenanceDutyTypeId = ''; // M1: assignment type the Maintenance Duty rota
 let intakeEnabled = false;      // public /report portal: is this team exposed? (config)
 let assethubConfigured = false; // FLOW-1: server-derived - true only when this team has BOTH an AssetHub mapping and a .env credential. Gates all asset UI. Never carries the token.
 let assethubBaseUrl = '';       // FLOW-1 item B: AssetHub host (non-secret) for the asset-tag deep link. Never the credential.
+let assethubConnection = {};    // Team Admin: the AssetHub mapping ({providerEnvironment, assethubTeam}). Non-secret.
+let assethubCredentialPresent = false;   // Team Admin: whether a .env credential exists for this team (presence bool, never the key).
+let enabledViews = null;        // Team Admin: per-team view allowlist (null = all enabled). admin + my-home always on.
 let intakeProjects = [];        // which Projects (products) the portal offers (empty = all). (config)
 let intakeNotifyEmail = '';     // team inbox that gets a copy of each portal ticket. (config)
 let intakeTypes = [];           // which item Types the portal offers (empty = all). (config)
@@ -7137,6 +7140,9 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       intakeEnabled = data.intakeEnabled === true;
       assethubConfigured = data.assethubConfigured === true;   // FLOW-1 gate
       assethubBaseUrl = data.assethubBaseUrl || '';            // FLOW-1 item B
+      assethubConnection = (data.assethubConnection && typeof data.assethubConnection==='object') ? data.assethubConnection : {};   // Team Admin
+      assethubCredentialPresent = data.assethubCredentialPresent === true;
+      enabledViews = Array.isArray(data.enabledViews) ? data.enabledViews : null;   // null = all enabled
       intakeProjects = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];
       intakeNotifyEmail = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : '';
       intakeTypes   = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];
@@ -16111,6 +16117,9 @@ async function boot(){
     intakeEnabled         = data.intakeEnabled === true;                                              // public /report portal exposed?
     assethubConfigured    = data.assethubConfigured === true;                                         // FLOW-1: gates all asset UI (mapping + .env credential present)
     assethubBaseUrl       = data.assethubBaseUrl || '';                                               // FLOW-1 item B: host for the asset-tag deep link
+    assethubConnection    = (data.assethubConnection && typeof data.assethubConnection==='object') ? data.assethubConnection : {};   // Team Admin
+    assethubCredentialPresent = data.assethubCredentialPresent === true;                              // Team Admin: which-half-missing
+    enabledViews          = Array.isArray(data.enabledViews) ? data.enabledViews : null;              // Team Admin: view allowlist (null = all)
     intakeProjects        = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];            // offered Projects (empty = all)
     intakeTypes           = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];                  // offered Types (empty = all)
     intakeNotifyEmail     = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : ''; // team inbox copy
@@ -17801,6 +17810,29 @@ if ('serviceWorker' in navigator) {
   };
   var VIEW_KEYS = ['gantt','kanban','list','planning','dashboard'];
   var VIEW_LABEL = { gantt:'Gantt', kanban:'Kanban', list:'List', planning:'Planning', dashboard:'Dashboard', reports:'Reports', 'my-home':'My Home', 'team-calendar':'Calendar', admin:'Admin' };
+  // ── Team Admin: per-team view visibility ──────────────────────────────────────
+  // admin + my-home are ALWAYS on (hiding admin self-locks; my-home is the guaranteed floor).
+  // The rest are toggleable via the enabledViews allowlist (null/absent = all enabled). Enforced
+  // at the rail AND the route (navigate/routeFromLocation + setView belt).
+  var _TOGGLEABLE_VIEWS = ['gantt','kanban','list','planning','dashboard','reports','team-calendar'];
+  function _viewEnabled(v){
+    if(v==='my-home' || v==='admin') return true;
+    var ev = _val('enabledViews', null);
+    if(!Array.isArray(ev)) return true;            // null/absent = every view enabled (default)
+    return ev.indexOf(v) >= 0;                     // explicit allowlist: not listed = hidden
+  }
+  function _viewRoleOk(v){                          // mirrors the rail role gates, so a fallback never lands on a role-blocked view
+    if(v==='kanban')   return !_val('isViewer', false);
+    if(v==='planning') return _val('isAdmin', false);
+    if(v==='reports')  return _val('isAdmin', false) || _val('isEditor', false);
+    return true;
+  }
+  function _firstEnabledView(){
+    // gantt + list are visible to every role; prefer them, then the rest; my-home is the floor.
+    var order = ['gantt','list','kanban','dashboard','reports','planning','team-calendar'];
+    for(var i=0;i<order.length;i++){ if(_viewEnabled(order[i]) && _viewRoleOk(order[i])) return order[i]; }
+    return 'my-home';
+  }
   // chip key -> production panel + selection getter + URL param
   var CHIPS = {
     owner:   { label:'Owner',    panel:'devDropPanel',      get:function(){ return _g('getSelectedDevs'); },      param:'owner' },
@@ -18300,20 +18332,14 @@ if ('serviceWorker' in navigator) {
     content.appendChild(adminPage);
     var _adminBox = document.querySelector('#adminModalBg .admin-modal');
     if (_adminBox) adminPage.appendChild(_adminBox);   // move (not copy) - tab listeners are on the same nodes
-    // FLOW-0: admin-only AssetHub connection-health widget. Calls /api/assethub/health (one
-    // whoami per press - no background poll, no loop). Never shows the key. Server-gated to
-    // admins; this page is admin-only too.
-    var ahBox = document.createElement('div');
-    ahBox.id = 'frzAssetHubHealth';
-    ahBox.style.cssText = 'margin:16px auto;max-width:760px;border:1px solid var(--border);border-radius:10px;overflow:hidden';
-    ahBox.innerHTML =
-      '<div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between">'+
-        'AssetHub connection'+
-        '<button type="button" id="frzAhTest" style="height:28px;border:1px solid var(--frz-accent);background:var(--frz-accent);color:#fff;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;padding:0 12px">Test connection</button>'+
-      '</div>'+
-      '<div id="frzAhResult" style="padding:14px 16px;font-size:13px;color:var(--text)"><span style="color:var(--muted)">Not run yet.</span></div>';
-    adminPage.appendChild(ahBox);
-    ahBox.querySelector('#frzAhTest').addEventListener('click', _frzAssetHubHealthCheck);
+    // Team Admin: a per-team settings panel below the classic admin box - the AssetHub mapping
+    // editor, the connection-health check (moved here from the FLOW-0 standalone widget), and
+    // per-team view visibility toggles. Rebuilt by renderTeamSettings() each time the Admin page is
+    // shown (setAdmin), so it always reflects current config. Admin-only (gated inside the render).
+    var tsBox = document.createElement('div');
+    tsBox.id = 'frzTeamSettings';
+    tsBox.style.cssText = 'max-width:760px;margin:16px auto 40px';
+    adminPage.appendChild(tsBox);
     // Team Calendar (Phase 2): Flow-owned view, Month/Week/Timeline sub-tabs.
     var cal = document.createElement('div');
     cal.id = 'frzCalendar'; cal.style.display = 'none';
@@ -18534,34 +18560,23 @@ if ('serviceWorker' in navigator) {
     hb.title='My Home';
     hb.innerHTML = IC.home + '<span>My Home</span>' + (mwCount>0 ? '<span class="frz-count">'+mwCount+'</span>' : '');
     nav.appendChild(hb);
-    // Calendar - Flow-owned view. Sits below List and above Planning (appended in the loop).
-    var cb = document.createElement('button');
-    cb.className='frz-item'; cb.setAttribute('data-nav','view:team-calendar');
-    cb.setAttribute('aria-current', String(state.view==='team-calendar' && !state.onItem));
-    cb.title='Calendar';
-    cb.innerHTML = IC.teamCalendar + '<span>Calendar</span>';
-    // Reports - Flow-owned view (Ship C). Sits directly BELOW Planning and ABOVE Dashboard
-    // (appended after 'planning' in the loop). Admin/editor only - hidden from viewers and
-    // contributors (so a contributor has no Reports/export path at all).
-    var rb = null;
-    if(admin || editor){
-      rb = document.createElement('button');
-      rb.className='frz-item'; rb.setAttribute('data-nav','view:reports');
-      rb.setAttribute('aria-current', String(state.view==='reports' && !state.onItem));
-      rb.title='Reports';
-      rb.innerHTML = IC.reports + '<span>Reports</span>';
-    }
-    // Viewers can't see Kanban (CLAUDE.md role rule); Planning is admin-only.
-    VIEW_KEYS.filter(function(v){ return (v!=='planning' || admin) && (v!=='kanban' || !viewer); }).forEach(function(v){
+    // Ordered VIEWS (My Home is pinned above, always). Each entry is gated by role AND by the
+    // per-team enabledViews allowlist (_viewEnabled). admin + my-home are always on and are not in
+    // this list. Calendar sits after List, Reports after Planning, Dashboard last - as before, but
+    // decoupled so disabling List/Planning no longer also hides Calendar/Reports.
+    ['gantt','kanban','list','team-calendar','planning','reports','dashboard'].forEach(function(v){
+      if(!_viewEnabled(v)) return;                        // Team Admin: per-team view visibility
+      if(v==='kanban' && viewer) return;                  // viewers never see Kanban (CLAUDE.md role rule)
+      if(v==='planning' && !admin) return;                // Planning is admin-only
+      if(v==='reports' && !(admin||editor)) return;       // Reports is admin/editor-only (contributors get no export path)
       var b = document.createElement('button');
-      b.className = 'frz-item'; b.setAttribute('data-nav','view:'+v);
+      b.className='frz-item'; b.setAttribute('data-nav','view:'+v);
       b.setAttribute('aria-current', String(state.view===v && !state.onItem));
       b.title = VIEW_LABEL[v];
-      var c = viewCount(v);
-      b.innerHTML = IC[v] + '<span>'+VIEW_LABEL[v]+'</span>' + (c!=null ? '<span class="frz-count">'+c+'</span>' : '');
+      var icon = (v==='team-calendar') ? IC.teamCalendar : IC[v];
+      var c = (v==='team-calendar' || v==='reports') ? null : viewCount(v);   // Calendar + Reports carry no count pill
+      b.innerHTML = icon + '<span>'+VIEW_LABEL[v]+'</span>' + (c!=null ? '<span class="frz-count">'+c+'</span>' : '');
       nav.appendChild(b);
-      if(v==='list') nav.appendChild(cb);   // Calendar directly after List (above Planning)
-      if(v==='planning' && rb) nav.appendChild(rb);   // Reports directly after Planning (above Dashboard)
     });
     // projects
     var pn = document.getElementById('frzProjNav');
@@ -19053,6 +19068,7 @@ if ('serviceWorker' in navigator) {
     renderRail();
     _frzSyncSearchMode();
     _call('renderAdminPanes','devTab');
+    renderTeamSettings();   // Team Admin: (re)build the per-team settings panel below the classic admin box
   }
   function setCalendar(tab){
     // Flow-owned Team Calendar view (like My Home). Any logged-in role.
@@ -19981,6 +19997,7 @@ if ('serviceWorker' in navigator) {
   }
   function setView(view, opts){
     opts = opts||{};
+    if(!_viewEnabled(view)) view = _firstEnabledView();   // belt: never render a disabled view (navigate/route own the URL redirect)
     if(view!=='list' && state.panelId!=null) frzClosePanel({fromURL:true});   // leaving List closes the detail panel (URL handled by the navigation)
     if(view==='my-home'){ return setHome(state.homeTab); }
     if(view==='admin'){ return setAdmin(); }
@@ -20273,6 +20290,88 @@ if ('serviceWorker' in navigator) {
   }
   // MAIN-COLUMN order - idempotent; safe to call after async injects (Attachments,
   // Sprint history) without disturbing the rail.
+  // ── Team Admin: per-team settings panel (AssetHub mapping + health + view visibility) ────────
+  function _tsCardHead(title, btnHtml){
+    return '<div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between">'+esc(title)+(btnHtml||'')+'</div>';
+  }
+  function _frzTeamSettingsHtml(){
+    var conn = _val('assethubConnection', {}) || {};
+    var mappingPresent = !!(conn && Object.keys(conn).length);
+    var credPresent = _val('assethubCredentialPresent', false);
+    var configured = _val('assethubConfigured', false);
+    var team = (function(){ try { return (localStorage.getItem('frazil_rm_team')||'').toUpperCase(); } catch(e){ return ''; } })();
+    var stateHtml;
+    if(configured){
+      stateHtml = '<span style="color:#1f9d55;font-weight:700">Configured</span> <span style="color:var(--muted)">(mapping + credential present)</span>';
+    } else {
+      var missing=[];
+      if(!mappingPresent) missing.push('the mapping (set it below)');
+      if(!credPresent) missing.push('the credential (add ASSETHUB_API_KEY_'+esc(team)+' to .env on the server, then restart)');
+      stateHtml = '<span style="color:#d9822b;font-weight:700">Not configured</span> <span style="color:var(--muted)">- missing '+missing.join(' and ')+'</span>';
+    }
+    var btn = 'style="height:24px;border:1px solid var(--frz-border-strong);background:var(--frz-bg-surface);color:var(--frz-accent);font-weight:700;font-size:12px;border-radius:7px;padding:0 12px;cursor:pointer"';
+    // AssetHub card: mapping editor + configured state + health check. The credential is NEVER
+    // shown or accepted here - only its presence (via assethubConfigured / the state line).
+    var ah = '<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:18px">'
+      + _tsCardHead('AssetHub integration')
+      + '<div style="padding:14px 16px;font-size:13px;color:var(--text);display:flex;flex-direction:column;gap:12px">'
+        + '<div>'+stateHtml+'</div>'
+        + '<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end">'
+          + '<label style="display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)">Provider environment'
+            + '<input type="text" id="tsAhEnv" value="'+escA(conn.providerEnvironment||'')+'" placeholder="production" style="width:180px;height:30px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px"></label>'
+          + '<label style="display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)">AssetHub team'
+            + '<input type="text" id="tsAhTeam" value="'+escA(conn.assethubTeam||'')+'" placeholder="IT" style="width:180px;height:30px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px"></label>'
+          + '<button type="button" id="tsAhSave" '+btn+'>Save mapping</button>'
+          + '<button type="button" id="frzAhTest" '+btn+'>Test connection</button>'
+        + '</div>'
+        + '<div style="font-size:11px;color:var(--muted)">The credential is never entered here. It lives in the server .env as ASSETHUB_API_KEY_'+esc(team)+'. Clearing both fields removes the mapping.</div>'
+        + '<div id="frzAhResult" style="font-size:13px;color:var(--text)"></div>'
+      + '</div></div>';
+    // View visibility card: a checkbox per toggleable view. admin + My Home are always on.
+    var ev = _val('enabledViews', null);
+    var rows = _TOGGLEABLE_VIEWS.map(function(v){
+      var on = !Array.isArray(ev) || ev.indexOf(v)>=0;
+      return '<label style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:13px;color:var(--text)">'
+        + '<input type="checkbox" class="ts-view" data-view="'+escA(v)+'"'+(on?' checked':'')+'>'
+        + esc(VIEW_LABEL[v]||v)+'</label>';
+    }).join('');
+    var vv = '<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">'
+      + _tsCardHead('View visibility', '<button type="button" id="tsViewsSave" '+btn+'>Save views</button>')
+      + '<div style="padding:14px 16px;font-size:13px;color:var(--text)">'
+        + '<div style="color:var(--muted);font-size:12px;margin-bottom:8px">Which views this team sees. My Home and Admin are always available.</div>'
+        + rows
+      + '</div></div>';
+    return ah + vv;
+  }
+  function _frzWireTeamSettings(host){
+    var save=host.querySelector('#tsAhSave');
+    if(save) save.addEventListener('click', function(){
+      var env=(host.querySelector('#tsAhEnv').value||'').trim(), tm=(host.querySelector('#tsAhTeam').value||'').trim();
+      var val = (env||tm) ? {providerEnvironment:env, assethubTeam:tm} : {};   // both empty = clear (not reseeded; presence-only)
+      API.put('/api/config/assethubConnection', val).then(function(){
+        assethubConnection = val;
+        assethubConfigured = (!!Object.keys(val).length) && _val('assethubCredentialPresent', false);
+        _call('showToast','Mapping saved','success'); renderTeamSettings();
+      }).catch(function(e){ _call('showToast', (e&&e.message)||'Save failed'); });
+    });
+    var test=host.querySelector('#frzAhTest'); if(test) test.addEventListener('click', _frzAssetHubHealthCheck);   // one call per press (moved here)
+    var vsave=host.querySelector('#tsViewsSave');
+    if(vsave) vsave.addEventListener('click', function(){
+      var picked=[].slice.call(host.querySelectorAll('.ts-view')).filter(function(c){return c.checked;}).map(function(c){return c.getAttribute('data-view');});
+      // Always store an explicit allowlist (Part 5.1). admin + My Home are always on regardless, so
+      // an empty set never locks the team out. A future view not in the list defaults hidden.
+      API.put('/api/config/enabledViews', picked).then(function(){
+        enabledViews = picked; _call('showToast','View visibility saved','success');
+        renderRail(); renderTeamSettings();
+      }).catch(function(e){ _call('showToast', (e&&e.message)||'Save failed'); });
+    });
+  }
+  function renderTeamSettings(){
+    var host=document.getElementById('frzTeamSettings'); if(!host) return;
+    if(!_val('isAdmin', false)){ host.innerHTML=''; return; }   // team settings are admin-only
+    host.innerHTML = _frzTeamSettingsHtml();
+    _frzWireTeamSettings(host);
+  }
   // FLOW-0: AssetHub connection-health surface (admin page). One call per explicit press.
   function _frzAssetHubHealthCheck(){
     var out = document.getElementById('frzAhResult'); if(!out) return;
@@ -20415,6 +20514,13 @@ if ('serviceWorker' in navigator) {
     var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar)/);
     var view = vm ? vm[1] : (lastView()||'gantt');
     if (view==='kanban' && _val('isViewer', false)){ navigate('/gantt', replace); return; }   // viewers can't see Kanban
+    // Team Admin: per-team view visibility, enforced at the ROUTE (not just the rail). A disabled
+    // view's URL - typed, bookmarked, or from a stale saved filter - redirects to a permitted view.
+    // NOTE: view visibility is enforced at the rail and route level. The underlying API endpoints
+    // are NOT gated, so a disabled view's data remains reachable by direct API call. This is
+    // acceptable for internal use and MUST be closed before view visibility is relied upon as a
+    // commercial entitlement boundary.
+    if (!_viewEnabled(view)){ navigate('/'+_firstEnabledView(), replace); return; }
     if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
     if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
     if (view==='team-calendar'){ state.calTab = _calTabFromURL(path, u.searchParams); _calSeedDateFromURL(u.searchParams); _calSeedFiltersFromURL(u.searchParams); }   // Stage 2c/5a: tab + period + filters before render/syncURL
@@ -20452,6 +20558,7 @@ if ('serviceWorker' in navigator) {
       return;
     }
     if (vm[1]==='kanban' && _val('isViewer', false)){ navigate('/gantt', true); return; }   // viewers can't see Kanban
+    if (!_viewEnabled(vm[1])){ navigate('/'+_firstEnabledView(), true); return; }   // Team Admin: disabled view route -> permitted view (rail+route gated; API not gated, internal-only)
     if (vm[1]==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
       // Stage 1b fix: seed state.releaseId from ?release= HERE, before rerender + the first syncURL
       // emit - otherwise syncURL writes a release-less URL (stripping the param) before the restore
