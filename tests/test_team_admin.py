@@ -26,13 +26,46 @@ def test_enabled_views_defaults_null_all_enabled(client, team, admin_headers):
 def test_enabled_views_saves_and_reads_back(client, team, admin_headers):
     r = client.put("/api/config/enabledViews", json=["gantt", "list", "dashboard"], headers=admin_headers)
     assert r.status_code == 200
-    assert _all(client, admin_headers)["enabledViews"] == ["gantt", "list", "dashboard"]
+    ev = _all(client, admin_headers)["enabledViews"]
+    # the picked views land; the always-on pair is injected by the write-path guard (Item 3)
+    assert set(ev) == {"gantt", "list", "dashboard", "my-home", "admin"}
 
 
-def test_enabled_views_empty_allowlist_persists_not_reseeded(client, team, admin_headers):
-    client.put("/api/config/enabledViews", json=[], headers=admin_headers)   # only always-on views (my-home/admin) remain
+def test_enabled_views_saved_set_persists_not_reseeded(client, team, admin_headers):
+    client.put("/api/config/enabledViews", json=["gantt"], headers=admin_headers)
     server.init_team_db(team)                                                # simulate a boot/migration pass
-    assert _all(client, admin_headers)["enabledViews"] == []                 # presence-only: not reseeded to null
+    ev = _all(client, admin_headers)["enabledViews"]
+    assert ev is not None and "gantt" in ev                                  # presence-only: the saved allowlist is not reseeded to null
+
+
+def test_enabled_views_write_injects_always_on_pair(client, team, admin_headers):
+    # The exact case that failed live at 5.8.0: PUT ["admin"] must NOT lock the team out.
+    client.put("/api/config/enabledViews", json=["admin"], headers=admin_headers)
+    ev = _all(client, admin_headers)["enabledViews"]
+    assert "my-home" in ev and "admin" in ev            # server injected the always-on pair
+    client.put("/api/config/enabledViews", json=["gantt"], headers=admin_headers)
+    assert set(_all(client, admin_headers)["enabledViews"]) >= {"gantt", "my-home", "admin"}
+    client.put("/api/config/enabledViews", json=[], headers=admin_headers)
+    assert set(_all(client, admin_headers)["enabledViews"]) == {"my-home", "admin"}   # empty -> only the floor, no lockout
+
+
+def test_enabled_views_null_body_rejected_reset_is_via_ui(client, team, admin_headers):
+    # 4B.2 decision: a literal null body is REJECTED (422) by the required-body config endpoint.
+    # Reset-to-all-enabled is done through the admin UI (enabling every view stores the full
+    # allowlist) or by deleting the config key - never a null write. Documented, not a bug.
+    h = dict(admin_headers); h["Content-Type"] = "application/json"
+    r = client.put("/api/config/enabledViews", content="null", headers=h)
+    assert r.status_code == 422
+
+
+def test_jira_gate_default_true_admin_only_not_reseeded(client, team, admin_headers, editor_headers):
+    # Reuses the existing jiraEnabled flag as the per-team Jira permission gate.
+    assert client.put("/api/config/jiraEnabled", json=False, headers=editor_headers).status_code in (401, 403)   # non-admin cannot flip it
+    assert client.put("/api/config/jiraEnabled", json=False, headers=admin_headers).status_code == 200
+    server.init_team_db(team)                                    # a false value is not re-seeded true (presence-only)
+    with server.db(team) as c:
+        stored = json.loads(c.execute("SELECT value FROM config WHERE key='jiraEnabled'").fetchone()["value"])
+    assert stored is False
 
 
 def test_config_write_is_admin_only(client, team, editor_headers):

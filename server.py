@@ -1351,7 +1351,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.8.0"
+APP_VERSION = "5.8.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -4217,6 +4217,16 @@ def set_config(key: str, body = Body(...), username: str = "",
             primary = next((un for un, u in existing.items() if u.get("builtin")), None)
             if primary and primary not in {u.get("username", "") for u in body}:
                 raise HTTPException(403, "The primary admin account cannot be removed")
+    # Team Admin lockout guard, SERVER-AUTHORITATIVE (was UI-only at 5.8.0, which a direct
+    # PUT enabledViews ["admin"] slipped past, disabling every view). enabledViews is an allowlist
+    # of toggleable views; My Home and Admin are always available regardless, so we inject them
+    # back into any list write (inject-and-accept - never fail a well-meaning write; the caller's
+    # intent for other views still lands). A null body means "all enabled" (the default) and is
+    # accepted as-is; the admin UI resets by enabling all, not by writing null.
+    if key == "enabledViews" and isinstance(body, list):
+        for _always in ("my-home", "admin"):
+            if _always not in body:
+                body = body + [_always]
     with db(team) as c:
         c.execute("INSERT INTO config(key,value) VALUES(?,?) "
                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
