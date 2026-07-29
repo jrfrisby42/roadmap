@@ -934,6 +934,11 @@ def init_team_db(team: str):
             # (ASSETHUB_API_KEY_<TEAM>); the `assethubConfigured` flag is true only when BOTH a
             # mapping and a credential are present.
             "assethubConnection": {},
+            # Team Admin: per-team view visibility (allowlist of enabled toggleable views).
+            # NULL/absent = every view enabled (the default, so existing teams are unaffected). An
+            # explicit array = allowlist (a view not in it is hidden, so a view added later defaults
+            # hidden for teams that have curated). admin + my-home are always on regardless.
+            "enabledViews": None,
             # Team Calendar (Phase 1): assignment types (config-backed collection, like
             # boards - edited via /api/assignment-types, NOT the generic config route).
             "assignmentTypes": _DEFAULT_ASSIGNMENT_TYPES,
@@ -1016,11 +1021,12 @@ def _migrate_config_keys(team: str):
         "maintenanceDutyTypeId": "",
         "externalRequestCategories": {},   # AssetHub integration (PR1): see init_team_db defaults for shape/rationale
         "assethubConnection": {},          # AssetHub outbound mapping (FLOW-0): see init_team_db defaults; credential lives in .env
+        "enabledViews": None,              # Team Admin: per-team view allowlist (null = all enabled); see init_team_db defaults
     }
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
     # an admin who deletes all types isn't re-seeded on next boot.)
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "enabledViews"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -1345,7 +1351,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.7.1"
+APP_VERSION = "5.8.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3030,7 +3036,9 @@ def get_all(auth: dict = Depends(require_auth)):
             # exist - and carries no token/base-URL/key fragment. FLOW-1 will gate asset display on it.
             "assethubConnection": cfg_map.get("assethubConnection", {}),
             "assethubConfigured": bool(cfg_map.get("assethubConnection")) and bool(_assethub_api_key(team)),
+            "assethubCredentialPresent": bool(_assethub_api_key(team)),   # Team Admin: presence bool (NOT the key) so the page can say WHICH half is missing
             "assethubBaseUrl": ASSETHUB_BASE_URL,   # FLOW-1 item B: non-secret host for the asset-tag deep link (credential stays in .env)
+            "enabledViews": cfg_map.get("enabledViews"),   # Team Admin: per-team view allowlist (null = all enabled)
             # PHASE B2: minimal read-only stubs for out-of-scope items a Contributor's own items
             # reference (parent / requires). Empty for admin/editor/viewer.
             "relatedStubs": related_stubs}
@@ -4137,7 +4145,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow",
               "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains","departmentMeta","maintenanceDutyTypeId",
-              "externalRequestCategories","assethubConnection"}
+              "externalRequestCategories","assethubConnection","enabledViews"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",
