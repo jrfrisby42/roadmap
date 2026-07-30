@@ -820,6 +820,17 @@ def init_team_db(team: str):
         );
         CREATE INDEX IF NOT EXISTS idx_item_assets_asset ON item_assets(asset_public_id);
         CREATE INDEX IF NOT EXISTS idx_item_assets_item  ON item_assets(item_id);
+        -- Department filter index: item `departments` is a multi-valued blob array, so it cannot be a
+        -- single indexed column. This side table (mirrors item_assets) is DERIVED from the blob and
+        -- re-synced on every save via _reindex_project, giving /api/items a clean IN(...) filter for a
+        -- multi-select "contains any" query. One row per (item, department); items with no department
+        -- have no rows (that is how the "(No department)" filter is expressed: id NOT IN this table).
+        CREATE TABLE IF NOT EXISTS item_departments (
+            item_id     INTEGER NOT NULL,
+            department  TEXT    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_item_departments_dept ON item_departments(department);
+        CREATE INDEX IF NOT EXISTS idx_item_departments_item ON item_departments(item_id);
         """)
         # ── Live migrations: add new columns if they don't exist yet ─────────────
         for _col, _defn in [
@@ -975,6 +986,24 @@ def init_team_db(team: str):
                         print(f"[Search] Built FTS index ({proj_n} items) for team '{team}'")
                 except Exception as e:
                     log.warning(f"[Search] FTS backfill failed for '{team}': {e}")
+            # One-time backfill of the item_departments filter index for teams whose items predate it
+            # (the reindex above only touches updated_ts IS NULL rows). Marker-guarded so it runs once
+            # per team, then costs a single config read on later boots. The marker key is private (not
+            # in VALID_KEYS, never returned by get_all).
+            try:
+                _built = c.execute("SELECT 1 FROM config WHERE key='__deptIndexBuilt'").fetchone()
+                if not _built:
+                    c.execute("DELETE FROM item_departments")
+                    _n = 0
+                    for _r in c.execute("SELECT id, data FROM projects").fetchall():
+                        try:
+                            _sync_item_departments(c, _r["id"], json.loads(_r["data"])); _n += 1
+                        except Exception:
+                            pass
+                    c.execute("INSERT OR REPLACE INTO config(key,value) VALUES('__deptIndexBuilt','1')")
+                    print(f"[Migration] Built department filter index ({_n} items) for team '{team}'")
+            except Exception as e:
+                log.warning(f"[Migration] department index backfill failed for '{team}': {e}")
         if _unindexed:
             print(f"[Migration] Indexed {len(_unindexed)} item(s) for team '{team}'")
     except Exception as e:
@@ -1351,7 +1380,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.9.0"
+APP_VERSION = "5.9.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3144,15 +3173,33 @@ def _sync_item_assets(c, pid: int, data: dict):
     except Exception:
         pass
 
+def _sync_item_departments(c, pid: int, data: dict):
+    """Re-derive the item_departments filter-index rows from the blob's `departments` array (the
+    authoritative record). Full replace for this item so it always matches the blob - one write
+    path, no drift (mirrors _sync_item_assets / _fts_sync). Best-effort: never let index upkeep
+    block a write (e.g. an older DB before init_team_db created the table)."""
+    try:
+        c.execute("DELETE FROM item_departments WHERE item_id=?", (pid,))
+        seen = set()
+        for d in (data.get("departments") or []):
+            name = str(d).strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            c.execute("INSERT INTO item_departments(item_id, department) VALUES(?,?)", (pid, name))
+    except Exception:
+        pass
+
 def _reindex_project(c, pid: int, data: dict, ts: str = None):
-    """Mirror an item's blob fields into its indexed columns (+ updated_ts), FTS, and the
-    item_assets reverse-lookup index."""
+    """Mirror an item's blob fields into its indexed columns (+ updated_ts), FTS, the
+    item_assets reverse-lookup index, and the item_departments filter index."""
     cols = _project_index_cols(data)
     cols["updated_ts"] = ts or datetime.now(timezone.utc).isoformat()
     assignments = ", ".join(f"{k}=?" for k in cols)
     c.execute(f"UPDATE projects SET {assignments} WHERE id=?", (*cols.values(), pid))
     _fts_sync(c, pid, data)
     _sync_item_assets(c, pid, data)
+    _sync_item_departments(c, pid, data)
 
 def _team_from_conn(c) -> str:
     """Best-effort team slug from the connection's DB file path
@@ -3957,6 +4004,7 @@ def delete_project(pid: int, username: str = "",
         c.execute("DELETE FROM comments WHERE item_id=?", (pid,))
         c.execute("DELETE FROM activities WHERE item_id=?", (pid,))
         c.execute("DELETE FROM item_assets WHERE item_id=?", (pid,))   # FLOW-1: drop reverse-lookup rows
+        c.execute("DELETE FROM item_departments WHERE item_id=?", (pid,))   # drop department filter-index rows
         c.execute("DELETE FROM projects WHERE id=?", (pid,))
         _fts_delete(c, pid)
     write_audit(team, "delete", username, pid, name)
@@ -3978,6 +4026,8 @@ def list_items(
     parent_id: Optional[str] = None,
     archived: Optional[str] = None,
     q: Optional[str] = None,
+    priority: Optional[str] = None,
+    department: Optional[str] = None,
     sort: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
@@ -4008,6 +4058,36 @@ def list_items(
     eq("owner", owner)
     eq("assignee", assignee)
     eq("sprint_id", sprint)
+
+    # Priority: an indexed column, but "no priority" items store NULL (the '' -> None mapping in
+    # _project_index_cols), so eq() cannot express the "(No priority)" option. A '__none__' member in
+    # the multi-select means "priority unset". Real codes and __none__ combine with OR.
+    if priority:
+        _pv = [v for v in priority.split(",") if v != ""]
+        _codes = [v for v in _pv if v != "__none__"]
+        _clauses = []
+        if _codes:
+            _clauses.append(f"priority IN ({','.join('?' * len(_codes))})"); params.extend(_codes)
+        if "__none__" in _pv:
+            _clauses.append("(priority IS NULL OR priority='')")
+        if _clauses:
+            where.append("(" + " OR ".join(_clauses) + ")")
+
+    # Department: multi-valued, so filtered through the item_departments side table. "contains any" of
+    # the selected departments; a '__none__' member means "item has no department" (no rows in the
+    # index). Real names and __none__ combine with OR.
+    if department:
+        _dv = [v for v in department.split(",") if v != ""]
+        _names = [v for v in _dv if v != "__none__"]
+        _clauses = []
+        if _names:
+            _clauses.append(
+                f"id IN (SELECT item_id FROM item_departments WHERE department IN ({','.join('?' * len(_names))}))")
+            params.extend(_names)
+        if "__none__" in _dv:
+            _clauses.append("id NOT IN (SELECT item_id FROM item_departments)")
+        if _clauses:
+            where.append("(" + " OR ".join(_clauses) + ")")
 
     # PHASE B: a Contributor sees only their read set. Added to `where`, so it constrains
     # BOTH the COUNT(*) (scoped total) and the page query - pagination can't report rows
