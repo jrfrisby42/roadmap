@@ -847,6 +847,21 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         <label class="ms-opt" data-val="TBD"><input type="checkbox" value="TBD"> TBD</label>
       </div>
     </div>
+    <!-- Priority + Department filters. Hidden in the classic bar (opt-in via the Flow shell's
+         "+ Filter" chip); these panels are the shared state store + option source the shell's
+         chip popover reads (chipMenu) and its getters/predicate query. Populated at runtime. -->
+    <div class="ms-wrap" id="priorityDropWrap" style="display:none">
+      <button class="ms-btn" id="priorityDropBtn" type="button">All ▾</button>
+      <div class="ms-panel" id="priorityDropPanel">
+        <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
+      </div>
+    </div>
+    <div class="ms-wrap" id="deptDropWrap" style="display:none">
+      <button class="ms-btn" id="deptDropBtn" type="button">All ▾</button>
+      <div class="ms-panel" id="deptDropPanel">
+        <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
+      </div>
+    </div>
     <span class="ctrl-lbl" id="dateRangeLbl" style="display:none">From</span>
     <input type="date" id="filterFrom" style="display:none;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none">
     <span class="ctrl-lbl" id="dateRangeLbl2" style="display:none">To</span>
@@ -2912,6 +2927,58 @@ function getSelectedProducts(){
   return chosen.length ? chosen : null;
 }
 
+// ── PRIORITY + DEPARTMENT FILTER PANELS (Flow-shell opt-in chips) ──
+// These populate the hidden #priorityDropPanel / #deptDropPanel that back the shell's optional
+// Priority / Department chips. Same ms-opt structure as the other filters, plus a "(None)" option
+// (value '__none__') so items with no priority / no department are filterable. Reserved '__none__'
+// never collides with a real code/name. Repopulate preserves the current selection.
+function _msPrevChecked(panelId){
+  const panel = document.getElementById(panelId);
+  return panel ? [...panel.querySelectorAll('input[type=checkbox]:not([value="all"])')].filter(c=>c.checked).map(c=>c.value) : [];
+}
+function populatePriorityFilter(){
+  const panel = document.getElementById('priorityDropPanel'); if(!panel) return;
+  const prev = _msPrevChecked('priorityDropPanel');
+  panel.innerHTML = `<label class="ms-opt" data-val="all"><input type="checkbox" value="all" ${prev.length===0?'checked':''}> All</label>` +
+    PRIORITY_ORDER.map(code=>`<label class="ms-opt" data-val="${escA(code)}"><input type="checkbox" value="${escA(code)}"${prev.includes(code)?' checked':''}> ${esc(PRIORITIES[code]?PRIORITIES[code].label:code)}</label>`).join('') +
+    `<label class="ms-opt" data-val="__none__"><input type="checkbox" value="__none__"${prev.includes('__none__')?' checked':''}> No priority</label>`;
+}
+function populateDeptFilter(){
+  const panel = document.getElementById('deptDropPanel'); if(!panel) return;
+  const prev = _msPrevChecked('deptDropPanel');
+  panel.innerHTML = `<label class="ms-opt" data-val="all"><input type="checkbox" value="all" ${prev.length===0?'checked':''}> All</label>` +
+    (departments||[]).filter(d=>d).map(d=>`<label class="ms-opt" data-val="${escA(d)}"><input type="checkbox" value="${escA(d)}"${prev.includes(d)?' checked':''}> ${esc(d)}</label>`).join('') +
+    `<label class="ms-opt" data-val="__none__"><input type="checkbox" value="__none__"${prev.includes('__none__')?' checked':''}> No department</label>`;
+}
+function getSelectedPriorities(){
+  const allCk = document.querySelector('#priorityDropPanel input[value="all"]');
+  if(allCk?.checked) return null;
+  const chosen = [...document.querySelectorAll('#priorityDropPanel input[type=checkbox]')]
+    .filter(c => c.value !== 'all' && c.checked).map(c => c.value);
+  return chosen.length ? chosen : null;
+}
+function getSelectedDepartments(){
+  const allCk = document.querySelector('#deptDropPanel input[value="all"]');
+  if(allCk?.checked) return null;
+  const chosen = [...document.querySelectorAll('#deptDropPanel input[type=checkbox]')]
+    .filter(c => c.value !== 'all' && c.checked).map(c => c.value);
+  return chosen.length ? chosen : null;
+}
+// Shared match predicates for the optional Priority/Department filters. Defined once as globals so
+// the classic renders (Gantt/Kanban/Planning) AND the Flow shell pill predicate use identical
+// semantics (no drift). sel null/empty = no filter. '__none__' = the item has no priority/department.
+// Priority is scalar (in-set); department is multi-valued (contains-any).
+function priorityMatches(p, sel){
+  if(!sel || !sel.length) return true;
+  const pr = (p.priority==null ? '' : String(p.priority));
+  return sel.some(v => v==='__none__' ? !pr : pr===v);
+}
+function departmentMatches(p, sel){
+  if(!sel || !sel.length) return true;
+  const ds = Array.isArray(p.departments) ? p.departments : [];
+  return sel.some(v => v==='__none__' ? ds.length===0 : ds.indexOf(v)>=0);
+}
+
 // ── Close all filter dropdowns (only one open at a time) ──────────────────────
 function closeAllDropdowns(){
   ['productDropBtn','devDropBtn','assigneeDropBtn','typeDropBtn','statusDropBtn'].forEach(id => {
@@ -3774,6 +3841,8 @@ function render(){
   const fProd    = getSelectedProducts();
   const fType    = getSelectedTypes();
   const fAsg     = getSelectedAssignees();   // Stage 2 (/beta filter parity): sole classic touch. No-op on classic / (no assignee selector → null → !fAsg short-circuits); active only where the /beta Gantt exposes the Assignee chip.
+  const fPrio    = getSelectedPriorities();  // opt-in Priority chip (/beta); null = no filter
+  const fDept    = getSelectedDepartments(); // opt-in Department chip (/beta); null = no filter
   const ownerScope = getCurrentOwnerFilter(); // non-null for scoped editors
   const searchQ  = getSearchQuery();
   const wkPx     = getWkPx();
@@ -3796,6 +3865,8 @@ function render(){
     (!fAsg  || fAsg.includes(p.assignee || '')) &&   // Stage 2: assignee parity (sole classic touch; no-op when fAsg null)
     (!fProd || fProd.includes(p.product || '')) &&
     (!fType || fType.includes(p.type || '')) &&
+    priorityMatches(p, fPrio) &&
+    departmentMatches(p, fDept) &&
     isScheduledType(p.type || '') &&        // Stage 2: non-scheduled types are tracking-only - hidden from the Gantt baseline (composes with the user Type filter; untyped = scheduled, fail-safe)
     (!ownerScope || p.dev === ownerScope) &&
     itemMatchesSearch(p, searchQ)
@@ -4787,6 +4858,8 @@ function openProjectModal(id){
   renderFeatureFlagList();
   populateDevSelects();
   populateStatusSelects();
+  populatePriorityFilter();
+  populateDeptFilter();
   populateDelaySelect();
   populateProductSelect();
   populateTypeSelect();
@@ -7186,6 +7259,8 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       // Refresh all UI
       populateDevSelects();
       populateStatusSelects();
+      populatePriorityFilter();
+      populateDeptFilter();
         populateProductSelect();
       render();
       // Re-render admin lists
@@ -9918,6 +9993,8 @@ function _listQuery(){
   setMulti('status',   getSelectedStatuses());
   setMulti('owner',    getSelectedDevs());
   setMulti('assignee', getSelectedAssignees());   // top-bar multi-select (List only)
+  setMulti('priority',   getSelectedPriorities());   // opt-in Priority chip (server /api/items)
+  setMulti('department', getSelectedDepartments());  // opt-in Department chip (server item_departments index)
   const q = v('itemSearch'); if(q) params.set('q', q);   // shared header search box
   if(_listState.sort) params.set('sort', _listState.sort);
   params.set('page', _listState.page);
@@ -10756,6 +10833,8 @@ function renderKanban(){
   const fProd    = getSelectedProducts();
   const fType    = getSelectedTypes();
   const fSt      = getSelectedStatuses();
+  const fPrio    = getSelectedPriorities();
+  const fDept    = getSelectedDepartments();
   const ownerScope = getCurrentOwnerFilter();
   const searchQ  = (document.getElementById('itemSearch')?.value||'').trim().toLowerCase();
 
@@ -10765,6 +10844,8 @@ function renderKanban(){
     if(fProd && !fProd.includes(p.product||'')) return false;
     if(fType && !fType.includes(p.type||''))    return false;
     if(fSt   && !fSt.includes(p.status))       return false;
+    if(!priorityMatches(p, fPrio))              return false;
+    if(!departmentMatches(p, fDept))            return false;
     if(ownerScope && p.dev !== ownerScope)      return false;
     if(searchQ && !itemMatchesSearch(p, searchQ)) return false;
     return true;
@@ -11945,6 +12026,8 @@ function getPlanningItems(){
   const fProj  = getSelectedProducts();   // null = all
   const fOwner = getSelectedDevs();       // null = all
   const fType  = getSelectedTypes();      // null = all
+  const fPrio  = getSelectedPriorities(); // null = all (opt-in Priority chip)
+  const fDept  = getSelectedDepartments();// null = all (opt-in Department chip)
   const fStatusFilters = getPlanningStatusFilters(); // null = all
   const searchQ = getSearchQuery();
   // At-risk item IDs from open activities
@@ -11956,6 +12039,8 @@ function getPlanningItems(){
     if(fProj  && !fProj.includes(p.product))  return false;
     if(fOwner && !fOwner.includes(p.dev||''))  return false;
     if(fType  && !fType.includes(p.type||''))  return false;
+    if(!priorityMatches(p, fPrio))             return false;
+    if(!departmentMatches(p, fDept))           return false;
     if(!itemMatchesSearch(p, searchQ)) return false;
 
     // Status multi-select filter (issue 7)
@@ -16235,6 +16320,8 @@ async function boot(){
   populateProductSelect();
   populateTypeSelect();
   populateAssigneeDrop();
+  populatePriorityFilter();
+  populateDeptFilter();
   if (new URLSearchParams(location.search).get('classic') !== '1') {
     // The /beta Flow shell drives ALL rendering + routing. Skip classic's initial
     // view render (and default-view / ?item= handling) so it can't flash a classic
@@ -17872,13 +17959,16 @@ if ('serviceWorker' in navigator) {
     owner:   { label:'Owner',    panel:'devDropPanel',      get:function(){ return _g('getSelectedDevs'); },      param:'owner' },
     type:    { label:'Type',     panel:'typeDropPanel',     get:function(){ return _g('getSelectedTypes'); },     param:'type' },
     status:  { label:'Status',   panel:'statusDropPanel',   get:function(){ return _g('getSelectedStatuses'); },  param:'status' },
-    assignee:{ label:'Assignee', panel:'assigneeDropPanel', get:function(){ return _g('getSelectedAssignees'); }, param:'assignee' }
+    assignee:{ label:'Assignee', panel:'assigneeDropPanel', get:function(){ return _g('getSelectedAssignees'); }, param:'assignee' },
+    // Opt-in only (in each view's CFG.extra, never chips): revealed via the "+ Filter" pill.
+    priority:{ label:'Priority',   panel:'priorityDropPanel', get:function(){ return _g('getSelectedPriorities'); },  param:'priority' },
+    dept:    { label:'Department', panel:'deptDropPanel',     get:function(){ return _g('getSelectedDepartments'); }, param:'dept' }
   };
   var CFG = {
-    gantt:    { chips:['owner','assignee','type','status'], extra:[], opts:['groupby','legend','capacity'] },   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
-    kanban:   { chips:['owner','assignee','type','status'], extra:['sprint'], opts:['hideEmpty'] },             // Stage 2: +Assignee +Status · Stage 3: +Sprint (optional, via + Filter)
-    list:     { chips:['owner','assignee','type','status'], extra:[], opts:['columns','export'] },
-    planning: { chips:['owner','status'],                   extra:['type','assignee'], opts:['whatif'] },   // What-if (Phase 0)
+    gantt:    { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['groupby','legend','capacity'] },   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
+    kanban:   { chips:['owner','assignee','type','status'], extra:['sprint','priority','dept'], opts:['hideEmpty'] },             // Stage 2: +Assignee +Status · Stage 3: +Sprint (optional, via + Filter)
+    list:     { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['columns','export'] },
+    planning: { chips:['owner','status'],                   extra:['type','assignee','priority','dept'], opts:['whatif'] },   // What-if (Phase 0)
     dashboard:{ chips:['owner','range'],                    extra:[], opts:[] },
     'my-home':{ chips:[],                                   extra:[], opts:[] },  // Stage 5: personal landing, no chips
     'admin':  { chips:[],                                   extra:[], opts:[] },  // Phase 0: Admin full page, no chips
@@ -18537,16 +18627,21 @@ if ('serviceWorker' in navigator) {
   function _frzActiveFilter(){
     var f = { st:_call('getSelectedStatuses'), dev:_call('getSelectedDevs'),
               type:_call('getSelectedTypes'), asg:_call('getSelectedAssignees'),
+              prio:_call('getSelectedPriorities'), dept:_call('getSelectedDepartments'),
               q:(_call('getSearchQuery')||'') };
     // "active" ignores product - project scope is navigation, not a filter chip.
-    f.any = !!(f.st || f.dev || f.type || f.asg || f.q);
+    f.any = !!(f.st || f.dev || f.type || f.asg || f.prio || f.dept || f.q);
     return f;
   }
   function _frzPillMatch(p, f){
+    // priorityMatches / departmentMatches are the SAME globals the classic renders use (one source
+    // of truth for the two opt-in dimensions; '__none__' = unset).
     return (!f.st   || f.st.indexOf(p.status)>=0)
         && (!f.dev  || f.dev.indexOf(p.dev||'')>=0)
         && (!f.type || f.type.indexOf(p.type||'')>=0)
         && (!f.asg  || f.asg.indexOf(p.assignee||'')>=0)
+        && _call('priorityMatches', p, f.prio)
+        && _call('departmentMatches', p, f.dept)
         && _call('itemMatchesSearch', p, f.q);
   }
   function _frzCountMatching(f, product){   // product: name | null (= all products)
@@ -18555,7 +18650,7 @@ if ('serviceWorker' in navigator) {
       return !p.archived && (product==null || p.product===product) && _frzPillMatch(p,f);
     }).length;
   }
-  function _frzListSig(f){ return JSON.stringify([state.project, f.st, f.dev, f.type, f.asg, f.q]); }
+  function _frzListSig(f){ return JSON.stringify([state.project, f.st, f.dev, f.type, f.asg, f.q, f.prio, f.dept]); }
   // A project pill's number: unfiltered total when no filter (byte-identical to
   // today), else filter-matching items in that product (product null = All).
   function _frzScopeCount(product){
@@ -18755,11 +18850,14 @@ if ('serviceWorker' in navigator) {
     if (!sel || !sel.length) return { active:false, value:'All' };
     if (sel.length===1){
       var v1 = sel[0]==='' ? 'Unassigned' : sel[0];
-      if (key==='assignee' && sel[0]!=='') v1 = displayName(sel[0]);   // show First Last if set, else username
+      if (sel[0]==='__none__') v1 = 'None';
+      else if (key==='assignee' && sel[0]!=='') v1 = displayName(sel[0]);   // show First Last if set, else username
+      else if (key==='priority') v1 = _frzPrioLabel(sel[0]);                // show Urgent/High/... not the code
       return { active:true, value: v1 };
     }
     return { active:true, value: sel.length+' selected' };
   }
+  function _frzPrioLabel(code){ var m=_val('PRIORITIES', {})||{}; return (m[code] && m[code].label) || code; }
   function rangeState(){
     var f = (document.getElementById('filterFrom')||{}).value || '';
     var t = (document.getElementById('filterTo')||{}).value || '';
@@ -18782,7 +18880,10 @@ if ('serviceWorker' in navigator) {
   }
   function anyActive(view){
     if(view==='kanban' && sprintState().active) return true;   // Stage 3: sprint scope counts even when active only via URL (not added via + Filter)
-    return CFG[view].chips.concat(_extraActive(view)).some(function(k){
+    var keys = CFG[view].chips.concat(_extraActive(view));
+    // Opt-in priority/dept count as active even when only auto-revealed (not added via + Filter).
+    ['priority','dept'].forEach(function(k){ if(CFG[view].extra.indexOf(k)>=0 && keys.indexOf(k)<0) keys.push(k); });
+    return keys.some(function(k){
       return (k==='range'? rangeState().active : k==='sprint'? sprintState().active : chipState(k).active);
     });
   }
@@ -18810,6 +18911,11 @@ if ('serviceWorker' in navigator) {
     // Stage 3: the sprint filter is an optional (+ Filter) chip, but it must also appear when
     // active from a cold-loaded ?sprint= URL even if the user never clicked + Filter.
     if (view==='kanban' && state.sprintFilter && keys.indexOf('sprint')<0) keys.push('sprint');
+    // Priority/Department (opt-in): same auto-reveal - if the filter is active on a view that offers
+    // it, show its chip even when it was never added via "+ Filter" (cold load, saved view, carry).
+    ['priority','dept'].forEach(function(k){
+      if (cfg.extra.indexOf(k)>=0 && keys.indexOf(k)<0 && (CHIPS[k].get()||[]).length) keys.push(k);
+    });
     var html = _frzTopViewControl() + keys.map(chipHTML).join('');   // Stage 3: segmented view switcher (shared views only)
     html += '<button class="frz-chip frz-chip--ghost" data-addfilter="1"><svg viewBox="0 0 12 12"><path d="M6 2v8M2 6h8"/></svg> Filter</button>';
     if (anyActive(view)){
@@ -18826,7 +18932,10 @@ if ('serviceWorker' in navigator) {
   // diverges the URL → Fix 1 drops any active saved-filter highlight via the syncURL refresh.
   function _frzClearChips(){
     var view=state.view;
-    CFG[view].chips.concat(_added[view]||[]).forEach(function(k){
+    // Include auto-revealed opt-in priority/dept so Clear resets them too (not just _added ones).
+    var keys=CFG[view].chips.concat(_added[view]||[]);
+    ['priority','dept'].forEach(function(k){ if(CFG[view].extra.indexOf(k)>=0 && keys.indexOf(k)<0) keys.push(k); });
+    keys.forEach(function(k){
       if(k==='range'){ var ff=document.getElementById('filterFrom'), ft=document.getElementById('filterTo'); if(ff){ff.value='';} if(ft){ft.value='';} }
       else if(k==='sprint'){ state.sprintFilter=''; }
       else if(CHIPS[k]) applyPanel(CHIPS[k].panel, null);
@@ -18934,6 +19043,14 @@ if ('serviceWorker' in navigator) {
       var sel = CHIPS[k].get();
       if (sel && sel.length) params.set(CHIPS[k].param, sel.join(','));
     });
+    // Priority/Department are opt-in (CFG.extra) - self-serialize when active even if not added via
+    // "+ Filter" (mirrors sprint), so a cold-load / auto-revealed filter survives a round-trip.
+    ['priority','dept'].forEach(function(k){
+      if (params.has(CHIPS[k].param)) return;   // already emitted by the opted-in chips loop above
+      if (CFG[view].chips.indexOf(k)<0 && CFG[view].extra.indexOf(k)<0) return;   // only where offered
+      var sel = CHIPS[k].get();
+      if (sel && sel.length) params.set(CHIPS[k].param, sel.join(','));
+    });
     if (view==='kanban' && state.board && state.board!=='__all__') params.set('board', state.board);  // board is URL state
     if (view==='kanban' && state.sprintFilter) params.set('sprint', state.sprintFilter);  // Stage 3: sprint scope (self-serializes even when not added via + Filter, e.g. cold load)
     if (view==='list' && state.panelId!=null) params.set('panel', state.panelId);   // List detail panel is URL state
@@ -18989,6 +19106,13 @@ if ('serviceWorker' in navigator) {
     ['owner','type','status','assignee'].forEach(function(k){
       var exposed = CFG[view].chips.indexOf(k)>=0;
       var v = exposed ? qp.get(CHIPS[k].param) : null;
+      applyPanel(CHIPS[k].panel, v ? v.split(',') : null);
+    });
+    // Priority/Department are opt-in (CFG.extra): restore from the URL on any view that OFFERS them
+    // (auto-reveal then shows the chip). Absent param -> cleared to All. Ignored on views without them.
+    ['priority','dept'].forEach(function(k){
+      if (CFG[view].extra.indexOf(k)<0 && CFG[view].chips.indexOf(k)<0) return;
+      var v = qp.get(CHIPS[k].param);
       applyPanel(CHIPS[k].panel, v ? v.split(',') : null);
     });
     if (view==='dashboard'){
@@ -20732,7 +20856,7 @@ if ('serviceWorker' in navigator) {
   // → project only (for non-shared targets like Planning/Dashboard, where chips don't travel).
   var _FRZ_SHARED_VIEWS={ list:1, kanban:1, gantt:1 };
   function _frzCarryQS(includeChips){
-    var keys = includeChips ? ['project','owner','type','status','assignee','sprint'] : ['project'];   // Stage 3: carry sprint across shared views
+    var keys = includeChips ? ['project','owner','type','status','assignee','sprint','priority','dept'] : ['project'];   // Stage 3: carry sprint across shared views; + opt-in priority/dept
     var src=new URLSearchParams(location.search), out=new URLSearchParams();
     keys.forEach(function(k){ var v=src.get(k); if(v!=null && v!=='') out.set(k, v); });
     var s=out.toString(); return s ? ('?'+s) : '';
@@ -21327,6 +21451,7 @@ if ('serviceWorker' in navigator) {
   // ════════ board kanban rendering + drag/drop (Feature A) ════════
   function _kanbanFilteredItems(){
     var fDev=getSelectedDevs(), fProd=getSelectedProducts(), fType=getSelectedTypes(), fSt=getSelectedStatuses(), fAsg=getSelectedAssignees();
+    var fPrio=getSelectedPriorities(), fDept=getSelectedDepartments();   // opt-in Priority/Department chips
     var ownerScope=_call('getCurrentOwnerFilter');
     var searchQ=((document.getElementById('itemSearch')||{}).value||'').trim().toLowerCase();
     var sprintScope=(state.view==='kanban' && _sprintFilterValid()) ? state.sprintFilter : '';   // Stage 3: only a valid (Planned/Active) sprint narrows; closed/unknown -> notice, not empty board
@@ -21338,6 +21463,8 @@ if ('serviceWorker' in navigator) {
       if(fType && fType.indexOf(p.type||'')<0) return false;
       if(fSt && fSt.indexOf(p.status)<0) return false;          // Stage 2: Status chip now exposed (filter pre-existed)
       if(fAsg && fAsg.indexOf(p.assignee||'')<0) return false;  // Stage 2: Assignee chip - narrows cards (status×columns: items filtered, columns unchanged)
+      if(!priorityMatches(p, fPrio)) return false;
+      if(!departmentMatches(p, fDept)) return false;
       if(ownerScope && p.dev!==ownerScope) return false;
       if(searchQ && !_call('itemMatchesSearch',p,searchQ)) return false;
       return true;
@@ -21685,6 +21812,7 @@ if ('serviceWorker' in navigator) {
   function _blCanEdit(){ return !!(_val('isAdmin',false) || _val('isEditor',false)); }
   function backlogItems(){
     var fDev=getSelectedDevs(), fType=getSelectedTypes(), fSt=getSelectedStatuses();
+    var fPrio=getSelectedPriorities(), fDept=getSelectedDepartments();   // opt-in Priority/Department chips
     return (_val('projects',[])||[]).filter(function(p){
       if(p.archived) return false;
       if(p.hidden) return false;   // M1 1c: sub-issue noise (hidden Jira-spawned children) stays excluded here now that the parent gate is gone
@@ -21695,6 +21823,8 @@ if ('serviceWorker' in navigator) {
       if(fDev && fDev.indexOf(p.dev||'')<0) return false;
       if(fType && fType.indexOf(p.type||'')<0) return false;
       if(fSt && fSt.indexOf(p.status)<0) return false;
+      if(!priorityMatches(p, fPrio)) return false;
+      if(!departmentMatches(p, fDept)) return false;
       return true;
     }).sort(function(a,b){
       var pa=_call('priorityRank',a.priority), pb=_call('priorityRank',b.priority);   // shared order: Urgent first, blank last
