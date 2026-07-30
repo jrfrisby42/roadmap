@@ -986,24 +986,11 @@ def init_team_db(team: str):
                         print(f"[Search] Built FTS index ({proj_n} items) for team '{team}'")
                 except Exception as e:
                     log.warning(f"[Search] FTS backfill failed for '{team}': {e}")
-            # One-time backfill of the item_departments filter index for teams whose items predate it
-            # (the reindex above only touches updated_ts IS NULL rows). Marker-guarded so it runs once
-            # per team, then costs a single config read on later boots. The marker key is private (not
-            # in VALID_KEYS, never returned by get_all).
-            try:
-                _built = c.execute("SELECT 1 FROM config WHERE key='__deptIndexBuilt'").fetchone()
-                if not _built:
-                    c.execute("DELETE FROM item_departments")
-                    _n = 0
-                    for _r in c.execute("SELECT id, data FROM projects").fetchall():
-                        try:
-                            _sync_item_departments(c, _r["id"], json.loads(_r["data"])); _n += 1
-                        except Exception:
-                            pass
-                    c.execute("INSERT OR REPLACE INTO config(key,value) VALUES('__deptIndexBuilt','1')")
-                    print(f"[Migration] Built department filter index ({_n} items) for team '{team}'")
-            except Exception as e:
-                log.warning(f"[Migration] department index backfill failed for '{team}': {e}")
+            # NOTE: the one-time item_departments backfill does NOT run here - init_team_db is
+            # called from boot() at IMPORT time, which is too early to read the projects table
+            # reliably (the same reason the item-key backfill is a separate post-boot pass). It ran
+            # 0 rows here and permanently set its marker. It now lives in
+            # _backfill_all_teams_departments(), invoked after boot() where project reads work.
         if _unindexed:
             print(f"[Migration] Indexed {len(_unindexed)} item(s) for team '{team}'")
     except Exception as e:
@@ -3462,6 +3449,41 @@ def _backfill_all_teams_keys():
             except Exception as e:
                 print(f"[ItemKeys] boot backfill failed for {_entry}: {e}")
 _backfill_all_teams_keys()
+
+# One-time backfill of the item_departments filter index for items that predate it. MUST run HERE
+# (post-boot, at import after the helpers exist) and NOT inside init_team_db: boot() runs at import
+# too early to read `projects` reliably, so the in-init version indexed 0 rows and set its marker.
+# A FRESH marker ('__deptIndexBuilt2') is used so this re-runs on teams whose stale v1 marker is set.
+# Idempotent + self-limiting: full rebuild once, then a single config read on later boots. New/edited
+# items index live via _reindex_project (_sync_item_departments), independent of this backfill.
+def _backfill_item_departments(team: str) -> int:
+    with db(team) as c:
+        if c.execute("SELECT 1 FROM config WHERE key='__deptIndexBuilt2'").fetchone():
+            return -1   # already built
+        c.execute("DELETE FROM item_departments")
+        n = 0
+        for r in c.execute("SELECT id, data FROM projects").fetchall():
+            try:
+                _sync_item_departments(c, r["id"], json.loads(r["data"])); n += 1
+            except Exception:
+                pass
+        c.execute("INSERT OR REPLACE INTO config(key,value) VALUES('__deptIndexBuilt2','1')")
+        return n
+
+def _backfill_all_teams_departments():
+    import os as _os
+    if not os.path.isdir(TENANTS_DIR):
+        return
+    for _entry in _os.listdir(TENANTS_DIR):
+        _tpath = _os.path.join(TENANTS_DIR, _entry)
+        if _os.path.isdir(_tpath) and _os.path.exists(_os.path.join(_tpath, "roadmap.db")):
+            try:
+                n = _backfill_item_departments(_entry)
+                if n >= 0:
+                    print(f"[Departments] Built filter index ({n} items scanned) for team '{_entry}'")
+            except Exception as e:
+                print(f"[Departments] boot backfill failed for {_entry}: {e}")
+_backfill_all_teams_departments()
 
 # ── Departments (multi-value free-text field + shared master list) ────────────
 def _normalize_departments(arr):
