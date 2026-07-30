@@ -2655,7 +2655,8 @@ let changeReasons = []; // admin-managed timeline change reasons
 let deferReasons  = []; // admin-managed defer reasons
 let departments   = []; // shared master list of departments (free-text, grows on item save)
 // Capacity & conflict config (side-data, doesn't restructure core arrays)
-let ownerCapacity = {};        // { [ownerName]: number }  e.g. { "Tyler": 2 }
+let ownerCapacity = {};        // { [ownerName]: number }  e.g. { "Tyler": 2 }  (FIXED-mode base per pod)
+let capacityMode = {};         // { [ownerName]: "derived" }  per-pod capacity source; absent = "fixed" (default)
 let statusIgnoreConflicts = {}; // { [statusName]: bool }
 let statusIsActive   = {}; // { [statusName]: bool } - drives locking rules
 let statusIsTerminal = {}; // { [statusName]: bool } - marks completed state
@@ -3679,9 +3680,9 @@ function computeConflictingIds(){
   });
 
   Object.entries(byOwner).forEach(([owner, items]) => {
-    // Need at least a default capacity to check against
-    const defaultCap = ownerCapacity[owner];
-    if(!defaultCap) return;
+    // Need at least a default capacity to check against (derived pods count via getBaseCapacity)
+    const defaultCap = getBaseCapacity(owner);
+    if(!podHasCapacity(owner)) return;
 
     // Walk every working day across the span of all items for this owner
     // Find the earliest start and latest end
@@ -3740,8 +3741,8 @@ function computeConflictingIds(){
 // Used by Phase 5 conflict screen for rich display
 function computeOwnerConflictDays(owner){
   const ignorePairs = buildIgnorePairs();
-  const defaultCap = ownerCapacity[owner];
-  if(!defaultCap) return [];
+  const defaultCap = getBaseCapacity(owner);
+  if(!podHasCapacity(owner)) return [];
 
   const items = projects.filter(p => {
     if(p.hidden || p.dev !== owner || !p.start) return false;
@@ -3986,7 +3987,7 @@ function render(){
         grpChartExtra = graphHtml;
         // Small inline pill on the left panel group header
         grpLabelExtra = `<span style="font-size:9px;font-weight:900;color:var(--accent);margin-left:6px;opacity:0.7;letter-spacing:0.3px;display:inline-flex;align-items:center;gap:3px">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>cap (${ownerCapacity[owner] || '-'})</span>`;
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>cap (${capacityMode[owner]==='derived' ? getBaseCapacity(owner) : (ownerCapacity[owner] || '-')})</span>`;
       }
 
       lRows += `<div class="left-row grp" data-group="${escA(g.label)}"><span class="grp-lbl">${esc(g.label)}</span>${grpLabelExtra}<span class="grp-cnt">${g.items.length}</span><span class="grp-tog">${coll?'▶':'▼'}</span></div>`;
@@ -5742,7 +5743,7 @@ function openConflictModal(itemId){
 
   const ignorePairs = buildIgnorePairs();
   const owner = item.dev || '';
-  const cap = ownerCapacity[owner];
+  const cap = capacityMode[owner]==='derived' ? getBaseCapacity(owner) : ownerCapacity[owner];
   const start = parseD(item.start);
   const end = conflictEndDate(item);
 
@@ -5933,8 +5934,8 @@ function openCapacityConflictsScreen(){
   const ownerGroups = {}; // { owner: { conflictDays, cap, conflictingItemIds } }
 
   developers.forEach(owner => {
-    const cap = ownerCapacity[owner];
-    if(!cap) return;
+    const cap = getBaseCapacity(owner);
+    if(!podHasCapacity(owner)) return;
     if(!isAdmin && ownerFilter && ownerFilter !== owner) return;
 
     const conflictDays = computeOwnerConflictDays(owner);
@@ -6335,6 +6336,14 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
     data.delay = '';
   }
 
+  // Part B: sole-member assignee default on CREATE. This modal has no assignee field, so when the
+  // chosen owner (pod) has exactly one member and no assignee is set, default it - reusing the same
+  // podMembers definition (A0) the item page uses. Zero or multiple members -> assignee left empty.
+  if(!editingId && data.dev && !data.assignee){
+    const _mem = podMembers(data.dev);
+    if(_mem.length === 1) data.assignee = _mem[0].username;
+  }
+
   document.getElementById('modalBg').classList.remove('open');
   // Reset z-index immediately so modal disappears - item page refresh happens after save
   const _modalBg = document.getElementById('modalBg');
@@ -6567,12 +6576,39 @@ async function loadAssignmentData(){
     if(typeof window._frzRefreshCalendar === 'function') window._frzRefreshCalendar();   // refresh Team Calendar once data is in
   } catch(e){ console.warn('[Assignments] load failed:', e); }
 }
+// ── Pod membership + base capacity (derived-capacity primitive) ──────────────
+// SINGLE source of truth for "who is in this pod": users whose single-valued ownerFilter
+// equals the owner and who have a username. Empty owner / no matches -> []. Consumed by the
+// derived base (getBaseCapacity) AND the sole-member assignee default (create + item page).
+function podMembers(owner){
+  if(!owner) return [];
+  return (users || []).filter(u => (u.ownerFilter || '') === owner && u.username);
+}
+// A pod's BASE capacity (before per-day overrides + assignment impacts):
+//   fixed  -> the typed ownerCapacity value (|| 1), exactly as before.
+//   derived -> sum of member FTE (u.fte, default 1.0 -> headcount today). Zero members -> 0.
+// capacityMode[owner] === 'derived' selects derived; anything else (incl. absent) is fixed.
+function getBaseCapacity(owner){
+  if(capacityMode[owner] === 'derived'){
+    return podMembers(owner).reduce((s, u) => s + (u.fte != null ? +u.fte : 1.0), 0);
+  }
+  return ownerCapacity[owner] || 1;
+}
+// True if the pod participates in capacity/conflict accounting. FIXED keeps the exact prior gate
+// (a positive typed capacity); DERIVED participates only when its base is > 0. This preserves
+// byte-for-byte fixed-mode behavior (a fixed pod with no typed capacity stays skipped) while
+// letting a derived pod be scheduled/conflict-checked. A zero-member derived pod (base 0) is
+// treated as "no capacity", same as an unconfigured fixed pod.
+function podHasCapacity(owner){
+  return (capacityMode[owner] === 'derived') ? (getBaseCapacity(owner) > 0) : !!ownerCapacity[owner];
+}
+
 // Multi-line breakdown for a capacity cell tooltip (empty when no impacts apply).
 function capacityBreakdownText(owner, dateStr){
   const det = _assignmentImpactDetail[owner]?.[dateStr] || [];
   if(!det.length) return '';
   const override = _capOverrides[owner]?.[dateStr];
-  const base = (override !== undefined) ? override : (ownerCapacity[owner] || 1);
+  const base = (override !== undefined) ? override : getBaseCapacity(owner);
   const lines = ['Base capacity: ' + base];
   det.forEach(x => lines.push('  ' + (x.username ? x.username + ' ' : '') + x.name + ': -' + x.impact));
   lines.push('Effective: ' + getEffectiveCapacity(owner, dateStr));
@@ -6583,7 +6619,7 @@ function capacityBreakdownText(owner, dateStr){
 //   effective = (override ?? base) − Σ(assignment impacts), floored at 0
 function getEffectiveCapacity(owner, dateStr){
   const override = _capOverrides[owner]?.[dateStr];
-  const base = (override !== undefined) ? override : (ownerCapacity[owner] || 1);
+  const base = (override !== undefined) ? override : getBaseCapacity(owner);
   const impact = _assignmentImpacts[owner]?.[dateStr] || 0;
   return Math.max(0, base - impact);
 }
@@ -6645,7 +6681,7 @@ function renderCapCal(owner){
   const wrap = document.getElementById(`capCal_${idx}`);
   if(!wrap || wrap.style.display === 'none') return;
   const st   = _capCalState[owner];
-  const def  = ownerCapacity[owner] || 1;
+  const def  = getBaseCapacity(owner);
   const today = new Date(); today.setHours(0,0,0,0);
   const todayStr = today.toISOString().slice(0,10);
 
@@ -6838,7 +6874,7 @@ function openCapCalEditor(owner){
   }
   _capEditDates = dates;
 
-  const def = ownerCapacity[owner] || 1;
+  const def = getBaseCapacity(owner);
   const modal = document.getElementById('capCalModalBg');
   if(!modal) return;
 
@@ -6886,7 +6922,7 @@ async function saveCapOverride(){
   const capInp = document.getElementById('capCalModalValue');
   const errEl  = document.getElementById('capCalModalErr');
   const val    = parseFloat(capInp.value);
-  const def    = ownerCapacity[owner] || 1;
+  const def    = getBaseCapacity(owner);
 
   errEl.style.display = 'none';
   if(isNaN(val) || val < 0){ errEl.textContent = 'Capacity must be 0 or greater'; errEl.style.display=''; return; }
@@ -6937,7 +6973,7 @@ async function deleteCapOverride(){
   if(!isAdmin || !_capEditOwner) return;
   const owner = _capEditOwner;
   if(!confirm(`Remove all capacity overrides for the selected ${_capEditDates.length} day(s)?
-Days will revert to default capacity (${ownerCapacity[owner]||1}).`)) return;
+Days will revert to default capacity (${getBaseCapacity(owner)}).`)) return;
 
   const btn = document.getElementById('capCalDeleteBtn');
   if(btn){ btn.disabled=true; btn.textContent='Removing…'; }
@@ -6970,12 +7006,15 @@ function renderDevList(){
   if(!developers.length){ list.innerHTML='<div class="dev-empty">No owners yet.</div>'; return; }
   list.innerHTML=developers.map((d,i)=>{
     const n=projects.filter(p=>p.dev===d).length;
-    const cap = ownerCapacity[d] || '-';
+    const _derived = capacityMode[d] === 'derived';
+    const _memN = _derived ? podMembers(d).length : 0;
+    const cap = _derived ? getBaseCapacity(d) : (ownerCapacity[d] || '-');
+    const _capNote = _derived ? ` <span style="font-weight:400;opacity:.7">(derived from ${_memN} member${_memN!==1?'s':''})</span>` : '';
     return `<div class="dev-item" draggable="true" data-idx="${i}">
       <span class="drag-handle" title="Drag to reorder">⠿</span>
       <span class="dev-nm">${esc(d)}</span>
       <span class="dev-cnt">${n} item${n!==1?'s':''}</span>
-      <span style="font-size:11px;color:var(--muted);margin-right:4px" title="Capacity (max concurrent items)">Cap: <strong>${cap}</strong></span>
+      <span style="font-size:11px;color:var(--muted);margin-right:4px" title="${_derived?'Capacity derived from assigned members':'Capacity (max concurrent items)'}">Cap: <strong>${cap}</strong>${_capNote}</span>
       <button class="btn-ic" onclick="toggleCapCal('${esc(d)}');event.stopPropagation();" title="Capacity calendar"
         id="capCalBtn_${i}">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
@@ -7017,14 +7056,24 @@ function renderDevList(){
 
 function startEditDev(i){
   const item=document.querySelector(`.dev-item[data-idx="${i}"]`); if(!item) return;
-  const cap = ownerCapacity[developers[i]] || '';
+  const owner = developers[i];
+  const cap = ownerCapacity[owner] || '';
+  const derived = capacityMode[owner] === 'derived';
+  const memN = podMembers(owner).length;
+  const derVal = podMembers(owner).reduce((s,u)=>s+(u.fte!=null?+u.fte:1.0),0);
+  const derInfoHtml = `Derived from ${memN} member${memN!==1?'s':''} = <strong>${derVal}</strong>` +
+    (memN===0 ? ' <span style="color:var(--accent2)">(no members assigned - capacity is 0)</span>' : '');
   item.innerHTML=`
     <div style="display:flex;flex-direction:column;gap:5px;flex:1">
-      <input class="dev-edit-inp" id="dei_${i}" value="${escA(developers[i])}" placeholder="Owner name">
-      <div style="display:flex;align-items:center;gap:6px">
+      <input class="dev-edit-inp" id="dei_${i}" value="${escA(owner)}" placeholder="Owner name">
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:var(--muted)">
+        <input type="checkbox" id="dei_derive_${i}" ${derived?'checked':''} onchange="_toggleDeriveCap(${i})"> Derive capacity from assigned members
+      </label>
+      <div id="dei_caprow_${i}" style="display:${derived?'none':'flex'};align-items:center;gap:6px">
         <label style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap">Capacity (concurrent items):</label>
         <input type="number" min="1" max="20" class="dev-edit-inp" id="dei_cap_${i}" value="${cap}" placeholder="e.g. 2" style="width:60px;padding:4px 6px">
       </div>
+      <div id="dei_derinfo_${i}" style="display:${derived?'block':'none'};font-size:11px;color:var(--muted)">${derInfoHtml}</div>
     </div>
     <div style="display:flex;gap:4px;margin-left:8px;align-self:flex-start;margin-top:2px">
       <button class="btn-ic" onclick="saveEditDev(${i})" style="color:var(--accent)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="20 6 9 17 4 12"/></svg></button>
@@ -7033,23 +7082,60 @@ function startEditDev(i){
   document.getElementById(`dei_${i}`)?.focus();
 }
 
+// A5: toggle the Owners-editor capacity source in place (Fixed number vs derived-from-members).
+// The preview computes the derived value directly from live members (the mode is not saved yet);
+// warns when flipping a zero-member pod to derived (base would be 0).
+function _toggleDeriveCap(i){
+  const owner = developers[i];
+  const on = !!document.getElementById(`dei_derive_${i}`)?.checked;
+  const caprow = document.getElementById(`dei_caprow_${i}`);
+  const info   = document.getElementById(`dei_derinfo_${i}`);
+  if(caprow) caprow.style.display = on ? 'none' : 'flex';
+  if(info){
+    info.style.display = on ? 'block' : 'none';
+    if(on){
+      const memN = podMembers(owner).length;
+      const val  = podMembers(owner).reduce((s,u)=>s+(u.fte!=null?+u.fte:1.0),0);
+      info.innerHTML = `Derived from ${memN} member${memN!==1?'s':''} = <strong>${val}</strong>` +
+        (memN===0 ? ' <span style="color:var(--accent2)">(no members assigned - capacity is 0)</span>' : '');
+    }
+  }
+  if(on && podMembers(owner).length===0 && typeof showToast==='function')
+    showToast('This pod has no assigned members - derived capacity will be 0 until members are added.', 'info');
+}
+
 function saveEditDev(i){
   const el=document.getElementById(`dei_${i}`);
   const capEl=document.getElementById(`dei_cap_${i}`);
+  const deriveEl=document.getElementById(`dei_derive_${i}`);
   const n=el?.value.trim(); if(!n) return;
   const old=developers[i];
-  // Update capacity
-  const capVal = parseInt(capEl?.value);
-  if(capVal > 0){
-    if(n !== old) delete ownerCapacity[old];
-    ownerCapacity[n] = capVal;
+  const derive = !!deriveEl?.checked;
+  if(derive){
+    // Derived mode: mark it and PRESERVE the dormant fixed ownerCapacity value (do not clobber),
+    // so toggling back to fixed restores the prior typed number. Carry it across a rename.
+    capacityMode[n] = 'derived';
+    if(n !== old){
+      delete capacityMode[old];
+      if(ownerCapacity[old] != null && ownerCapacity[n] == null) ownerCapacity[n] = ownerCapacity[old];
+      delete ownerCapacity[old];
+    }
   } else {
-    delete ownerCapacity[old];
-    if(n !== old) delete ownerCapacity[n];
+    // Fixed mode (unchanged write path): clear any derived flag, write the typed value.
+    delete capacityMode[old]; if(n !== old) delete capacityMode[n];
+    const capVal = parseInt(capEl?.value);
+    if(capVal > 0){
+      if(n !== old) delete ownerCapacity[old];
+      ownerCapacity[n] = capVal;
+    } else {
+      delete ownerCapacity[old];
+      if(n !== old) delete ownerCapacity[n];
+    }
   }
   developers[i]=n;
   projects.forEach(p=>{ if(p.dev===old) p.dev=n; });
   saveConfig('ownerCapacity', ownerCapacity);
+  saveConfig('capacityMode', capacityMode);
   saveConfig('developers', developers); renderDevList(); populateDevSelects(); render();
 }
 
@@ -7059,6 +7145,7 @@ function deleteDev(i){
   if(!confirm(cnt>0?`Delete "${name}"? ${cnt} item(s) will become unassigned.`:`Delete "${name}"?`)) return;
   developers.splice(i,1);
   projects.forEach(p=>{ if(p.dev===name) p.dev=''; });
+  if(capacityMode[name]!==undefined){ delete capacityMode[name]; saveConfig('capacityMode', capacityMode); }
   saveConfig('developers', developers); renderDevList(); populateDevSelects(); render();
 }
 
@@ -7215,6 +7302,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
     departments   = data.departments   || departments;
       products     = data.products     || products;
       if(data.ownerCapacity)         ownerCapacity         = data.ownerCapacity;
+      if(data.capacityMode)          capacityMode          = data.capacityMode;
       if(data.statusIsActive)        statusIsActive        = data.statusIsActive;
       if(data.statusIsTerminal)      statusIsTerminal      = data.statusIsTerminal;
       if(data.statusIsDefault)       statusIsDefault       = data.statusIsDefault;
@@ -9743,8 +9831,8 @@ async function runCapacityConflictNotifications(){
   const ownerConflictGroups = {}; // { owner: { spans, groupKey } }
 
   developers.forEach(owner => {
-    const cap = ownerCapacity[owner];
-    if(!cap) return;
+    const cap = getBaseCapacity(owner);
+    if(!podHasCapacity(owner)) return;
 
     const conflictDays = computeOwnerConflictDays(owner);
     if(!conflictDays.length) return;
@@ -10533,7 +10621,7 @@ function renderDashboard(){
 
   // Over-capacity owners (uses phased units)
   const overCapOwners = developers.filter(owner=>{
-    if(!ownerCapacity[owner]) return false;
+    if(!podHasCapacity(owner)) return false;
     const todayStr = today.toISOString().slice(0,10);
     const eff = getEffectiveCapacity(owner, todayStr);
     const units = projects.filter(p=>!p.hidden&&p.dev===owner&&!isTerminalStatus(p.status))
@@ -10695,7 +10783,7 @@ function renderDashboard(){
     const act   = mine.filter(p=>isActiveStatus(p.status)).length;
     const done  = mine.filter(p=>isTerminalStatus(p.status)).length;
     const risk  = mine.filter(p=>atRiskIds.has(p.id)&&!isTerminalStatus(p.status)).length;
-    const cap   = ownerCapacity[d]||1;
+    const cap   = getBaseCapacity(d);
     const todStr = today.toISOString().slice(0,10);
     const effCap = getEffectiveCapacity(d, todStr);
     const units  = projects.filter(p=>!p.hidden&&p.dev===d&&!isTerminalStatus(p.status))
@@ -14172,7 +14260,7 @@ function renderCapacityHeatmap(items){
       label: wStart.toLocaleDateString('en-US',{month:'short',day:'numeric',timeZone:MT_TZ}) });
   }
 
-  const owners = developers.filter(d => ownerCapacity[d]);
+  const owners = developers.filter(d => podHasCapacity(d));
   if(!owners.length) return `<div style="color:var(--muted);font-size:13px;padding:16px 0">Set owner capacities in Admin → Owners to see the heat-map.</div>`;
 
   const headerCells = weeks.map(w =>
@@ -14472,7 +14560,7 @@ async function saveItemPageField(field, value, opts={}){
   // user can see it was auto-filled and change it; it is never silent-and-sticky). NOTE: pod
   // membership is currently incomplete, so this is a soft default only.
   if(field==='dev' && value && !(p.assignee||'').trim()){
-    const _mem = users.filter(u => (u.ownerFilter||'') === value && u.username);
+    const _mem = podMembers(value);   // A0: single membership definition (shared with create-modal default)
     if(_mem.length === 1) updated.assignee = _mem[0].username;
   }
   // Schedule-driving fields: validate + recompute the derived due date (like the modal).
@@ -16201,6 +16289,7 @@ async function boot(){
     users        = data.users        || [];
     types        = data.types        || DEFAULT_TYPES;
     ownerCapacity         = data.ownerCapacity         || {};
+    capacityMode          = data.capacityMode          || {};
     statusIsActive        = data.statusIsActive        || {};
     statusIsTerminal      = data.statusIsTerminal      || {};
     statusIsDefault       = data.statusIsDefault       || {};
@@ -19522,7 +19611,7 @@ if ('serviceWorker' in navigator) {
     var owners=(_val('developers',[])||[]).filter(function(o){ return !f.owner || o===f.owner; });
     var out=[];
     owners.forEach(function(owner){
-      var baseCap=capMap[owner]||1, effToday=getEffectiveCapacity(owner, todayStr);
+      var baseCap=_call('getBaseCapacity',owner), effToday=getEffectiveCapacity(owner, todayStr);
       if(f.cap==='reduced' && !(effToday<baseCap)) return;
       var userSet={};
       winAssigns.forEach(function(a){ if(a.owner===owner && a.username && (!f.type||a.type_id===f.type)) userSet[a.username]=1; });
@@ -19642,7 +19731,7 @@ if ('serviceWorker' in navigator) {
   // 0) per displayed day. Health class reuses the Gantt palette (.cap-health-*): at/over base
   // = healthy (green), reduced = warning (yellow), 0 = critical (red). Fractional as stored.
   function _calFmt(n){ return String(Math.round((+n||0)*100)/100); }
-  function _calOwnerBase(owner){ var oc=_val('ownerCapacity',{})||{}; return oc[owner]!=null ? oc[owner] : null; }
+  function _calOwnerBase(owner){ var oc=_val('ownerCapacity',{})||{}, mode=_val('capacityMode',{})||{}; return mode[owner]==='derived' ? _call('getBaseCapacity',owner) : (oc[owner]!=null ? oc[owner] : null); }
   function _calCapHealth(owner, ds, base){
     var eff=getEffectiveCapacity(owner, ds);
     if(eff<=0) return 'cap-health-over';          // 0 -> critical (red)

@@ -3008,12 +3008,14 @@ def get_all(auth: dict = Depends(require_auth)):
                    "lastName": u.get("lastName", ""),
                    "avatarInitials": u.get("avatarInitials", ""),   # user-chosen monogram (blank = derive from username)
                    "avatarColor": u.get("avatarColor", ""),         # user-chosen #RRGGBB (blank = username-hash color)
+                   "fte": u.get("fte"),                             # per-user FTE for derived pod capacity (null -> 1.0 at read)
                    "revokedAt": u.get("revokedAt")} for u in users_raw]
     return {"projects": projects, "developers": cfg("developers"),
             "statuses": cfg("statuses"), "delayReasons": cfg("delayReasons"),
             "products": cfg("products"), "users": users_safe,
             "types": cfg("types"),
             "ownerCapacity": cfg("ownerCapacity") or {},
+            "capacityMode": cfg("capacityMode") or {},
             "statusIgnoreConflicts": cfg("statusIgnoreConflicts") or {},
             "typeIgnoreConflicts": cfg("typeIgnoreConflicts") or {},
             "typeScheduled": cfg("typeScheduled") or {},
@@ -4263,7 +4265,7 @@ def bulk_update_items(body: dict = Body(...),
 
 # ── Config ────────────────────────────────────────────────────────────────────
 VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
-              "ownerCapacity","statusIgnoreConflicts","typeIgnoreConflicts","productIgnoreConflicts",
+              "ownerCapacity","capacityMode","statusIgnoreConflicts","typeIgnoreConflicts","productIgnoreConflicts",
               "typeScheduled",
               "statusIsActive","statusIsTerminal",
               "statusIsDefault","statusIsDeferred",
