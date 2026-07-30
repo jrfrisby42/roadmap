@@ -945,6 +945,11 @@ def init_team_db(team: str):
             # (ASSETHUB_API_KEY_<TEAM>); the `assethubConfigured` flag is true only when BOTH a
             # mapping and a credential are present.
             "assethubConnection": {},
+            # WRITE-1b: Flow item Type -> AssetHub service_type mapping for the resolution ServiceEvent.
+            # Flat {flowType: serviceType}; values must be in SERVICE_TYPE_VOCAB or they degrade to
+            # "Other" at send time. Seeded Maintenance -> Maintenance (correct for IT, inert elsewhere);
+            # editable per team via the config API. Presence-only seed, so a team that clears it stays clear.
+            "assethubServiceTypeMapping": {"Maintenance": "Maintenance"},
             # Team Admin: per-team view visibility (allowlist of enabled toggleable views).
             # NULL/absent = every view enabled (the default, so existing teams are unaffected). An
             # explicit array = allowlist (a view not in it is hidden, so a view added later defaults
@@ -1037,12 +1042,13 @@ def _migrate_config_keys(team: str):
         "maintenanceDutyTypeId": "",
         "externalRequestCategories": {},   # AssetHub integration (PR1): see init_team_db defaults for shape/rationale
         "assethubConnection": {},          # AssetHub outbound mapping (FLOW-0): see init_team_db defaults; credential lives in .env
+        "assethubServiceTypeMapping": {"Maintenance": "Maintenance"},  # WRITE-1b service_type mapping; presence-only
         "enabledViews": None,              # Team Admin: per-team view allowlist (null = all enabled); see init_team_db defaults
     }
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
     # an admin who deletes all types isn't re-seeded on next boot.)
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "enabledViews"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -3035,6 +3041,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "jiraProjectMapping": cfg("jiraProjectMapping") or {},
             "jiraStatusMapping": cfg("jiraStatusMapping") or {},
             "jiraTypeMapping": cfg("jiraTypeMapping") or {},
+            "assethubServiceTypeMapping": cfg("assethubServiceTypeMapping") or {},
             "jiraSyncConfig": cfg("jiraSyncConfig") or {},
             # /beta rich-text editor master switch - boolean preserved (default ON when
             # absent) so an admin's explicit False reaches the client and reverts the editor.
@@ -4274,7 +4281,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow",
               "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains","departmentMeta","maintenanceDutyTypeId",
-              "externalRequestCategories","assethubConnection","enabledViews"}
+              "externalRequestCategories","assethubConnection","assethubServiceTypeMapping","enabledViews"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",
@@ -6143,11 +6150,26 @@ _ASSETHUB_SYSTEM_ROLE = "system"          # the outbound call runs under the SER
                                           # identity, NEVER the triggering user's role, so a send is
                                           # not blocked by the Contributor gate (Part 4). Any value
                                           # other than "contributor" clears _require_allowed_actor.
-_ASSETHUB_FLOW_SERVICE_TYPE = "Other"     # A Flow resolution (Bug Fix / Enhancement / Support / Task)
-                                          # has no clean member in AssetHub's service vocabulary
-                                          # (Repair/Maintenance/Upgrade/Inspection/Configuration/
-                                          # Software/Network/Hardware/Other), so the general "Other"
-                                          # member is used, per contract C.2 guidance.
+_ASSETHUB_DEFAULT_SERVICE_TYPE = "Other"  # Fallback service_type - the only member guaranteed valid.
+# AssetHub's STRICT title-case service_type vocabulary, mirroring contract 1.2.1 (Section C.2).
+# AssetHub OWNS this vocabulary: if AssetHub adds a value, Flow cannot target it until this constant
+# is updated, and until then that value degrades to "Other" - acceptable by design because the
+# fallback never 422s. The Flow item Type -> service_type mapping is per-team config
+# (assethubServiceTypeMapping); any mapped value not in this set degrades to "Other" at send time.
+SERVICE_TYPE_VOCAB = {"Repair", "Maintenance", "Upgrade", "Inspection",
+                      "Configuration", "Software", "Network", "Hardware", "Other"}
+
+def _resolve_service_type(mapping: dict, item_type: str) -> str:
+    """Resolve a Flow item Type to an AssetHub service_type via the per-team mapping. Two independent
+    paths to the "Other" fallback: (1) unmapped type (silent, expected), and (2) a mapped value that
+    is NOT in SERVICE_TYPE_VOCAB (a config typo) - degraded to "Other" and WARN-logged (never 422).
+    Keys match the item type exactly (no normalization), like jiraTypeMapping."""
+    mapped = (mapping or {}).get(item_type) if item_type else None
+    if mapped and mapped not in SERVICE_TYPE_VOCAB:
+        log.warning(f"[AssetHub] assethubServiceTypeMapping[{item_type!r}] = {mapped!r} is not a valid "
+                    f"AssetHub service_type; sending {_ASSETHUB_DEFAULT_SERVICE_TYPE!r} instead.")
+        return _ASSETHUB_DEFAULT_SERVICE_TYPE
+    return mapped or _ASSETHUB_DEFAULT_SERVICE_TYPE
 
 def _assignee_email_for_service_event(c, assignee) -> str:
     """Resolve an item's `assignee` username to an email for the AssetHub actor. LOOKUP ONLY -
@@ -6169,15 +6191,16 @@ def _assignee_email_for_service_event(c, assignee) -> str:
         return ""
     return (u.get("email") or "").strip()
 
-def _assethub_service_event_body(item: dict, pid, actor_email: str) -> dict:
+def _assethub_service_event_body(item: dict, pid, actor_email: str, service_type: str) -> dict:
     """Build the service-event request body from a resolved item. Only contract-allowed keys
     are included (unknown top-level fields are a 422). `source_reference` is the numeric Flow
     item id as a string (stable across product re-keys), the idempotency key with source_system.
-    `actor_email` is included ONLY when non-empty (never sent as "")."""
+    `actor_email` is included ONLY when non-empty (never sent as ""). `service_type` is resolved
+    by the caller via _resolve_service_type (always a valid SERVICE_TYPE_VOCAB member)."""
     summary = (item.get("name") or item.get("itemKey") or "Resolved").strip()[:255] or "Resolved"
     notes = _strip_tags(item.get("resolution") or item.get("description") or "").strip()[:4000]
     body = {
-        "service_type":     _ASSETHUB_FLOW_SERVICE_TYPE,
+        "service_type":     service_type,
         "summary":          summary,
         "source_system":    "flow",           # MUST equal the connection provider or AssetHub 422s
         "source_reference": str(pid),
@@ -6210,9 +6233,14 @@ def _dispatch_service_events(team: str, pid: int, role_for_client: str = _ASSETH
             if not links:
                 return
             actor_email = _assignee_email_for_service_event(c, item.get("assignee"))
+            _map_row = c.execute("SELECT value FROM config WHERE key='assethubServiceTypeMapping'").fetchone()
+            st_mapping = json.loads(_map_row["value"]) if _map_row else {}
     except Exception as e:
         log.warning(f"[AssetHub] service-event prep failed for item {pid}: {e}")
         return
+    # WRITE-1b service_type: config-mapped from the item Type, degrading to "Other" (unmapped OR a
+    # mapped-but-illegal value). Resolved ONCE per item (Type is the same for all its linked assets).
+    service_type = _resolve_service_type(st_mapping, item.get("type"))
     now = datetime.now(timezone.utc).isoformat()
     outcomes = {}
     for l in links[:_ASSET_LINK_CAP]:
@@ -6227,7 +6255,7 @@ def _dispatch_service_events(team: str, pid: int, role_for_client: str = _ASSETH
         # whether Flow actually supplied an actor (the join-rate measurement, paired with attribution).
         # Constructed with the SERVER identity, never the triggering user's role (Part 4).
         client = AssetHubClient(team, role_for_client)
-        body = _assethub_service_event_body(item, pid, actor_email)   # omits actor_email when empty
+        body = _assethub_service_event_body(item, pid, actor_email, service_type)   # omits actor_email when empty
         try:
             res = client.post("/api/v1/assets/" + _urlq(pubid, safe="") + "/service-events", body)
             data = res.get("data") or {}
@@ -6235,6 +6263,7 @@ def _dispatch_service_events(team: str, pid: int, role_for_client: str = _ASSETH
                 "state":          "replayed" if data.get("idempotent_replay") else "sent",
                 "at":             now,
                 "actorEmailSent": bool(actor_email),
+                "serviceType":    service_type,
                 "attribution":    (data.get("attribution") or {}).get("type"),
                 "correlationId":  res.get("correlation_id"),
             }
@@ -6242,7 +6271,8 @@ def _dispatch_service_events(team: str, pid: int, role_for_client: str = _ASSETH
             # Recorded distinctly by contract code; NEVER retried here (the client already did its
             # bounded retry). 404 = asset gone; missing_scope = the grant was not done (misconfig).
             outcomes[pubid] = {"state": "failed", "code": e.code, "httpStatus": e.status,
-                               "at": now, "actorEmailSent": bool(actor_email), "correlationId": e.correlation_id}
+                               "at": now, "actorEmailSent": bool(actor_email),
+                               "serviceType": service_type, "correlationId": e.correlation_id}
             log.warning(f"[AssetHub] service-event send failed item={pid} asset={pubid} "
                         f"code={e.code} status={e.status} corr={e.correlation_id}")
     if not outcomes:
