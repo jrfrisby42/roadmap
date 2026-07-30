@@ -6048,9 +6048,9 @@ _ASSETHUB_FLOW_SERVICE_TYPE = "Other"     # A Flow resolution (Bug Fix / Enhance
 def _assignee_email_for_service_event(c, assignee) -> str:
     """Resolve an item's `assignee` username to an email for the AssetHub actor. LOOKUP ONLY -
     never invents or guesses an email (Part 3). Returns "" when there is no assignee, the
-    assignee is unknown, or it carries no email; the caller then sends NO actor and records the
-    gap (a missing actor_email is a hard 422 on the WRITE-1a contract, so a doomed send is not
-    attempted). A REVOKED assignee still resolves and is still sent: the service event is
+    assignee is unknown, or it carries no email; the caller then sends WITH actor_email omitted and
+    AssetHub connection-attributes the event (contract 1.2.1 made actor_email optional - the send is
+    no longer skipped). A REVOKED assignee still resolves and is still sent: the service event is
     historical, the person did the work, and their identity at the time is the correct
     attribution. To exclude revoked assignees later, flip the single flag below."""
     if not (assignee or "").strip():
@@ -6115,22 +6115,22 @@ def _dispatch_service_events(team: str, pid: int, role_for_client: str = _ASSETH
         pubid = str((l or {}).get("publicId") or "").strip() if isinstance(l, dict) else ""
         if not pubid:
             continue
-        if not actor_email:
-            # No resolvable assignee email. The contract REQUIRES actor_email (a missing/empty value
-            # is a hard 422) and inventing one is forbidden, so we do NOT send a request we know will
-            # be rejected - we record the gap for the actor-supply measurement (Part 3) and move on.
-            outcomes[pubid] = {"state": "skipped_no_actor", "at": now, "actorEmailSent": False}
-            continue
+        # No-actor path (contract 1.2.1): when there is no resolvable assignee email we STILL send,
+        # with actor_email OMITTED from the body (never ""); AssetHub routes an absent actor to
+        # connection-attribution ("integration"), capturing the service history without the actor.
+        # This was previously a skip-and-record because WRITE-1a required actor_email; the follow-up
+        # made it optional, so we send. The resolving-actor path is unchanged. actorEmailSent records
+        # whether Flow actually supplied an actor (the join-rate measurement, paired with attribution).
         # Constructed with the SERVER identity, never the triggering user's role (Part 4).
         client = AssetHubClient(team, role_for_client)
-        body = _assethub_service_event_body(item, pid, actor_email)
+        body = _assethub_service_event_body(item, pid, actor_email)   # omits actor_email when empty
         try:
             res = client.post("/api/v1/assets/" + _urlq(pubid, safe="") + "/service-events", body)
             data = res.get("data") or {}
             outcomes[pubid] = {
                 "state":          "replayed" if data.get("idempotent_replay") else "sent",
                 "at":             now,
-                "actorEmailSent": True,
+                "actorEmailSent": bool(actor_email),
                 "attribution":    (data.get("attribution") or {}).get("type"),
                 "correlationId":  res.get("correlation_id"),
             }
@@ -6138,7 +6138,7 @@ def _dispatch_service_events(team: str, pid: int, role_for_client: str = _ASSETH
             # Recorded distinctly by contract code; NEVER retried here (the client already did its
             # bounded retry). 404 = asset gone; missing_scope = the grant was not done (misconfig).
             outcomes[pubid] = {"state": "failed", "code": e.code, "httpStatus": e.status,
-                               "at": now, "actorEmailSent": True, "correlationId": e.correlation_id}
+                               "at": now, "actorEmailSent": bool(actor_email), "correlationId": e.correlation_id}
             log.warning(f"[AssetHub] service-event send failed item={pid} asset={pubid} "
                         f"code={e.code} status={e.status} corr={e.correlation_id}")
     if not outcomes:

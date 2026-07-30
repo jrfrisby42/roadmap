@@ -55,6 +55,13 @@ def _post_replay(path, body, params):
             "correlation_id": "c-post"}
 
 
+def _post_attrib(path, body, params):
+    # Mirror AssetHub 1.2.1: an absent actor_email -> connection attribution ("integration");
+    # a present actor_email -> "person". Lets a test assert the no-actor send is captured.
+    attrib = "integration" if "actor_email" not in body else "person"
+    return {"data": {"idempotent_replay": False, "attribution": {"type": attrib}}, "correlation_id": "c-post"}
+
+
 def _post_raise(code, status):
     def h(path, body, params):
         raise server.AssetHubError(code, status=status, correlation_id="c-err")
@@ -188,27 +195,33 @@ def test_assignee_email_is_sent(client, team, admin_headers, monkeypatch):
     assert state["posts"][0]["body"]["actor_email"] == "dev1@freezingpointllc.com"
 
 
-def test_unassigned_omits_actor_and_skips_send(client, team, admin_headers, monkeypatch):
-    # No assignee -> no resolvable actor. The contract REQUIRES actor_email (missing == 422), so
-    # rather than send a doomed request or an empty string, we skip and record the gap.
+def test_unassigned_sends_with_actor_omitted_connection_attributed(client, team, admin_headers, monkeypatch):
+    # No assignee -> no resolvable actor. Contract 1.2.1: we STILL send, with actor_email OMITTED
+    # (never ""), and AssetHub connection-attributes it. (Was skip-and-record under the old
+    # required-actor contract; the WRITE-1a follow-up made actor_email optional, so we send.)
     _enable(team, monkeypatch)
     _install(monkeypatch)
     pid = _create(client, admin_headers)                # no assignee
     assert _link(client, admin_headers, pid).status_code == 200
-    state = _install(monkeypatch)
+    state = _install(monkeypatch, post_handler=_post_attrib)
     _resolve(client, admin_headers, pid)
-    assert state["posts"] == []                         # nothing sent, no empty-string actor
+    assert len(state["posts"]) == 1                     # sent, not skipped
+    assert "actor_email" not in state["posts"][0]["body"]   # omitted, not empty-string
     sync = _stored(team, pid)["assetServiceSync"][UUID1]
-    assert sync["state"] == "skipped_no_actor"
+    assert sync["state"] == "sent"
     assert sync["actorEmailSent"] is False
+    assert sync["attribution"] == "integration"
 
 
-def test_assignee_without_email_omits_actor_and_skips_send(client, team, admin_headers, monkeypatch):
+def test_assignee_without_email_sends_with_actor_omitted(client, team, admin_headers, monkeypatch):
+    # The admin-with-no-email case: same as unassigned - sends, omits the actor, connection attribution.
     pid, _ = _setup_linked(client, admin_headers, team, monkeypatch, assignee="dev1", email="")
-    state = _install(monkeypatch)
+    state = _install(monkeypatch, post_handler=_post_attrib)
     _resolve(client, admin_headers, pid)
-    assert state["posts"] == []
-    assert _stored(team, pid)["assetServiceSync"][UUID1]["state"] == "skipped_no_actor"
+    assert len(state["posts"]) == 1
+    assert "actor_email" not in state["posts"][0]["body"]
+    sync = _stored(team, pid)["assetServiceSync"][UUID1]
+    assert sync["state"] == "sent" and sync["actorEmailSent"] is False and sync["attribution"] == "integration"
 
 
 def test_revoked_assignee_still_resolves_and_sends(client, team, admin_headers, monkeypatch):
