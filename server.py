@@ -1600,7 +1600,11 @@ def _intake_open(team: str) -> bool:
     return bool(_cfg_val(team, "intakeEnabled", False))
 
 def _intake_label(team: str) -> str:
-    return team[:1].upper() + team[1:] if team else team
+    # Display label for a team slug (slug stays lowercase - identity). Short slugs (<=3 chars) read as
+    # acronyms and go all-caps (it -> IT, ops -> OPS); longer are title-cased (development -> Development).
+    if not team:
+        return team
+    return team.upper() if len(team) <= 3 else (team[:1].upper() + team[1:])
 
 def _intake_types(team: str) -> list:
     allow = _cfg_val(team, "intakeTypes", []) or []

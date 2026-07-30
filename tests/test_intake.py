@@ -730,3 +730,14 @@ def test_sanitize_html_helper_keeps_safe_formatting():
     assert "onerror" not in server._sanitize_html('<img src=x onerror=alert(1)>')
     # Portal-stored form (escaped text + literal <br>) round-trips as inert text.
     assert server._sanitize_html("&lt;script&gt;x&lt;/script&gt;<br>ok") == "&lt;script&gt;x&lt;/script&gt;<br>ok"
+
+
+def test_intake_label_acronym_heuristic():
+    # Team display label: short slugs (<=3 chars) read as acronyms -> all-caps; longer -> title-case.
+    # The slug itself stays lowercase (identity); this is display only.
+    assert server._intake_label("it") == "IT"
+    assert server._intake_label("ops") == "OPS"
+    assert server._intake_label("qa") == "QA"
+    assert server._intake_label("development") == "Development"
+    assert server._intake_label("logistics") == "Logistics"
+    assert server._intake_label("") == ""
