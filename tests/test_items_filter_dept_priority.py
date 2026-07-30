@@ -102,6 +102,22 @@ def test_department_index_resyncs_on_update(client, team, admin_headers):
     assert _total(client, admin_headers, "department=__none__") == 1
 
 
+def test_backfill_rebuilds_index_for_preexisting_items(client, team, admin_headers):
+    # Regression for the boot-time backfill bug: the index must be (re)buildable for items that
+    # predate it. Simulate that by wiping the index + the fresh marker, then run the deferred pass.
+    _mk(client, admin_headers, departments=["Hardware"])
+    _mk(client, admin_headers, departments=["Software", "Network"])
+    with server.db(team) as c:
+        c.execute("DELETE FROM item_departments")
+        c.execute("DELETE FROM config WHERE key='__deptIndexBuilt2'")
+    assert _total(client, admin_headers, "department=Hardware") == 0   # index empty -> nothing matches
+    n = server._backfill_item_departments(team)
+    assert n >= 2
+    assert _total(client, admin_headers, "department=Hardware") == 1
+    assert _total(client, admin_headers, "department=Network") == 1
+    assert server._backfill_item_departments(team) == -1               # marker set -> no-op second run
+
+
 def test_department_index_dropped_on_delete(client, team, admin_headers):
     pid = _mk(client, admin_headers, departments=["Hardware"])
     assert _total(client, admin_headers, "department=Hardware") == 1
