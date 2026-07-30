@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from urllib.request import urlopen, Request
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote as _urlq
-from fastapi import FastAPI, HTTPException, Body, Request as FRequest, Header, Depends, Response
+from fastapi import FastAPI, HTTPException, Body, Request as FRequest, Header, Depends, Response, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from typing import Optional, List
@@ -1351,7 +1351,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.8.1"
+APP_VERSION = "5.9.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3280,7 +3280,8 @@ SERVER_OWNED_FIELDS = ("reporter", "reporterEmail", "source", "createdAt", "spri
                        "recurrence_parent", "hubspotId",
                        "completedAt", "firstResponseAt",
                        "externalRefs",
-                       "assetLinks", "assetCache")   # FLOW-1: server-owned asset links + display cache
+                       "assetLinks", "assetCache",    # FLOW-1: server-owned asset links + display cache
+                       "assetServiceSync")            # WRITE-1b: per-asset service-event send outcomes
 
 RECURRENCE_SKIP_KEYS = {
     # instance-specific / per-cycle fields a new occurrence starts fresh (incl. itemKey, which
@@ -3307,6 +3308,9 @@ RECURRENCE_SKIP_KEYS = {
     # relationships (same rationale as externalRefs). Both are in SERVER_OWNED_FIELDS, so the
     # recurrence-inheritance invariant requires them here (dropped) or on RECURRENCE_INHERITED.
     "assetLinks", "assetCache",
+    # WRITE-1b: per-asset service-event send outcomes. A new occurrence has sent nothing and starts
+    # with a clean slate (it inherits no asset links either), so it is dropped, not inherited.
+    "assetServiceSync",
 }
 
 # Server-owned fields a recurrence occurrence deliberately KEEPS. Kept intentionally small - a
@@ -3685,6 +3689,7 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     # them. Strip on create for the same reason as externalRefs (raw client body).
     body.pop("assetLinks", None)
     body.pop("assetCache", None)
+    body.pop("assetServiceSync", None)   # WRITE-1b: server-owned send-outcome record; never client-seeded
     with db(team) as c:
         _bucket_item_owner(c, body)   # owner bucketing: fill a blank owner from the assignee's pod
         _assign_item_key(c, body)
@@ -3705,7 +3710,8 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     return body
 
 @app.put("/api/projects/{pid}")
-def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admin", "editor", "contributor"))):
+def update_project(pid: int, body: dict, background: BackgroundTasks = None,
+                   auth: dict = Depends(require_role("admin", "editor", "contributor"))):
     team = auth["team"]
     username = _audit_actor(body.pop("_username", None), auth)
     body.pop("id", None)
@@ -3917,6 +3923,25 @@ def update_project(pid: int, body: dict, auth: dict = Depends(require_role("admi
                 log.info(f"[FeatureFlags] Pulled {len(all_ff)} flags for item {pid} on release")
         except Exception as e:
             log.warning(f"[FeatureFlags] Release-trigger FF pull failed for item {pid}: {e}")
+
+    # ── WRITE-1b: AssetHub ServiceEvent on a resolution ─────────────────────────
+    # Fire ONLY on the TRANSITION into a terminal status (prev not terminal, new terminal),
+    # never on a save that leaves an already-terminal item terminal, and only for an
+    # asset-linked item on an AssetHub-configured team (inert everywhere but `it`). Deferred to
+    # a BackgroundTask so the send's retry/timeout window is NOT on the interactive path
+    # (worst-case added latency to the user ~0). The send runs under the server integration
+    # identity, so a Contributor-triggered resolution would still send - though a Contributor
+    # cannot reach a terminal status today (_enforce_contributor_status bars it), so in practice
+    # only admin/editor resolutions trigger this. Best-effort: never fails the resolution.
+    try:
+        entered_terminal = bool(terminal_map.get(new_status)) and not bool(terminal_map.get(old_status))
+        if entered_terminal and merged.get("assetLinks") and _assethub_configured(team):
+            if background is not None:
+                background.add_task(_dispatch_service_events, team, pid, _ASSETHUB_SYSTEM_ROLE)
+            else:
+                _dispatch_service_events(team, pid, _ASSETHUB_SYSTEM_ROLE)   # direct-call fallback (no request scope)
+    except Exception as e:
+        log.warning(f"[AssetHub] service-event trigger failed for item {pid}: {e}")
 
     return merged
 
@@ -5647,6 +5672,13 @@ class AssetHubClient:
     def get(self, path, params=None):
         return self._request("GET", path, params=params)
 
+    def post(self, path, body, params=None):
+        # WRITE-1b: the FIRST write verb on this client. Same bounded retry / timeout /
+        # correlation / no-timer behavior as GET; the body is JSON-encoded once and sent
+        # under the sole Bearer header. Retry on a POST is safe here only because the sole
+        # POST target (service-event ingest) is idempotent on (source_system, source_reference).
+        return self._request("POST", path, params=params, body=body)
+
     # ── internals ──
     def _require_allowed_actor(self):
         # Part 6: Contributors are external contractors and must NEVER originate an AssetHub call.
@@ -5663,22 +5695,27 @@ class AssetHubClient:
                                   for k, v in sorted(params.items()) if v is not None)
         return url
 
-    def _perform(self, method, url, headers):
+    def _perform(self, method, url, headers, body=None):
         if self._transport is not None:
+            # Backward-compatible test seam: existing transports are (method, url, headers);
+            # only pass the 4th (body) arg when there IS a body, so GET-only fakes keep working.
+            if body is not None:
+                return self._transport(method, url, headers, body)
             return self._transport(method, url, headers)
-        req = Request(url, headers=headers, method=method)   # Authorization set by caller; no body this sprint
+        req = Request(url, data=body, headers=headers, method=method)   # Authorization set by caller
         try:
             with urlopen(req, timeout=_ASSETHUB_TIMEOUT) as r:
                 return r.status, r.read(), r.headers
         except HTTPError as e:
             return e.code, (e.read() or b""), (e.headers or {})   # 4xx/5xx carry the JSON error envelope
 
-    def _request(self, method, path, params=None):
+    def _request(self, method, path, params=None, body=None):
         self._require_allowed_actor()
         if not self._key or not self.base_url:
             # Not an error condition - the team simply has no AssetHub integration.
             raise AssetHubError("not_configured", _assethub_plain("not_configured"))
         url = self._build_url(path, params)
+        body_bytes = json.dumps(body).encode() if body is not None else None
         attempt = 0
         while True:
             corr = _assethub_correlation_id()
@@ -5687,8 +5724,10 @@ class AssetHubClient:
                 "Accept":          "application/json",
                 "X-Correlation-ID": corr,
             }
+            if body_bytes is not None:
+                headers["Content-Type"] = "application/json"
             try:
-                status, body, resp_headers = self._perform(method, url, headers)
+                status, body_resp, resp_headers = self._perform(method, url, headers, body_bytes)
             except (URLError, TimeoutError, OSError) as e:
                 # transport failure / timeout: surfaced rather than hung; retry within the bound
                 if attempt >= _ASSETHUB_MAX_RETRIES:
@@ -5700,8 +5739,8 @@ class AssetHubClient:
             echoed = _assethub_ci_get(resp_headers, "X-Correlation-ID") or corr
             log.info(f"[AssetHub] {method} {path} -> {status} corr={echoed}")   # correlation id logged; key NEVER logged
             if 200 <= status < 300:
-                return self._parse_success(body, echoed)
-            err = self._parse_error(body, status, echoed)
+                return self._parse_success(body_resp, echoed)
+            err = self._parse_error(body_resp, status, echoed)
             if status in _ASSETHUB_NO_RETRY:
                 raise err                                     # terminal - never retry unchanged
             if status in _ASSETHUB_RETRY and attempt < _ASSETHUB_MAX_RETRIES:
@@ -5986,6 +6025,139 @@ def refresh_asset_links(pid: int, auth: dict = Depends(require_role("admin", "ed
         p["assetCache"] = cache
         _save_project(c, pid, p)
     return {"ok": True, "assetCache": p.get("assetCache") or {}, "connectionError": conn_error}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WRITE-1b: resolution -> AssetHub ServiceEvent (contract 1.2, POST service-events)
+# ══════════════════════════════════════════════════════════════════════════════
+# When an item transitions INTO a terminal status and is linked to assets, record ONE
+# ServiceEvent per linked asset in AssetHub, attributed to the ASSIGNEE. Fired server-side
+# from the update_project chokepoint (below), deferred to a BackgroundTask so the retry /
+# timeout window never extends the user's resolution request. Best-effort: the resolution
+# has already committed and can never be rolled back by a send failure. No timer, no poller,
+# no unbounded retry - the client's bounded retry (<=3 attempts) is the only retry.
+_ASSETHUB_SYSTEM_ROLE = "system"          # the outbound call runs under the SERVER integration
+                                          # identity, NEVER the triggering user's role, so a send is
+                                          # not blocked by the Contributor gate (Part 4). Any value
+                                          # other than "contributor" clears _require_allowed_actor.
+_ASSETHUB_FLOW_SERVICE_TYPE = "Other"     # A Flow resolution (Bug Fix / Enhancement / Support / Task)
+                                          # has no clean member in AssetHub's service vocabulary
+                                          # (Repair/Maintenance/Upgrade/Inspection/Configuration/
+                                          # Software/Network/Hardware/Other), so the general "Other"
+                                          # member is used, per contract C.2 guidance.
+
+def _assignee_email_for_service_event(c, assignee) -> str:
+    """Resolve an item's `assignee` username to an email for the AssetHub actor. LOOKUP ONLY -
+    never invents or guesses an email (Part 3). Returns "" when there is no assignee, the
+    assignee is unknown, or it carries no email; the caller then sends WITH actor_email omitted and
+    AssetHub connection-attributes the event (contract 1.2.1 made actor_email optional - the send is
+    no longer skipped). A REVOKED assignee still resolves and is still sent: the service event is
+    historical, the person did the work, and their identity at the time is the correct
+    attribution. To exclude revoked assignees later, flip the single flag below."""
+    if not (assignee or "").strip():
+        return ""
+    row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+    users = json.loads(row["value"]) if row else []
+    u = next((x for x in users if x.get("username") == assignee), None)
+    if not u:
+        return ""
+    include_revoked = True   # Part 3: a revoked assignee is STILL attributed. Set False to exclude.
+    if not include_revoked and u.get("revokedAt"):
+        return ""
+    return (u.get("email") or "").strip()
+
+def _assethub_service_event_body(item: dict, pid, actor_email: str) -> dict:
+    """Build the service-event request body from a resolved item. Only contract-allowed keys
+    are included (unknown top-level fields are a 422). `source_reference` is the numeric Flow
+    item id as a string (stable across product re-keys), the idempotency key with source_system.
+    `actor_email` is included ONLY when non-empty (never sent as "")."""
+    summary = (item.get("name") or item.get("itemKey") or "Resolved").strip()[:255] or "Resolved"
+    notes = _strip_tags(item.get("resolution") or item.get("description") or "").strip()[:4000]
+    body = {
+        "service_type":     _ASSETHUB_FLOW_SERVICE_TYPE,
+        "summary":          summary,
+        "source_system":    "flow",           # MUST equal the connection provider or AssetHub 422s
+        "source_reference": str(pid),
+    }
+    if notes:
+        body["notes"] = notes
+    if actor_email:
+        body["actor_email"] = actor_email     # omitted entirely (not "") when the assignee has no email
+    occurred = item.get("completedAt")         # server-stamped first-terminal timestamp (C1)
+    if occurred:
+        body["occurred_at"] = occurred
+    return body
+
+def _dispatch_service_events(team: str, pid: int, role_for_client: str = _ASSETHUB_SYSTEM_ROLE):
+    """Send one ServiceEvent per linked asset for a resolved item, then record the per-asset
+    outcome on the item's server-owned `assetServiceSync` field. Deferred (BackgroundTask) so it
+    adds ~0 to the interactive resolution. Bounded and timer-free: each send uses the client's
+    <=3-attempt retry; failures are recorded distinctly (404 asset-gone, missing_scope misconfig,
+    validation_error, unreachable, ...) and NOT retried by any loop or timer here. A failed send is
+    retried only by an explicit action or the next genuine terminal transition. AssetHub idempotency
+    on (source_system, source_reference) is the safety net for the race/retry cases, not a licence to
+    send on every save (the trigger already fires only on the transition)."""
+    try:
+        with db(team) as c:
+            row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+            if not row:
+                return
+            item = json.loads(row["data"])
+            links = item.get("assetLinks") or []
+            if not links:
+                return
+            actor_email = _assignee_email_for_service_event(c, item.get("assignee"))
+    except Exception as e:
+        log.warning(f"[AssetHub] service-event prep failed for item {pid}: {e}")
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    outcomes = {}
+    for l in links[:_ASSET_LINK_CAP]:
+        pubid = str((l or {}).get("publicId") or "").strip() if isinstance(l, dict) else ""
+        if not pubid:
+            continue
+        # No-actor path (contract 1.2.1): when there is no resolvable assignee email we STILL send,
+        # with actor_email OMITTED from the body (never ""); AssetHub routes an absent actor to
+        # connection-attribution ("integration"), capturing the service history without the actor.
+        # This was previously a skip-and-record because WRITE-1a required actor_email; the follow-up
+        # made it optional, so we send. The resolving-actor path is unchanged. actorEmailSent records
+        # whether Flow actually supplied an actor (the join-rate measurement, paired with attribution).
+        # Constructed with the SERVER identity, never the triggering user's role (Part 4).
+        client = AssetHubClient(team, role_for_client)
+        body = _assethub_service_event_body(item, pid, actor_email)   # omits actor_email when empty
+        try:
+            res = client.post("/api/v1/assets/" + _urlq(pubid, safe="") + "/service-events", body)
+            data = res.get("data") or {}
+            outcomes[pubid] = {
+                "state":          "replayed" if data.get("idempotent_replay") else "sent",
+                "at":             now,
+                "actorEmailSent": bool(actor_email),
+                "attribution":    (data.get("attribution") or {}).get("type"),
+                "correlationId":  res.get("correlation_id"),
+            }
+        except AssetHubError as e:
+            # Recorded distinctly by contract code; NEVER retried here (the client already did its
+            # bounded retry). 404 = asset gone; missing_scope = the grant was not done (misconfig).
+            outcomes[pubid] = {"state": "failed", "code": e.code, "httpStatus": e.status,
+                               "at": now, "actorEmailSent": bool(actor_email), "correlationId": e.correlation_id}
+            log.warning(f"[AssetHub] service-event send failed item={pid} asset={pubid} "
+                        f"code={e.code} status={e.status} corr={e.correlation_id}")
+    if not outcomes:
+        return
+    # Persist: re-read + merge ONLY assetServiceSync so a concurrent edit landing during the send is
+    # not clobbered (mirrors the post-commit FF-pull write). assetServiceSync is server-owned, so a
+    # later client PUT can neither forge nor wipe it.
+    try:
+        with db(team) as c:
+            row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+            if not row:
+                return
+            cur = json.loads(row["data"])
+            sync = cur.get("assetServiceSync") or {}
+            sync.update(outcomes)
+            cur["assetServiceSync"] = sync
+            _save_project(c, pid, cur)
+    except Exception as e:
+        log.warning(f"[AssetHub] service-event outcome record failed for item {pid}: {e}")
 
 def _get_all_jira_tickets(team: str) -> dict:
     """Return {ticket_key: item_id} for all items with jiraTickets."""
