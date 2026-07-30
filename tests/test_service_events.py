@@ -236,9 +236,9 @@ def test_missing_and_empty_actor_treated_identically():
     # WRITE-1a treats a missing and an empty actor_email identically (both hit `if not actor_email`
     # -> 422); so Flow's "omit" and "empty" collapse to the same no-actor branch. We build no body
     # that carries actor_email="" - it is either present-and-nonempty or absent.
-    body = server._assethub_service_event_body({"name": "X"}, 7, "")
+    body = server._assethub_service_event_body({"name": "X"}, 7, "", "Other")
     assert "actor_email" not in body
-    body2 = server._assethub_service_event_body({"name": "X"}, 7, "a@b.com")
+    body2 = server._assethub_service_event_body({"name": "X"}, 7, "a@b.com", "Other")
     assert body2["actor_email"] == "a@b.com"
 
 
@@ -354,3 +354,84 @@ def test_recurrence_invariant_holds_with_service_sync():
                  if f not in server.RECURRENCE_SKIP_KEYS and f not in server.RECURRENCE_INHERITED]
     assert not unhandled
     assert "assetServiceSync" in server.RECURRENCE_SKIP_KEYS
+
+
+# ── service_type mapping (config-driven, validated; degrades to "Other") ──────
+
+def _service_type_sent(client, team, admin_headers, monkeypatch, item_type, mapping=None):
+    """Create a typed asset-linked item, optionally override the team mapping, resolve it, and
+    return the fresh capture state. state['posts'][0]['body']['service_type'] is what was sent."""
+    _enable(team, monkeypatch)
+    _install(monkeypatch)                       # get_handler for the link fetch
+    pid = _create(client, admin_headers, assignee="dev1", type=item_type)
+    assert _link(client, admin_headers, pid).status_code == 200
+    _seed_user(team)
+    if mapping is not None:
+        _set_cfg(team, "assethubServiceTypeMapping", mapping)
+    state = _install(monkeypatch)               # fresh capture for the resolve send
+    _resolve(client, admin_headers, pid)
+    state["_pid"] = pid
+    return state
+
+
+def test_service_type_mapped_hit(client, team, admin_headers, monkeypatch):
+    # Default seed maps Maintenance -> Maintenance (init_team_db default), so no override needed.
+    state = _service_type_sent(client, team, admin_headers, monkeypatch, "Maintenance")
+    assert state["posts"][0]["body"]["service_type"] == "Maintenance"
+    assert _stored(team, state["_pid"])["assetServiceSync"][UUID1]["serviceType"] == "Maintenance"
+
+
+def test_service_type_unmapped_to_other(client, team, admin_headers, monkeypatch):
+    # Task is not in the default mapping -> "Other".
+    state = _service_type_sent(client, team, admin_headers, monkeypatch, "Task")
+    assert state["posts"][0]["body"]["service_type"] == "Other"
+
+
+def test_service_type_illegal_value_degrades_and_logs(client, team, admin_headers, monkeypatch, caplog):
+    import logging
+    with caplog.at_level(logging.WARNING):
+        state = _service_type_sent(client, team, admin_headers, monkeypatch, "Task",
+                                   mapping={"Task": "Bogus"})   # "Bogus" not in SERVICE_TYPE_VOCAB
+    assert len(state["posts"]) == 1                              # still sent (no 422, no drop)
+    assert state["posts"][0]["body"]["service_type"] == "Other"  # degraded
+    assert _stored(team, state["_pid"])["assetServiceSync"][UUID1]["serviceType"] == "Other"
+    assert "Task" in caplog.text and "Bogus" in caplog.text      # observable: names type + bad value
+
+
+def test_service_type_empty_mapping_to_other(client, team, admin_headers, monkeypatch):
+    state = _service_type_sent(client, team, admin_headers, monkeypatch, "Maintenance", mapping={})
+    assert state["posts"][0]["body"]["service_type"] == "Other"
+
+
+def test_service_type_missing_type_to_other(client, team, admin_headers, monkeypatch):
+    # No type on the item -> unmapped -> "Other" (mapping left at default).
+    _enable(team, monkeypatch)
+    _install(monkeypatch)
+    pid = _create(client, admin_headers, assignee="dev1")   # no type field
+    assert _link(client, admin_headers, pid).status_code == 200
+    _seed_user(team)
+    state = _install(monkeypatch)
+    _resolve(client, admin_headers, pid)
+    assert state["posts"][0]["body"]["service_type"] == "Other"
+
+
+def test_resolve_service_type_unit():
+    # The resolver directly: mapped-valid, mapped-illegal, unmapped, empty, no-type.
+    m = {"Maintenance": "Maintenance", "Repairs": "Repair", "Bad": "Nope"}
+    assert server._resolve_service_type(m, "Maintenance") == "Maintenance"
+    assert server._resolve_service_type(m, "Repairs") == "Repair"
+    assert server._resolve_service_type(m, "Bad") == "Other"       # illegal RHS -> Other
+    assert server._resolve_service_type(m, "Task") == "Other"      # unmapped -> Other
+    assert server._resolve_service_type({}, "Maintenance") == "Other"
+    assert server._resolve_service_type(m, "") == "Other"
+    assert server._resolve_service_type(m, None) == "Other"
+
+
+def test_service_type_mapping_config_roundtrip(client, team, admin_headers):
+    # Default seed present on a fresh team (init_team_db defaults).
+    data = client.get("/api/all", headers=admin_headers).json()
+    assert data["assethubServiceTypeMapping"] == {"Maintenance": "Maintenance"}
+    # In VALID_KEYS -> PUT round-trips; a team that sets its own is honored (not clobbered).
+    r = client.put("/api/config/assethubServiceTypeMapping", json={"Task": "Repair"}, headers=admin_headers)
+    assert r.status_code == 200
+    assert client.get("/api/all", headers=admin_headers).json()["assethubServiceTypeMapping"] == {"Task": "Repair"}
