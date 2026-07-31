@@ -6344,6 +6344,11 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
   // and edit save paths (fill-if-empty) via the shared defaultSoleMemberAssignee helper - so an
   // existing item whose owner is a single-member pod but whose assignee is blank gets backfilled on
   // save. An existing non-empty assignee is never overwritten. Same podMembers source as the item page.
+  // The modal builds `data` from form fields only (no assignee key), so on EDIT we must seed the
+  // payload with the item's real assignee FIRST - otherwise the helper sees `undefined` (empty) and,
+  // on a single-member pod, would overwrite an existing assignee. Create (existing null) skips the
+  // seed so the sole-member backfill still fires.
+  if(existing) data.assignee = existing.assignee || '';
   defaultSoleMemberAssignee(data);
 
   document.getElementById('modalBg').classList.remove('open');
