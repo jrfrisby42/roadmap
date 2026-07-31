@@ -18955,6 +18955,16 @@ if ('serviceWorker' in navigator) {
   function inNonCompletedSprint(p){ var s=sprintById(p.sprintId); return !!(s && s.state!=='Completed'); }
   function isPlannable(p){ return PLANNABLE_TYPES.indexOf(p.type)>=0 && (p.recurrence||'none')==='none'; }   // M1 1c: parent gate REMOVED - parented items are plannable; sub-issue noise is excluded via `hidden` in backlogItems
   function isTerm(s){ return isTermStatus(s); }   // Stage 1a: terminal/done from STATUS_META - drives backlog, sprint stats/completion, release progress
+  // PARKED / OFF-FLOW = statuses excluded from the release auto-close (markReleased) AND the
+  // release add-items picker (openReleasePicker). Config-driven, never a hardcoded status name
+  // (rule 3): the union of statusIsOffFlow (parking/flag states off the linear progression, e.g.
+  // Blocked - server-derived from statusIsBlocked) + statusIsDeferred (the deferred parking
+  // status). NOTE: the server does NOT seed "Inactive" as off-flow by default (it stays ranked);
+  // for an Inactive item to be excluded here, Inactive must be flagged off-flow in Admin ->
+  // Statuses on the team. We deliberately do not special-case the name "Inactive".
+  function isParkedStatus(s){
+    return !!((_val('statusIsOffFlow',{})||{})[s]) || !!((_val('statusIsDeferred',{})||{})[s]);
+  }
   function nextSprintName(){ return 'Sprint '+(_sprints.length+1); }
 
   // ════════ releases data (Feature C) ════════
@@ -23101,7 +23111,10 @@ if ('serviceWorker' in navigator) {
   // ANOTHER release are shown with a "· in <name>" tag - selecting reassigns (single release field;
   // linkItemToRelease logs the prev→next move). Confirm chains linkItemToRelease sequentially.
   function openReleasePicker(rid){
-    var cands=(_val('projects',[])||[]).filter(function(p){ return !p.archived && (p.release||'')!==rid; });
+    // Exclude parked/off-flow items (same set as markReleased) so they cannot be linked to a
+    // release in the first place. Already-linked items are unaffected (they are filtered by rid,
+    // not shown here); terminal items keep today's behavior (not excluded).
+    var cands=(_val('projects',[])||[]).filter(function(p){ return !p.archived && (p.release||'')!==rid && !isParkedStatus(p.status); });
     var rn=releaseById(rid)?releaseById(rid).name:rid;
     var sel={};
     var bg=document.createElement('div'); bg.className='frz-modal-bg';
@@ -23151,26 +23164,94 @@ if ('serviceWorker' in navigator) {
   function markReleased(id){
     var r=releaseById(id); if(!r) return;
     var pr=releaseProgress(r);
-    var unfinished=pr.items.filter(function(p){ return !isTerm(p.status); });
+    var relStatus=_call('getReleasedStatus') || '';
+    // Item-status changes are admin/editor (server require_role on update_project). The move is
+    // gated to match; also requires a configured released status to move INTO.
+    var canMove=(_val('isAdmin',false)||_val('isEditor',false)) && !!relStatus;
+    // Split linked items: already terminal (fine), parked/off-flow (excluded from the move,
+    // left as-is - still counted outstanding by releaseProgress), and on-flow non-terminal
+    // (the "to move" set). `unfinished` keeps today's meaning for the no-permission fallback.
+    var toMove=[], parked=[], unfinished=[];
+    pr.items.forEach(function(p){
+      if(isTerm(p.status)) return;
+      unfinished.push(p);
+      if(isParkedStatus(p.status)) parked.push(p); else toMove.push(p);
+    });
     function doShip(){
       r.state='Released'; r.releasedDate=todayStr();
       saveReleases(function(){ var body=document.getElementById('frzPlanBody'); if(body && state.planTab==='releases') renderReleasesTab(body); _call('showToast','Release marked released'); });
     }
-    if(!unfinished.length){ doShip(); return; }
+    // Nothing on-flow to move -> ship as today, no modal. Parked items (if any) stay outstanding;
+    // surface that as an informational toast, but they never trigger the move modal.
+    if(!toMove.length){
+      doShip();
+      if(parked.length) _call('showToast', parked.length+' parked item'+(parked.length!==1?'s':'')+' left outstanding');
+      return;
+    }
     closePop();
+    // No permission (or no released status) but there ARE on-flow items -> today's entity-only
+    // warning modal (mark anyway), unchanged for viewers / unconfigured teams.
+    if(!canMove){
+      var wbg=document.createElement('div'); wbg.className='frz-modal-bg';
+      wbg.innerHTML='<div class="frz-modal" style="width:480px">'+
+        '<div class="frz-modal-hd">Mark "'+esc(r.name)+'" released?<button class="frz-iconbtn" id="frzMrClose">✕</button></div>'+
+        '<div class="frz-modal-bd"><div style="margin-bottom:10px;color:var(--frz-text)"><b>'+unfinished.length+'</b> linked item'+(unfinished.length!==1?'s are':' is')+' not in a terminal status:</div>'+
+          '<div class="frz-plan-list" style="max-height:220px">'+unfinished.map(function(p){ return miniItemRow(p,true); }).join('')+'</div></div>'+
+        '<div class="frz-modal-ft"><button class="frz-viewopt" id="frzMrCancel">Cancel</button><button class="frz-newitem" id="frzMrSave">Mark released anyway</button></div>'+
+      '</div>';
+      root.appendChild(wbg);
+      var wclose=function(){ wbg.remove(); };
+      wbg.querySelector('#frzMrClose').addEventListener('click', wclose);
+      wbg.querySelector('#frzMrCancel').addEventListener('click', wclose);
+      wbg.addEventListener('mousedown', function(e){ if(e.target===wbg) wclose(); });
+      wbg.querySelector('#frzMrSave').addEventListener('click', function(){ wclose(); doShip(); });
+      return;
+    }
+    // Three-way move modal.
     var bg=document.createElement('div'); bg.className='frz-modal-bg';
+    var listHtml=toMove.map(function(p){ return miniItemRow(p,true); }).join('');
+    var parkedNote = parked.length ? '<div style="margin-top:10px;color:var(--frz-text-muted);font-size:12px">'+parked.length+' parked / off-flow item'+(parked.length!==1?'s':'')+' will be left outstanding.</div>' : '';
     bg.innerHTML='<div class="frz-modal" style="width:480px">'+
-      '<div class="frz-modal-hd">Mark “'+esc(r.name)+'” released?<button class="frz-iconbtn" id="frzMrClose">✕</button></div>'+
-      '<div class="frz-modal-bd"><div style="margin-bottom:10px;color:var(--frz-text)"><b>'+unfinished.length+'</b> linked item'+(unfinished.length!==1?'s are':' is')+' not in a terminal status:</div>'+
-        '<div class="frz-plan-list" style="max-height:220px">'+unfinished.map(function(p){ return miniItemRow(p,true); }).join('')+'</div></div>'+
-      '<div class="frz-modal-ft"><button class="frz-viewopt" id="frzMrCancel">Cancel</button><button class="frz-newitem" id="frzMrSave">Mark released anyway</button></div>'+
+      '<div class="frz-modal-hd">Mark "'+esc(r.name)+'" released?<button class="frz-iconbtn" id="frzMrClose">✕</button></div>'+
+      '<div class="frz-modal-bd">'+
+        '<div style="margin-bottom:10px;color:var(--frz-text)"><b>'+toMove.length+'</b> on-flow item'+(toMove.length!==1?'s are':' is')+' not yet in "'+esc(relStatus)+'". Move '+(toMove.length!==1?'them':'it')+' to "'+esc(relStatus)+'" and release?</div>'+
+        '<div class="frz-plan-list" style="max-height:220px">'+listHtml+'</div>'+parkedNote+
+      '</div>'+
+      '<div class="frz-modal-ft"><button class="frz-viewopt" id="frzMrCancel">Cancel</button><button class="frz-viewopt" id="frzMrPlain">Release without closing</button><button class="frz-newitem" id="frzMrMove">Move to "'+esc(relStatus)+'" &amp; release</button></div>'+
     '</div>';
     root.appendChild(bg);
     function close(){ bg.remove(); }
     bg.querySelector('#frzMrClose').addEventListener('click', close);
     bg.querySelector('#frzMrCancel').addEventListener('click', close);
     bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
-    bg.querySelector('#frzMrSave').addEventListener('click', function(){ close(); doShip(); });
+    bg.querySelector('#frzMrPlain').addEventListener('click', function(){ close(); doShip(); });
+    bg.querySelector('#frzMrMove').addEventListener('click', function(){ close(); _releaseMoveThenShip(toMove, relStatus, doShip); });
+  }
+  // Promote each on-flow non-terminal item to the released status via the SAME per-item
+  // update_project PUT path used by sprint completion (client-side chain, best-effort - one
+  // item's failure does not abort the rest). Routing through update_project is the point: the
+  // server fires the WRITE-1b asset ServiceEvent, stamps completedAt, and pushes Jira on the
+  // non-terminal -> terminal transition. NO send logic is reimplemented here. Non-atomic (per
+  // the sprint-completion precedent). After all attempts, ship the release entity + summarize.
+  function _releaseMoveThenShip(items, relStatus, doShip){
+    var ps=_val('projects',[])||[];
+    var moved=0, failed=0, chain=Promise.resolve();
+    items.forEach(function(p){
+      chain=chain.then(function(){
+        var i=ps.findIndex(function(x){ return x.id===p.id; });
+        var prev=p.status;
+        if(prev===relStatus){ return; }   // already there (defensive) - no-op, no PUT
+        var patch=Object.assign({}, p, {status:relStatus, _username:_call('getUsername')});
+        return API.put('/api/projects/'+p.id, patch).then(function(updated){
+          if(i>-1) ps[i]=updated; p.status=relStatus; moved++;
+          _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Status: '+(prev||'(none)')+' → '+relStatus+' (release)', {status:prev}, {status:relStatus});
+        }).catch(function(){ failed++; });
+      });
+    });
+    chain.then(function(){
+      doShip();
+      _call('showToast', moved+' item'+(moved!==1?'s':'')+' released'+(failed?(' · '+failed+' failed'):''), failed?'error':'success');
+    });
   }
   // Reopen a Released release → Unreleased (the escape hatch for a one-way "Mark released").
   // Admin-only; lifts the 2a.1 membership lock on re-render. Goes through saveReleases (no new write path).
