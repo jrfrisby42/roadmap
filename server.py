@@ -7606,6 +7606,7 @@ def update_session_draft(session_id: str, body: dict = Body(...),
 
 @app.post("/api/planning-sessions/{session_id}/commit")
 def commit_planning_session(session_id: str, body: dict = Body(...),
+                            background: BackgroundTasks = None,
                             auth: dict = Depends(require_role("admin", "editor"))):
     """Commit a planning session. Validates payload, applies all changes atomically.
 
@@ -7663,6 +7664,10 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
     today       = datetime.now(timezone.utc).date().isoformat()
     changes     = []
     to_save     = {}   # {id: updated_project_dict}
+    # Dev-5: capture each touched item's PRE-commit status so the post-commit WRITE-1b send can
+    # test the terminal transition (prev not terminal -> new terminal). setdefault keeps the true
+    # original if an item is touched by more than one branch. Only status-mutating branches record.
+    pre_commit_status = {}   # {id: status before this commit}
     activities  = []   # [{...activity body}]
     session_name = body.get("name", "")
     rel_number   = body.get("release_number", "").strip()
@@ -7675,6 +7680,7 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
             p = proj_rows.get(item_id)
             if not p: continue
             orig_status = p.get("status", "")
+            pre_commit_status.setdefault(item_id, orig_status)
             if approved_status:
                 p["status"] = approved_status
             updated = {**p, "id": item_id}
@@ -7701,6 +7707,7 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
             p = proj_rows.get(item_id)
             if not p: continue
             orig_status = p.get("status", "")
+            pre_commit_status.setdefault(item_id, orig_status)
             if active_status: p["status"] = active_status
             p["start"] = start
             to_save[item_id] = {**p, "id": item_id}
@@ -7733,6 +7740,7 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
             p = proj_rows.get(item_id)
             if not p: continue
             orig_status = p.get("status","")
+            pre_commit_status.setdefault(item_id, orig_status)
             if released_status: p["status"] = released_status
             p["releaseDate"]   = today
             p["releaseNumber"] = rel_number
@@ -7767,6 +7775,7 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
         item_id = item.get("id")
         p = proj_rows.get(item_id)
         if not p: continue
+        pre_commit_status.setdefault(item_id, p.get("status", ""))
         if deferred_status: p["status"] = deferred_status
         p["deferred"]     = True
         p["deferReason"]  = item.get("reason", "")
@@ -7857,6 +7866,37 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
                         f"{auth['username']} changed status to {st_} (planning)", auth["username"])
     except Exception as e:
         log.warning(f"[Notify] planning-commit hook failed: {e}")
+
+    # ── WRITE-1b (Dev-5): AssetHub ServiceEvent for commit-driven terminal transitions ──────
+    # commit_planning_session applies status changes in its OWN transaction and does NOT route
+    # through update_project, so the WRITE-1b send hooked in update_project's post-commit tail is
+    # bypassed for items a commit closes. The ONLY commit transition that lands in a send-eligible
+    # (terminal) status is a Release commit (release_ids -> the Released status, which is terminal
+    # per statusIsTerminal); Review->Approved, Sprint->Active and Deferred are non-terminal, so the
+    # flag-driven test below skips them. Gate matches update_project EXACTLY: entered-terminal (prev
+    # not terminal, new terminal, read from statusIsTerminal, never a hardcoded name) AND the item
+    # is asset-linked AND the team is AssetHub-configured. Post-commit + best-effort so a send can
+    # never roll back committed status changes (an HTTPException in the transaction above returns
+    # before reaching here, so no send fires for a failed/aborted commit). The send runs under the
+    # SERVER integration identity (never the committing user's role), and commits are admin/editor
+    # gated, so a Contributor can never originate a send (D13). source_reference is str(pid) in
+    # _dispatch_service_events - IDENTICAL to the update-driven send - so AssetHub's
+    # (source_system, source_reference) uniqueness dedupes a commit send + any belt-and-suspenders
+    # update_project PUT for the same close to ONE ServiceEvent (the references cannot diverge).
+    # completedAt (occurred_at) was set inside the transaction (C1), so the body matches too.
+    try:
+        if _assethub_configured(team):
+            for _id, _old_st in pre_commit_status.items():
+                _fin = to_save.get(_id) or {}
+                _new_st = _fin.get("status", "")
+                _entered_terminal = bool(_commit_terminal.get(_new_st)) and not bool(_commit_terminal.get(_old_st))
+                if _entered_terminal and _fin.get("assetLinks"):
+                    if background is not None:
+                        background.add_task(_dispatch_service_events, team, _id, _ASSETHUB_SYSTEM_ROLE)
+                    else:
+                        _dispatch_service_events(team, _id, _ASSETHUB_SYSTEM_ROLE)   # direct-call fallback (no request scope)
+    except Exception as e:
+        log.warning(f"[AssetHub] planning-commit service-event dispatch failed: {e}")
 
     return {
         "session_id": session_id, "type": stype, "status": "committed",

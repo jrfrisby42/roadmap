@@ -6340,13 +6340,11 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
     data.delay = '';
   }
 
-  // Part B: sole-member assignee default on CREATE. This modal has no assignee field, so when the
-  // chosen owner (pod) has exactly one member and no assignee is set, default it - reusing the same
-  // podMembers definition (A0) the item page uses. Zero or multiple members -> assignee left empty.
-  if(!editingId && data.dev && !data.assignee){
-    const _mem = podMembers(data.dev);
-    if(_mem.length === 1) data.assignee = _mem[0].username;
-  }
+  // Part B: sole-member assignee default. This modal has no assignee field. Applied on BOTH create
+  // and edit save paths (fill-if-empty) via the shared defaultSoleMemberAssignee helper - so an
+  // existing item whose owner is a single-member pod but whose assignee is blank gets backfilled on
+  // save. An existing non-empty assignee is never overwritten. Same podMembers source as the item page.
+  defaultSoleMemberAssignee(data);
 
   document.getElementById('modalBg').classList.remove('open');
   // Reset z-index immediately so modal disappears - item page refresh happens after save
@@ -6587,6 +6585,18 @@ async function loadAssignmentData(){
 function podMembers(owner){
   if(!owner) return [];
   return (users || []).filter(u => (u.ownerFilter || '') === owner && u.username);
+}
+// Sole-member assignee default (SINGLE definition shared by the create modal, the edit-modal save,
+// and the item-page inline owner edit). FILL-IF-EMPTY only: when the item's owner (pod) has exactly
+// one recorded member and the item has no assignee, default assignee to that member. Never overwrites
+// a non-empty assignee - a silent reassignment on save would be a footgun. Zero/multi-member pod ->
+// unchanged. Reuses podMembers (A0), the single membership source. Mutates + returns the item.
+function defaultSoleMemberAssignee(item){
+  if(item && item.dev && !(item.assignee || '').trim()){
+    const _mem = podMembers(item.dev);
+    if(_mem.length === 1) item.assignee = _mem[0].username;
+  }
+  return item;
 }
 // A pod's BASE capacity (before per-day overrides + assignment impacts):
 //   fixed  -> the typed ownerCapacity value (|| 1), exactly as before.
@@ -14562,9 +14572,8 @@ async function saveItemPageField(field, value, opts={}){
   // the assignee stays a normal inline field afterward (visibly populated, freely editable - so a
   // user can see it was auto-filled and change it; it is never silent-and-sticky). NOTE: pod
   // membership is currently incomplete, so this is a soft default only.
-  if(field==='dev' && value && !(p.assignee||'').trim()){
-    const _mem = podMembers(value);   // A0: single membership definition (shared with create-modal default)
-    if(_mem.length === 1) updated.assignee = _mem[0].username;
+  if(field==='dev' && value){
+    defaultSoleMemberAssignee(updated);   // shared fill-if-empty default (create + edit-modal + item page)
   }
   // Schedule-driving fields: validate + recompute the derived due date (like the modal).
   if(['start','dueWeeks','testWeeks','parallelResources'].includes(field)){
