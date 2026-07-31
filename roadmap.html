@@ -2173,7 +2173,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.10.3';
+const APP_VERSION = '5.10.4';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16064,7 +16064,8 @@ async function loadItemPageJira(p){
     const canCreate = (isAdmin||isEditor) && jiraConfigured;
     jiraEl.innerHTML = canCreate
       ? `<div style="font-size:12px;color:var(--muted);margin-bottom:8px">No Jira issues linked.</div>
-         <button onclick="createJiraFromItemPage()" style="font-size:12px;font-weight:700;background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif">+ Create Jira Issue</button>`
+         <button onclick="createJiraFromItemPage()" style="font-size:12px;font-weight:700;background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif">+ Create Jira Issue</button>
+         ${_ipJiraLinkRowHtml()}`
       : `<div style="font-size:12px;color:var(--muted)">No Jira issues linked.</div>`;
     if(syncBtn) syncBtn.style.display='none';
     renderJiraFeatureFlags(p);
@@ -16077,9 +16078,11 @@ async function loadItemPageJira(p){
   const cached  = p.jiraTickets.map(t=>cache[t]).filter(Boolean);
 
   if(cached.length){
-    jiraEl.innerHTML = cached.map(d=>renderJiraIssueCard(d, canEdit)).join('');
+    jiraEl.innerHTML = cached.map(d=>renderJiraIssueCard(d, canEdit)).join('') + _ipJiraLinkRowHtml();
   } else {
-    jiraEl.innerHTML = `<div style="font-size:12px;color:var(--muted)">Loading Jira data…</div>`;
+    // Uncached tickets: show a loading note + the link row (so the row survives even if the
+    // pull fails - the catch only appends an error, it does not replace innerHTML), then pull.
+    jiraEl.innerHTML = `<div style="font-size:12px;color:var(--muted)">Loading Jira data…</div>` + _ipJiraLinkRowHtml();
     await syncJiraFromItemPage(true);
   }
   // Always render FF flags from stored data (updated on sync)
@@ -16193,7 +16196,7 @@ async function syncJiraFromItemPage(silent=false){
       const cache  = p.jiraCache||{};
       const issues = p.jiraTickets.map(t=>cache[t]).filter(Boolean);
       const jiraEl = document.getElementById('ipJira');
-      if(jiraEl && issues.length) jiraEl.innerHTML = issues.map(d=>renderJiraIssueCard(d,isAdmin||isEditor)).join('');
+      if(jiraEl && issues.length) jiraEl.innerHTML = issues.map(d=>renderJiraIssueCard(d,isAdmin||isEditor)).join('') + _ipJiraLinkRowHtml();
       // Always refresh the Feature Flags card after sync (server may have updated jiraFeatureFlags)
       renderJiraFeatureFlags(p);
       if(result.changed && result.statusChange){
@@ -16252,6 +16255,75 @@ async function unlinkJiraFromItemPage(ticket){
     renderItemPage(p);
     showToast(`${ticket} unlinked`);
   } catch(e){ showToast('Failed to unlink: '+e.message); }
+}
+
+// Item-page "link an existing Jira ticket" row. Parity with the edit modal, which offers BOTH
+// "link existing" (fJiraInput + addJiraTicket) and "create". The item page previously only offered
+// create. Gated to admin/editor + jiraConfigured (the whole Jira card is already hidden unless
+// jiraConfigured && the product is mapped). Rendered by loadItemPageJira + syncJiraFromItemPage.
+function _ipJiraLinkRowHtml(){
+  if(!((isAdmin||isEditor) && jiraConfigured)) return '';
+  return `<div style="display:flex;gap:6px;align-items:center;margin-top:10px">
+      <input id="ipJiraLinkInput" placeholder="Link existing (e.g. FRAZ-1234)" autocomplete="off"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();linkJiraFromItemPage();}"
+        style="flex:1;min-width:0;padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif;outline:none">
+      <button onclick="linkJiraFromItemPage()" style="font-size:12px;font-weight:700;background:var(--surface);color:var(--text);border:1px solid var(--border);padding:6px 12px;border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif">Link</button>
+    </div>
+    <div id="ipJiraLinkError" style="display:none;color:var(--accent2);font-size:11px;margin-top:4px"></div>`;
+}
+
+// Link an already-existing Jira ticket to the open item. Reuses the SAME server validation +
+// duplicate check as the modal (POST /api/jira/link-issue) and the same save/render/activity
+// pattern as unlinkJiraFromItemPage. Then pulls the ticket's data so the new card renders.
+async function linkJiraFromItemPage(){
+  if(!_itemPageId) return;
+  const p = projects.find(x=>x.id===_itemPageId);
+  if(!p) return;
+  const inp   = document.getElementById('ipJiraLinkInput');
+  const errEl = document.getElementById('ipJiraLinkError');
+  if(!inp) return;
+  let val = inp.value.trim().toUpperCase();
+  if(!val) return;
+  if(/^\d+$/.test(val)) val = 'FRAZ-' + val;
+  if(!/^[A-Z]+-\d+$/.test(val)){
+    inp.style.borderColor = 'var(--accent2)';
+    if(errEl){ errEl.textContent = 'Format: PROJECT-1234'; errEl.style.display=''; }
+    return;
+  }
+  if((p.jiraTickets||[]).includes(val)){ inp.value=''; return; }
+  inp.style.borderColor = '';
+  if(errEl) errEl.style.display = 'none';
+  let summary = '';
+  // Validate + dedupe server-side (same endpoint the modal uses). The item-page Jira card only
+  // shows when jiraConfigured, so this branch always runs here.
+  if(jiraConfigured){
+    try {
+      const result = await API.post('/api/jira/link-issue', {
+        ticket: val, item_id: _itemPageId, item_name: p.name||'',
+        username: getUsername(), roadmap_base_url: location.origin
+      });
+      summary = result.summary || '';
+      if(result.status) jiraStatuses[val] = { status: result.status, summary: result.summary||val };
+    } catch(e){
+      inp.style.borderColor = 'var(--accent2)';
+      if(errEl){ errEl.textContent = e.message||'Could not validate ticket'; errEl.style.display=''; }
+      return;
+    }
+  }
+  p.jiraTickets = [...(p.jiraTickets||[]), val];
+  try {
+    await API.put('/api/projects/'+p.id, {...p, _username:getUsername()});
+    API.post('/api/activities', {
+      activity_type:'Jira Linked', source:'Flow',
+      item_id:p.id, item_name:p.name, owner:p.dev||'', project:p.product||'',
+      created_by:getUsername(),
+      message:`Linked Jira issue ${val}${summary?' ('+summary+')':''}`,
+      previous_value:null, new_value:val, status:'Auto-Cleared'
+    }).catch(()=>{});
+    renderItemPage(p);
+    syncJiraFromItemPage(true);   // pull the newly linked ticket's data so its card renders
+    showToast(`${val} linked`);
+  } catch(e){ showToast('Failed to link: '+(e.message||String(e))); }
 }
 
 // ── INIT ──
@@ -20325,7 +20397,7 @@ if ('serviceWorker' in navigator) {
   function _frzEnsureRailGroups(rightCol){
     if(document.getElementById('frzRailDetails')) return;   // Details is now the first rail group (the bare #frzRailStatus group was removed - status lives inside Details)
     function grp(id,title){
-      var c=document.createElement('div'); c.className='frz-rail-group';
+      var c=document.createElement('div'); c.className='frz-rail-group'; c.id=id;   // the outer group carries the id the idempotency guard above checks (frzRailDetails / frzRailSchedule); the inner body is id+'Body'. Without this the guard never matched and a fresh Details+Schedule pair was prepended on every item-page open (ghost sections stacking down the rail).
       c.innerHTML='<div class="frz-rail-ghead">'+title+'</div><div class="frz-rail-gbody" id="'+id+'Body"></div>';
       return c;
     }
