@@ -348,3 +348,87 @@ def test_contributor_cannot_link(client, team, contributor_headers, admin_header
     _enable(team, monkeypatch)
     pid = _create(client, admin_headers).json()["id"]
     assert _link(client, contributor_headers, pid).status_code in (401, 403)
+
+
+# ── reverse lookup: which tickets touched asset X (5.12.x) ───────────────────────
+# GET /api/assethub/assets/{public_id}/items reads the DERIVED item_assets index (no blob scan,
+# NO AssetHub call). Returns a lightweight row per linked item + the asset's cached display.
+
+def _revlookup(client, headers, pubid=UUID1):
+    return client.get(f"/api/assethub/assets/{pubid}/items", headers=headers)
+
+
+def test_reverse_lookup_lists_linked_items(client, team, admin_headers, monkeypatch):
+    _enable_linkable(team, monkeypatch)
+    a = _create(client, admin_headers, name="A").json()["id"]
+    b = _create(client, admin_headers, name="B").json()["id"]
+    _link(client, admin_headers, a)                 # both -> UUID1
+    _link(client, admin_headers, b)
+    other = _create(client, admin_headers, name="C").json()["id"]
+    _link(client, admin_headers, other, pubid=UUID2)   # a different asset, must not appear
+    r = _revlookup(client, admin_headers)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["count"] == 2
+    ids = {it["id"] for it in body["items"]}
+    assert ids == {a, b}
+    # asset display comes from the cached AssetResponse (TAG-1111), no AssetHub call needed here
+    assert body["asset"]["tag"] == "TAG-" + UUID1[:4]
+    assert body["asset"]["publicId"] == UUID1
+
+
+def test_reverse_lookup_orders_open_first_then_newest(client, team, admin_headers, monkeypatch):
+    _set_cfg(team, "statusIsTerminal", {"Done": True})
+    _enable_linkable(team, monkeypatch)
+    old_open = _create(client, admin_headers, name="old open", status="Planned").json()["id"]
+    new_open = _create(client, admin_headers, name="new open", status="Planned").json()["id"]
+    done = _create(client, admin_headers, name="done", status="Done").json()["id"]
+    for pid in (old_open, new_open, done):
+        _link(client, admin_headers, pid)
+    items = _revlookup(client, admin_headers).json()["items"]
+    order = [it["id"] for it in items]
+    # open group first (newest-created first within it), terminal last
+    assert order == [new_open, old_open, done]
+    assert [it["open"] for it in items] == [True, True, False]
+
+
+def test_reverse_lookup_excludes_hidden_and_archived(client, team, admin_headers, monkeypatch):
+    _enable_linkable(team, monkeypatch)
+    visible = _create(client, admin_headers, name="visible").json()["id"]
+    _link(client, admin_headers, visible)
+    # A hidden item cannot be linked via the endpoint (guarded), so seed the link + index directly.
+    hidden = _create(client, admin_headers, name="hidden").json()["id"]
+    with server.db(team) as c:
+        row = c.execute("SELECT data FROM projects WHERE id=?", (hidden,)).fetchone()
+        p = json.loads(row["data"]); p["hidden"] = True
+        p["assetLinks"] = [{"publicId": UUID1, "role": "related", "linkedAt": "", "linkedBy": ""}]
+        server._save_project(c, hidden, p)          # re-syncs item_assets even for a hidden item
+    body = _revlookup(client, admin_headers).json()
+    assert body["count"] == 1
+    assert body["items"][0]["id"] == visible
+
+
+def test_reverse_lookup_bad_uuid_422(client, team, admin_headers, monkeypatch):
+    _enable(team, monkeypatch)
+    assert client.get("/api/assethub/assets/not-a-uuid/items", headers=admin_headers).status_code == 422
+
+
+def test_reverse_lookup_requires_assethub_config(client, team, admin_headers):
+    # Team not enabled -> 400 (mirrors the other asset endpoints' gate).
+    assert _revlookup(client, admin_headers).status_code == 400
+
+
+def test_reverse_lookup_role_gated(client, team, viewer_headers, monkeypatch):
+    _enable(team, monkeypatch)
+    assert _revlookup(client, viewer_headers).status_code in (401, 403)
+
+
+def test_reverse_lookup_makes_no_assethub_call(client, team, admin_headers, monkeypatch):
+    _enable_linkable(team, monkeypatch)
+    pid = _create(client, admin_headers, name="A").json()["id"]
+    _link(client, admin_headers, pid)
+    # Re-install a client that BLOWS UP if constructed: the reverse lookup must not touch AssetHub.
+    _install(monkeypatch, forbid=True)
+    r = _revlookup(client, admin_headers)
+    assert r.status_code == 200
+    assert r.json()["count"] == 1
