@@ -23864,6 +23864,10 @@ if ('serviceWorker' in navigator) {
     var a = entry.asset || {};
     var pubid = link.publicId || a.id || '';
     var unlinkBtn = canEdit ? '<button type="button" class="frz-asset-unlink" data-pubid="'+escA(pubid)+'" style="border:none;background:none;color:var(--muted);cursor:pointer;font-size:12px;text-decoration:underline">Unlink</button>' : '';
+    // Reverse lookup ("which tickets touched this asset") - index-backed, zero AssetHub call. Shown to
+    // admin/editor (matches the server gate); available in every asset state (does not need the cache).
+    var ticketsBtn = canEdit ? '<button type="button" class="frz-asset-tickets" data-pubid="'+escA(pubid)+'" style="border:none;background:none;color:var(--frz-accent);cursor:pointer;font-size:12px;font-weight:700">Related tickets</button>' : '';
+    var actions = (ticketsBtn||unlinkBtn) ? '<div style="display:flex;align-items:center;gap:12px;flex-shrink:0">'+ticketsBtn+unlinkBtn+'</div>' : '';
     // FLOW-1 item B: the asset tag deep-links to AssetHub's inventory list FILTERED BY the tag
     // (base URL from assethubBaseUrl, never hardcoded; q= is AssetHub's verified search param; the
     // tag is URL-encoded because tags may contain a slash). NOTES: (1) asset_tag is a MUTABLE
@@ -23878,7 +23882,7 @@ if ('serviceWorker' in navigator) {
       : esc(tag || '(unknown tag)');
     var head = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'+
       '<div style="font-weight:800;color:var(--text)">'+tagHtml+
-        (link.role==='primary'?' <span style="font-weight:700;font-size:10px;color:var(--frz-accent);border:1px solid var(--frz-accent);border-radius:4px;padding:1px 5px">PRIMARY</span>':'')+'</div>'+unlinkBtn+'</div>';
+        (link.role==='primary'?' <span style="font-weight:700;font-size:10px;color:var(--frz-accent);border:1px solid var(--frz-accent);border-radius:4px;padding:1px 5px">PRIMARY</span>':'')+'</div>'+actions+'</div>';
     var box = 'border:1px solid var(--border);border-radius:8px;padding:10px 12px';
     // Broken / errored states: shown plainly, the link is NOT dropped.
     if(entry.state === 'not_found') return '<div style="'+box+'">'+head+'<div style="color:#e8394a;font-weight:700;margin-top:4px">No longer available in AssetHub (deleted or out of scope).</div><div style="color:var(--muted);font-size:11px;margin-top:4px">Checked '+esc(_frzAssetAge(entry.fetchedAt))+'</div></div>';
@@ -23935,6 +23939,11 @@ if ('serviceWorker' in navigator) {
     var rr = function(){ _frzRenderAssetCard(card, p); };   // re-render THIS container (item page OR edit modal) after an action
     var rb = card.querySelector('#frzAssetRefresh'); if(rb) rb.addEventListener('click', function(){ _frzAssetRefresh(p, rr, rb); });
     card.querySelectorAll('.frz-asset-unlink').forEach(function(b){ b.addEventListener('click', function(){ _frzAssetUnlink(p, b.getAttribute('data-pubid'), rr); }); });
+    card.querySelectorAll('.frz-asset-tickets').forEach(function(b){ b.addEventListener('click', function(){
+      var pubid = b.getAttribute('data-pubid');
+      var tag = ((p.assetCache||{})[pubid]||{}).asset;   // cached tag for the header before the fetch returns
+      _frzAssetTicketsOpen(pubid, (tag && tag.asset_tag) || '');
+    }); });
     var inp = card.querySelector('#frzAssetSearch'), results = card.querySelector('#frzAssetResults');
     if(inp) inp.addEventListener('input', function(){
       var q = (inp.value||'').trim();
@@ -23986,6 +23995,48 @@ if ('serviceWorker' in navigator) {
       p.assetCache = r.assetCache; _frzRerenderAssets(p, rr);
       if(r.connectionError) _call('showToast', 'AssetHub: '+(r.connectionError.message||r.connectionError.code));
     }).catch(function(e){ _call('showToast', (e&&e.message)||'Refresh failed'); if(btn){ btn.disabled=false; btn.textContent='Refresh'; } });
+  }
+  // ── Reverse lookup: "which tickets touched asset X". Reads the item_assets index via
+  //    GET /api/assethub/assets/{pubid}/items (NO AssetHub call). Appended to <body> with a high
+  //    z-index + classic :root tokens so it clears both launch contexts (the in-shell item page AND
+  //    the classic edit modal, .modal-bg z-index 200), each of which shows the asset card.
+  function _frzAssetTicketRowHtml(it){
+    var badge = it.status ? '<span class="'+(_call('statusCls', it.status)||'')+'" style="padding:1px 8px;border-radius:9px;font-size:11px;font-weight:700;white-space:nowrap">'+esc(it.status)+'</span>' : '';
+    var key = it.itemKey || ('#'+it.id);
+    var who = it.assignee ? (_call('displayName', it.assignee)||it.assignee) : (it.owner||'');
+    var meta = [key, who].filter(Boolean).join(' · ');
+    return '<div class="frz-ati-row" data-id="'+it.id+'" style="display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid var(--border);border-radius:8px;padding:9px 12px;margin-bottom:6px;cursor:pointer;background:var(--surface)" onmouseenter="this.style.background=\'var(--surface2)\'" onmouseleave="this.style.background=\'var(--surface)\'">'+
+      '<div style="min-width:0"><div style="font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.name||'(untitled)')+'</div>'+
+      '<div style="color:var(--muted);font-size:11px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(meta)+'</div></div>'+badge+'</div>';
+  }
+  function _frzAssetTicketsOpen(pubid, tagHint){
+    if(!pubid) return;
+    var bg=document.createElement('div');
+    bg.style.cssText='position:fixed;inset:0;background:rgba(20,40,63,.38);z-index:100050;display:flex;align-items:center;justify-content:center;padding:24px;font-family:\'Lato\',system-ui,sans-serif';
+    var titleTxt = 'Tickets for '+(tagHint||'asset');
+    bg.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 18px 56px rgba(20,40,63,.28);width:560px;max-width:100%;max-height:82vh;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px">'+
+        '<span id="frzAtiTitle" style="font-size:16px;font-weight:800;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(titleTxt)+'</span>'+
+        '<button type="button" id="frzAtiClose" style="border:none;background:none;color:var(--muted);cursor:pointer;font-size:18px;line-height:1;flex-shrink:0">✕</button></div>'+
+      '<div id="frzAtiBody" style="padding:16px 20px;overflow-y:auto"><div style="color:var(--muted);font-size:13px">Loading...</div></div>'+
+    '</div>';
+    document.body.appendChild(bg);
+    function close(){ if(bg.parentNode) bg.parentNode.removeChild(bg); document.removeEventListener('keydown', onKey); }
+    function onKey(e){ if(e.key==='Escape') close(); }
+    document.addEventListener('keydown', onKey);
+    bg.querySelector('#frzAtiClose').addEventListener('click', close);
+    bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
+    var body=bg.querySelector('#frzAtiBody');
+    API.get('/api/assethub/assets/'+encodeURIComponent(pubid)+'/items').then(function(r){
+      var items=(r&&r.items)||[];
+      var a=r&&r.asset;
+      if(a){ var t=bg.querySelector('#frzAtiTitle'); if(t){ var lbl='Tickets for '+(a.tag||tagHint||'asset')+(a.name?(' - '+a.name):''); t.textContent=lbl; t.title=lbl; } }
+      if(!items.length){ body.innerHTML='<div style="color:var(--muted);font-size:13px">No tickets are linked to this asset.</div>'; return; }
+      var openN=items.filter(function(i){return i.open;}).length;
+      body.innerHTML='<div style="font-size:12px;color:var(--muted);margin-bottom:10px">'+items.length+' ticket'+(items.length===1?'':'s')+' · '+openN+' open</div>'+
+        items.map(_frzAssetTicketRowHtml).join('');
+      body.querySelectorAll('.frz-ati-row').forEach(function(el){ el.addEventListener('click', function(){ var id=parseInt(el.getAttribute('data-id'),10); close(); _call('openItemPage', id); }); });
+    }).catch(function(e){ body.innerHTML='<div style="color:#e8394a;font-size:13px">'+esc((e&&e.message)||'Could not load tickets')+'</div>'; });
   }
   function loadAttachments(p){
     var list=document.getElementById('frzAttList'); if(!list) return;

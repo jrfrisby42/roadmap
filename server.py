@@ -6366,6 +6366,52 @@ def refresh_asset_links(pid: int, auth: dict = Depends(require_role("admin", "ed
         _save_project(c, pid, p)
     return {"ok": True, "assetCache": p.get("assetCache") or {}, "connectionError": conn_error}
 
+@app.get("/api/assethub/assets/{public_id}/items")
+def asset_linked_items(public_id: str, auth: dict = Depends(require_role("admin", "editor"))):
+    """Reverse lookup: every Flow item currently linked to this asset ("which tickets touched
+    asset X"). Reads the DERIVED item_assets index (indexed on asset_public_id) - no blob scan and
+    NO AssetHub call, so it is zero fan-out. Returns a lightweight row per item plus the asset's
+    cached display (tag/name) pulled from any linked item's assetCache, so the modal shows a header
+    without spending an AssetHub call. Hidden / archived items are excluded (they never carry links,
+    but guard anyway). open/terminal is resolved from the team's statusIsTerminal map (read once)."""
+    team = auth["team"]
+    _require_assethub(team)
+    pubid = str(public_id or "").strip()
+    if not _is_uuid(pubid):
+        raise HTTPException(422, "A valid asset public id (UUID) is required.")
+    term = _cfg_val(team, "statusIsTerminal", {}) or {}
+    items = []
+    asset_disp = None
+    with db(team) as c:
+        rows = c.execute("SELECT item_id, role, linked_at, linked_by FROM item_assets "
+                         "WHERE asset_public_id=?", (pubid,)).fetchall()
+        for r in rows:
+            pr = c.execute("SELECT data FROM projects WHERE id=?", (r["item_id"],)).fetchone()
+            if not pr:
+                continue
+            p = json.loads(pr["data"])
+            if p.get("hidden") or p.get("archived"):
+                continue
+            status = p.get("status") or ""
+            if asset_disp is None:
+                a = ((p.get("assetCache") or {}).get(pubid) or {}).get("asset") or {}
+                if a.get("id"):
+                    asset_disp = {"publicId": pubid, "tag": a.get("asset_tag") or "",
+                                  "name": a.get("name") or ""}
+            items.append({
+                "id": r["item_id"], "itemKey": p.get("itemKey") or "", "name": p.get("name") or "",
+                "status": status, "open": not bool(term.get(status)),
+                "owner": p.get("dev") or "", "assignee": p.get("assignee") or "",
+                "priority": p.get("priority") or "",
+                "createdAt": p.get("createdAt") or "", "completedAt": p.get("completedAt") or "",
+                "due": p.get("due") or "", "role": r["role"] or "",
+                "linkedAt": r["linked_at"] or "", "linkedBy": r["linked_by"] or "",
+            })
+    # Present open tickets first, then most-recently-created first (blank createdAt sorts last).
+    items.sort(key=lambda it: it.get("createdAt") or "", reverse=True)   # newest first
+    items.sort(key=lambda it: 0 if it["open"] else 1)                    # stable: open group first
+    return {"asset": asset_disp, "items": items, "count": len(items)}
+
 # ══════════════════════════════════════════════════════════════════════════════
 # WRITE-1b: resolution -> AssetHub ServiceEvent (contract 1.2, POST service-events)
 # ══════════════════════════════════════════════════════════════════════════════
