@@ -3070,8 +3070,9 @@ def get_all(auth: dict = Depends(require_auth)):
             "assethubCredentialPresent": bool(_assethub_api_key(team)),   # Team Admin: presence bool (NOT the key) so the page can say WHICH half is missing
             "assethubBaseUrl": ASSETHUB_BASE_URL,   # FLOW-1 item B: non-secret host for the asset-tag deep link (credential stays in .env)
             "enabledViews": cfg_map.get("enabledViews"),   # Team Admin: per-team view allowlist (null = all enabled)
-            "slackNotify": cfg_map.get("slackNotify") or {},   # Slack notifications (non-secret {enabled,types})
-            "slackWebhookPresent": bool(_slack_webhook(team)),   # presence bool only - NEVER the webhook URL
+            "slackNotify": cfg_map.get("slackNotify") or {},   # Slack notifications (non-secret {enabled,types,mode})
+            "slackWebhookPresent": bool(_slack_webhook(team)),   # channel transport present (presence bool only)
+            "slackBotTokenPresent": bool(_slack_bot_token(team)),   # DM transport present (presence bool only - NEVER the token)
             # PHASE B2: minimal read-only stubs for out-of-scope items a Contributor's own items
             # reference (parent / requires). Empty for admin/editor/viewer.
             "relatedStubs": related_stubs}
@@ -4979,51 +4980,119 @@ def _team_usernames(team: str) -> set:
     except Exception:
         return set()
 
-# ── Slack notifications (Tier 1: channel Incoming Webhook) ────────────────────
+# ── Slack notifications (Tier 1 channel webhook + Tier 2 per-user DMs) ─────────
 _SLACK_DEFAULT_TYPES = ["mention", "assigned", "reply", "watch_status", "watch_comment"]
+_slack_uid_cache = {}   # {team: {email_lower: slack_user_id or ''}} - lookups are cached (incl. not-found)
 
 def _slack_webhook(team: str) -> str:
-    """Per-team Slack Incoming Webhook URL from .env: SLACK_WEBHOOK_<TEAM> (slug uppercased,
-    non-alphanumerics stripped). Absent = the team has no Slack integration (a NORMAL condition).
-    The URL is a bearer capability (a secret) - NEVER read into team config or returned by
-    /api/all, only the outbound dispatch reads it, and it is never logged."""
+    """Per-team Slack Incoming Webhook URL from .env: SLACK_WEBHOOK_<TEAM> (channel post). A secret
+    (a bearer capability) - NEVER read into team config or returned by /api/all; only the outbound
+    dispatch reads it; never logged. Absent = no channel transport (a NORMAL condition)."""
     slug = re.sub(r"[^A-Za-z0-9]", "", (team or "")).upper()
     return os.environ.get("SLACK_WEBHOOK_" + slug, "").strip() if slug else ""
+
+def _slack_bot_token(team: str) -> str:
+    """Per-team Slack Bot User OAuth token from .env: SLACK_BOT_TOKEN_<TEAM> (xoxb-...), used for
+    per-user DMs (users.lookupByEmail + chat.postMessage). A secret - same handling as the webhook.
+    Absent = no DM transport."""
+    slug = re.sub(r"[^A-Za-z0-9]", "", (team or "")).upper()
+    return os.environ.get("SLACK_BOT_TOKEN_" + slug, "").strip() if slug else ""
 
 def _slack_esc(s) -> str:
     # Slack mrkdwn: escape only &, <, > in dynamic text (per Slack's guidance).
     return str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-def _slack_dispatch(team, ntype, item_id, item_name, message, actor):
-    """Best-effort, NON-BLOCKING: post one Slack message per notification event to the team's
-    channel webhook. Fired once per _notify (only when there is >=1 in-app recipient, so self-only
-    actions never post). Gated by SLACK_WEBHOOK_<TEAM> present AND slackNotify.enabled AND ntype in
-    the configured type allowlist. Default OFF -> fully inert. Runs the HTTP POST on a daemon thread
-    so it adds no latency to the request; a failure is logged and NEVER affects the in-app insert or
-    the triggering mutation."""
+def _user_email(team, username) -> str:
+    """The email on a team user's config record ('' if none). The DM mapping key."""
     try:
-        url = _slack_webhook(team)
-        if not url:
-            return
+        for u in (_cfg_val(team, "users", []) or []):
+            if u.get("username") == username:
+                return (u.get("email") or "").strip()
+    except Exception:
+        pass
+    return ""
+
+def _slack_user_id(team, token, email) -> str:
+    """Resolve a Slack user id from an email via users.lookupByEmail, cached per team. Returns ''
+    when the email is blank / not found in Slack (that '' is cached to avoid re-lookups). A transient
+    error returns '' WITHOUT caching so it retries later. Best-effort - never raises."""
+    email = (email or "").strip().lower()
+    if not email or not token:
+        return ""
+    cache = _slack_uid_cache.setdefault(team, {})
+    if email in cache:
+        return cache[email]
+    try:
+        req = Request("https://slack.com/api/users.lookupByEmail?email=" + _urlq(email, safe=""),
+                      headers={"Authorization": "Bearer " + token})
+        with urlopen(req, timeout=6) as r:
+            data = json.loads(r.read())
+    except Exception as e:
+        log.warning(f"[Slack] user lookup failed for team {team}: {e}")
+        return ""   # transient - do not cache
+    uid = ((data.get("user") or {}).get("id") or "") if data.get("ok") else ""
+    cache[email] = uid   # cache found AND not-found
+    return uid
+
+def _slack_post_webhook(url, text):
+    req = Request(url, data=json.dumps({"text": text}).encode("utf-8"), method="POST",
+                  headers={"Content-Type": "application/json"})
+    urlopen(req, timeout=6)
+
+def _slack_post_dm(token, slack_uid, text):
+    req = Request("https://slack.com/api/chat.postMessage",
+                  data=json.dumps({"channel": slack_uid, "text": text}).encode("utf-8"), method="POST",
+                  headers={"Authorization": "Bearer " + token, "Content-Type": "application/json; charset=utf-8"})
+    with urlopen(req, timeout=6) as r:
+        d = json.loads(r.read())
+    if not d.get("ok"):
+        log.warning(f"[Slack] chat.postMessage not ok: {d.get('error')}")
+
+def _slack_dispatch(team, ntype, item_id, item_name, message, actor, recips):
+    """Best-effort, NON-BLOCKING outbound Slack for one notification event. Gated by
+    slackNotify.enabled AND ntype in the type allowlist. Transport by slackNotify.mode:
+    'channel' (webhook, one post), 'dm' (chat.postMessage to each recipient resolved by email),
+    or 'both'. Absent mode = 'channel' (back-compat). Each transport is inert unless its secret is
+    present (SLACK_WEBHOOK_<TEAM> / SLACK_BOT_TOKEN_<TEAM>). Default OFF -> fully inert. All network
+    (lookups + posts) runs on a daemon thread so it adds no request latency; failures are logged and
+    NEVER affect the in-app insert or the triggering mutation."""
+    try:
         cfg = _cfg_val(team, "slackNotify", {}) or {}
         if not cfg.get("enabled"):
             return
         types = cfg.get("types") or _SLACK_DEFAULT_TYPES
         if ntype not in types:
             return
+        mode = cfg.get("mode") or "channel"
+        webhook = _slack_webhook(team)
+        token = _slack_bot_token(team)
+        want_channel = mode in ("channel", "both") and bool(webhook)
+        want_dm = mode in ("dm", "both") and bool(token)
+        if not (want_channel or want_dm):
+            return
         link = f"{APP_BASE_URL}/item/{item_id}" if item_id else APP_BASE_URL
         text = "*" + _slack_esc(item_name or "Item") + "*: " + _slack_esc(message or "")
         if item_id:
             text += "  <" + link + "|open>"
-        payload = json.dumps({"text": text}).encode("utf-8")
-        def _post():
+        dm_recips = list(recips or [])
+        def _send():
             try:
-                req = Request(url, data=payload, method="POST",
-                              headers={"Content-Type": "application/json"})
-                urlopen(req, timeout=6)
+                if want_channel:
+                    try:
+                        _slack_post_webhook(webhook, text)
+                    except Exception as e:
+                        log.warning(f"[Slack] channel post failed for team {team}: {e}")
+                if want_dm:
+                    for u in dm_recips:
+                        sid = _slack_user_id(team, token, _user_email(team, u))
+                        if sid:
+                            try:
+                                _slack_post_dm(token, sid, text)
+                            except Exception as e:
+                                log.warning(f"[Slack] DM failed for team {team} user {u}: {e}")
             except Exception as e:
-                log.warning(f"[Slack] post failed for team {team}: {e}")
-        threading.Thread(target=_post, daemon=True).start()
+                log.warning(f"[Slack] send failed for team {team}: {e}")
+        threading.Thread(target=_send, daemon=True).start()
     except Exception as e:
         log.warning(f"[Slack] dispatch prep failed for team {team}: {e}")
 
@@ -5037,8 +5106,9 @@ def _notify(team, recipients, ntype, item_id, item_name, message, actor):
         for r in recips:
             c.execute("INSERT INTO notifications(username,type,item_id,item_name,message,actor,created_ts,read)"
                       " VALUES(?,?,?,?,?,?,?,0)", (r, ntype, item_id, item_name or "", message, actor or "", ts))
-    # Outbound Slack (best-effort, non-blocking, once per event; inert unless configured + enabled).
-    _slack_dispatch(team, ntype, item_id, item_name, message, actor)
+    # Outbound Slack (best-effort, non-blocking; inert unless configured + enabled). recips carries
+    # the per-user DM targets (mode 'dm'/'both'); channel mode ignores it.
+    _slack_dispatch(team, ntype, item_id, item_name, message, actor, recips)
 
 def _get_watchers(team, item_id) -> set:
     with db(team) as c:
@@ -5199,20 +5269,37 @@ def mark_notifications_read(body: dict = Body({}), auth: dict = Depends(require_
 
 @app.post("/api/slack/test")
 def slack_test(auth: dict = Depends(require_role("admin"))):
-    """Admin-only: post a synchronous test message to the team's Slack webhook so the admin card
-    gives immediate feedback. Does not require slackNotify.enabled (it is a connectivity test)."""
+    """Admin-only synchronous connectivity test for whichever transports are configured: the channel
+    webhook (if SLACK_WEBHOOK_<TEAM> present) and a DM to the calling admin (if SLACK_BOT_TOKEN_<TEAM>
+    present). Returns a per-transport result so the card gives immediate feedback. Does not require
+    slackNotify.enabled."""
     team = auth["team"]
-    url = _slack_webhook(team)
-    if not url:
-        raise HTTPException(400, "No Slack webhook configured. Add SLACK_WEBHOOK_<TEAM> to .env on the server, then restart.")
-    payload = json.dumps({"text": f"Flow test message for *{_slack_esc(team)}* - Slack notifications are wired up."}).encode("utf-8")
-    try:
-        req = Request(url, data=payload, method="POST", headers={"Content-Type": "application/json"})
-        urlopen(req, timeout=8)
-    except Exception as e:
-        raise HTTPException(502, f"Slack post failed: {e}")
+    webhook = _slack_webhook(team)
+    token = _slack_bot_token(team)
+    if not webhook and not token:
+        raise HTTPException(400, "No Slack transport configured. Add SLACK_WEBHOOK_<TEAM> (channel) and/or SLACK_BOT_TOKEN_<TEAM> (DMs) to .env, then restart.")
+    text = f"Flow test message for *{_slack_esc(team)}* - Slack notifications are wired up."
+    result = {}
+    if webhook:
+        try:
+            _slack_post_webhook(webhook, text); result["channel"] = "sent"
+        except Exception as e:
+            result["channel"] = "failed: " + str(e)
+    if token:
+        email = _user_email(team, auth["username"])
+        if not email:
+            result["dm"] = "skipped: your user has no email set"
+        else:
+            sid = _slack_user_id(team, token, email)
+            if not sid:
+                result["dm"] = "skipped: no Slack user found for " + email
+            else:
+                try:
+                    _slack_post_dm(token, sid, text + " (DM test)"); result["dm"] = "DM sent to you"
+                except Exception as e:
+                    result["dm"] = "failed: " + str(e)
     write_audit(team, "slack:test", auth["username"])
-    return {"ok": True}
+    return {"ok": True, "result": result}
 
 @app.get("/api/items/{pid}/watchers")
 def get_item_watchers(pid: int, auth: dict = Depends(require_auth)):

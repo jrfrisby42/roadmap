@@ -2679,6 +2679,7 @@ let assethubCredentialPresent = false;   // Team Admin: whether a .env credentia
 let enabledViews = null;        // Team Admin: per-team view allowlist (null = all enabled). admin + my-home always on.
 let slackNotify = {};           // Team Admin (Slack): {enabled, types}. Default {} = OFF. Webhook URL is server-side only.
 let slackWebhookPresent = false;// Team Admin (Slack): whether a SLACK_WEBHOOK_<TEAM> .env value exists (presence bool, never the URL).
+let slackBotTokenPresent = false;// Team Admin (Slack): whether a SLACK_BOT_TOKEN_<TEAM> .env value exists (DM transport; presence bool, never the token).
 let jiraFeatureEnabled = true;  // Team Admin (Jira gate): the per-team jiraEnabled flag. Already ANDed into jiraConfigured at boot; surfaced here for the admin toggle. Default true = unchanged for configured teams.
 let intakeProjects = [];        // which Projects (products) the portal offers (empty = all). (config)
 let intakeNotifyEmail = '';     // team inbox that gets a copy of each portal ticket. (config)
@@ -7347,6 +7348,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       enabledViews = Array.isArray(data.enabledViews) ? data.enabledViews : null;   // null = all enabled
       slackNotify = (data.slackNotify && typeof data.slackNotify==='object') ? data.slackNotify : {};   // Team Admin (Slack)
       slackWebhookPresent = data.slackWebhookPresent === true;
+      slackBotTokenPresent = data.slackBotTokenPresent === true;
       intakeProjects = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];
       intakeNotifyEmail = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : '';
       intakeTypes   = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];
@@ -16408,7 +16410,8 @@ async function boot(){
     assethubCredentialPresent = data.assethubCredentialPresent === true;                              // Team Admin: which-half-missing
     enabledViews          = Array.isArray(data.enabledViews) ? data.enabledViews : null;              // Team Admin: view allowlist (null = all)
     slackNotify           = (data.slackNotify && typeof data.slackNotify==='object') ? data.slackNotify : {};   // Team Admin (Slack)
-    slackWebhookPresent   = data.slackWebhookPresent === true;                                        // Team Admin (Slack): presence bool
+    slackWebhookPresent   = data.slackWebhookPresent === true;                                        // Team Admin (Slack): channel transport present
+    slackBotTokenPresent  = data.slackBotTokenPresent === true;                                       // Team Admin (Slack): DM transport present
     intakeProjects        = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];            // offered Projects (empty = all)
     intakeTypes           = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];                  // offered Types (empty = all)
     intakeNotifyEmail     = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : ''; // team inbox copy
@@ -20720,21 +20723,27 @@ if ('serviceWorker' in navigator) {
     var slk = _val('slackNotify', {}) || {};
     var slackEnabled = !!slk.enabled;
     var slackHasHook = _val('slackWebhookPresent', false);
+    var slackHasBot = _val('slackBotTokenPresent', false);
+    var slackMode = (slk.mode === 'dm' || slk.mode === 'both') ? slk.mode : 'channel';   // absent = channel (back-compat)
     var effTypes = Array.isArray(slk.types) ? slk.types : ['mention','assigned','reply','watch_status','watch_comment'];
-    var slackState = slackHasHook
-      ? '<span style="color:#1f9d55;font-weight:700">Webhook present</span>'
-      : '<span style="color:#d9822b;font-weight:700">No webhook</span> <span style="color:var(--muted)">- add SLACK_WEBHOOK_'+esc(team)+' to .env on the server, then restart</span>';
+    function _okbad(ok, okTxt, badTxt){ return ok ? '<span style="color:#1f9d55;font-weight:700">'+okTxt+'</span>' : '<span style="color:#d9822b;font-weight:700">'+badTxt+'</span>'; }
+    var slackState = 'Channel: '+_okbad(slackHasHook,'webhook present','no webhook')
+      + ' &nbsp;&middot;&nbsp; DMs: '+_okbad(slackHasBot,'bot token present','no bot token');
     var slackTypeRows = [['mention','Mentions'],['assigned','Assignments'],['reply','Comment replies'],['watch_status','Status changes (watched)'],['watch_comment','Comments (watched)']].map(function(t){
       return '<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin-right:14px;margin-bottom:4px"><input type="checkbox" class="ts-slack-type" data-stype="'+t[0]+'"'+(effTypes.indexOf(t[0])>=0?' checked':'')+'>'+esc(t[1])+'</label>';
+    }).join('');
+    var slackModeRows = [['channel','Channel only'],['dm','DM the users'],['both','Both']].map(function(m){
+      return '<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin-right:14px"><input type="radio" name="tsSlackMode" class="ts-slack-mode" value="'+m[0]+'"'+(slackMode===m[0]?' checked':'')+'>'+esc(m[1])+'</label>';
     }).join('');
     var slack = '<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">'
       + _tsCardHead('Slack notifications', '<button type="button" id="tsSlackSave" '+btn+'>Save Slack settings</button>')
       + '<div style="padding:14px 16px;font-size:13px;color:var(--text);display:flex;flex-direction:column;gap:12px">'
         + '<div>'+slackState+'</div>'
         + '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="tsSlackEnabled"'+(slackEnabled?' checked':'')+'> Post notifications to Slack</label>'
-        + '<div><div style="color:var(--muted);font-size:12px;margin-bottom:6px">Which events post to the channel:</div>'+slackTypeRows+'</div>'
+        + '<div><div style="color:var(--muted);font-size:12px;margin-bottom:6px">Deliver to:</div>'+slackModeRows+'</div>'
+        + '<div><div style="color:var(--muted);font-size:12px;margin-bottom:6px">Which events:</div>'+slackTypeRows+'</div>'
         + '<div style="display:flex;gap:10px;align-items:center"><button type="button" id="tsSlackTest" '+btn+'>Send test message</button><span id="tsSlackTestResult" style="font-size:12px;color:var(--muted)"></span></div>'
-        + '<div style="font-size:11px;color:var(--muted)">The webhook URL is a secret and is never entered here. Create an Incoming Webhook in your Slack workspace and add its URL to the server .env as SLACK_WEBHOOK_'+esc(team)+'.</div>'
+        + '<div style="font-size:11px;color:var(--muted)">Secrets are never entered here - they live in the server .env. Channel posts need an Incoming Webhook at SLACK_WEBHOOK_'+esc(team)+'. DMs need a Slack app bot token (scopes chat:write + users:read.email) at SLACK_BOT_TOKEN_'+esc(team)+'; DMs reach a user only if their Flow email matches a Slack account.</div>'
       + '</div></div>';
     return ah + jira + slack;
   }
@@ -20789,16 +20798,23 @@ if ('serviceWorker' in navigator) {
     if(ssave) ssave.addEventListener('click', function(){
       var enabled=!!host.querySelector('#tsSlackEnabled').checked;
       var types=[].slice.call(host.querySelectorAll('.ts-slack-type')).filter(function(c){return c.checked;}).map(function(c){return c.getAttribute('data-stype');});
-      API.put('/api/config/slackNotify', {enabled:enabled, types:types}).then(function(){
-        slackNotify = {enabled:enabled, types:types}; _call('showToast','Slack settings saved','success'); renderTeamSettings();
+      var modeEl=host.querySelector('.ts-slack-mode:checked'); var mode=modeEl?modeEl.value:'channel';
+      API.put('/api/config/slackNotify', {enabled:enabled, types:types, mode:mode}).then(function(){
+        slackNotify = {enabled:enabled, types:types, mode:mode}; _call('showToast','Slack settings saved','success'); renderTeamSettings();
       }).catch(function(e){ _call('showToast', (e&&e.message)||'Save failed'); });
     });
     var stest=host.querySelector('#tsSlackTest');
     if(stest) stest.addEventListener('click', function(){
       var out=host.querySelector('#tsSlackTestResult'); if(out){ out.textContent='Sending...'; out.style.color='var(--muted)'; }
-      API.post('/api/slack/test', {}).then(function(){ if(out){ out.textContent='Sent - check your Slack channel.'; out.style.color='#1f9d55'; } })
-        .catch(function(e){ var m=(e&&e.message)||'Failed'; try{ var j=JSON.parse(m); if(j&&j.detail) m=j.detail; }catch(_){}
-          if(out){ out.textContent=m; out.style.color='#e8394a'; } });
+      API.post('/api/slack/test', {}).then(function(r){
+        var res=(r&&r.result)||{}; var parts=[];
+        if(res.channel) parts.push('Channel: '+res.channel);
+        if(res.dm) parts.push('DM: '+res.dm);
+        var msg=parts.join('  |  ')||'Sent';
+        var ok=/sent/i.test(res.channel||'')||/sent/i.test(res.dm||'');
+        if(out){ out.textContent=msg; out.style.color=ok?'#1f9d55':'#d9822b'; }
+      }).catch(function(e){ var m=(e&&e.message)||'Failed'; try{ var j=JSON.parse(m); if(j&&j.detail) m=j.detail; }catch(_){}
+        if(out){ out.textContent=m; out.style.color='#e8394a'; } });
     });
   }
   function renderTeamSettings(){

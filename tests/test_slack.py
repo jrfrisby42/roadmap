@@ -1,6 +1,6 @@
-"""Slack notifications (Tier 1) - config round-trip + dispatch gating.
+"""Slack notifications (Tier 1 channel + Tier 2 DMs) - config + dispatch gating.
 
-Network is never exercised: dispatch is inert without a configured webhook, and the config
+Network is never exercised: dispatch is inert without a configured transport, and the config
 round-trip only touches the config table + /api/all.
 """
 import server
@@ -11,34 +11,52 @@ def test_slacknotify_in_valid_keys():
 
 
 def test_slacknotify_config_roundtrip(client, team, admin_headers):
-    # default: absent/empty + no webhook env -> {} and presence False
     a0 = client.get("/api/all", headers=admin_headers).json()
-    assert a0.get("slackNotify") in ({}, None) or a0["slackNotify"] == {}
-    assert a0.get("slackWebhookPresent") is False
+    assert a0["slackNotify"] == {}
+    assert a0["slackWebhookPresent"] is False
+    assert a0["slackBotTokenPresent"] is False
 
     r = client.put("/api/config/slackNotify",
-                   json={"enabled": True, "types": ["mention", "assigned"]},
+                   json={"enabled": True, "types": ["mention", "assigned"], "mode": "both"},
                    headers=admin_headers)
     assert r.status_code == 200
 
     a1 = client.get("/api/all", headers=admin_headers).json()
-    assert a1["slackNotify"] == {"enabled": True, "types": ["mention", "assigned"]}
-    assert a1["slackWebhookPresent"] is False   # still no .env webhook in tests
+    assert a1["slackNotify"] == {"enabled": True, "types": ["mention", "assigned"], "mode": "both"}
+    assert a1["slackWebhookPresent"] is False   # no .env transports in tests
+    assert a1["slackBotTokenPresent"] is False
 
 
-def test_slack_dispatch_inert_without_webhook(team):
-    # No SLACK_WEBHOOK_<TEAM> env in the test environment -> early return, no raise, no network.
-    assert server._slack_dispatch(team, "mention", 1, "Item", "msg", "actor") is None
+def test_slack_transports_absent_by_default(team):
+    assert server._slack_webhook(team) == ""
+    assert server._slack_bot_token(team) == ""
 
 
-def test_slack_dispatch_inert_when_disabled(team, monkeypatch):
-    # Webhook present but slackNotify disabled (default) -> still inert (no thread/network).
-    slug = "".join(ch for ch in team.upper() if ch.isalnum())
-    monkeypatch.setenv("SLACK_WEBHOOK_" + slug, "https://hooks.slack.example/T/B/xxx")
-    # slackNotify defaults to {} (enabled falsy) -> returns before any post.
-    assert server._slack_dispatch(team, "mention", 1, "Item", "msg", "actor") is None
+def test_slack_dispatch_inert_without_transport(team):
+    # No webhook/bot env, slackNotify disabled by default -> early return, no raise, no network.
+    assert server._slack_dispatch(team, "mention", 1, "Item", "msg", "actor", ["someone"]) is None
 
 
-def test_slack_test_endpoint_400_without_webhook(client, team, admin_headers):
+def test_slack_dispatch_inert_dm_mode_without_token(team, monkeypatch, admin_headers, client):
+    # Enable DM mode but provide no bot token -> want_dm False, want_channel False -> inert.
+    client.put("/api/config/slackNotify",
+               json={"enabled": True, "types": ["mention"], "mode": "dm"}, headers=admin_headers)
+    assert server._slack_dispatch(team, "mention", 1, "Item", "msg", "actor", ["someone"]) is None
+
+
+def test_slack_user_id_inert_without_token(team):
+    # No token -> '' without any network call.
+    assert server._slack_user_id(team, "", "someone@example.com") == ""
+
+
+def test_user_email_lookup(team, admin_headers, client):
+    client.put("/api/config/users",
+               json=[{"username": "jdoe", "email": "jdoe@example.com"}],
+               headers=admin_headers)
+    assert server._user_email(team, "jdoe") == "jdoe@example.com"
+    assert server._user_email(team, "nobody") == ""
+
+
+def test_slack_test_endpoint_400_without_transport(client, team, admin_headers):
     r = client.post("/api/slack/test", json={}, headers=admin_headers)
-    assert r.status_code == 400   # no webhook configured
+    assert r.status_code == 400   # neither webhook nor bot token configured
