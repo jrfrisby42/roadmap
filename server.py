@@ -1038,6 +1038,7 @@ def _migrate_config_keys(team: str):
         "intakeNotifyEmail": "",
         "intakeProjectEmails": {},
         "intakeDomains": [],
+        "intakeNotifyTeam": False,   # notify the team (in-app + Slack channel) on a new portal ticket
         "departmentMeta": {},
         "assignmentTypes": _DEFAULT_ASSIGNMENT_TYPES,
         "maintenanceDutyTypeId": "",
@@ -1050,7 +1051,7 @@ def _migrate_config_keys(team: str):
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
     # an admin who deletes all types isn't re-seeded on next boot.)
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "intakeNotifyTeam", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -1375,7 +1376,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.11.5"
+APP_VERSION = "5.11.6"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1670,6 +1671,19 @@ def _intake_notify_usernames(team: str, item: dict, pid) -> set:
             pass
     return targets
 
+def _intake_team_usernames(team: str) -> list:
+    """Triage roles to notify (in-app + Slack) about a NEW portal ticket: admins + editors. A
+    portal ticket has no assignee/owner yet, so 'the team' = the people who triage. Best-effort."""
+    out = []
+    try:
+        for u in (_cfg_val(team, "users", []) or []):
+            un = u.get("username")
+            if un and (u.get("role") in ("admin", "editor")):
+                out.append(un)
+    except Exception:
+        pass
+    return out
+
 def _intake_departments(team: str) -> list:
     return [d for d in (_cfg_val(team, "departments", []) or []) if d]
 
@@ -1807,6 +1821,15 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
         _intake_send_emails(team, item, item["id"])
     except Exception as e:
         log.warning(f"[Intake] email hook failed for item {item.get('id')}: {e}")
+    # Optional: notify the team (in-app bell for admins/editors + Slack channel) on a new portal
+    # ticket. Gated by the intakeNotifyTeam config toggle; best-effort - never fail the submit.
+    try:
+        if _cfg_val(team, "intakeNotifyTeam", False):
+            reporter = (item.get("reporter") or "").strip()
+            msg = "New portal ticket: " + title + (f" (from {reporter})" if reporter else "")
+            _notify(team, _intake_team_usernames(team), "intake", item["id"], title, msg, "Portal")
+    except Exception as e:
+        log.warning(f"[Intake] team-notify hook failed for item {item.get('id')}: {e}")
     return {"ok": True, "itemKey": item.get("itemKey"), "id": item["id"],
             "url": f"{APP_BASE_URL}/ticket?team={team}&id={item['id']}&t={_ticket_token(team, item['id'])}"}
 
@@ -3057,6 +3080,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "intakeTypes": cfg_map.get("intakeTypes", []),
             "intakeNotifyEmail": cfg_map.get("intakeNotifyEmail", ""),
             "intakeProjectEmails": cfg_map.get("intakeProjectEmails", {}),
+            "intakeNotifyTeam": bool(cfg_map.get("intakeNotifyTeam", False)),
             "intakeDomains": cfg_map.get("intakeDomains", []),
             "departmentMeta": cfg_map.get("departmentMeta", {}),
             "maintenanceDutyTypeId": cfg_map.get("maintenanceDutyTypeId", ""),
@@ -4289,7 +4313,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow",
-              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains","departmentMeta","maintenanceDutyTypeId",
+              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains","intakeNotifyTeam","departmentMeta","maintenanceDutyTypeId",
               "externalRequestCategories","assethubConnection","assethubServiceTypeMapping","enabledViews",
               "slackNotify"}
 
@@ -5084,16 +5108,23 @@ def _slack_dispatch(team, ntype, item_id, item_name, message, actor, recips):
     NEVER affect the in-app insert or the triggering mutation."""
     try:
         cfg = _cfg_val(team, "slackNotify", {}) or {}
-        if not cfg.get("enabled"):
-            return
-        types = cfg.get("types") or _SLACK_DEFAULT_TYPES
-        if ntype not in types:
-            return
-        mode = cfg.get("mode") or "channel"
         webhook = _slack_webhook(team)
         token = _slack_bot_token(team)
-        want_channel = mode in ("channel", "both") and bool(webhook)
-        want_dm = mode in ("dm", "both") and bool(token)
+        # "intake" is a team broadcast (new portal ticket), gated upstream by intakeNotifyTeam - it
+        # bypasses the personal slackNotify enable/type/mode settings and posts CHANNEL-only (never
+        # DMs every admin). Everything else obeys slackNotify (enabled + type allowlist + mode).
+        if ntype == "intake":
+            want_channel = bool(webhook)
+            want_dm = False
+        else:
+            if not cfg.get("enabled"):
+                return
+            types = cfg.get("types") or _SLACK_DEFAULT_TYPES
+            if ntype not in types:
+                return
+            mode = cfg.get("mode") or "channel"
+            want_channel = mode in ("channel", "both") and bool(webhook)
+            want_dm = mode in ("dm", "both") and bool(token)
         if not (want_channel or want_dm):
             return
         link = f"{APP_BASE_URL}/item/{item_id}" if item_id else APP_BASE_URL

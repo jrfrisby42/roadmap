@@ -2085,6 +2085,11 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
               <label style="display:block;font-size:12px;font-weight:700;color:var(--text);margin-bottom:4px">Team notification email <span style="font-weight:400;color:var(--muted)">- gets a copy of every submitted ticket (comma-separate for several)</span></label>
               <input type="text" id="tsIntakeNotify" placeholder="team-inbox@example.com" style="width:100%;max-width:380px;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;font-family:'Lato',sans-serif;outline:none">
             </div>
+            <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:700;cursor:pointer;user-select:none;margin:6px 0 2px">
+              <input type="checkbox" id="tsIntakeNotifyTeam" style="accent-color:var(--accent);width:16px;height:16px;cursor:pointer">
+              Notify the team when a ticket is created
+            </label>
+            <div style="font-size:11px;color:var(--muted);margin:-4px 0 2px">Sends an in-app notification to admins and editors, and posts to the team Slack channel if a webhook is configured. Separate from the email above.</div>
             <div style="font-size:12px;font-weight:700;color:var(--text);margin:8px 0 6px">Projects offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all; optional per-project email overrides the team address for that project's tickets)</span></div>
             <div id="tsIntakeProjects" style="display:flex;flex-direction:column;gap:6px;max-width:520px"></div>
             <div style="font-size:12px;font-weight:700;color:var(--text);margin:12px 0 6px">Types offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all)</span></div>
@@ -2173,7 +2178,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.11.5';
+const APP_VERSION = '5.11.6';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2686,6 +2691,7 @@ let intakeNotifyEmail = '';     // team inbox that gets a copy of each portal ti
 let intakeTypes = [];           // which item Types the portal offers (empty = all). (config)
 let intakeProjectEmails = {};   // optional per-Project notify email override {product: email}; falls back to intakeNotifyEmail. (config)
 let intakeDomains = [];         // allowed reporter email domains for the portal (empty = allow any). (config)
+let intakeNotifyTeam = false;   // notify the team (in-app + Slack channel) on a new portal ticket. (config)
 let departmentMeta = {};        // per-department {name:{color,emails}} - pill color + notify list. (config)
 let productIgnoreConflicts = {}; // { [productName]: bool } - exempt a whole project from capacity-conflict accounting
 
@@ -7351,6 +7357,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       slackBotTokenPresent = data.slackBotTokenPresent === true;
       intakeProjects = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];
       intakeNotifyEmail = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : '';
+      intakeNotifyTeam = data.intakeNotifyTeam === true;
       intakeTypes   = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];
       if(data.intakeProjectEmails && typeof data.intakeProjectEmails === 'object') intakeProjectEmails = data.intakeProjectEmails;
       if(Array.isArray(data.intakeDomains)) intakeDomains = data.intakeDomains;
@@ -15560,6 +15567,11 @@ function renderIntakePortalSettings(){
     notify.value = intakeNotifyEmail || '';
     notify.onchange = () => { intakeNotifyEmail = notify.value.trim(); saveConfig('intakeNotifyEmail', intakeNotifyEmail); };
   }
+  const notifyTeam = document.getElementById('tsIntakeNotifyTeam');
+  if(notifyTeam){
+    notifyTeam.checked = !!intakeNotifyTeam;
+    notifyTeam.onchange = () => { intakeNotifyTeam = notifyTeam.checked; saveConfig('intakeNotifyTeam', intakeNotifyTeam); };
+  }
   const projWrap = document.getElementById('tsIntakeProjects');
   const projNames = (products||[]).map(p => (p&&p.name)||p).filter(Boolean);
   const projOffered = intakeProjects.length ? new Set(intakeProjects) : new Set(projNames);   // empty = all
@@ -16404,6 +16416,7 @@ async function boot(){
     richTextEditor        = data.richTextEditor !== false;   // default ON; only an explicit false reverts to the classic editor
     maintenanceDutyTypeId = data.maintenanceDutyTypeId || '';   // M1: Maintenance Duty assignment-type mapping
     intakeEnabled         = data.intakeEnabled === true;                                              // public /report portal exposed?
+    intakeNotifyTeam      = data.intakeNotifyTeam === true;                                            // notify the team on a new portal ticket
     assethubConfigured    = data.assethubConfigured === true;                                         // FLOW-1: gates all asset UI (mapping + .env credential present)
     assethubBaseUrl       = data.assethubBaseUrl || '';                                               // FLOW-1 item B: host for the asset-tag deep link
     assethubConnection    = (data.assethubConnection && typeof data.assethubConnection==='object') ? data.assethubConnection : {};   // Team Admin
