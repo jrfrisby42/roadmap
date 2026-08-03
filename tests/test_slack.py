@@ -79,3 +79,24 @@ def test_channel_msg_names_recipient(team, admin_headers, client):
     # status change has no "you" -> unchanged
     assert server._slack_channel_msg(team, "jr.frisby changed status to Done", ["alice"]) \
         == "jr.frisby changed status to Done"
+
+
+def test_intake_notify_team_config_roundtrip(client, team, admin_headers):
+    assert "intakeNotifyTeam" in server.VALID_KEYS
+    a0 = client.get("/api/all", headers=admin_headers).json()
+    assert a0["intakeNotifyTeam"] is False   # default off
+    r = client.put("/api/config/intakeNotifyTeam", json=True, headers=admin_headers)
+    assert r.status_code == 200
+    a1 = client.get("/api/all", headers=admin_headers).json()
+    assert a1["intakeNotifyTeam"] is True
+
+
+def test_intake_team_usernames_admins_editors(team, admin_headers, client):
+    client.put("/api/config/users", json=[
+        {"username": "boss", "role": "admin"},
+        {"username": "dev1", "role": "editor"},
+        {"username": "looker", "role": "viewer"},
+        {"username": "contrib1", "role": "contributor"},
+    ], headers=admin_headers)
+    got = set(server._intake_team_usernames(team))
+    assert got == {"boss", "dev1"}   # admins + editors only
