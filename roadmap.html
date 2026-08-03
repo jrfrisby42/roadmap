@@ -2178,7 +2178,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.11.7';
+const APP_VERSION = '5.11.8';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -23604,10 +23604,14 @@ if ('serviceWorker' in navigator) {
       card._wired=true;
       up.addEventListener('click', function(){ input.click(); });
       drop.addEventListener('click', function(){ input.click(); });
-      input.addEventListener('change', function(){ [].slice.call(this.files||[]).forEach(function(f){ uploadAttachment(p, f); }); this.value=''; });
+      // These handlers are wired ONCE (card._wired) and the card is reused across item opens, so
+      // they must resolve the CURRENTLY-open item fresh (_frzCurItem) - NOT the `p` captured when
+      // the card was first wired, or uploads land on whichever ticket was opened first (the
+      // cross-ticket misattribution bug). Mirrors the paste/description-drop handlers below.
+      input.addEventListener('change', function(){ var cur=_frzCurItem()||p; [].slice.call(this.files||[]).forEach(function(f){ uploadAttachment(cur, f); }); this.value=''; });
       drop.addEventListener('dragover', function(e){ e.preventDefault(); drop.classList.add('frz-drag'); });
       drop.addEventListener('dragleave', function(){ drop.classList.remove('frz-drag'); });
-      drop.addEventListener('drop', function(e){ e.preventDefault(); drop.classList.remove('frz-drag'); [].slice.call((e.dataTransfer&&e.dataTransfer.files)||[]).forEach(function(f){ uploadAttachment(p,f); }); });
+      drop.addEventListener('drop', function(e){ e.preventDefault(); drop.classList.remove('frz-drag'); var cur=_frzCurItem()||p; [].slice.call((e.dataTransfer&&e.dataTransfer.files)||[]).forEach(function(f){ uploadAttachment(cur,f); }); });
       // Clipboard paste of an image - required for screenshots. Wired on the
       // attachments card AND the description (Ctrl/Cmd+V while focused in either).
       var onPaste=function(e){
