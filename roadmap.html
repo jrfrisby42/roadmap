@@ -17341,6 +17341,14 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rpt-num { text-align:right; white-space:nowrap; }
   .frz-beta .frz-rpt-desc { max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .frz-beta .frz-rpt-na { color:var(--frz-text-muted); font-style:italic; }
+  .frz-beta .frz-rpt-kpis { display:flex; flex-wrap:wrap; gap:12px; padding:14px 16px; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-rpt-kpi { flex:1; min-width:130px; border:1px solid var(--frz-border); border-radius:10px; padding:12px 14px; background:var(--frz-bg-app); }
+  .frz-beta .frz-rpt-kpi-v { font-size:26px; font-weight:900; line-height:1.05; color:var(--frz-text); }
+  .frz-beta .frz-rpt-kpi-l { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); margin-top:4px; }
+  .frz-beta .frz-rpt-kpi-s { font-size:10.5px; color:var(--frz-text-muted); margin-top:1px; }
+  .frz-beta .frz-rpt-kpi.is-warn .frz-rpt-kpi-v { color:#e8394a; }
+  .frz-beta .frz-rpt-pivot td.frz-rpt-pivk { font-weight:700; white-space:nowrap; }
+  .frz-beta .frz-rpt-pivot tr.frz-rpt-pivtotal td { border-top:2px solid var(--frz-border); font-weight:900; background:var(--frz-bg-sunken); }
   .frz-beta .frz-plan-tabs { display:flex; gap:4px; padding:10px 14px 0; flex-shrink:0; }
   .frz-beta .frz-plan-tab { border:0; background:none; cursor:pointer; font:inherit; font-size:13px; font-weight:600; color:var(--frz-text-secondary); padding:7px 14px; border-radius:8px 8px 0 0; border-bottom:2px solid transparent; }
   .frz-beta .frz-plan-tab:hover { color:var(--frz-text); }
@@ -19524,8 +19532,19 @@ if ('serviceWorker' in navigator) {
     _frzSyncSearchMode();
     renderReports();
   }
-  var _rptFilters = { from:'', to:'', status:'', type:'', priority:'', dept:'', assignee:'', product:'', owner:'' };
+  var _rptFilters = { from:'', to:'', status:'', type:'', priority:'', dept:'', assignee:'', product:'', owner:'', basis:'requested', group:'' };
   var _PRPL = {1:'Urgent',2:'High',3:'Medium',4:'Low'};
+  function _rptMedian(nums){                     // median over non-null numbers; null if none
+    var xs=(nums||[]).filter(function(n){ return n!=null && !isNaN(n); }).sort(function(a,b){ return a-b; });
+    if(!xs.length) return null;
+    var m=Math.floor(xs.length/2);
+    return xs.length%2 ? xs[m] : Math.round((xs[m-1]+xs[m])/2*10)/10;
+  }
+  function _rptAvg(nums){                         // mean over non-null numbers; null if none
+    var xs=(nums||[]).filter(function(n){ return n!=null && !isNaN(n); });
+    if(!xs.length) return null;
+    return Math.round(xs.reduce(function(a,b){ return a+b; },0)/xs.length*10)/10;
+  }
   function _rptDays(aIso, bIso){   // whole days between two timestamps; null if either missing/invalid
     if(!aIso || !bIso) return null;
     var a=new Date(aIso), b=new Date(bIso);
@@ -19582,9 +19601,9 @@ if ('serviceWorker' in navigator) {
       if(f.owner && (p.dev||'')!==f.owner) return false;
       if(f.dept && (p.departments||[]).indexOf(f.dept)<0) return false;
       if(f.assignee && (p.assignee||'')!==f.assignee) return false;
-      if(f.from || f.to){                       // date-range over the Requested date (createdAt)
-        var d=(p.createdAt||'').slice(0,10);
-        if(!d) return false;                     // no createdAt = excluded when a range is set
+      if(f.from || f.to){                       // date-range over Requested (createdAt) OR Completed (completedAt) per basis
+        var d=((f.basis==='completed' ? p.completedAt : p.createdAt)||'').slice(0,10);
+        if(!d) return false;                     // no date on that basis = excluded when a range is set
         if(f.from && d<f.from) return false;
         if(f.to && d>f.to) return false;
       }
@@ -19632,10 +19651,21 @@ if ('serviceWorker' in navigator) {
   }
   function _rptCsvCell(v){ v=(v==null?'':String(v)); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
   function _rptExportCsv(){
-    // Export follows the SAME team-aware visible columns as the on-screen table.
-    var c=_rptComputed(), rows=c.rows, cols=_rptVisibleCols(c.allRows);
-    var lines=[cols.map(function(col){ return _rptCsvCell(col.h); }).join(',')];
+    var c=_rptComputed(), rows=c.rows, lines;
+    var f=_rptFilters;
+    if(f.group && _RPT_GROUPS[f.group]){
+      // Grouped mode: export the pivot rows + TOTAL (matches the on-screen pivot table).
+      var pv=_rptPivot(rows, f.group), pcols=_rptPivotColsVisible(c.allRows);
+      lines=[[_RPT_GROUPS[f.group].label].concat(pcols.map(function(col){ return col.h; })).map(_rptCsvCell).join(',')];
+      pv.rows.concat([pv.total]).forEach(function(s){
+        lines.push([String(s.k)].concat(pcols.map(function(col){ var v=s[col.k]; if(col.pct) v=(s.count?v+'%':''); return (v==null?'':v); })).map(_rptCsvCell).join(','));
+      });
+    } else {
+    // Flat mode: follows the SAME team-aware visible columns as the on-screen table.
+    var cols=_rptVisibleCols(c.allRows);
+    lines=[cols.map(function(col){ return _rptCsvCell(col.h); }).join(',')];
     rows.forEach(function(r){ lines.push(cols.map(function(col){ var v=r[col.csvk||col.k]; return _rptCsvCell(v==null?'':v); }).join(',')); });
+    }
     var blob=new Blob(['﻿'+lines.join('\r\n')], {type:'text/csv;charset=utf-8'});
     var a=document.createElement('a'); a.href=URL.createObjectURL(blob);
     a.download='report-'+new Date().toISOString().slice(0,10)+'.csv';
@@ -19651,6 +19681,88 @@ if ('serviceWorker' in navigator) {
                             : '<div class="frz-rpt-aggrow" style="color:var(--frz-text-muted)">No data</div>';
     return '<div class="frz-rpt-agg"><div class="frz-rpt-agg-h">'+esc(title)+'</div>'+body+'</div>';
   }
+  // ── KPI tiles over the FILTERED rows. Team-aware: a tile is dropped when its source measure
+  //    is unpopulated across allRows (mirrors _rptHas); in-scope-but-empty renders "n/a". ──
+  function _rptKpis(rows, allRows){
+    var openN=rows.filter(function(r){ return r.open; }).length;
+    var overdueN=rows.filter(function(r){ return r.overdue; }).length;
+    var completedN=rows.filter(function(r){ return r.completion; }).length;
+    var resVals=rows.map(function(r){ return r.resolutionTime; });
+    var respVals=rows.map(function(r){ return r.responseTime; });
+    var hasRes=allRows.some(function(r){ return r.resolutionTime!=null; });
+    var hasResp=allRows.some(function(r){ return r.responseTime!=null; });
+    function fmtD(v){ return v==null ? 'n/a' : String(v); }
+    var tiles=[
+      {label:'Open',                value:String(openN)},
+      {label:'Overdue',             value:String(overdueN), warn:overdueN>0},
+      {label:'Completed (in window)', value:String(completedN)},
+      {label:'Throughput',          value:String(completedN), sub:'completed in window'}
+    ];
+    if(hasRes)  tiles.push({label:'Median resolution', value:fmtD(_rptMedian(resVals)), sub:'days'});
+    if(hasRes)  tiles.push({label:'Avg resolution',    value:fmtD(_rptAvg(resVals)),    sub:'days'});
+    if(hasResp) tiles.push({label:'Avg first response',value:fmtD(_rptAvg(respVals)),   sub:'days'});
+    return tiles;
+  }
+  function _rptKpisHtml(tiles){
+    return '<div class="frz-rpt-kpis">'+tiles.map(function(t){
+      return '<div class="frz-rpt-kpi'+(t.warn?' is-warn':'')+'">'
+        +'<div class="frz-rpt-kpi-v">'+esc(t.value)+'</div>'
+        +'<div class="frz-rpt-kpi-l">'+esc(t.label)+'</div>'
+        +(t.sub?'<div class="frz-rpt-kpi-s">'+esc(t.sub)+'</div>':'')
+      +'</div>';
+    }).join('')+'</div>';
+  }
+  // ── Group-by pivot. groupKey is one of owner|assignee|dept|status|type|product|priority.
+  //    Returns {rows:[{k, count, open, overdue, pctOverdue, avgAge, medRes, avgResp}], total}. ──
+  var _RPT_GROUPS = {
+    owner:    {label:'Owner',      fn:function(r){ return r.owner || '(no owner)'; }},
+    assignee: {label:'Assignee',   fn:function(r){ return r.assignee ? (r.assigneeName||r.assignee) : '(unassigned)'; }},
+    dept:     {label:'Department', fn:function(r){ return r.dept || '(none)'; }},
+    status:   {label:'Status',     fn:function(r){ return r.status || '(none)'; }},
+    type:     {label:'Type',       fn:function(r){ return r.type || '(none)'; }},
+    product:  {label:'Project',    fn:function(r){ return r.product || '(none)'; }},
+    priority: {label:'Priority',   fn:function(r){ return r.priority || '(none)'; }}
+  };
+  var _RPT_PIVOT_COLS = [
+    {h:'Count',              k:'count',      always:true},
+    {h:'Open',               k:'open',       always:true},
+    {h:'Overdue',            k:'overdue',    always:true},
+    {h:'% Overdue',          k:'pctOverdue', always:true, pct:true},
+    {h:'Avg age (d)',        k:'avgAge',     always:true},
+    {h:'Median resolution (d)', k:'medRes',  src:'resolutionTime'},
+    {h:'Avg response (d)',   k:'avgResp',    src:'responseTime'}
+  ];
+  function _rptPivotColsVisible(allRows){
+    return _RPT_PIVOT_COLS.filter(function(c){ return c.always || allRows.some(function(r){ return r[c.src]!=null; }); });
+  }
+  function _rptPivotStats(rows){
+    var count=rows.length;
+    var open=rows.filter(function(r){ return r.open; }).length;
+    var overdue=rows.filter(function(r){ return r.overdue; }).length;
+    return {
+      count:count, open:open, overdue:overdue,
+      pctOverdue: count ? Math.round(overdue/count*100) : 0,
+      avgAge: _rptAvg(rows.map(function(r){ return r.age; })),
+      medRes: _rptMedian(rows.map(function(r){ return r.resolutionTime; })),
+      avgResp: _rptAvg(rows.map(function(r){ return r.responseTime; }))
+    };
+  }
+  function _rptPivot(rows, groupKey){
+    var g=_RPT_GROUPS[groupKey]; if(!g) return null;
+    var buckets={}, order=[];
+    rows.forEach(function(r){ var k=g.fn(r); if(!(k in buckets)){ buckets[k]=[]; order.push(k); } buckets[k].push(r); });
+    var out=order.map(function(k){ var s=_rptPivotStats(buckets[k]); s.k=k; return s; })
+                 .sort(function(a,b){ return b.count-a.count; });
+    var total=_rptPivotStats(rows); total.k='TOTAL';
+    return { rows:out, total:total };
+  }
+  function _rptPivotCell(col, s){
+    var v=s[col.k];
+    if(col.pct) return (s.count ? v+'%' : '<span class="frz-rpt-na">n/a</span>');
+    if(v==null) return '<span class="frz-rpt-na">n/a</span>';
+    return String(v);
+  }
+
   function renderReports(){
     var host=document.getElementById('reportsBody'); if(!host) return;
     var c=_rptComputed(), rows=c.rows, all=c.all, allRows=c.allRows, f=_rptFilters;
@@ -19675,6 +19787,22 @@ if ('serviceWorker' in navigator) {
     }
     var thead=cols.map(function(col){ return '<th>'+esc(col.h)+'</th>'; }).join('');
     var tableRows=rows.map(function(r){ return '<tr>'+cols.map(function(col){ return renderCell(col,r); }).join('')+'</tr>'; }).join('');
+    // ── grouped pivot (item 4): replaces the flat table when a Group by is chosen ──
+    var grouped=!!(f.group && _RPT_GROUPS[f.group]);
+    var pivotHtml='';
+    if(grouped){
+      var pv=_rptPivot(rows, f.group), pcols=_rptPivotColsVisible(allRows);
+      var glabel=_RPT_GROUPS[f.group].label;
+      var pHead='<th>'+esc(glabel)+'</th>'+pcols.map(function(c){ return '<th class="frz-rpt-num">'+esc(c.h)+'</th>'; }).join('');
+      var pBody=pv.rows.map(function(s){
+        return '<tr><td class="frz-rpt-pivk">'+esc(String(s.k))+'</td>'
+          +pcols.map(function(c){ return '<td class="frz-rpt-num">'+_rptPivotCell(c,s)+'</td>'; }).join('')+'</tr>';
+      }).join('');
+      var pTotal='<tr class="frz-rpt-pivtotal"><td>TOTAL</td>'
+        +pcols.map(function(c){ return '<td class="frz-rpt-num">'+_rptPivotCell(c,pv.total)+'</td>'; }).join('')+'</tr>';
+      pivotHtml='<div class="frz-rpt-tablewrap"><table class="frz-rpt-table frz-rpt-pivot"><thead><tr>'+pHead+'</tr></thead>'
+        +'<tbody>'+(pBody||'')+pTotal+'</tbody></table></div>';
+    }
     // ── team-aware aggregates: only for dimensions the team populates ──
     var aggs=[];
     if(has('product'))      aggs.push(_rptAggHtml('By project', _rptCount(rows, function(r){ return r.product; })));
@@ -19690,8 +19818,12 @@ if ('serviceWorker' in navigator) {
       aggs.push(_rptAggHtml('Schedule', [{k:'Open',n:openN},{k:'Open & overdue',n:overdueN}]));
     }
     // ── team-aware filters: show a control only when that dimension is in use ──
-    var filters='<label>Requested from<input type="date" id="frzRptFrom" value="'+escA(f.from)+'"></label>'
+    var basisLbl=(f.basis==='completed'?'Completed':'Requested');
+    var filters='<label>Date basis<select id="frzRptBasis">'+_rptOpt(f.basis,'requested','Requested')+_rptOpt(f.basis,'completed','Completed')+'</select></label>'
+      +'<label>'+basisLbl+' from<input type="date" id="frzRptFrom" value="'+escA(f.from)+'"></label>'
       +'<label>to<input type="date" id="frzRptTo" value="'+escA(f.to)+'"></label>'
+      +'<label>Group by<select id="frzRptGroup">'+_rptOpt(f.group,'','None')
+        +['owner','assignee','dept','status','type','product','priority'].map(function(g){ return _rptOpt(f.group,g,_RPT_GROUPS[g].label); }).join('')+'</select></label>'
       +'<label>Status<select id="frzRptStatus">'+_rptOpt(f.status,'','All')+statuses.map(function(s){ return _rptOpt(f.status,s,s); }).join('')+'</select></label>'
       +'<label>Type<select id="frzRptType">'+_rptOpt(f.type,'','All')+types.map(function(t){ return _rptOpt(f.type,t,t); }).join('')+'</select></label>';
     // Project filter mirrors the rail project scope (state.project) so the two are never
@@ -19703,18 +19835,21 @@ if ('serviceWorker' in navigator) {
     if(has('dept'))    filters+='<label>Department<select id="frzRptDept">'+_rptOpt(f.dept,'','All')+depts.map(function(d){ return _rptOpt(f.dept,d,d); }).join('')+'</select></label>';
     if(has('assigneeName')) filters+='<label>Assignee<select id="frzRptAssignee">'+_rptOpt(f.assignee,'','All')+asgList.map(function(a){ return _rptOpt(f.assignee,a,(_call('displayName',a)||a)); }).join('')+'</select></label>';
     filters+='<span class="frz-rpt-total">'+rows.length+' item'+(rows.length===1?'':'s')+'</span>';
+    var flatTable='<div class="frz-rpt-tablewrap"><table class="frz-rpt-table"><thead><tr>'+thead+'</tr></thead>'
+        +'<tbody>'+(tableRows || '<tr><td colspan="'+cols.length+'" style="padding:24px;text-align:center;color:var(--frz-text-muted)">No items match the current filters.</td></tr>')+'</tbody></table></div>';
     host.innerHTML =
       '<section class="frz-rpt-sec">'   // top-bar already reads "Reports"; no redundant page heading
         +'<div class="frz-rpt-sec-h"><span>Work Items</span>'
           +'<button class="frz-newitem" id="frzRptCsv">Export CSV</button></div>'
         +'<div class="frz-rpt-filters">'+filters+'</div>'
+        +_rptKpisHtml(_rptKpis(rows, allRows))
         +'<div class="frz-rpt-aggs">'+aggs.join('')+'</div>'
-        +'<div class="frz-rpt-tablewrap"><table class="frz-rpt-table"><thead><tr>'+thead+'</tr></thead>'
-          +'<tbody>'+(tableRows || '<tr><td colspan="'+cols.length+'" style="padding:24px;text-align:center;color:var(--frz-text-muted)">No items match the current filters.</td></tr>')+'</tbody></table></div>'
+        +(grouped ? pivotHtml : flatTable)
       +'</section>';
     // Wire filters (re-render on change) + CSV. Each binder no-ops when its control is hidden.
     function bindF(id, key, ev){ var el=document.getElementById(id); if(el) el.addEventListener(ev||'change', function(){ _rptFilters[key]=el.value; renderReports(); }); }
     bindF('frzRptFrom','from'); bindF('frzRptTo','to');
+    bindF('frzRptBasis','basis'); bindF('frzRptGroup','group');
     bindF('frzRptStatus','status'); bindF('frzRptType','type'); bindF('frzRptPriority','priority');
     bindF('frzRptDept','dept'); bindF('frzRptAssignee','assignee');
     bindF('frzRptOwner','owner');
