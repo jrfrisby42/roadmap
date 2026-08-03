@@ -1376,7 +1376,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.11.8"
+APP_VERSION = "5.11.9"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2667,8 +2667,14 @@ def login(body: dict = Body(...), request: FRequest = None, response: Response =
         raise HTTPException(401, "Invalid username or password")
 
     role = user.get("role", "viewer")
-    token = create_token(team, username, role)
-    write_audit(team, "login", username)
+    # Mint the token with the CANONICAL username, NOT the raw identifier the user typed - which may
+    # be their EMAIL (login accepts username OR email). A token whose username is the email mis-keys
+    # everything downstream that matches on username: the avatar save 404s ("User not found"), and
+    # comments/mentions/assignee/contributor-scope all key off username. The response already returns
+    # user["username"]; align the token + audit with it.
+    canonical = user["username"]
+    token = create_token(team, canonical, role)
+    write_audit(team, "login", canonical)
     # Set httpOnly session cookie so the audit page can verify auth server-side
     if response:
         response.set_cookie(
