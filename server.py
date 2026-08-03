@@ -5012,6 +5012,32 @@ def _user_email(team, username) -> str:
         pass
     return ""
 
+def _user_display(team, username) -> str:
+    """A user's display name for channel copy (name/displayName from the user record, else the
+    username). Never blank when a username is given."""
+    try:
+        for u in (_cfg_val(team, "users", []) or []):
+            if u.get("username") == username:
+                return (u.get("name") or u.get("displayName") or "").strip() or (username or "")
+    except Exception:
+        pass
+    return username or ""
+
+def _slack_channel_msg(team, message, recips) -> str:
+    """Rephrase a notification message for a CHANNEL post: the personal 'you'/'your' (correct in a
+    DM) becomes the recipient name(s), so a shared channel reads 'X mentioned Alice in a comment'
+    rather than the ambiguous 'X mentioned you' (which, to the actor, looks self-addressed). No-op
+    when the message has no 'you' (e.g. status changes) or there are no recipients."""
+    msg = message or ""
+    if "you" not in msg.lower() or not recips:
+        return msg
+    names = ", ".join(_user_display(team, u) for u in recips if u)
+    if not names:
+        return msg
+    msg = re.sub(r"\byour\b", names + "'s", msg)
+    msg = re.sub(r"\byou\b", names, msg)
+    return msg
+
 def _slack_user_id(team, token, email) -> str:
     """Resolve a Slack user id from an email via users.lookupByEmail, cached per team. Returns ''
     when the email is blank / not found in Slack (that '' is cached to avoid re-lookups). A transient
@@ -5071,23 +5097,26 @@ def _slack_dispatch(team, ntype, item_id, item_name, message, actor, recips):
         if not (want_channel or want_dm):
             return
         link = f"{APP_BASE_URL}/item/{item_id}" if item_id else APP_BASE_URL
-        text = "*" + _slack_esc(item_name or "Item") + "*: " + _slack_esc(message or "")
-        if item_id:
-            text += "  <" + link + "|open>"
-        dm_recips = list(recips or [])
+        recips_l = list(recips or [])
+        def _fmt(msg_text):
+            t = "*" + _slack_esc(item_name or "Item") + "*: " + _slack_esc(msg_text or "")
+            return (t + "  <" + link + "|open>") if item_id else t
         def _send():
             try:
                 if want_channel:
+                    # Channel: name the recipient(s) instead of the DM-style 'you' (config read
+                    # happens here, off the request path).
                     try:
-                        _slack_post_webhook(webhook, text)
+                        _slack_post_webhook(webhook, _fmt(_slack_channel_msg(team, message, recips_l)))
                     except Exception as e:
                         log.warning(f"[Slack] channel post failed for team {team}: {e}")
                 if want_dm:
-                    for u in dm_recips:
+                    dm_text = _fmt(message)   # DM keeps the personal 'you'
+                    for u in recips_l:
                         sid = _slack_user_id(team, token, _user_email(team, u))
                         if sid:
                             try:
-                                _slack_post_dm(token, sid, text)
+                                _slack_post_dm(token, sid, dm_text)
                             except Exception as e:
                                 log.warning(f"[Slack] DM failed for team {team} user {u}: {e}")
             except Exception as e:

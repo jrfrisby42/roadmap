@@ -60,3 +60,22 @@ def test_user_email_lookup(team, admin_headers, client):
 def test_slack_test_endpoint_400_without_transport(client, team, admin_headers):
     r = client.post("/api/slack/test", json={}, headers=admin_headers)
     assert r.status_code == 400   # neither webhook nor bot token configured
+
+
+def test_channel_msg_names_recipient(team, admin_headers, client):
+    # Channel posts should name the recipient instead of the DM-style "you".
+    client.put("/api/config/users",
+               json=[{"username": "alice", "name": "Alice Jones", "email": "alice@x.com"},
+                     {"username": "bob", "email": "bob@x.com"}],
+               headers=admin_headers)
+    # mention: "you" -> recipient display name (name field wins; username fallback)
+    assert server._slack_channel_msg(team, "jr.frisby mentioned you in a comment", ["alice"]) \
+        == "jr.frisby mentioned Alice Jones in a comment"
+    assert server._slack_channel_msg(team, "jr.frisby mentioned you in a comment", ["bob"]) \
+        == "jr.frisby mentioned bob in a comment"
+    # reply: "your" -> "<name>'s"
+    assert server._slack_channel_msg(team, "jr.frisby replied to your comment on X", ["alice"]) \
+        == "jr.frisby replied to Alice Jones's comment on X"
+    # status change has no "you" -> unchanged
+    assert server._slack_channel_msg(team, "jr.frisby changed status to Done", ["alice"]) \
+        == "jr.frisby changed status to Done"
