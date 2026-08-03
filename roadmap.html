@@ -2874,6 +2874,28 @@ const fmtD = d => {
   });
 };
 
+// Event-timestamp formatters. Stored timestamps are UTC ISO (with a +00:00 offset), so
+// new Date() parses them correctly and toLocaleString renders in the VIEWER's browser timezone.
+// Use ONLY for real timestamps (created_ts, completedAt, committedAt, jiraLastSync, ...), NEVER
+// for date-only YYYY-MM-DD fields (those have no time and would shift a day through UTC parsing).
+// Global function declarations so both the classic and beta script blocks can call them directly.
+function fmtTS(iso){
+  if(!iso) return '';
+  try {
+    const d = new Date(iso);
+    if(isNaN(d.getTime())) return String(iso).slice(0,16).replace('T',' ');
+    return d.toLocaleString(undefined, {year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+  } catch(e){ return String(iso).slice(0,16).replace('T',' '); }
+}
+function fmtTSDate(iso){
+  if(!iso) return '';
+  try {
+    const d = new Date(iso);
+    if(isNaN(d.getTime())) return String(iso).slice(0,10);
+    return d.toLocaleDateString(undefined, {year:'numeric',month:'short',day:'numeric'});
+  } catch(e){ return String(iso).slice(0,10); }
+}
+
 const STATUS_BADGE_COLORS = ['s-inprogress','s-planned','s-testing','s-released','s-tbd'];
 function statusCls(s){
   if(!s) return 's-tbd';
@@ -9388,7 +9410,7 @@ function renderAcOpen(){
     const newBadge = isUnread ? `<span style="font-size:9px;background:#22b96e;color:#fff;padding:2px 7px;border-radius:8px;font-weight:700;white-space:nowrap">NEW</span>` : '';
     const unreadStyle = isUnread ? ';box-shadow:0 0 0 2px rgba(34,185,110,0.25)' : '';
     const typeLine = `<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px"><span style="font-size:11px;font-weight:900;color:${color};text-transform:uppercase;letter-spacing:0.5px">${esc(a.activity_type)}</span></div>`;
-    const metaLine = `<div style="font-size:10px;color:var(--muted);margin-top:6px">${esc(a.source||'System')} · ${a.created_by?esc(a.created_by)+' · ':''}${esc((a.created_ts||'').slice(0,16))}</div>`;
+    const metaLine = `<div style="font-size:10px;color:var(--muted);margin-top:6px">${esc(a.source||'System')} · ${a.created_by?esc(a.created_by)+' · ':''}${esc(fmtTS(a.created_ts))}</div>`;
 
     if(a.activity_type === 'Capacity Conflict'){
       // Rich layout: parse item names from new_value, severity from message
@@ -9550,7 +9572,7 @@ function renderAcHistory(){
         const diff = renderAcHistoryDiff(a);
         const action = a.action_taken || a.message || '-';
         return `<tr style="border-bottom:1px solid var(--border)">
-          <td style="padding:6px 10px;white-space:nowrap;color:var(--muted);vertical-align:top">${(a.created_ts||'').slice(0,10)}</td>
+          <td style="padding:6px 10px;white-space:nowrap;color:var(--muted);vertical-align:top">${fmtTSDate(a.created_ts)}</td>
           <td style="padding:6px 10px;white-space:nowrap;vertical-align:top"><span style="color:${AC_STATUS_COLOR[a.activity_type]||'#888'};font-weight:700">${esc(a.activity_type)}</span></td>
           <td style="padding:6px 10px;font-weight:700;vertical-align:top">${esc(a.item_name||'-')}</td>
           <td style="padding:6px 10px;color:var(--muted);vertical-align:top;white-space:nowrap">${esc(a.owner||'-')}</td>
@@ -9653,7 +9675,7 @@ function openDueDateApproval(actId){
           <div style="font-size:14px;font-weight:700;color:var(--accent)">${fmtD(parseD(a.new_value))||'None'}</div></div>
       </div>
       ${a.note?`<div style="margin-top:10px;padding:8px 12px;background:var(--surface);border-radius:6px;font-size:12px;color:var(--muted)"><strong>Reason:</strong> ${esc(a.note)}</div>`:''}
-      <div style="margin-top:8px;font-size:11px;color:var(--muted)">Requested by <strong>${esc(a.created_by||'-')}</strong> on ${esc((a.created_ts||'').slice(0,16))}</div>
+      <div style="margin-top:8px;font-size:11px;color:var(--muted)">Requested by <strong>${esc(a.created_by||'-')}</strong> on ${esc(fmtTS(a.created_ts))}</div>
     </div>`;
   document.getElementById('rejectionNoteRow').style.display = 'none';
   document.getElementById('approveDueDateBtn').style.display = isAdmin ? '' : 'none';
@@ -14019,7 +14041,7 @@ function openPlanningSessions(){
       return `<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:14px">
         <div style="background:var(--surface);padding:10px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
           <span style="font-size:13px;font-weight:900;flex:1">${esc(s.name)}</span>
-          <span style="font-size:11px;color:var(--muted)">${(s.committedAt||'').slice(0,16)} UTC</span>
+          <span style="font-size:11px;color:var(--muted)">${fmtTS(s.committedAt)}</span>
           <span style="font-size:11px;color:var(--muted);background:rgba(0,0,0,0.05);padding:1px 7px;border-radius:8px">${s.changes?.length||0} changes</span>
         </div>
         ${changeRows ? `<table style="width:100%;border-collapse:collapse">
@@ -14243,7 +14265,7 @@ async function loadComments(itemId){
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
           <span style="font-size:11px;font-weight:700;color:var(--accent)">${esc(c.author)}</span>
           <span style="display:flex;align-items:center;gap:6px">
-            <span style="font-size:10px;color:var(--muted)">${(c.created_ts||'').slice(0,16)}</span>
+            <span style="font-size:10px;color:var(--muted)">${fmtTS(c.created_ts)}</span>
             ${c.author === getUsername() || isAdmin
               ? `<button onclick="deleteComment(${c.id})" style="background:none;border:none;cursor:pointer;color:var(--accent2);padding:0;opacity:0.6"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>` : ''}
           </span>
@@ -15244,7 +15266,7 @@ function renderItemPageActivity(itemId){
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
           <span style="font-size:10px;font-weight:900;color:${color};text-transform:uppercase">${esc(a.activity_type)}</span>
-          <span style="font-size:10px;color:var(--muted);margin-left:auto">${(a.created_ts||'').slice(0,16)}</span>
+          <span style="font-size:10px;color:var(--muted);margin-left:auto">${fmtTS(a.created_ts)}</span>
         </div>
         <div style="font-size:12px;color:var(--text)">${esc(a.message||'')}</div>
         ${a.created_by?`<div style="font-size:10px;color:var(--muted);margin-top:2px">by ${esc(a.created_by)}</div>`:''}
@@ -15304,7 +15326,7 @@ async function renderItemPageComments(itemId){
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">
           <span style="font-size:12px;font-weight:700;color:var(--accent)">${esc(c.author)}</span>
           <span style="display:flex;align-items:center;gap:8px">
-            <span style="font-size:10px;color:var(--muted)">${(c.created_ts||'').slice(0,16)}</span>
+            <span style="font-size:10px;color:var(--muted)">${fmtTS(c.created_ts)}</span>
             ${c.author===getUsername()||isAdmin
               ? `<button onclick="deleteItemPageComment(${c.id})" style="background:none;border:none;cursor:pointer;color:var(--accent2);opacity:0.6;padding:0">
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
@@ -15540,7 +15562,7 @@ async function openTeamSettingsTab(){
   if(intervalEl) intervalEl.value   = _jiraSyncConfig.intervalMinutes || 30;
   if(statusEl){
     statusEl.textContent = _jiraSyncLastRun
-      ? `Last background sync: ${_jiraSyncLastRun.slice(0,16)} UTC`
+      ? `Last background sync: ${fmtTS(_jiraSyncLastRun)}`
       : _jiraSyncConfig.enabled ? 'Sync enabled - not yet run' : 'Background sync disabled';
   }
   tsCheckConnection();
@@ -15809,7 +15831,7 @@ async function runManualPullSyncAll(){
   try {
     const r = await API.post('/api/jira/pull-all', {});
     _jiraSyncLastRun = new Date().toISOString();
-    if(statusEl) statusEl.textContent = `Done - ${r.synced} items checked, ${r.changes} updated, ${r.errors} errors · ${_jiraSyncLastRun.slice(0,16)} UTC`;
+    if(statusEl) statusEl.textContent = `Done - ${r.synced} items checked, ${r.changes} updated, ${r.errors} errors · ${fmtTS(_jiraSyncLastRun)}`;
     if(r.changes > 0){
       const data = await API.get('/api/all');
       projects = data.projects || projects;
@@ -16081,7 +16103,7 @@ async function loadItemPageJira(p){
   if(jiraCard) jiraCard.style.display = showJiraCard ? '' : 'none';
   if(!showJiraCard){ if(syncBtn) syncBtn.style.display='none'; renderJiraFeatureFlags(p); return; }
 
-  if(syncBtn && p.jiraLastSync) syncBtn.title = `Last synced: ${p.jiraLastSync.slice(0,16)} UTC`;
+  if(syncBtn && p.jiraLastSync) syncBtn.title = `Last synced: ${fmtTS(p.jiraLastSync)}`;
 
   if(!p.jiraTickets?.length){
     const canCreate = (isAdmin||isEditor) && jiraConfigured;
@@ -16215,7 +16237,7 @@ async function syncJiraFromItemPage(silent=false){
     projects     = data.projects || projects;
     const p      = projects.find(x=>x.id===_itemPageId);
     if(p){
-      if(syncBtn && p.jiraLastSync) syncBtn.title = `Last synced: ${p.jiraLastSync.slice(0,16)} UTC`;
+      if(syncBtn && p.jiraLastSync) syncBtn.title = `Last synced: ${fmtTS(p.jiraLastSync)}`;
       const cache  = p.jiraCache||{};
       const issues = p.jiraTickets.map(t=>cache[t]).filter(Boolean);
       const jiraEl = document.getElementById('ipJira');
@@ -23631,7 +23653,7 @@ if ('serviceWorker' in navigator) {
   function _frzExtRefRowHtml(r){
     r = r || {};
     var sys = _frzExtRefSys(r.system), kind = _frzExtRefKind(r.kind);
-    var when = r.at ? '<span style="color:var(--muted);font-size:11px">'+esc(String(r.at).replace('T',' ').slice(0,16))+'</span>' : '';
+    var when = r.at ? '<span style="color:var(--muted);font-size:11px">'+esc(fmtTS(r.at))+'</span>' : '';
     var head = '<span style="font-weight:700;color:var(--text)">'+esc(sys)+' '+esc(kind)+'</span>';
     var body;
     if(r.status==='linked'){
@@ -24835,7 +24857,7 @@ if ('serviceWorker' in navigator) {
         var rows=data.slice().sort(function(a,b){ return (b.id||0)-(a.id||0); });   // newest-first
         h.innerHTML=rows.map(function(c){
           return '<div class="frz-lp-cmt"><div class="frz-lp-cmt-hd"><span style="display:inline-flex;align-items:center;gap:7px">'+avatarHTML(c.author,20)+'<span class="frz-lp-cmt-author">'+esc(c.author)+'</span></span>'
-            + '<span class="frz-lp-cmt-ts">'+esc((c.created_ts||'').slice(0,16))+'</span></div>'
+            + '<span class="frz-lp-cmt-ts">'+esc(fmtTS(c.created_ts))+'</span></div>'
             + '<div class="frz-lp-cmt-body">'+(_call('_renderCommentBody', c.body)||'')+'</div></div>';
         }).join('');
         _frzRehydrateImagesIn(h, id);
@@ -24929,7 +24951,7 @@ if ('serviceWorker' in navigator) {
       ? '<button class="frz-cmt-del" title="Delete" onclick="deleteItemPageComment('+c.id+')">✕</button>' : '';
     return '<div class="frz-cmt'+(isReply?' frz-cmt-reply':'')+'">'
       + '<div class="frz-cmt-hd"><span style="display:inline-flex;align-items:center;gap:7px">'+avatarHTML(c.author,22)+'<span class="frz-cmt-author">'+esc(c.author)+'</span></span>'
-      + '<span class="frz-cmt-meta"><span class="frz-cmt-ts">'+esc((c.created_ts||'').slice(0,16))+'</span>'+del+'</span></div>'
+      + '<span class="frz-cmt-meta"><span class="frz-cmt-ts">'+esc(fmtTS(c.created_ts))+'</span>'+del+'</span></div>'
       + '<div class="frz-cmt-body">'+_call('_renderCommentBody', c.body)+'</div></div>';
   }
   // Threaded render: tops newest-first; replies (by root parent) chronological + nested.
@@ -25030,7 +25052,7 @@ if ('serviceWorker' in navigator) {
     function nameToId(name){ var sp=sprintByName(name); return sp?sp.id:name; }
     function openFor(name){ for(var k=hist.length-1;k>=0;k--){ if(_shName(hist[k].sprintId)===name && !hist[k].outcome) return hist[k]; } return null; }
     acts.forEach(function(a){
-      var m=a.message, ts=String(a.created_ts||'').slice(0,10);
+      var m=a.message, ts=fmtTSDate(a.created_ts);
       var mc=/^Sprint planning: (.+?) completed → (moved to (.+)|returned to backlog)$/.exec(m);
       if(mc){
         var fromName=mc[1], carried=!!mc[3];
@@ -25431,7 +25453,7 @@ if ('serviceWorker' in navigator) {
     var body = _notifs.length ? _notifs.map(function(n){
       return '<button class="frz-notif-row'+(n.read?'':' is-unread')+'" data-nid="'+n.id+'" data-nitem="'+(n.item_id||'')+'">'+
         '<span class="frz-notif-msg">'+esc(_notifMsg(n))+'</span>'+
-        '<span class="frz-notif-meta">'+esc(n.item_name||'')+(n.created_ts?(' · '+esc(String(n.created_ts).slice(0,10))):'')+'</span>'+
+        '<span class="frz-notif-meta">'+esc(n.item_name||'')+(n.created_ts?(' · '+esc(fmtTSDate(n.created_ts))):'')+'</span>'+
       '</button>';
     }).join('') : '<div class="frz-notif-empty">You’re all caught up.</div>';
     p.innerHTML=hd+'<div class="frz-notif-list">'+body+'</div>';
