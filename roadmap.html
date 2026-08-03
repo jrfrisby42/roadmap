@@ -18632,16 +18632,40 @@ if ('serviceWorker' in navigator) {
     var adminPage = document.createElement('div');
     adminPage.id = 'frzAdminPage'; adminPage.className = 'frz-adminpage'; adminPage.style.display = 'none';
     content.appendChild(adminPage);
+    // Phase 1 (true tabbed admin page): a beta-owned top tab bar over the Admin page -
+    // Configuration / Integrations / Views & Access. Re-parent (never rewrite) the classic
+    // admin box into the Configuration pane (its own internal tabs stay intact); the per-team
+    // settings sections render into the other two panes (renderTeamSettings). Reuses the
+    // .frz-plan-tabs visual. Tab state is in-memory (state.adminTab); admin-only (render gate).
+    var _admTabs = document.createElement('div');
+    _admTabs.className = 'frz-plan-tabs'; _admTabs.id = 'frzAdminTabs';
+    _admTabs.style.cssText = 'max-width:960px;margin:4px auto 14px;padding:0 8px';
+    _admTabs.setAttribute('role','tablist'); _admTabs.setAttribute('aria-label','Admin sections');
+    [['config','Configuration'],['integrations','Integrations'],['access','Views & Access']].forEach(function(t,i){
+      var b=document.createElement('button'); b.type='button';
+      b.className='frz-plan-tab'+(i===0?' is-active':'');
+      b.setAttribute('role','tab'); b.setAttribute('data-admtab',t[0]); b.textContent=t[1];
+      _admTabs.appendChild(b);
+    });
+    adminPage.appendChild(_admTabs);
+    var paneConfig=document.createElement('div'); paneConfig.id='frzAdminPane_config';
+    var paneIntegr=document.createElement('div'); paneIntegr.id='frzAdminPane_integrations'; paneIntegr.style.display='none';
+    var paneAccess=document.createElement('div'); paneAccess.id='frzAdminPane_access'; paneAccess.style.display='none';
+    adminPage.appendChild(paneConfig); adminPage.appendChild(paneIntegr); adminPage.appendChild(paneAccess);
     var _adminBox = document.querySelector('#adminModalBg .admin-modal');
-    if (_adminBox) adminPage.appendChild(_adminBox);   // move (not copy) - tab listeners are on the same nodes
-    // Team Admin: a per-team settings panel below the classic admin box - the AssetHub mapping
-    // editor, the connection-health check (moved here from the FLOW-0 standalone widget), and
-    // per-team view visibility toggles. Rebuilt by renderTeamSettings() each time the Admin page is
-    // shown (setAdmin), so it always reflects current config. Admin-only (gated inside the render).
-    var tsBox = document.createElement('div');
-    tsBox.id = 'frzTeamSettings';
-    tsBox.style.cssText = 'max-width:760px;margin:16px auto 40px';
-    adminPage.appendChild(tsBox);
+    if (_adminBox) paneConfig.appendChild(_adminBox);   // move (not copy) - tab listeners stay on the same nodes
+    // Per-team settings hosts (rendered by renderTeamSettings): Integrations = AssetHub + Jira;
+    // Access = view visibility (and, next, the capability tree). Wired via _frzWireTeamSettings.
+    var tsI=document.createElement('div'); tsI.id='frzTeamIntegrations'; tsI.style.cssText='max-width:760px;margin:16px auto 40px'; paneIntegr.appendChild(tsI);
+    var tsA=document.createElement('div'); tsA.id='frzTeamAccess'; tsA.style.cssText='max-width:760px;margin:16px auto 40px'; paneAccess.appendChild(tsA);
+    _admTabs.addEventListener('click', function(e){
+      var b=e.target.closest('[data-admtab]'); if(!b) return;
+      var t=b.getAttribute('data-admtab'); state.adminTab=t;
+      [].slice.call(_admTabs.querySelectorAll('.frz-plan-tab')).forEach(function(x){ x.classList.toggle('is-active', x.getAttribute('data-admtab')===t); });
+      paneConfig.style.display = t==='config' ? '' : 'none';
+      paneIntegr.style.display = t==='integrations' ? '' : 'none';
+      paneAccess.style.display = t==='access' ? '' : 'none';
+    });
     // Team Calendar (Phase 2): Flow-owned view, Month/Week/Timeline sub-tabs.
     var cal = document.createElement('div');
     cal.id = 'frzCalendar'; cal.style.display = 'none';
@@ -20640,7 +20664,8 @@ if ('serviceWorker' in navigator) {
   function _tsCardHead(title, btnHtml){
     return '<div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between">'+esc(title)+(btnHtml||'')+'</div>';
   }
-  function _frzTeamSettingsHtml(){
+  // Integrations tab: AssetHub mapping/health + the Jira gate.
+  function _tsIntegrationsHtml(){
     var conn = _val('assethubConnection', {}) || {};
     var mappingPresent = !!(conn && Object.keys(conn).length);
     var credPresent = _val('assethubCredentialPresent', false);
@@ -20673,24 +20698,10 @@ if ('serviceWorker' in navigator) {
         + '<div style="font-size:11px;color:var(--muted)">The credential is never entered here. It lives in the server .env as ASSETHUB_API_KEY_'+esc(team)+'. Clearing both fields removes the mapping.</div>'
         + '<div id="frzAhResult" style="font-size:13px;color:var(--text)"></div>'
       + '</div></div>';
-    // View visibility card: a checkbox per toggleable view. admin + My Home are always on.
-    var ev = _val('enabledViews', null);
-    var rows = _TOGGLEABLE_VIEWS.map(function(v){
-      var on = !Array.isArray(ev) || ev.indexOf(v)>=0;
-      return '<label style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:13px;color:var(--text)">'
-        + '<input type="checkbox" class="ts-view" data-view="'+escA(v)+'"'+(on?' checked':'')+'>'
-        + esc(VIEW_LABEL[v]||v)+'</label>';
-    }).join('');
-    var vv = '<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">'
-      + _tsCardHead('View visibility', '<button type="button" id="tsViewsSave" '+btn+'>Save views</button>')
-      + '<div style="padding:14px 16px;font-size:13px;color:var(--text)">'
-        + '<div style="color:var(--muted);font-size:12px;margin-bottom:8px">Which views this team sees. My Home and Admin are always available.</div>'
-        + rows
-      + '</div></div>';
     // Jira integration gate: reuses the EXISTING per-team jiraEnabled flag (already ANDed into
     // jiraConfigured, which gates all 29 Jira UI sites) - surfaced here as the "permitted to use
     // Jira" toggle rather than adding a redundant parallel flag. Layered on jiraConfigured, never
-    // a replacement. UI-level gate (deferred-API caveat below), same shape as view visibility.
+    // a replacement. UI-level gate (deferred-API caveat), same shape as view visibility.
     var jiraOn = _val('jiraFeatureEnabled', true);
     var jira = '<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:18px">'
       + _tsCardHead('Jira integration')
@@ -20698,7 +20709,25 @@ if ('serviceWorker' in navigator) {
         + '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="tsJiraGate"'+(jiraOn?' checked':'')+'> Allow this team to use the Jira integration</label>'
         + '<div style="color:var(--muted);font-size:12px;margin-top:8px">When off, the Jira UI is hidden for this team even when Jira is configured. This gate is UI-level - the underlying Jira endpoints and sync are not gated by it (acceptable for internal use; must be closed before it is a commercial entitlement boundary).</div>'
       + '</div></div>';
-    return ah + jira + vv;
+    return ah + jira;
+  }
+  // Views & Access tab: view visibility (the capability tree lands here next - see
+  // design/team-admin-and-capabilities-plan.md).
+  function _tsAccessHtml(){
+    var btn = 'style="height:24px;border:1px solid var(--frz-border-strong);background:var(--frz-bg-surface);color:var(--frz-accent);font-weight:700;font-size:12px;border-radius:7px;padding:0 12px;cursor:pointer"';
+    var ev = _val('enabledViews', null);
+    var rows = _TOGGLEABLE_VIEWS.map(function(v){
+      var on = !Array.isArray(ev) || ev.indexOf(v)>=0;
+      return '<label style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:13px;color:var(--text)">'
+        + '<input type="checkbox" class="ts-view" data-view="'+escA(v)+'"'+(on?' checked':'')+'>'
+        + esc(VIEW_LABEL[v]||v)+'</label>';
+    }).join('');
+    return '<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">'
+      + _tsCardHead('View visibility', '<button type="button" id="tsViewsSave" '+btn+'>Save views</button>')
+      + '<div style="padding:14px 16px;font-size:13px;color:var(--text)">'
+        + '<div style="color:var(--muted);font-size:12px;margin-bottom:8px">Which views this team sees. My Home and Admin are always available.</div>'
+        + rows
+      + '</div></div>';
   }
   function _frzWireTeamSettings(host){
     var save=host.querySelector('#tsAhSave');
@@ -20731,10 +20760,13 @@ if ('serviceWorker' in navigator) {
     });
   }
   function renderTeamSettings(){
-    var host=document.getElementById('frzTeamSettings'); if(!host) return;
-    if(!_val('isAdmin', false)){ host.innerHTML=''; return; }   // team settings are admin-only
-    host.innerHTML = _frzTeamSettingsHtml();
-    _frzWireTeamSettings(host);
+    var integ=document.getElementById('frzTeamIntegrations'), acc=document.getElementById('frzTeamAccess');
+    if(!integ && !acc) return;
+    if(!_val('isAdmin', false)){ if(integ) integ.innerHTML=''; if(acc) acc.innerHTML=''; return; }   // team settings are admin-only
+    if(integ) integ.innerHTML = _tsIntegrationsHtml();
+    if(acc)   acc.innerHTML   = _tsAccessHtml();
+    // Wire over the whole Admin page so the selectors find the controls in whichever pane they live.
+    var page=document.getElementById('frzAdminPage'); if(page) _frzWireTeamSettings(page);
   }
   // FLOW-0: AssetHub connection-health surface (admin page). One call per explicit press.
   function _frzAssetHubHealthCheck(){
