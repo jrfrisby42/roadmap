@@ -2173,7 +2173,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.11.2';
+const APP_VERSION = '5.11.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2677,6 +2677,8 @@ let assethubBaseUrl = '';       // FLOW-1 item B: AssetHub host (non-secret) for
 let assethubConnection = {};    // Team Admin: the AssetHub mapping ({providerEnvironment, assethubTeam}). Non-secret.
 let assethubCredentialPresent = false;   // Team Admin: whether a .env credential exists for this team (presence bool, never the key).
 let enabledViews = null;        // Team Admin: per-team view allowlist (null = all enabled). admin + my-home always on.
+let slackNotify = {};           // Team Admin (Slack): {enabled, types}. Default {} = OFF. Webhook URL is server-side only.
+let slackWebhookPresent = false;// Team Admin (Slack): whether a SLACK_WEBHOOK_<TEAM> .env value exists (presence bool, never the URL).
 let jiraFeatureEnabled = true;  // Team Admin (Jira gate): the per-team jiraEnabled flag. Already ANDed into jiraConfigured at boot; surfaced here for the admin toggle. Default true = unchanged for configured teams.
 let intakeProjects = [];        // which Projects (products) the portal offers (empty = all). (config)
 let intakeNotifyEmail = '';     // team inbox that gets a copy of each portal ticket. (config)
@@ -7343,6 +7345,8 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       assethubConnection = (data.assethubConnection && typeof data.assethubConnection==='object') ? data.assethubConnection : {};   // Team Admin
       assethubCredentialPresent = data.assethubCredentialPresent === true;
       enabledViews = Array.isArray(data.enabledViews) ? data.enabledViews : null;   // null = all enabled
+      slackNotify = (data.slackNotify && typeof data.slackNotify==='object') ? data.slackNotify : {};   // Team Admin (Slack)
+      slackWebhookPresent = data.slackWebhookPresent === true;
       intakeProjects = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];
       intakeNotifyEmail = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : '';
       intakeTypes   = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];
@@ -16403,6 +16407,8 @@ async function boot(){
     assethubConnection    = (data.assethubConnection && typeof data.assethubConnection==='object') ? data.assethubConnection : {};   // Team Admin
     assethubCredentialPresent = data.assethubCredentialPresent === true;                              // Team Admin: which-half-missing
     enabledViews          = Array.isArray(data.enabledViews) ? data.enabledViews : null;              // Team Admin: view allowlist (null = all)
+    slackNotify           = (data.slackNotify && typeof data.slackNotify==='object') ? data.slackNotify : {};   // Team Admin (Slack)
+    slackWebhookPresent   = data.slackWebhookPresent === true;                                        // Team Admin (Slack): presence bool
     intakeProjects        = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];            // offered Projects (empty = all)
     intakeTypes           = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];                  // offered Types (empty = all)
     intakeNotifyEmail     = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : ''; // team inbox copy
@@ -20709,7 +20715,28 @@ if ('serviceWorker' in navigator) {
         + '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="tsJiraGate"'+(jiraOn?' checked':'')+'> Allow this team to use the Jira integration</label>'
         + '<div style="color:var(--muted);font-size:12px;margin-top:8px">When off, the Jira UI is hidden for this team even when Jira is configured. This gate is UI-level - the underlying Jira endpoints and sync are not gated by it (acceptable for internal use; must be closed before it is a commercial entitlement boundary).</div>'
       + '</div></div>';
-    return ah + jira;
+    // Slack notifications card (Tier 1: channel Incoming Webhook). The webhook URL is a secret and
+    // lives in .env (SLACK_WEBHOOK_<TEAM>) - only its presence is shown here, never the URL.
+    var slk = _val('slackNotify', {}) || {};
+    var slackEnabled = !!slk.enabled;
+    var slackHasHook = _val('slackWebhookPresent', false);
+    var effTypes = Array.isArray(slk.types) ? slk.types : ['mention','assigned','reply','watch_status','watch_comment'];
+    var slackState = slackHasHook
+      ? '<span style="color:#1f9d55;font-weight:700">Webhook present</span>'
+      : '<span style="color:#d9822b;font-weight:700">No webhook</span> <span style="color:var(--muted)">- add SLACK_WEBHOOK_'+esc(team)+' to .env on the server, then restart</span>';
+    var slackTypeRows = [['mention','Mentions'],['assigned','Assignments'],['reply','Comment replies'],['watch_status','Status changes (watched)'],['watch_comment','Comments (watched)']].map(function(t){
+      return '<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin-right:14px;margin-bottom:4px"><input type="checkbox" class="ts-slack-type" data-stype="'+t[0]+'"'+(effTypes.indexOf(t[0])>=0?' checked':'')+'>'+esc(t[1])+'</label>';
+    }).join('');
+    var slack = '<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden">'
+      + _tsCardHead('Slack notifications', '<button type="button" id="tsSlackSave" '+btn+'>Save Slack settings</button>')
+      + '<div style="padding:14px 16px;font-size:13px;color:var(--text);display:flex;flex-direction:column;gap:12px">'
+        + '<div>'+slackState+'</div>'
+        + '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="tsSlackEnabled"'+(slackEnabled?' checked':'')+'> Post notifications to Slack</label>'
+        + '<div><div style="color:var(--muted);font-size:12px;margin-bottom:6px">Which events post to the channel:</div>'+slackTypeRows+'</div>'
+        + '<div style="display:flex;gap:10px;align-items:center"><button type="button" id="tsSlackTest" '+btn+'>Send test message</button><span id="tsSlackTestResult" style="font-size:12px;color:var(--muted)"></span></div>'
+        + '<div style="font-size:11px;color:var(--muted)">The webhook URL is a secret and is never entered here. Create an Incoming Webhook in your Slack workspace and add its URL to the server .env as SLACK_WEBHOOK_'+esc(team)+'.</div>'
+      + '</div></div>';
+    return ah + jira + slack;
   }
   // Views & Access tab: view visibility (the capability tree lands here next - see
   // design/team-admin-and-capabilities-plan.md).
@@ -20757,6 +20784,21 @@ if ('serviceWorker' in navigator) {
         enabledViews = picked; _call('showToast','View visibility saved','success');
         renderRail(); renderTeamSettings();
       }).catch(function(e){ _call('showToast', (e&&e.message)||'Save failed'); });
+    });
+    var ssave=host.querySelector('#tsSlackSave');
+    if(ssave) ssave.addEventListener('click', function(){
+      var enabled=!!host.querySelector('#tsSlackEnabled').checked;
+      var types=[].slice.call(host.querySelectorAll('.ts-slack-type')).filter(function(c){return c.checked;}).map(function(c){return c.getAttribute('data-stype');});
+      API.put('/api/config/slackNotify', {enabled:enabled, types:types}).then(function(){
+        slackNotify = {enabled:enabled, types:types}; _call('showToast','Slack settings saved','success'); renderTeamSettings();
+      }).catch(function(e){ _call('showToast', (e&&e.message)||'Save failed'); });
+    });
+    var stest=host.querySelector('#tsSlackTest');
+    if(stest) stest.addEventListener('click', function(){
+      var out=host.querySelector('#tsSlackTestResult'); if(out){ out.textContent='Sending...'; out.style.color='var(--muted)'; }
+      API.post('/api/slack/test', {}).then(function(){ if(out){ out.textContent='Sent - check your Slack channel.'; out.style.color='#1f9d55'; } })
+        .catch(function(e){ var m=(e&&e.message)||'Failed'; try{ var j=JSON.parse(m); if(j&&j.detail) m=j.detail; }catch(_){}
+          if(out){ out.textContent=m; out.style.color='#e8394a'; } });
     });
   }
   function renderTeamSettings(){
