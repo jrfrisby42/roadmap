@@ -17,6 +17,7 @@ Jira integration:
 """
 
 import json, os, re, sqlite3, base64, time, hashlib, hmac, sys, html, logging, secrets
+import threading
 from html.parser import HTMLParser
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -1044,11 +1045,12 @@ def _migrate_config_keys(team: str):
         "assethubConnection": {},          # AssetHub outbound mapping (FLOW-0): see init_team_db defaults; credential lives in .env
         "assethubServiceTypeMapping": {"Maintenance": "Maintenance"},  # WRITE-1b service_type mapping; presence-only
         "enabledViews": None,              # Team Admin: per-team view allowlist (null = all enabled); see init_team_db defaults
+        "slackNotify": {},                 # Slack notifications (Tier 1): {enabled, types}; default OFF. Webhook URL lives in .env (SLACK_WEBHOOK_<TEAM>)
     }
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
     # an admin who deletes all types isn't re-seeded on next boot.)
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -3068,6 +3070,8 @@ def get_all(auth: dict = Depends(require_auth)):
             "assethubCredentialPresent": bool(_assethub_api_key(team)),   # Team Admin: presence bool (NOT the key) so the page can say WHICH half is missing
             "assethubBaseUrl": ASSETHUB_BASE_URL,   # FLOW-1 item B: non-secret host for the asset-tag deep link (credential stays in .env)
             "enabledViews": cfg_map.get("enabledViews"),   # Team Admin: per-team view allowlist (null = all enabled)
+            "slackNotify": cfg_map.get("slackNotify") or {},   # Slack notifications (non-secret {enabled,types})
+            "slackWebhookPresent": bool(_slack_webhook(team)),   # presence bool only - NEVER the webhook URL
             # PHASE B2: minimal read-only stubs for out-of-scope items a Contributor's own items
             # reference (parent / requires). Empty for admin/editor/viewer.
             "relatedStubs": related_stubs}
@@ -4285,7 +4289,8 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow",
               "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains","departmentMeta","maintenanceDutyTypeId",
-              "externalRequestCategories","assethubConnection","assethubServiceTypeMapping","enabledViews"}
+              "externalRequestCategories","assethubConnection","assethubServiceTypeMapping","enabledViews",
+              "slackNotify"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",
@@ -4974,6 +4979,54 @@ def _team_usernames(team: str) -> set:
     except Exception:
         return set()
 
+# ── Slack notifications (Tier 1: channel Incoming Webhook) ────────────────────
+_SLACK_DEFAULT_TYPES = ["mention", "assigned", "reply", "watch_status", "watch_comment"]
+
+def _slack_webhook(team: str) -> str:
+    """Per-team Slack Incoming Webhook URL from .env: SLACK_WEBHOOK_<TEAM> (slug uppercased,
+    non-alphanumerics stripped). Absent = the team has no Slack integration (a NORMAL condition).
+    The URL is a bearer capability (a secret) - NEVER read into team config or returned by
+    /api/all, only the outbound dispatch reads it, and it is never logged."""
+    slug = re.sub(r"[^A-Za-z0-9]", "", (team or "")).upper()
+    return os.environ.get("SLACK_WEBHOOK_" + slug, "").strip() if slug else ""
+
+def _slack_esc(s) -> str:
+    # Slack mrkdwn: escape only &, <, > in dynamic text (per Slack's guidance).
+    return str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+def _slack_dispatch(team, ntype, item_id, item_name, message, actor):
+    """Best-effort, NON-BLOCKING: post one Slack message per notification event to the team's
+    channel webhook. Fired once per _notify (only when there is >=1 in-app recipient, so self-only
+    actions never post). Gated by SLACK_WEBHOOK_<TEAM> present AND slackNotify.enabled AND ntype in
+    the configured type allowlist. Default OFF -> fully inert. Runs the HTTP POST on a daemon thread
+    so it adds no latency to the request; a failure is logged and NEVER affects the in-app insert or
+    the triggering mutation."""
+    try:
+        url = _slack_webhook(team)
+        if not url:
+            return
+        cfg = _cfg_val(team, "slackNotify", {}) or {}
+        if not cfg.get("enabled"):
+            return
+        types = cfg.get("types") or _SLACK_DEFAULT_TYPES
+        if ntype not in types:
+            return
+        link = f"{APP_BASE_URL}/item/{item_id}" if item_id else APP_BASE_URL
+        text = "*" + _slack_esc(item_name or "Item") + "*: " + _slack_esc(message or "")
+        if item_id:
+            text += "  <" + link + "|open>"
+        payload = json.dumps({"text": text}).encode("utf-8")
+        def _post():
+            try:
+                req = Request(url, data=payload, method="POST",
+                              headers={"Content-Type": "application/json"})
+                urlopen(req, timeout=6)
+            except Exception as e:
+                log.warning(f"[Slack] post failed for team {team}: {e}")
+        threading.Thread(target=_post, daemon=True).start()
+    except Exception as e:
+        log.warning(f"[Slack] dispatch prep failed for team {team}: {e}")
+
 def _notify(team, recipients, ntype, item_id, item_name, message, actor):
     """Insert one notification per recipient, de-duped and excluding the actor."""
     recips = [r for r in dict.fromkeys(recipients or []) if r and r != actor]
@@ -4984,6 +5037,8 @@ def _notify(team, recipients, ntype, item_id, item_name, message, actor):
         for r in recips:
             c.execute("INSERT INTO notifications(username,type,item_id,item_name,message,actor,created_ts,read)"
                       " VALUES(?,?,?,?,?,?,?,0)", (r, ntype, item_id, item_name or "", message, actor or "", ts))
+    # Outbound Slack (best-effort, non-blocking, once per event; inert unless configured + enabled).
+    _slack_dispatch(team, ntype, item_id, item_name, message, actor)
 
 def _get_watchers(team, item_id) -> set:
     with db(team) as c:
@@ -5141,6 +5196,23 @@ def mark_notifications_read(body: dict = Body({}), auth: dict = Depends(require_
             c.execute("UPDATE notifications SET read=1 WHERE id=? AND username=?", (body.get("id"), me))
         unread = c.execute("SELECT COUNT(*) FROM notifications WHERE username=? AND read=0", (me,)).fetchone()[0]
     return {"unread": unread}
+
+@app.post("/api/slack/test")
+def slack_test(auth: dict = Depends(require_role("admin"))):
+    """Admin-only: post a synchronous test message to the team's Slack webhook so the admin card
+    gives immediate feedback. Does not require slackNotify.enabled (it is a connectivity test)."""
+    team = auth["team"]
+    url = _slack_webhook(team)
+    if not url:
+        raise HTTPException(400, "No Slack webhook configured. Add SLACK_WEBHOOK_<TEAM> to .env on the server, then restart.")
+    payload = json.dumps({"text": f"Flow test message for *{_slack_esc(team)}* - Slack notifications are wired up."}).encode("utf-8")
+    try:
+        req = Request(url, data=payload, method="POST", headers={"Content-Type": "application/json"})
+        urlopen(req, timeout=8)
+    except Exception as e:
+        raise HTTPException(502, f"Slack post failed: {e}")
+    write_audit(team, "slack:test", auth["username"])
+    return {"ok": True}
 
 @app.get("/api/items/{pid}/watchers")
 def get_item_watchers(pid: int, auth: dict = Depends(require_auth)):
