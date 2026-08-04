@@ -2191,7 +2191,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.15.2';
+const APP_VERSION = '5.15.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -19061,9 +19061,7 @@ if ('serviceWorker' in navigator) {
       b.title = VIEW_LABEL[v];
       var icon = (v==='team-calendar') ? IC.teamCalendar : IC[v];
       var c = (v==='team-calendar' || v==='reports') ? null : viewCount(v);   // Calendar + Reports carry no count pill
-      var fdot = (function(){ try { return anyActive(v); } catch(e){ return false; } })()   // visual cue: a filter is active for this view (shared chips; owner travels, so it lights the filtered views)
-        ? '<span class="frz-item-fdot" title="A filter is active"></span>' : '';
-      b.innerHTML = icon + '<span>'+VIEW_LABEL[v]+'</span>' + fdot + (c!=null ? '<span class="frz-count">'+c+'</span>' : '');
+      b.innerHTML = icon + '<span>'+VIEW_LABEL[v]+'</span>' + (c!=null ? '<span class="frz-count">'+c+'</span>' : '');
       nav.appendChild(b);
     });
     // projects
@@ -19206,8 +19204,10 @@ if ('serviceWorker' in navigator) {
     state.saved.forEach(function(s){
       var b = document.createElement('button');
       b.className='frz-item'; b.setAttribute('data-saved', s.id); b.title = s.name;
-      b.setAttribute('aria-current', String(!!(active && active.id===s.id)));   // same weight as view/project
-      b.innerHTML = IC.flag + '<span>'+esc(s.name)+'</span><button class="frz-rowmenu" data-savedmenu="'+s.id+'" title="Rename or delete">…</button>';
+      var _on = !!(active && active.id===s.id);
+      b.setAttribute('aria-current', String(_on));   // same weight as view/project
+      // Dot on the ACTIVE saved filter so you can see at a glance which one is applied (it scopes every view).
+      b.innerHTML = IC.flag + '<span>'+esc(s.name)+'</span>' + (_on ? '<span class="frz-item-fdot" title="Active filter (applied to all views)"></span>' : '') + '<button class="frz-rowmenu" data-savedmenu="'+s.id+'" title="Rename or delete">…</button>';
       sn.appendChild(b);
     });
   }
@@ -21570,9 +21570,18 @@ if ('serviceWorker' in navigator) {
   // is automatic). Cheap + null-tolerant (syncURL can run pre-render).
   function _frzRefreshActiveSaved(){
     var active=_frzActiveSaved();   // computed once (also clears a diverged anchor)
+    // Fall back to a URL-match when nothing is anchored, so a saved filter applied by CLICK (which
+    // goes through navigate, not the cold-load routeFromLocation seed) is still detected as active -
+    // the URL always encodes the applied filter. _frzSeedActiveFromURL picks the single most-specific
+    // match (a tie -> none), so it never spuriously promotes an unrelated filter.
+    if(!active){ _frzSeedActiveFromURL(); active=_frzActiveSaved(); }
     var sn=document.getElementById('frzSavedNav');
     if(sn){ [].slice.call(sn.querySelectorAll('.frz-item[data-saved]')).forEach(function(b){
-      b.setAttribute('aria-current', String(!!(active && active.id===b.getAttribute('data-saved'))));   // reuses .frz-item[aria-current] weight
+      var on=!!(active && active.id===b.getAttribute('data-saved'));
+      b.setAttribute('aria-current', String(on));   // reuses .frz-item[aria-current] weight
+      var dot=b.querySelector('.frz-item-fdot');     // keep the active-filter dot in sync live (not just on full renderSavedNav)
+      if(on && !dot){ var d=document.createElement('span'); d.className='frz-item-fdot'; d.title='Active filter (applied to all views)'; b.insertBefore(d, b.querySelector('.frz-rowmenu')); }
+      else if(!on && dot){ dot.remove(); }
     }); }
     if(!state.onItem){ var c=document.querySelector('#frzLeft .frz-crumbs'); if(c) c.textContent=_frzCrumbText(); }
     var tv=document.querySelector('#frzFilterBar .frz-topview');
