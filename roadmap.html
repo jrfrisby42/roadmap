@@ -17071,6 +17071,8 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-item svg { width:16px; height:16px; flex-shrink:0; }
   .frz-beta .frz-item .frz-count { margin-left:auto; font-size:11.5px; font-weight:600; color:var(--frz-text-muted); background:#E7EEF5; border-radius:999px; padding:1px 7px; }
   .frz-beta .frz-item[aria-current="true"] .frz-count { background:#D2E5F6; color:var(--frz-accent); }
+  .frz-beta .frz-item .frz-item-fdot { margin-left:auto; width:7px; height:7px; border-radius:50%; background:var(--frz-accent); flex:0 0 auto; }   /* active-filter cue */
+  .frz-beta .frz-item .frz-item-fdot + .frz-count { margin-left:8px; }   /* when both show, the count sits just after the dot (dot takes the auto-margin) */
   .frz-beta .frz-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
   .frz-beta .frz-item .frz-rowmenu { margin-left:auto; opacity:0; border:0; background:none; cursor:pointer; color:var(--frz-text-muted); font-size:15px; line-height:1; padding:0 4px; }
   .frz-beta .frz-item:hover .frz-rowmenu { opacity:1; }
@@ -18636,7 +18638,21 @@ if ('serviceWorker' in navigator) {
   function uname(){ return _val('currentUser','') || (function(){ try { return localStorage.getItem('frazil_rm_user')||''; } catch(e){ return ''; } })(); }
   function ls(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
   function lset(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
-  function savedKey(){ return 'frazil_beta_saved_filters_' + uname(); }
+  function _teamSlug(){ try { return (localStorage.getItem('frazil_rm_team')||'').trim(); } catch(e){ return ''; } }
+  // Saved filters are per (team, user) - keying by user alone leaked one team's filters (which
+  // reference that team's owners) into every other team. One-time migration: if the new per-team
+  // key is empty but the legacy user-only key has entries, adopt them for the CURRENT team (best
+  // effort - the legacy key wasn't team-tagged, so they land on whichever team is active first).
+  function savedKey(){ return 'frazil_beta_saved_filters_' + _teamSlug() + '_' + uname(); }
+  function _migrateSavedKey(){
+    try {
+      var lk='frazil_beta_saved_filters_' + uname();              // legacy user-only key (shared across teams)
+      var legacy=ls(lk); if(legacy==null) return;                 // nothing legacy -> already migrated / none
+      var nk=savedKey();
+      if(!ls(nk) && legacy!=='[]') lset(nk, legacy);              // adopt for the FIRST team loaded post-upgrade
+      localStorage.removeItem(lk);                                // remove the shared legacy key so OTHER teams don't also adopt it (no re-leak)
+    } catch(e){}
+  }
   function railKey(){ return 'frazil_beta_rail_' + uname(); }      // 'c' | 'e' | (absent = auto)
   function projKey(){ return 'frazil_beta_project_' + uname(); }
 
@@ -19045,7 +19061,9 @@ if ('serviceWorker' in navigator) {
       b.title = VIEW_LABEL[v];
       var icon = (v==='team-calendar') ? IC.teamCalendar : IC[v];
       var c = (v==='team-calendar' || v==='reports') ? null : viewCount(v);   // Calendar + Reports carry no count pill
-      b.innerHTML = icon + '<span>'+VIEW_LABEL[v]+'</span>' + (c!=null ? '<span class="frz-count">'+c+'</span>' : '');
+      var fdot = (function(){ try { return anyActive(v); } catch(e){ return false; } })()   // visual cue: a filter is active for this view (shared chips; owner travels, so it lights the filtered views)
+        ? '<span class="frz-item-fdot" title="A filter is active"></span>' : '';
+      b.innerHTML = icon + '<span>'+VIEW_LABEL[v]+'</span>' + fdot + (c!=null ? '<span class="frz-count">'+c+'</span>' : '');
       nav.appendChild(b);
     });
     // projects
@@ -20159,7 +20177,7 @@ if ('serviceWorker' in navigator) {
         '" title="'+escA(_calCapBreakdown(owner,ds))+'">'+_calFmt(eff)+'/'+_calFmt(base)+'</div>';
     }).join('');
   }
-  var _calFilterOpts={}, _calMenuEl=null;
+  var _calFilterOpts={}, _calMenuEl=null, _calSuppressClose=false;   // suppress = keep the multi-select owner menu open while re-rendering
   function _calCloseFilterMenu(){
     if(!_calMenuEl) return;
     _calMenuEl.remove(); _calMenuEl=null;
@@ -20178,8 +20196,30 @@ if ('serviceWorker' in navigator) {
     var _n=document.getElementById('frzNotif'); if(_n) _n.hidden=true;
     var _am=document.getElementById('frzAcctMenu'); if(_am) _am.hidden=true;
     var f=_calFilterState();
-    var opts=[{v:'',t:'All'}].concat(_calFilterOpts[key]||[]);
     var m=document.createElement('div'); m.className='frz-cal-menu'; m.setAttribute('data-for', key);
+    if(key==='owner'){
+      // Owner = the SHARED multi-select Devs filter (checkboxes, stays open; writes the shared
+      // owner panel so the selection matches every other view and persists on navigation).
+      var _devs=(_val('developers',[])||[]);
+      var _cur=(typeof getSelectedDevs==='function'?getSelectedDevs():null)||[], _curSet={}; _cur.forEach(function(o){ _curSet[o]=1; });
+      m.innerHTML='<div class="frz-cal-menu-item'+(_cur.length?'':' is-sel')+'" data-own-all="1">All</div>'+
+        _devs.map(function(o){ return '<label class="frz-cal-menu-item" style="display:flex;align-items:center;gap:7px;cursor:pointer"><input type="checkbox" data-own="'+escA(o)+'"'+(_curSet[o]?' checked':'')+'>'+esc(o)+'</label>'; }).join('');
+      root.appendChild(m);
+      var ro=anchor.getBoundingClientRect();
+      m.style.top=(ro.bottom+4)+'px'; m.style.left=ro.left+'px'; m.style.minWidth=Math.max(ro.width,170)+'px';
+      var mro=m.getBoundingClientRect(); if(mro.right>window.innerWidth-8) m.style.left=Math.max(8, window.innerWidth-8-mro.width)+'px';
+      function _calApplyOwner(){
+        var arr=[].slice.call(m.querySelectorAll('input[data-own]')).filter(function(c){ return c.checked; }).map(function(c){ return c.getAttribute('data-own'); });
+        applyPanel(CHIPS.owner.panel, arr.length?arr:null);   // shared panel -> getSelectedDevs
+        _calSuppressClose=true; renderCalendar(); syncURL(true); renderRail(); _calSuppressClose=false;   // re-render body + chip label + rail cue, keep this menu open
+      }
+      m.querySelector('[data-own-all]').addEventListener('click', function(){ applyPanel(CHIPS.owner.panel, null); _calSuppressClose=true; renderCalendar(); syncURL(true); renderRail(); _calSuppressClose=false; _calCloseFilterMenu(); });
+      m.querySelectorAll('input[data-own]').forEach(function(cb){ cb.addEventListener('change', _calApplyOwner); });
+      _calMenuEl=m;
+      setTimeout(function(){ document.addEventListener('mousedown', _calMenuOutside, true); document.addEventListener('keydown', _calMenuKey, true); }, 0);
+      return;
+    }
+    var opts=[{v:'',t:'All'}].concat(_calFilterOpts[key]||[]);
     m.innerHTML=opts.map(function(o){
       return '<div class="frz-cal-menu-item'+(String(f[key]||'')===String(o.v)?' is-sel':'')+'" data-v="'+escA(o.v)+'">'+esc(o.t)+'</div>';
     }).join('');
@@ -20199,7 +20239,7 @@ if ('serviceWorker' in navigator) {
     // Timeline tabs. These are the SAME .frz-chip pills the Gantt/List views use (label +
     // value + caret/clear), opening a lightweight single-select dropdown - so size and
     // behavior match the other views. Driven by state.calFilter (NOT the CHIPS/URL system).
-    _calCloseFilterMenu();
+    if(!_calSuppressClose) _calCloseFilterMenu();   // keep the owner multi-select menu open across its in-place re-renders
     var host=document.getElementById('frzFilterBar'); if(!host) return;
     var f=_calFilterState();
     var owners=_val('developers',[])||[];
@@ -20212,7 +20252,9 @@ if ('serviceWorker' in navigator) {
       type:    types.map(function(t){ return {v:t.id,t:t.name}; }),
       cap:     [{v:'reduced',t:'Reduced only'}]
     };
+    function _calSharedOwner(){ return (typeof getSelectedDevs==='function') ? getSelectedDevs() : null; }   // Owner is the SHARED multi-select Devs filter (not the calendar's own single-select)
     function valText(key){
+      if(key==='owner'){ var sd=_calSharedOwner(); return !sd ? 'All' : (sd.length===1 ? sd[0] : sd.length+' owners'); }
       var v=f[key]; if(!v) return 'All';
       if(key==='user') return displayName(v);
       if(key==='type') return typeName[v]||v;
@@ -20220,7 +20262,7 @@ if ('serviceWorker' in navigator) {
       return v;
     }
     function chip(key,label){
-      var active=!!f[key];
+      var active = (key==='owner') ? !!_calSharedOwner() : !!f[key];
       return '<button class="frz-chip'+(active?' is-active':'')+'" data-cf="'+key+'">'+
         '<span class="frz-chip-label">'+esc(label)+'</span>'+
         '<span class="frz-chip-value">'+esc(valText(key))+'</span>'+
@@ -20229,16 +20271,18 @@ if ('serviceWorker' in navigator) {
     }
     host.innerHTML =
       chip('owner','Owner')+chip('user','User')+chip('type','Type')+chip('cap','Capacity')+
-      ((f.owner||f.user||f.type||f.cap) ? '<button class="frz-chip frz-chip--ghost" id="frzCalFClear">Clear</button>' : '');
+      ((_calSharedOwner()||f.user||f.type||f.cap) ? '<button class="frz-chip frz-chip--ghost" id="frzCalFClear">Clear</button>' : '');
     host.querySelectorAll('[data-cf]').forEach(function(btn){
       btn.addEventListener('click', function(e){
         e.stopPropagation();   // 2d: keep the global "click outside .ms-wrap -> closeAllDropdowns" (L8530) from closing this menu on the same click that opens it
         var cl=e.target.closest('[data-cfclear]');
-        if(cl){ f[cl.getAttribute('data-cfclear')]=''; renderCalendar(); syncURL(true); return; }   // Stage 5a: filter -> URL
+        if(cl){ var ck=cl.getAttribute('data-cfclear');
+          if(ck==='owner'){ applyPanel(CHIPS.owner.panel, null); } else { f[ck]=''; }   // owner clears the SHARED panel; others clear the calendar-local filter
+          renderCalendar(); syncURL(true); renderRail(); return; }
         _calOpenFilterMenu(btn, btn.getAttribute('data-cf'));
       });
     });
-    var clr=host.querySelector('#frzCalFClear'); if(clr) clr.onclick=function(){ state.calFilter={owner:'',user:'',type:'',cap:''}; renderCalendar(); syncURL(true); };
+    var clr=host.querySelector('#frzCalFClear'); if(clr) clr.onclick=function(){ state.calFilter={owner:'',user:'',type:'',cap:''}; applyPanel(CHIPS.owner.panel, null); renderCalendar(); syncURL(true); renderRail(); };
   }
   // Stage 2: one shared Mon-start month grid. Shows ASSIGNMENTS only (types with
   // show_on_calendar), user-centric (owner grouping + capacity are gone on Month; those are
@@ -21421,7 +21465,7 @@ if ('serviceWorker' in navigator) {
   function toggleCollapse(){ setCollapsed(!state.collapsed, false); }
 
   // ════════ saved filters ════════
-  function loadSaved(){ try { return JSON.parse(ls(savedKey())||'[]'); } catch(e){ return []; } }
+  function loadSaved(){ _migrateSavedKey(); try { return JSON.parse(ls(savedKey())||'[]'); } catch(e){ return []; } }
   function persistSaved(){ lset(savedKey(), JSON.stringify(state.saved)); }
   // Non-blocking inline name popover (replaces window.prompt - styleable, async)
   function namePopover(anchor, opts){
