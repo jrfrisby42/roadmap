@@ -239,6 +239,36 @@ def test_ticket_status_page_hides_internal_fields(client, team, admin_headers):
     assert "SecretOwnerName" not in r.text
 
 
+def test_portal_ts_iso_normalizes():
+    # strftime 'YYYY-MM-DD HH:MM:SS UTC', ISO with offset+microseconds, and date-only -> ISO-Z.
+    assert server._portal_ts_iso("2026-01-01 12:34:56 UTC") == "2026-01-01T12:34:56Z"
+    assert server._portal_ts_iso("2026-07-31T22:10:04.003391+00:00") == "2026-07-31T22:10:04Z"
+    assert server._portal_ts_iso("2026-01-01") == "2026-01-01T00:00:00Z"
+    assert server._portal_ts_iso("") == ""
+    assert server._portal_ts_iso("garbage") == ""
+
+
+def test_ticket_page_timestamps_are_localized_client_side(client, team, admin_headers):
+    # The portal renders UTC instants in data-ts spans + a script that reformats them to the
+    # viewer's local time (the portal parallel of the app's fmtTS). Assert the machinery is emitted.
+    _expose(client, admin_headers, types=["Bug"])
+    server._rate.clear()
+    pid = client.post(f"/api/intake/{team}",
+                      json={"title": "LocalTime", "email": "a@b.com"}).json()["id"]
+    with server.db(team) as c:
+        c.execute("INSERT INTO comments(item_id,author,body,created_ts,parent_id,source) "
+                  "VALUES(?,?,?,?,?,?)", (pid, "tech", "@reporter on it", "2026-07-31 23:00:00 UTC", None, "note"))
+    r = client.get(f"/ticket?team={team}&id={pid}&t={server._ticket_token(team, pid)}")
+    assert r.status_code == 200
+    # Conversation timestamp emitted as a localizable span carrying the UTC instant...
+    assert 'class="frz-localts" data-ts="2026-07-31T23:00:00Z" data-mode="datetime"' in r.text
+    # ...the Submitted date is a localizable date span...
+    assert 'data-mode="date"' in r.text
+    # ...and the reformatting script is present.
+    assert ".frz-localts[data-ts]" in r.text
+    assert "toLocaleString" in r.text and "toLocaleDateString" in r.text
+
+
 # ── 4.16.1: reporter emails on completion / deferral / @reporter comment ──────
 import pytest
 

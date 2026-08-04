@@ -479,6 +479,19 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .s-approved   { background: rgba(34,185,110,0.10);  color: #1a8a52; border: 1px solid rgba(34,185,110,0.25); }
   .s-terminal   { background: rgba(29,184,106,0.12);  color: #1a9a59; border: 1px solid rgba(29,184,106,0.3); }
 
+  /* IT/Ops SLA badge (Stage A) - reuses the overdue/status color language; global (classic + Flow) */
+  .sla-badge { display:inline-block; padding:1px 8px; border-radius:9px; font-size:11px; font-weight:700; white-space:nowrap; border:1px solid transparent; vertical-align:middle; }
+  .sla-breached { background: rgba(232,57,74,0.12);  color:#c0293b; border-color: rgba(232,57,74,0.30); }
+  .sla-atrisk   { background: rgba(212,160,0,0.14);  color:#a07800; border-color: rgba(212,160,0,0.32); }
+  .sla-ontrack  { background: rgba(130,152,173,0.14);color:#5b6b7d; border-color: rgba(130,152,173,0.30); }
+  .sla-met      { background: rgba(29,184,106,0.12); color:#1a9a59; border-color: rgba(29,184,106,0.30); }
+  .sla-missed   { background: rgba(232,57,74,0.10);  color:#b04252; border-color: rgba(232,57,74,0.24); }
+  body.dark-mode .sla-breached { background: rgba(232,57,74,0.20);  color:#ff6b7a; }
+  body.dark-mode .sla-atrisk   { background: rgba(212,160,0,0.22);  color:#e6b800; }
+  body.dark-mode .sla-ontrack  { background: rgba(130,152,173,0.22);color:#9fb3c8; }
+  body.dark-mode .sla-met      { background: rgba(29,184,106,0.20);  color:#3dd68a; }
+  body.dark-mode .sla-missed   { background: rgba(232,57,74,0.16);  color:#e58a95; }
+
   /* CHART */
   .chart-panel { flex: 1; position: relative; }
   .chart-hdr { border-bottom: 2px solid var(--border); display: flex; flex-direction: column; position: sticky; top: 0; background: var(--bg); z-index: 15; }
@@ -2685,6 +2698,8 @@ let enabledViews = null;        // Team Admin: per-team view allowlist (null = a
 let slackNotify = {};           // Team Admin (Slack): {enabled, types}. Default {} = OFF. Webhook URL is server-side only.
 let slackWebhookPresent = false;// Team Admin (Slack): whether a SLACK_WEBHOOK_<TEAM> .env value exists (presence bool, never the URL).
 let slackBotTokenPresent = false;// Team Admin (Slack): whether a SLACK_BOT_TOKEN_<TEAM> .env value exists (DM transport; presence bool, never the token).
+let slaTargets = {};            // IT/Ops SLA (Stage A): {enabled, resolution{prio:hrs}, atRiskPct}. Default {} = OFF (no SLA anything).
+let digestConfig = {};          // IT/Ops weekly digest (Stage B): {enabled}. Recipients reuse intakeNotifyEmail + dept emails.
 let jiraFeatureEnabled = true;  // Team Admin (Jira gate): the per-team jiraEnabled flag. Already ANDed into jiraConfigured at boot; surfaced here for the admin toggle. Default true = unchanged for configured teams.
 let intakeProjects = [];        // which Projects (products) the portal offers (empty = all). (config)
 let intakeNotifyEmail = '';     // team inbox that gets a copy of each portal ticket. (config)
@@ -3115,6 +3130,47 @@ function priorityDot(val){
 function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function stripHtml(s){ return String(s||'').replace(/<[^>]*>/g,'').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim(); }
 function escA(s){ return String(s||'').replace(/"/g,'&quot;'); }
+// ── IT/Ops SLA (Stage A) ─────────────────────────────────────────────────────────
+// Per-priority resolution target (CALENDAR hours from createdAt). Returns null when SLA is off /
+// inapplicable (no createdAt, no priority target, terminal-without-completedAt), else an object:
+//   {kind, cls, short, full}  kind in breached|atrisk|ontrack|met|missed
+// Shared global so classic (List/Kanban/item) AND the Flow shell (_call('slaState',p)) use ONE
+// definition. Gate on slaTargets.enabled so non-IT teams see nothing.
+function _slaDur(ms){
+  ms = Math.max(0, ms);
+  var h = ms/3600000;
+  if(h < 1)  return Math.max(1, Math.round(ms/60000))+'m';
+  if(h < 48) return Math.round(h)+'h';
+  return Math.round(h/24)+'d';
+}
+function slaState(p){
+  if(!p || !slaTargets || !slaTargets.enabled) return null;
+  var H = (slaTargets.resolution || {})[String(p.priority || '')];
+  if(!(H > 0)) return null;                                   // no target for this priority
+  var created = p.createdAt ? Date.parse(p.createdAt) : NaN;
+  if(isNaN(created)) return null;
+  var targetMs = created + H*3600000;
+  if(statusIsTerminal && statusIsTerminal[p.status]){          // resolved: met/missed vs target
+    var done = p.completedAt ? Date.parse(p.completedAt) : NaN;
+    if(isNaN(done)) return null;                              // terminal but no completedAt -> can't judge
+    return done <= targetMs
+      ? {kind:'met',    cls:'sla-met',    short:'Met',    full:'SLA met'}
+      : {kind:'missed', cls:'sla-missed', short:'Missed', full:'SLA missed by '+_slaDur(done-targetMs)};
+  }
+  var now = Date.now(), remaining = targetMs - now;
+  if(remaining <= 0) return {kind:'breached', cls:'sla-breached', short:'Breached', full:'SLA breached '+_slaDur(-remaining)+' ago'};
+  var elapsedPct = ((now - created)/(H*3600000))*100;
+  var atRisk = (typeof slaTargets.atRiskPct === 'number' ? slaTargets.atRiskPct : 80);
+  var short = _slaDur(remaining)+' left';
+  return (elapsedPct >= atRisk)
+    ? {kind:'atrisk',  cls:'sla-atrisk',  short:short, full:'SLA at risk - '+short}
+    : {kind:'ontrack', cls:'sla-ontrack', short:short, full:'SLA on track - '+short};
+}
+function slaBadgeHtml(p, compact){
+  var s = slaState(p); if(!s) return '';
+  var txt = compact ? s.short : s.full;
+  return '<span class="sla-badge '+s.cls+'" title="'+escA(s.full)+'">'+esc(txt)+'</span>';
+}
 // Display label for a team SLUG (the slug itself stays lowercase - it is the identity used in URLs,
 // the X-Team header and the DB path). Short slugs (<=3 chars) read as acronyms and go all-caps
 // (it -> IT, ops -> OPS); longer slugs are title-cased (development -> Development). Display only.
@@ -7377,6 +7433,8 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       slackNotify = (data.slackNotify && typeof data.slackNotify==='object') ? data.slackNotify : {};   // Team Admin (Slack)
       slackWebhookPresent = data.slackWebhookPresent === true;
       slackBotTokenPresent = data.slackBotTokenPresent === true;
+      slaTargets = (data.slaTargets && typeof data.slaTargets==='object') ? data.slaTargets : {};   // IT/Ops SLA (Stage A)
+      digestConfig = (data.digestConfig && typeof data.digestConfig==='object') ? data.digestConfig : {};   // IT/Ops digest (Stage B)
       intakeProjects = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];
       intakeNotifyEmail = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : '';
       intakeNotifyTeam = data.intakeNotifyTeam === true;
@@ -10180,7 +10238,7 @@ function _frzSprintLabel(id){
 // Single source of truth for the main #listView table. Each column is a self-contained
 // unit (label + sort key + cell renderer) so its behavior travels when reordered. The
 // multi-select checkbox column is pinned at position 0 and is NOT part of this model.
-const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','priority','owner','assignee','points','sprint','project'];
+const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','points','sprint','project'];
 const _LIST_COL_DEF = {
   key:        { label:'Key',         sort:'item_key',
                 td:(it,ctx)=>`<td style="${ctx.firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${ctx.chevron}${_listCell(it.itemKey)}</td>` },
@@ -10223,6 +10281,8 @@ const _LIST_COL_DEF = {
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.sprintId ? _frzSprintLabel(it.sprintId) : '')}</td>` },
   project:    { label:'Project',     sort:'product',
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.product)}</td>` },
+  sla:        { label:'SLA',         sort:null,   // IT/Ops SLA (Stage A); absent unless slaTargets.enabled (gated in _listColOrderAll)
+                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${slaBadgeHtml(it, true) || '-'}</td>` },
 };
 function _listColUser(){ try { return (typeof uname==='function'?uname():'') || localStorage.getItem('frazil_rm_user') || ''; } catch(e){ return ''; } }
 function _listOrderKey(){ return 'frazil_beta_listorder_' + _listColUser(); }   // NEW key, separate from the visibility key
@@ -10258,6 +10318,7 @@ function _listColOrderAll(){
     let pos=0; for(let j=i-1;j>=0;j--){ const p=saved.indexOf(_LIST_DEFAULT_ORDER[j]); if(p>=0){ pos=p+1; break; } }
     saved.splice(pos,0,id);                                            // insert at default index
   });
+  if(!(slaTargets && slaTargets.enabled)) saved = saved.filter(id => id!=='sla');   // SLA column is team-aware: absent (order/header/picker/render) unless enabled
   return saved;
 }
 let _listColsRenderCache = null;
@@ -10317,7 +10378,7 @@ function _listCardHtml(it, depth){
   return `<tr class="list-row" data-id="${it.id}" data-depth="${depth||0}" style="cursor:pointer">`
     + `<td class="list-card-cell" colspan="99">`
     + `<div class="list-card">`
-    +   `<div class="lc-top"><span class="lc-key">${_listCell(it.itemKey)}</span>${statusBadge}</div>`
+    +   `<div class="lc-top"><span class="lc-key">${_listCell(it.itemKey)}</span>${statusBadge}${slaBadgeHtml(it, true)}</div>`
     +   `<div class="lc-name">${_listCell(it.name)}</div>`
     +   ((metaLeft||prio) ? `<div class="lc-meta"><span class="lc-meta-left">${metaLeft}</span>${prio}</div>` : '')
     + `</div></td></tr>`;
@@ -15030,7 +15091,8 @@ function renderItemPage(p){
   document.getElementById('ipMeta').innerHTML =
     `${p.dev?`<span style="font-weight:700;color:var(--text)">${esc(p.dev)}</span> · `:''}` +
     `${p.type?esc(p.type)+' · ':''}` +
-    `<span class="${p.status?statusCls(p.status):''}" style="background:none;border:none;padding:0;font-weight:700">${esc(p.status||'-')}</span>`;
+    `<span class="${p.status?statusCls(p.status):''}" style="background:none;border:none;padding:0;font-weight:700">${esc(p.status||'-')}</span>` +
+    `${(()=>{ const s=slaBadgeHtml(p); return s?' · '+s:''; })()}`;   // IT/Ops SLA (Stage A): resolution SLA state (absent unless enabled)
 
   // Core fields
   const dueD  = nextMonday(parseD(p.due));
@@ -16447,6 +16509,8 @@ async function boot(){
     slackNotify           = (data.slackNotify && typeof data.slackNotify==='object') ? data.slackNotify : {};   // Team Admin (Slack)
     slackWebhookPresent   = data.slackWebhookPresent === true;                                        // Team Admin (Slack): channel transport present
     slackBotTokenPresent  = data.slackBotTokenPresent === true;                                       // Team Admin (Slack): DM transport present
+    slaTargets            = (data.slaTargets && typeof data.slaTargets==='object') ? data.slaTargets : {};   // IT/Ops SLA (Stage A)
+    digestConfig          = (data.digestConfig && typeof data.digestConfig==='object') ? data.digestConfig : {};   // IT/Ops digest (Stage B)
     intakeProjects        = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];            // offered Projects (empty = all)
     intakeTypes           = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];                  // offered Types (empty = all)
     intakeNotifyEmail     = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : ''; // team inbox copy
@@ -19590,7 +19654,8 @@ if ('serviceWorker' in navigator) {
         // Calculated (null = not available):
         age: closed ? _rptDays(p.createdAt, p.completedAt) : _rptDays(p.createdAt, nowIso),
         resolutionTime: _rptDays(p.createdAt, p.completedAt),
-        responseTime: _rptDays(p.createdAt, p.firstResponseAt)
+        responseTime: _rptDays(p.createdAt, p.firstResponseAt),
+        slaKind: (typeof slaState==='function' ? (function(){ var s=slaState(p); return s?s.kind:null; })() : null)   // IT/Ops SLA (A2): breached|atrisk|ontrack|met|missed|null
       };
     }
     var rows=all.filter(function(p){
@@ -19701,7 +19766,24 @@ if ('serviceWorker' in navigator) {
     if(hasRes)  tiles.push({label:'Median resolution', value:fmtD(_rptMedian(resVals)), sub:'days'});
     if(hasRes)  tiles.push({label:'Avg resolution',    value:fmtD(_rptAvg(resVals)),    sub:'days'});
     if(hasResp) tiles.push({label:'Avg first response',value:fmtD(_rptAvg(respVals)),   sub:'days'});
+    // IT/Ops SLA tiles (A2): only when SLA is enabled AND some row carries a state (team-aware).
+    if(slaTargets && slaTargets.enabled && allRows.some(function(r){ return r.slaKind!=null; })){
+      var breachedN=rows.filter(function(r){ return r.slaKind==='breached'; }).length;
+      var atRiskN=rows.filter(function(r){ return r.slaKind==='atrisk'; }).length;
+      var judged=rows.filter(function(r){ return r.slaKind==='met' || r.slaKind==='missed'; }).length;   // closed with a target
+      var metN=rows.filter(function(r){ return r.slaKind==='met'; }).length;
+      tiles.push({label:'SLA breached', value:String(breachedN), sub:'open', warn:breachedN>0});
+      tiles.push({label:'SLA at risk',  value:String(atRiskN),  sub:'open'});
+      tiles.push({label:'Within SLA',   value:(judged ? Math.round(metN/judged*100)+'%' : 'n/a'), sub:'resolved in window'});
+    }
     return tiles;
+  }
+  // IT/Ops aging (A2): OPEN items bucketed by age. Only buckets with a count render.
+  function _rptAging(rows){
+    var b=[{k:'0-2 days',n:0},{k:'3-7 days',n:0},{k:'8-30 days',n:0},{k:'30+ days',n:0}];
+    rows.forEach(function(r){ if(!r.open || r.age==null) return;
+      if(r.age<=2) b[0].n++; else if(r.age<=7) b[1].n++; else if(r.age<=30) b[2].n++; else b[3].n++; });
+    return b;
   }
   function _rptKpisHtml(tiles){
     return '<div class="frz-rpt-kpis">'+tiles.map(function(t){
@@ -19817,6 +19899,8 @@ if ('serviceWorker' in navigator) {
       var overdueN=rows.filter(function(r){ return r.overdue; }).length;
       aggs.push(_rptAggHtml('Schedule', [{k:'Open',n:openN},{k:'Open & overdue',n:overdueN}]));
     }
+    // IT/Ops aging (A2): open items by age bucket. Shown whenever there are open items.
+    if(rows.some(function(r){ return r.open; })) aggs.push(_rptAggHtml('Aging (open)', _rptAging(rows)));
     // ── team-aware filters: show a control only when that dimension is in use ──
     var basisLbl=(f.basis==='completed'?'Completed':'Requested');
     var filters='<label>Date basis<select id="frzRptBasis">'+_rptOpt(f.basis,'requested','Requested')+_rptOpt(f.basis,'completed','Completed')+'</select></label>'
@@ -20915,7 +20999,33 @@ if ('serviceWorker' in navigator) {
         + '<div style="display:flex;gap:10px;align-items:center"><button type="button" id="tsSlackTest" '+btn+'>Send test message</button><span id="tsSlackTestResult" style="font-size:12px;color:var(--muted)"></span></div>'
         + '<div style="font-size:11px;color:var(--muted)">Secrets are never entered here - they live in the server .env. Channel posts need an Incoming Webhook at SLACK_WEBHOOK_'+esc(team)+'. DMs need a Slack app bot token (scopes chat:write + users:read.email) at SLACK_BOT_TOKEN_'+esc(team)+'; DMs reach a user only if their Flow email matches a Slack account.</div>'
       + '</div></div>';
-    return ah + jira + slack;
+    // IT/Ops resolution SLA card (Stage A): per-priority calendar-hour targets + at-risk threshold.
+    var sla = _val('slaTargets', {}) || {}, slaRes = sla.resolution || {};
+    var slaAtRisk = (typeof sla.atRiskPct === 'number') ? sla.atRiskPct : 80;
+    function _slaHr(prio, label){
+      var v = slaRes[String(prio)];
+      return '<label style="display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)">'+esc(label)+' (hrs)'
+        + '<input type="number" min="0" step="1" class="ts-sla-hr" data-prio="'+prio+'" value="'+escA(v!=null?v:'')+'" style="width:88px;height:30px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px"></label>';
+    }
+    var slaCard = '<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-top:18px">'
+      + _tsCardHead('Resolution SLA', '<button type="button" id="tsSlaSave" '+btn+'>Save SLA settings</button>')
+      + '<div style="padding:14px 16px;font-size:13px;color:var(--text);display:flex;flex-direction:column;gap:12px">'
+        + '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="tsSlaEnabled"'+(sla.enabled?' checked':'')+'> Track resolution SLA (badges on List, Kanban, and the item page)</label>'
+        + '<div style="color:var(--muted);font-size:12px">Target time from ticket creation to a terminal status, in calendar hours, by priority. Blank = no SLA for that priority.</div>'
+        + '<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end">'+_slaHr(1,'Urgent')+_slaHr(2,'High')+_slaHr(3,'Medium')+_slaHr(4,'Low')
+          + '<label style="display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)">At risk at (% elapsed)<input type="number" min="1" max="100" step="1" id="tsSlaAtRisk" value="'+escA(slaAtRisk)+'" style="width:100px;height:30px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px"></label>'
+        + '</div>'
+      + '</div></div>';
+    // IT/Ops weekly digest card (Stage B): enable + send-preview. Recipients reuse intakeNotifyEmail + dept emails.
+    var dg = _val('digestConfig', {}) || {};
+    var digestCard = '<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-top:18px">'
+      + _tsCardHead('Weekly queue-health digest', '<button type="button" id="tsDigestSave" '+btn+'>Save digest settings</button>')
+      + '<div style="padding:14px 16px;font-size:13px;color:var(--text);display:flex;flex-direction:column;gap:12px">'
+        + '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="tsDigestEnabled"'+(dg.enabled?' checked':'')+'> Send a weekly queue-health email (open / overdue / SLA-breached / aged / closed-last-week + the oldest open tickets)</label>'
+        + '<div style="color:var(--muted);font-size:12px">Recipients reuse this team\'s existing addresses: the team inbox (intake notify email) gets the team-wide summary, and each department\'s notify list gets its own department summary. Delivery is a weekly server job.</div>'
+        + '<div style="display:flex;gap:10px;align-items:center"><button type="button" id="tsDigestPreview" '+btn+'>Send me a preview now</button><span id="tsDigestResult" style="font-size:12px;color:var(--muted)"></span></div>'
+      + '</div></div>';
+    return ah + jira + slack + slaCard + digestCard;
   }
   // Views & Access tab: view visibility (the capability tree lands here next - see
   // design/team-admin-and-capabilities-plan.md).
@@ -20972,6 +21082,33 @@ if ('serviceWorker' in navigator) {
       API.put('/api/config/slackNotify', {enabled:enabled, types:types, mode:mode}).then(function(){
         slackNotify = {enabled:enabled, types:types, mode:mode}; _call('showToast','Slack settings saved','success'); renderTeamSettings();
       }).catch(function(e){ _call('showToast', (e&&e.message)||'Save failed'); });
+    });
+    var slaSave=host.querySelector('#tsSlaSave');
+    if(slaSave) slaSave.addEventListener('click', function(){
+      var enabled=!!host.querySelector('#tsSlaEnabled').checked;
+      var res={};
+      [].slice.call(host.querySelectorAll('.ts-sla-hr')).forEach(function(inp){ var v=parseFloat(inp.value); if(v>0) res[inp.getAttribute('data-prio')]=v; });
+      var arEl=host.querySelector('#tsSlaAtRisk'); var ar=parseInt(arEl&&arEl.value,10); if(!(ar>0&&ar<=100)) ar=80;
+      var val={enabled:enabled, resolution:res, atRiskPct:ar};
+      API.put('/api/config/slaTargets', val).then(function(){
+        slaTargets = val; _call('showToast','SLA settings saved','success');
+        renderTeamSettings(); if(typeof rerender==='function') rerender();   // repaint List/Kanban so badges + column appear/disappear
+      }).catch(function(e){ _call('showToast',(e&&e.message)||'Save failed'); });
+    });
+    var dgsave=host.querySelector('#tsDigestSave');
+    if(dgsave) dgsave.addEventListener('click', function(){
+      var enabled=!!host.querySelector('#tsDigestEnabled').checked;
+      API.put('/api/config/digestConfig', {enabled:enabled}).then(function(){
+        digestConfig={enabled:enabled}; _call('showToast','Digest settings saved','success'); renderTeamSettings();
+      }).catch(function(e){ _call('showToast',(e&&e.message)||'Save failed'); });
+    });
+    var dgprev=host.querySelector('#tsDigestPreview');
+    if(dgprev) dgprev.addEventListener('click', function(){
+      var out=host.querySelector('#tsDigestResult'); if(out){ out.textContent='Sending...'; out.style.color='var(--muted)'; }
+      API.post('/api/admin/send-digest-preview', {}).then(function(r){
+        if(out){ out.textContent = r&&r.sentTo ? ('Preview sent to '+r.sentTo) : 'Sent'; out.style.color='#1f9d55'; }
+      }).catch(function(e){ var m=(e&&e.message)||'Failed'; try{ var j=JSON.parse(m); if(j&&j.detail) m=j.detail; }catch(_){}
+        if(out){ out.textContent=m; out.style.color='#e8394a'; } });
     });
     var stest=host.querySelector('#tsSlackTest');
     if(stest) stest.addEventListener('click', function(){
@@ -21961,7 +22098,7 @@ if ('serviceWorker' in navigator) {
       + openBtn
       + (p.itemKey?'<div class="frz-bcard-key" style="display:flex;align-items:center;gap:4px;padding-right:18px">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></div>':'')
       + '<div class="frz-bcard-name" style="padding-right:16px">'+esc(p.name||'')+' '+(_call('getItemActivityIndicator', p.id)||'')+'</div>'
-      + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+'</div>'
+      + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+(function(){ var s=_call('slaBadgeHtml',p,true); return s?' '+s:''; })()+'</div>'
       + '</div>';
   }
   function renderBetaKanban(){
