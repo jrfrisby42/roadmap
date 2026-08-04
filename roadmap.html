@@ -17375,6 +17375,21 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-bcard-key { font-size:10px; font-family:monospace; color:var(--frz-text-muted); }
   .frz-beta .frz-bcard-name { font-size:12px; font-weight:700; color:var(--frz-text); line-height:1.3; }
   .frz-beta .frz-bcard-meta { font-size:11px; color:var(--frz-text-muted); margin-top:3px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  /* Board-card key strip + priority edge bar. ALL layout lives on .frz-bcard-inner, a class ONLY
+     the board card emits - NEVER on the shared .frz-bcard (list rows, mini rows, and the list-panel
+     header also carry .frz-bcard-key, and the reverted build's bug was flex on .frz-bcard). The
+     inner breaks out of the card's own 9x11 padding with negative margins so the strip + bar are
+     full-bleed, and clips them to the card radius (7px = the 8px card radius minus its 1px border). */
+  .frz-beta .frz-bcard-inner { margin:-9px -11px; display:flex; flex-direction:row; overflow:hidden; border-radius:7px; }
+  .frz-beta .frz-bcard-pbar { flex:0 0 4px; align-self:stretch; }   /* 4px, CARD-tall (stretch on this row, not the column) */
+  .frz-beta .frz-bcard-pbar.p1 { background:#e8394a; }   /* Urgent */
+  .frz-beta .frz-bcard-pbar.p2 { background:#e87000; }   /* High */
+  .frz-beta .frz-bcard-pbar.p3 { background:#e8c000; }   /* Medium */
+  .frz-beta .frz-bcard-pbar.p4 { background:#22b96e; }   /* Low */
+  .frz-beta .frz-bcard-pbar.p0 { background:var(--frz-border); }   /* unset -> neutral hairline (matches card border), never a misleading urgency color */
+  .frz-beta .frz-bcard-main { flex:1 1 0; min-width:0; display:flex; flex-direction:column; }   /* fills card width minus the 4px bar */
+  .frz-beta .frz-bcard-keystrip { background:var(--frz-accent-soft); color:var(--frz-text); font-family:monospace; font-size:12px; font-weight:600; letter-spacing:.3px; padding:4px 22px 4px 10px; border-bottom:1px solid var(--frz-border); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .frz-beta .frz-bcard-body { padding:9px 11px; }   /* the card body padding, moved here (the card keeps its own padding; the inner negates it) */
   /* Canonical card footer chips - pts (neutral) vs weeks (accent) stay visually distinct */
   .frz-beta .frz-bchip { display:inline-flex; align-items:center; font-size:10px; font-weight:700; line-height:1; padding:2px 6px; border-radius:9px; }
   .frz-beta .frz-bchip-pts { background:rgba(128,128,128,0.15); color:var(--frz-text-secondary); }
@@ -17769,6 +17784,13 @@ if ('serviceWorker' in navigator) {
   body.dark-mode .frz-beta .frz-prog { background:#272b44; }
   body.dark-mode .frz-beta .frz-item[aria-current="true"] .frz-count { background:#15314a; }
   body.dark-mode .frz-beta .frz-bcard { background:var(--frz-bg-surface); }
+  /* Priority edge bar: dark-adjusted so the light hexes never sit unaltered on the dark card; hues
+     align with the app's existing dark color language. p0 (var(--frz-border)) + the keystrip
+     (--frz-accent-soft / --frz-text) are already theme-aware and flip via their tokens. */
+  body.dark-mode .frz-beta .frz-bcard-pbar.p1 { background:#ff6b7a; }
+  body.dark-mode .frz-beta .frz-bcard-pbar.p2 { background:#ff9a4d; }
+  body.dark-mode .frz-beta .frz-bcard-pbar.p3 { background:#f0cf3a; }
+  body.dark-mode .frz-beta .frz-bcard-pbar.p4 { background:#3dd68a; }
   body.dark-mode .frz-beta .frz-pop input[type=date] { background:var(--frz-bg-surface); }
   body.dark-mode .frz-beta .frz-sh-completed { background:#15331f; color:#5fcf8a; }
   body.dark-mode .frz-beta .frz-sh-carried   { background:#332714; color:#e0a94d; }
@@ -22094,11 +22116,30 @@ if ('serviceWorker' in navigator) {
     var _canDrag = !_contribCard || _call('itemInContributorScope', p);
     var _dragAttr = _canDrag ? 'draggable="true"' : 'draggable="false"';
     var _dragTitle = _canDrag ? '' : ' title="Not assigned to you or your pod"';
+    // Priority edge bar: level from the item's priority (PRIO_COLORS 1=Urgent..4=Low); 0 = unset.
+    var _PLBL = {1:'Urgent',2:'High',3:'Medium',4:'Low'};
+    var _pnum = (p.priority!=null && p.priority!=='' && +p.priority>0) ? +p.priority : 0;
+    var _ptitle = _pnum ? ('Priority: '+_PLBL[_pnum]) : 'No priority set';
+    var pbar = '<div class="frz-bcard-pbar p'+_pnum+'" title="'+escA(_ptitle)+'" aria-label="'+escA(_ptitle)+'"></div>';
+    // Key strip (key only) atop the content column; the whole card stays the click/drag target.
+    var keyStrip = p.itemKey ? '<div class="frz-bcard-keystrip">'+esc(p.itemKey)+'</div>' : '';
+    // Type icon rides inline at the start of the name (tinted in the type color); NOT in the strip.
+    var typeIcon = _call('typeIconHTML', p.type, {size:13}) || '';
+    var nameIcon = typeIcon ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;margin-right:4px">'+typeIcon+'</span>' : '';
+    // .frz-bcard stays a plain block (shared class - NO layout added here). All new layout is on
+    // .frz-bcard-inner, a class only the board card emits, so the shared-class consumers are safe.
     return '<div class="frz-bcard" '+_dragAttr+_dragTitle+' data-id="'+p.id+'" onclick="openProjectModal('+p.id+')">'
       + openBtn
-      + (p.itemKey?'<div class="frz-bcard-key" style="display:flex;align-items:center;gap:4px;padding-right:18px">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></div>':'')
-      + '<div class="frz-bcard-name" style="padding-right:16px">'+esc(p.name||'')+' '+(_call('getItemActivityIndicator', p.id)||'')+'</div>'
-      + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+(function(){ var s=_call('slaBadgeHtml',p,true); return s?' '+s:''; })()+'</div>'
+      + '<div class="frz-bcard-inner">'
+        + pbar
+        + '<div class="frz-bcard-main">'
+          + keyStrip
+          + '<div class="frz-bcard-body">'
+            + '<div class="frz-bcard-name" style="padding-right:16px">'+nameIcon+esc(p.name||'')+' '+(_call('getItemActivityIndicator', p.id)||'')+'</div>'
+            + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+(function(){ var s=_call('slaBadgeHtml',p,true); return s?' '+s:''; })()+'</div>'
+          + '</div>'
+        + '</div>'
+      + '</div>'
       + '</div>';
   }
   function renderBetaKanban(){
