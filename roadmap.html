@@ -17272,7 +17272,7 @@ if ('serviceWorker' in navigator) {
 
   /* Filter row */
   .frz-beta .frz-filterbar { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-surface); overflow-x:auto; scrollbar-width:none; flex-shrink:0; }
-  .frz-beta.frz-cal-active .frz-filterbar { padding:6px 14px; }   /* Stage 3.5: calendar-only trim (other views keep 10px) */
+  /* (Removed the calendar-only filterbar padding trim so every view's bar is the same height - 10px 14px.) */
   /* Stage 3.5.2 addendum: reserve the scrollbar gutter on the calendar's scroll container so
      a scrollbar appearing on one tab (e.g. Week overflows, Month fill-height doesn't) can't
      narrow the layout and shift the centered nav/tabs. Scoped to the calendar view only. */
@@ -18289,7 +18289,7 @@ if ('serviceWorker' in navigator) {
     dashboard:{ chips:['owner','range'],                    extra:[], opts:[] },
     'my-home':{ chips:[],                                   extra:[], opts:[] },  // Stage 5: personal landing, no chips
     'admin':  { chips:[],                                   extra:[], opts:[] },  // Phase 0: Admin full page, no chips
-    'team-calendar':{ chips:[],                             extra:[], opts:[] },  // Phase 2: Team Calendar (custom filters in 2c)
+    'team-calendar':{ chips:['owner'],                      extra:[], opts:[] },  // owner is applied+serialized so the SHARED Devs filter persists onto the calendar (the calendar renders its OWN filter row, not renderBar, so this adds no visual chip); _calData honors getSelectedDevs
     'reports':{ chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:[] }   // Phase 1: Reports uses the SHARED chip bar (so Saved Views scope it); its date-basis/range/group-by are report-local controls in the page body
   };
   var PROJ_COLORS = ['#0059A9','#65B1E3','#2E8B6F','#C0700B','#8E4FB0','#C0392B','#0E7C86'];
@@ -20003,7 +20003,8 @@ if ('serviceWorker' in navigator) {
     var typeById={}; (_assignmentTypes||[]).forEach(function(t){ typeById[t.id]=t; });
     var projs=_val('projects',[])||[], capMap=_val('ownerCapacity',{})||{}, todayStr=_ymdLocal(new Date());
     var winAssigns=(_assignments||[]).filter(function(a){ return (a.start_date||'')<=win.to && (a.end_date||a.start_date||'')>=win.from; });
-    var owners=(_val('developers',[])||[]).filter(function(o){ return !f.owner || o===f.owner; });
+    var shDev=(typeof getSelectedDevs==='function') ? getSelectedDevs() : null;   // SHARED Devs chip (null = all); honored here so the calendar scopes like every other view
+    var owners=(_val('developers',[])||[]).filter(function(o){ return (!f.owner || o===f.owner) && (!shDev || shDev.indexOf(o)>=0); });
     var out=[];
     owners.forEach(function(owner){
       var baseCap=_call('getBaseCapacity',owner), effToday=getEffectiveCapacity(owner, todayStr);
@@ -20039,6 +20040,7 @@ if ('serviceWorker' in navigator) {
   // specific owner or by capacity (an unowned assignment has no pool to match either).
   function _calUnassignedData(win, f, typeById){
     if(f.owner || f.cap) return null;
+    if(typeof getSelectedDevs==='function' && getSelectedDevs()) return null;   // a shared Devs filter is active -> unowned rows can't match an owner, hide them (like the other views)
     var winAssigns=(_assignments||[]).filter(function(a){
       return !a.owner && a.username && (a.start_date||'')<=win.to && (a.end_date||a.start_date||'')>=win.from && (!f.type||a.type_id===f.type);
     });
@@ -20264,9 +20266,11 @@ if ('serviceWorker' in navigator) {
     var gridEnd=addDays(startOfW(last), 6);                         // Sunday on/after the last day
     var fromStr=_ymdLocal(gridStart), toStr=_ymdLocal(gridEnd), todayStr=todayStrMT();
     var mm=win.start.getMonth();
+    var shDev=(typeof getSelectedDevs==='function') ? getSelectedDevs() : null;   // SHARED Devs chip (null = all)
     var visible=(_assignments||[]).filter(function(a){
       if(!_calMoTypeVisible(types[a.type_id])) return false;
       if(f.owner && a.owner!==f.owner) return false;               // owner-scope hides unowned (Stage 1 rule)
+      if(shDev && shDev.indexOf(a.owner||'')<0) return false;      // shared Devs filter (unowned can't match)
       if(f.user && a.username!==f.user) return false;
       if(f.type && a.type_id!==f.type) return false;
       var s=a.start_date||'', e=a.end_date||a.start_date||'';
@@ -21697,10 +21701,10 @@ if ('serviceWorker' in navigator) {
     root.addEventListener('click', function(e){
       var navBtn = e.target.closest && e.target.closest('[data-nav]');
       if (navBtn){ e.preventDefault(); var t=navBtn.getAttribute('data-nav');
-        if(t.indexOf('view:')===0){ var _v=t.slice(5); var _qs=_frzCarryQS(!!_FRZ_SHARED_VIEWS[_v]);
+        if(t.indexOf('view:')===0){ var _v=t.slice(5); var _qs=_frzCarryQS(true);   // carry chips to EVERY view so the shared filter (esp. Devs/owner) persists (each view still self-serializes only what it exposes)
           // Fix 2: switching TO Kanban preserves the active/last board (no silent drop); other views drop it (correct).
           if(_v==='kanban' && state.board && state.board!=='__all__'){ var _bu=new URLSearchParams(_qs.replace(/^\?/,'')); _bu.set('board', state.board); _qs='?'+_bu.toString(); }
-          navigate('/'+_v + _qs, false);   // Stage 1: carry filter+project (chips only to shared views; project always)
+          navigate('/'+_v + _qs, false);   // carry filter+project to all views (project always; chips ride and each view applies the ones it exposes)
         } return; }
       var savedMenu = e.target.closest && e.target.closest('[data-savedmenu]');
       if (savedMenu){ e.stopPropagation(); savedRowMenu(savedMenu); return; }
