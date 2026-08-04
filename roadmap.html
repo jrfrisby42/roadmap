@@ -2191,7 +2191,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.14.0';
+const APP_VERSION = '5.14.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -17370,22 +17370,9 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-unassigned { font-size:12px; color:var(--frz-text-muted); margin-top:4px; }
   /* ── Beta board Kanban columns/cards (mirrors production kanban look) ── */
   .frz-beta .frz-board-zone { min-height:60px; }
-  /* Card is a flex row [ priority edge bar | content column ]; overflow:hidden clips the bar +
-     key strip to the rounded corners (no border-left, which would fight the radius). */
-  .frz-beta .frz-bcard { position:relative; display:flex; overflow:hidden; background:#fff; border:1px solid var(--frz-border); border-radius:8px; cursor:pointer; user-select:none; margin-bottom:8px; }
+  .frz-beta .frz-bcard { position:relative; background:#fff; border:1px solid var(--frz-border); border-radius:8px; padding:9px 11px; cursor:pointer; user-select:none; margin-bottom:8px; }
   .frz-beta .frz-bcard:hover { border-color:var(--frz-accent-soft-border); }
-  /* Priority edge bar - full-height left strip; color per level from the app's PRIO_COLORS palette. */
-  .frz-beta .frz-bcard-pbar { flex:0 0 4px; align-self:stretch; }
-  .frz-beta .frz-bcard-pbar.p1 { background:#e8394a; }   /* Urgent */
-  .frz-beta .frz-bcard-pbar.p2 { background:#e87000; }   /* High */
-  .frz-beta .frz-bcard-pbar.p3 { background:#e8c000; }   /* Medium */
-  .frz-beta .frz-bcard-pbar.p4 { background:#22b96e; }   /* Low */
-  .frz-beta .frz-bcard-pbar.p0 { background:var(--frz-border); }   /* unset -> neutral hairline (matches the card border), never a misleading urgency color */
-  .frz-beta .frz-bcard-content { flex:1; min-width:0; display:flex; flex-direction:column; }
-  /* Key strip - full-width tinted header band; the accent-soft token is theme-aware (light #E7F1FA,
-     dark #15314a). Top-right corner clips to the card radius via the card's overflow:hidden. */
-  .frz-beta .frz-bcard-keystrip { background:var(--frz-accent-soft); color:var(--frz-text); font-family:monospace; font-size:12px; font-weight:600; letter-spacing:.3px; padding:4px 22px 4px 10px; border-bottom:1px solid var(--frz-border); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .frz-beta .frz-bcard-body { padding:9px 11px; }
+  .frz-beta .frz-bcard-key { font-size:10px; font-family:monospace; color:var(--frz-text-muted); }
   .frz-beta .frz-bcard-name { font-size:12px; font-weight:700; color:var(--frz-text); line-height:1.3; }
   .frz-beta .frz-bcard-meta { font-size:11px; color:var(--frz-text-muted); margin-top:3px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   /* Canonical card footer chips - pts (neutral) vs weeks (accent) stay visually distinct */
@@ -17782,13 +17769,6 @@ if ('serviceWorker' in navigator) {
   body.dark-mode .frz-beta .frz-prog { background:#272b44; }
   body.dark-mode .frz-beta .frz-item[aria-current="true"] .frz-count { background:#15314a; }
   body.dark-mode .frz-beta .frz-bcard { background:var(--frz-bg-surface); }
-  /* Priority edge bar: dark-adjusted so the light hexes do not sit unaltered on the dark card;
-     hues align with the app's existing dark color language (breach red, terminal green). p0 stays
-     var(--frz-border), which is already theme-aware. The keystrip (accent-soft) + key (--frz-text) flip via their tokens. */
-  body.dark-mode .frz-beta .frz-bcard-pbar.p1 { background:#ff6b7a; }
-  body.dark-mode .frz-beta .frz-bcard-pbar.p2 { background:#ff9a4d; }
-  body.dark-mode .frz-beta .frz-bcard-pbar.p3 { background:#f0cf3a; }
-  body.dark-mode .frz-beta .frz-bcard-pbar.p4 { background:#3dd68a; }
   body.dark-mode .frz-beta .frz-pop input[type=date] { background:var(--frz-bg-surface); }
   body.dark-mode .frz-beta .frz-sh-completed { background:#15331f; color:#5fcf8a; }
   body.dark-mode .frz-beta .frz-sh-carried   { background:#332714; color:#e0a94d; }
@@ -22114,25 +22094,11 @@ if ('serviceWorker' in navigator) {
     var _canDrag = !_contribCard || _call('itemInContributorScope', p);
     var _dragAttr = _canDrag ? 'draggable="true"' : 'draggable="false"';
     var _dragTitle = _canDrag ? '' : ' title="Not assigned to you or your pod"';
-    // Priority edge bar: level from the item's priority (PRIO_COLORS: 1=Urgent..4=Low); 0 = unset.
-    var _PLBL = {1:'Urgent',2:'High',3:'Medium',4:'Low'};
-    var _pnum = (p.priority!=null && p.priority!=='' && +p.priority>0) ? +p.priority : 0;
-    var _ptitle = _pnum ? ('Priority: '+_PLBL[_pnum]) : 'No priority set';
-    var pbar = '<div class="frz-bcard-pbar p'+_pnum+'" title="'+escA(_ptitle)+'" aria-label="'+escA(_ptitle)+'"></div>';
-    // Key strip (key only) sits at the top of the content column; the whole card stays the click/drag target.
-    var keyStrip = p.itemKey ? '<div class="frz-bcard-keystrip">'+esc(p.itemKey)+'</div>' : '';
-    // Type icon rides inline at the start of the name (empty when the type carries no icon).
-    var typeIcon = _call('typeIconHTML', p.type, {size:13}) || '';
-    var nameIcon = typeIcon ? '<span style="display:inline-flex;align-items:center;vertical-align:middle;margin-right:4px">'+typeIcon+'</span>' : '';
     return '<div class="frz-bcard" '+_dragAttr+_dragTitle+' data-id="'+p.id+'" onclick="openProjectModal('+p.id+')">'
       + openBtn
-      + pbar
-      + '<div class="frz-bcard-content">'
-        + keyStrip
-        + '<div class="frz-bcard-body">'
-          + '<div class="frz-bcard-name" style="padding-right:16px">'+nameIcon+esc(p.name||'')+' '+(_call('getItemActivityIndicator', p.id)||'')+'</div>'
-          + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+(function(){ var s=_call('slaBadgeHtml',p,true); return s?' '+s:''; })()+'</div>'
-        + '</div>'
+      + (p.itemKey?'<div class="frz-bcard-key" style="display:flex;align-items:center;gap:4px;padding-right:18px">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></div>':'')
+      + '<div class="frz-bcard-name" style="padding-right:16px">'+esc(p.name||'')+' '+(_call('getItemActivityIndicator', p.id)||'')+'</div>'
+      + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+(function(){ var s=_call('slaBadgeHtml',p,true); return s?' '+s:''; })()+'</div>'
       + '</div>';
   }
   function renderBetaKanban(){
