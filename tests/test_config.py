@@ -25,10 +25,27 @@ def test_product_ignore_conflicts_round_trips(client, admin_headers):
     assert body["productIgnoreConflicts"] == flags
 
 
+def test_sla_and_digest_config_round_trip(client, admin_headers):
+    # IT/Ops SLA (Stage A): slaTargets + digestConfig are settable and returned by /api/all.
+    sla = {"enabled": True, "resolution": {"1": 4, "2": 24, "3": 72, "4": 168}, "atRiskPct": 80}
+    assert client.put("/api/config/slaTargets", json=sla, headers=admin_headers).status_code == 200
+    assert client.put("/api/config/digestConfig", json={"enabled": True}, headers=admin_headers).status_code == 200
+    body = client.get("/api/all", headers=admin_headers).json()
+    assert body["slaTargets"] == sla
+    assert body["digestConfig"] == {"enabled": True}
+
+
+def test_sla_targets_default_off_in_get_all(client, admin_headers):
+    # A fresh team gets slaTargets seeded but DISABLED, so non-IT teams show no SLA anything.
+    body = client.get("/api/all", headers=admin_headers).json()
+    assert body["slaTargets"]["enabled"] is False
+    assert body["slaTargets"]["resolution"]["1"] == 4      # seeded default targets present
+
+
 def test_get_all_shape(client, admin_headers):
     """The frontend depends on /api/all returning these top-level keys in one call."""
     body = client.get("/api/all", headers=admin_headers).json()
-    for key in ("projects", "statuses", "users", "statusIsActive", "statusIsDefault"):
+    for key in ("projects", "statuses", "users", "statusIsActive", "statusIsDefault", "slaTargets", "digestConfig"):
         assert key in body
     # users must be the sanitised shape (no password field leaks).
     for u in body["users"]:

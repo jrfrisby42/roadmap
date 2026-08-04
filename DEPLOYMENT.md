@@ -140,6 +140,57 @@ when `LITESTREAM_FLOW_CONFIG` is not set (the `LITESTREAM_*` vars belong in
 command was not run with sufficient privileges, it prints the reload command to run
 manually - the config file is still written.
 
+### Weekly queue-health digest (IT/Ops SLA feature, Stage B)
+
+`python server.py --send-digests` builds and emails a per-team queue-health summary (open /
+overdue / SLA-breached / aged / closed-last-week + the oldest open tickets) for every team with
+`digestConfig.enabled` set in Admin -> Integrations. It sends to the team's **existing** addresses
+(the intake notify email gets the team-wide summary; each department's notify list gets its own
+department summary) via SES + the instance role, then exits - it never starts the server. Best
+effort: one recipient's failure never aborts the run. Enable/verify content with the **"Send me a
+preview now"** button on the SLA/digest card (admin).
+
+Run it on a weekly **systemd timer** (create these two units, then enable the timer):
+
+```ini
+# /etc/systemd/system/roadmap-digest.service
+[Unit]
+Description=Frazil Flow weekly queue-health digest
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/roadmap
+ExecStart=/opt/roadmap/venv/bin/python server.py --send-digests
+```
+
+```ini
+# /etc/systemd/system/roadmap-digest.timer
+[Unit]
+Description=Weekly Frazil Flow queue-health digest (Mon 08:00 America/Denver)
+
+[Timer]
+OnCalendar=Mon *-*-* 08:00:00 America/Denver
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now roadmap-digest.timer
+systemctl list-timers roadmap-digest.timer          # confirm the next run
+sudo systemctl start roadmap-digest.service         # optional: fire once now to test
+journalctl -u roadmap-digest.service --no-pager | tail   # see per-send results
+```
+
+The digest uses the same SES path as password-reset/invite emails, so no extra IAM is needed
+(the instance role already has `ses:SendEmail`). `MAIL_FROM` / `AWS_REGION` / `APP_BASE_URL` come
+from `/opt/roadmap/.env`, same as the rest of the app.
+
 ---
 
 ## Reference: systemd unit

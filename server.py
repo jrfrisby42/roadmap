@@ -959,6 +959,13 @@ def init_team_db(team: str):
             # Team Calendar (Phase 1): assignment types (config-backed collection, like
             # boards - edited via /api/assignment-types, NOT the generic config route).
             "assignmentTypes": _DEFAULT_ASSIGNMENT_TYPES,
+            # IT/Ops SLA (Stage A): per-priority resolution targets in CALENDAR hours (created ->
+            # terminal). Default OFF (enabled=false) so non-IT teams see no SLA anything. atRiskPct
+            # = elapsed % of target at which an open item flips to "at risk". Presence-only seed.
+            "slaTargets": {"enabled": False, "resolution": {"1": 4, "2": 24, "3": 72, "4": 168}, "atRiskPct": 80},
+            # IT/Ops weekly digest (Stage B): {enabled}. Recipients reuse intakeNotifyEmail (team-wide)
+            # + departmentMeta[d].emails (per-dept). Sent by `python server.py --send-digests` (timer).
+            "digestConfig": {"enabled": False},
         }
         for k, v in defaults.items():
             c.execute("INSERT OR IGNORE INTO config(key,value) VALUES(?,?)",
@@ -1047,11 +1054,13 @@ def _migrate_config_keys(team: str):
         "assethubServiceTypeMapping": {"Maintenance": "Maintenance"},  # WRITE-1b service_type mapping; presence-only
         "enabledViews": None,              # Team Admin: per-team view allowlist (null = all enabled); see init_team_db defaults
         "slackNotify": {},                 # Slack notifications (Tier 1): {enabled, types}; default OFF. Webhook URL lives in .env (SLACK_WEBHOOK_<TEAM>)
+        "slaTargets": {"enabled": False, "resolution": {"1": 4, "2": 24, "3": 72, "4": 168}, "atRiskPct": 80},  # IT/Ops SLA (Stage A): per-priority resolution targets in calendar hours; default OFF
+        "digestConfig": {"enabled": False},  # IT/Ops weekly digest (Stage B): {enabled}; recipients reuse intakeNotifyEmail + departmentMeta emails
     }
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
     # an admin who deletes all types isn't re-seeded on next boot.)
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "intakeNotifyTeam", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "intakeNotifyTeam", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify", "slaTargets", "digestConfig"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -1376,7 +1385,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.12.1"
+APP_VERSION = "5.13.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2135,15 +2144,58 @@ def _flow_hd(text="Frazil&nbsp;Flow"):
             f'background:#fff;border-radius:7px;padding:3px;flex:0 0 auto">{_flow_mark(22)}</span>'
             f'<span>{text}</span></div>')
 
+# ── Reporter-portal local-time rendering ─────────────────────────────────────────
+# Portal pages are server-rendered with no framework, so timestamps would show in UTC. We emit
+# the UTC instant in a data-ts attribute (with a UTC fallback for no-JS), and a tiny inline script
+# reformats each into the viewer's local timezone - the portal parallel of the app's fmtTS (5.11.7).
+def _portal_ts_iso(raw):
+    """Normalize a stored timestamp string to an ISO-8601 UTC instant that JS `new Date()` parses.
+    Handles our two stored shapes: 'YYYY-MM-DD HH:MM:SS UTC' (strftime) and ISO-8601 (createdAt,
+    +00:00/Z, optional microseconds). All stored times are UTC. Returns '' when unparseable (the
+    server-rendered fallback text is shown instead)."""
+    s = (raw or "").strip()
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})", s)
+    if m:
+        return f"{m.group(1)}T{m.group(2)}Z"
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})$", s)       # date only -> midnight UTC
+    if m:
+        return f"{m.group(1)}T00:00:00Z"
+    return ""
+
+def _localts_html(raw, mode="datetime", fallback=None):
+    """A timestamp span the portal script localizes. `mode`='date' shows a local date, 'datetime'
+    a local date+time. `fallback` (UTC) is shown as-is if JS is off or the value can't be parsed."""
+    fb = html.escape(fallback if fallback is not None else (raw or ""))
+    iso = _portal_ts_iso(raw)
+    if not iso:
+        return fb
+    return f'<span class="frz-localts" data-ts="{html.escape(iso)}" data-mode="{mode}">{fb}</span>'
+
+_PORTAL_LOCALTS_JS = """<script>
+(function(){
+  var dt={year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'};
+  var dO={year:'numeric',month:'short',day:'numeric'};
+  var els=document.querySelectorAll('.frz-localts[data-ts]');
+  for(var i=0;i<els.length;i++){
+    var el=els[i], d=new Date(el.getAttribute('data-ts'));
+    if(isNaN(d.getTime())) continue;
+    try{ el.textContent=(el.getAttribute('data-mode')==='date')?d.toLocaleDateString(undefined,dO):d.toLocaleString(undefined,dt); }catch(e){}
+  }
+})();
+</script>"""
+
 def _ticket_status_page(p, comments):
     esc = html.escape
     prio = _PRIO_LABEL.get(str(p.get("priority") or ""), "")
-    rows = [("Type", p.get("type")), ("Priority", prio), ("Project", p.get("product")),
-            ("Submitted", (p.get("createdAt") or "")[:10])]
+    rows = [("Type", p.get("type")), ("Priority", prio), ("Project", p.get("product"))]
     row_html = "".join(
         f'<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f0f3f6;font-size:14px">'
         f'<span style="color:#6b7280">{esc(k)}</span><span style="color:#1f2733;font-weight:600">{esc(v)}</span></div>'
         for k, v in rows if v)
+    if p.get("createdAt"):    # Submitted: localized to the viewer's browser date (fallback = UTC date)
+        row_html += (f'<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f0f3f6;font-size:14px">'
+                     f'<span style="color:#6b7280">Submitted</span>'
+                     f'<span style="color:#1f2733;font-weight:600">{_localts_html(p.get("createdAt"), "date", (p.get("createdAt") or "")[:10])}</span></div>')
     desc = _sanitize_html(p.get("description") or "")   # H1: sanitize at render (stored value is untrusted); pre-wrap also covers legacy plain text
     desc_html = (f'<div style="margin-top:16px"><div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Details</div>'
                  f'<div style="font-size:14px;color:#1f2733;white-space:pre-wrap;line-height:1.55">{desc}</div></div>') if desc else ""
@@ -2159,7 +2211,7 @@ def _ticket_status_page(p, comments):
         is_rep = (c.get("source") == "portal")
         who, bg, align = ("You", "#eaf2fb", "flex-end") if is_rep else ("Team", "#f7f9fb", "flex-start")
         txt = esc(_strip_tags(re.sub(r'@reporter\b', '', c.get("body") or '', flags=re.I)).strip())
-        ts = esc((c.get("created_ts") or "")[:16])
+        ts = _localts_html(c.get("created_ts"), "datetime", (c.get("created_ts") or "")[:16])
         bubbles += (f'<div style="display:flex;justify-content:{align};margin-bottom:8px">'
                     f'<div style="max-width:82%;background:{bg};border:1px solid #e6ebf1;border-radius:10px;padding:8px 11px">'
                     f'<div style="font-size:11px;font-weight:700;color:#6b7280;margin-bottom:2px">{who} · {ts}</div>'
@@ -2184,7 +2236,7 @@ def _ticket_status_page(p, comments):
 <div class="k">{esc(key)}</div><h1 style="margin:4px 0 12px;font-size:19px">{esc(p.get("name") or "Ticket")}</h1>
 <div style="margin-bottom:14px">Status: <span class="badge" style="background:{sc_bg};color:{sc_fg};border-color:{sc_bd}">{esc(p.get("status") or "-")}</span></div>
 {row_html}{desc_html}{att_html}{thread_html}{myt}
-</div><div class="foot">Reporter View - Replies go straight to the team.</div></div>{_TICKET_REPLY_JS}</body></html>"""
+</div><div class="foot">Reporter View - Replies go straight to the team.</div></div>{_TICKET_REPLY_JS}{_PORTAL_LOCALTS_JS}</body></html>"""
 
 def _ticket_error_page(msg):
     esc = html.escape
@@ -2469,7 +2521,7 @@ def _my_tickets_page(email, items, scopes=None, active=None):
             f'<span style="background:{_c[0]};color:{_c[1]};border:1px solid {_c[2]};border-radius:999px;padding:2px 10px;font-size:12px;font-weight:700">{esc(p.get("status") or "-")}</span>'
             f'</span></div>'
             f'<div style="font-size:14px;font-weight:600;color:#1f2733;margin-top:6px">{esc(p.get("name") or "Ticket")}</div>'
-            f'<div style="font-size:12px;color:#6b7280;margin-top:2px">{esc(p.get("product") or "")}{" · " if p.get("product") and p.get("createdAt") else ""}{esc((p.get("createdAt") or "")[:10])}</div></a>'
+            f'<div style="font-size:12px;color:#6b7280;margin-top:2px">{esc(p.get("product") or "")}{" · " if p.get("product") and p.get("createdAt") else ""}{_localts_html(p.get("createdAt"), "date", (p.get("createdAt") or "")[:10])}</div></a>'
             for p in items for _c in [_stcol(p["_team"], p.get("status"))])
     elif active:
         cards = '<div style="color:#6b7280;font-size:14px;text-align:center;padding:20px 0">No tickets for this department yet.</div>'
@@ -2506,7 +2558,7 @@ def _my_tickets_page(email, items, scopes=None, active=None):
 {toggle}
 {cards}
 <div style="text-align:center;margin-top:8px"><a href="{esc(APP_BASE_URL)}/report{('?email=' + _urlq(email, safe='')) if email else ''}" style="color:#0059A9;font-size:13px;font-weight:700;text-decoration:none">+ Submit a new ticket</a></div>
-</div><div class="foot">Private to you - please don't share this link.</div></div></body></html>"""
+</div><div class="foot">Private to you - please don't share this link.</div></div>{_PORTAL_LOCALTS_JS}</body></html>"""
 
 def _my_tickets_landing(email=""):
     """Self-service landing for /my-tickets when there's no valid token: the list is
@@ -3103,6 +3155,8 @@ def get_all(auth: dict = Depends(require_auth)):
             "slackNotify": cfg_map.get("slackNotify") or {},   # Slack notifications (non-secret {enabled,types,mode})
             "slackWebhookPresent": bool(_slack_webhook(team)),   # channel transport present (presence bool only)
             "slackBotTokenPresent": bool(_slack_bot_token(team)),   # DM transport present (presence bool only - NEVER the token)
+            "slaTargets": cfg_map.get("slaTargets") or {},   # IT/Ops SLA (Stage A): {enabled, resolution{prio:hrs}, atRiskPct}
+            "digestConfig": cfg_map.get("digestConfig") or {},   # IT/Ops weekly digest (Stage B): {enabled}
             # PHASE B2: minimal read-only stubs for out-of-scope items a Contributor's own items
             # reference (parent / requires). Empty for admin/editor/viewer.
             "relatedStubs": related_stubs}
@@ -4321,7 +4375,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "statusIsOffFlow",
               "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains","intakeNotifyTeam","departmentMeta","maintenanceDutyTypeId",
               "externalRequestCategories","assethubConnection","assethubServiceTypeMapping","enabledViews",
-              "slackNotify"}
+              "slackNotify","slaTargets","digestConfig"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",
@@ -8551,7 +8605,235 @@ def spa_catch_all(full_path: str):
         return f.read()
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# IT/Ops weekly queue-health digest (Stage B)
+# ══════════════════════════════════════════════════════════════════════════════
+# A per-team summary email (open / overdue / SLA-breached / aged / closed-last-week + the oldest
+# open tickets), built from the SAME model the Reports view uses. Sent by `python server.py
+# --send-digests` (run by a weekly systemd timer - no in-app scheduler, no new auth surface).
+# Recipients reuse the existing config: intakeNotifyEmail (team-wide) + departmentMeta[d].emails
+# (a dept-scoped summary per department). Best-effort: one send's failure never blocks the rest.
+def _digest_parse_iso(s):
+    s = (s or "").strip()
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        pass
+    m = re.match(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})", s)   # 'YYYY-MM-DD HH:MM:SS UTC'
+    if m:
+        try:
+            return datetime.fromisoformat(m.group(1) + "T" + m.group(2)).replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+    m = re.match(r"(\d{4}-\d{2}-\d{2})$", s)                         # date only
+    if m:
+        try:
+            return datetime.fromisoformat(m.group(1)).replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+    return None
+
+def _digest_sla_kind(p, sla, term_map, now_dt):
+    """Server mirror of the client slaState() kind (breached|atrisk|met|missed|ontrack|None)."""
+    from datetime import timedelta
+    if not sla or not sla.get("enabled"):
+        return None
+    try:
+        H = float((sla.get("resolution") or {}).get(str(p.get("priority") or "")))
+    except (TypeError, ValueError):
+        return None
+    if not (H > 0):
+        return None
+    created = _digest_parse_iso(p.get("createdAt"))
+    if not created:
+        return None
+    target = created + timedelta(hours=H)
+    if term_map.get(p.get("status") or ""):
+        done = _digest_parse_iso(p.get("completedAt"))
+        if not done:
+            return None
+        return "met" if done <= target else "missed"
+    if now_dt > target:
+        return "breached"
+    try:
+        at_risk = float(sla.get("atRiskPct", 80))
+    except (TypeError, ValueError):
+        at_risk = 80.0
+    elapsed_pct = (now_dt - created).total_seconds() / (H * 3600) * 100
+    return "atrisk" if elapsed_pct >= at_risk else "ontrack"
+
+def _digest_summary(items, term_map, sla, now_dt):
+    """Queue-health counts + the oldest open tickets, over a list of item blobs."""
+    today = now_dt.date().isoformat()
+    counts = {"open": 0, "overdue": 0, "sla_breached": 0, "sla_atrisk": 0, "aged_30": 0, "closed_7d": 0}
+    open_rows = []
+    for p in items:
+        status = p.get("status") or ""
+        if term_map.get(status):                                    # resolved
+            done = _digest_parse_iso(p.get("completedAt"))
+            if done and (now_dt - done).days <= 7:
+                counts["closed_7d"] += 1
+            continue
+        counts["open"] += 1
+        due = (p.get("due") or "")[:10]
+        if due and due < today:
+            counts["overdue"] += 1
+        created = _digest_parse_iso(p.get("createdAt"))
+        age = (now_dt - created).days if created else None
+        if age is not None and age > 30:
+            counts["aged_30"] += 1
+        kind = _digest_sla_kind(p, sla, term_map, now_dt)
+        if kind == "breached":
+            counts["sla_breached"] += 1
+        elif kind == "atrisk":
+            counts["sla_atrisk"] += 1
+        open_rows.append((age if age is not None else -1, p))
+    open_rows.sort(key=lambda t: t[0], reverse=True)
+    counts["oldest_open"] = [{
+        "key": p.get("itemKey") or ("#" + str(p.get("id", ""))),
+        "name": p.get("name") or "",
+        "age": (age if age >= 0 else None),
+        "assignee": p.get("assignee") or "",
+        "status": p.get("status") or "",
+    } for age, p in open_rows[:8]]
+    return counts
+
+def _render_digest_email(team, scope_label, s, base_url):
+    scope = f" - {scope_label}" if scope_label else ""
+    subj = f"[{team}] Queue health{scope}: {s['open']} open, {s['sla_breached']} SLA-breached"
+    metrics = [("Open", s["open"]), ("Overdue", s["overdue"]), ("SLA breached", s["sla_breached"]),
+               ("SLA at risk", s["sla_atrisk"]), ("Aged 30+ days", s["aged_30"]), ("Closed last 7 days", s["closed_7d"])]
+    # Plain text
+    lines = [f"Queue health for {team}{scope}", ""]
+    lines += [f"  {label}: {val}" for label, val in metrics]
+    if s["oldest_open"]:
+        lines += ["", "Oldest open tickets:"]
+        for it in s["oldest_open"]:
+            agestr = f"{it['age']}d" if it["age"] is not None else "?"
+            who = f" ({it['assignee']})" if it["assignee"] else ""
+            lines.append(f"  {it['key']} - {it['name']} [{agestr}, {it['status']}]{who}")
+    text = "\n".join(lines)
+    # HTML
+    esc = html.escape
+    mrows = "".join(
+        f'<td style="padding:10px 14px;border:1px solid #e3e8ee;border-radius:10px;text-align:center;min-width:90px">'
+        f'<div style="font-size:24px;font-weight:800;color:{("#c0293b" if (label in ("SLA breached","Overdue") and val) else "#14283f")}">{val}</div>'
+        f'<div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-top:3px">{esc(label)}</div></td>'
+        for label, val in metrics)
+    oldest_html = ""
+    if s["oldest_open"]:
+        rows = "".join(
+            f'<tr><td style="padding:6px 8px;font-family:ui-monospace,Menlo,monospace;color:#0059A9;font-weight:700;white-space:nowrap">{esc(it["key"])}</td>'
+            f'<td style="padding:6px 8px;color:#1f2733">{esc(it["name"])}</td>'
+            f'<td style="padding:6px 8px;color:#6b7280;white-space:nowrap">{(str(it["age"])+"d") if it["age"] is not None else "?"}</td>'
+            f'<td style="padding:6px 8px;color:#6b7280;white-space:nowrap">{esc(it["status"])}</td>'
+            f'<td style="padding:6px 8px;color:#6b7280;white-space:nowrap">{esc(it["assignee"] or "-")}</td></tr>'
+            for it in s["oldest_open"])
+        oldest_html = ('<div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin:20px 0 8px">Oldest open tickets</div>'
+                       '<table style="border-collapse:collapse;width:100%;font-size:13px"><thead><tr>'
+                       + "".join(f'<th style="text-align:left;padding:6px 8px;font-size:10px;color:#9aa4b1;text-transform:uppercase">{h}</th>' for h in ["Key", "Name", "Age", "Status", "Assignee"])
+                       + f'</tr></thead><tbody>{rows}</tbody></table>')
+    body_html = (f'<div style="max-width:620px;margin:0 auto;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1f2733">'
+                 f'<h1 style="font-size:19px;margin:0 0 4px">Queue health{esc(scope)}</h1>'
+                 f'<div style="color:#6b7280;font-size:13px;margin-bottom:16px">{esc(team)}</div>'
+                 f'<table style="border-collapse:separate;border-spacing:8px 0"><tr>{mrows}</tr></table>'
+                 f'{oldest_html}'
+                 f'<div style="margin-top:22px;font-size:12px"><a href="{esc(base_url)}/reports" style="color:#0059A9;font-weight:700;text-decoration:none">Open Reports in Flow -></a></div>'
+                 f'<div style="margin-top:16px;color:#9aa4b1;font-size:11px">Weekly queue-health digest from Frazil Flow.</div></div>')
+    return subj, text, body_html
+
+def send_team_digests(verbose=False):
+    """Send the weekly digest for every team with digestConfig.enabled. Returns the send count.
+    Team-wide summary -> intakeNotifyEmail; per-department summary -> departmentMeta[d].emails."""
+    now_dt = datetime.now(timezone.utc)
+    try:
+        teams = [d for d in sorted(os.listdir(TENANTS_DIR))
+                 if os.path.isdir(os.path.join(TENANTS_DIR, d)) and re.match(r"^[a-z0-9]+$", d)]
+    except FileNotFoundError:
+        teams = []
+    sent = 0
+    for team in teams:
+        try:
+            if not (_cfg_val(team, "digestConfig", {}) or {}).get("enabled"):
+                continue
+            term_map = _cfg_val(team, "statusIsTerminal", {}) or {}
+            sla = _cfg_val(team, "slaTargets", {}) or {}
+            with db(team) as c:
+                rows = c.execute("SELECT data FROM projects").fetchall()
+            items = []
+            for r in rows:
+                try:
+                    p = json.loads(r["data"])
+                except Exception:
+                    continue
+                if not (p.get("archived") or p.get("hidden")):
+                    items.append(p)
+            targets = []   # (scope_label, email, item_subset)
+            inbox = (_cfg_val(team, "intakeNotifyEmail", "") or "").strip()
+            if inbox:
+                targets.append(("", inbox, items))
+            for dname, meta in (_cfg_val(team, "departmentMeta", {}) or {}).items():
+                emails = [e.strip() for e in (meta.get("emails") or []) if e and e.strip()] if isinstance(meta, dict) else []
+                if not emails:
+                    continue
+                subset = [p for p in items if dname in (p.get("departments") or [])]
+                for em in emails:
+                    targets.append((dname, em, subset))
+            for label, email, subset in targets:
+                try:
+                    s = _digest_summary(subset, term_map, sla, now_dt)
+                    subj, text, html_body = _render_digest_email(team, label, s, APP_BASE_URL)
+                    send_email(email, subj, text, html_body)
+                    sent += 1
+                    if verbose:
+                        print(f"[digest] {team} -> {email} ({label or 'team-wide'})")
+                except Exception as e:
+                    if verbose:
+                        print(f"[digest] FAILED {team} -> {email}: {e}")
+        except Exception as e:
+            if verbose:
+                print(f"[digest] team {team} error: {e}")
+    return sent
+
+@app.post("/api/admin/send-digest-preview")
+def send_digest_preview(body: dict = Body(default={}), auth: dict = Depends(require_role("admin"))):
+    """Admin: email a one-off digest preview (team-wide scope) so the content can be reviewed
+    without waiting for the timer. Defaults to the caller's own email; a body {email} overrides."""
+    team = auth["team"]
+    to = (body.get("email") or _user_email(team, auth["username"]) or "").strip()
+    if not to:
+        raise HTTPException(400, "No email to send to. Add an email to your user, or pass one.")
+    now_dt = datetime.now(timezone.utc)
+    term_map = _cfg_val(team, "statusIsTerminal", {}) or {}
+    sla = _cfg_val(team, "slaTargets", {}) or {}
+    with db(team) as c:
+        rows = c.execute("SELECT data FROM projects").fetchall()
+    items = []
+    for r in rows:
+        try:
+            p = json.loads(r["data"])
+        except Exception:
+            continue
+        if not (p.get("archived") or p.get("hidden")):
+            items.append(p)
+    s = _digest_summary(items, term_map, sla, now_dt)
+    subj, text, html_body = _render_digest_email(team, "", s, APP_BASE_URL)
+    try:
+        send_email(to, "[Preview] " + subj, text, html_body)
+    except Exception as e:
+        raise HTTPException(502, f"Could not send the preview: {e}")
+    return {"ok": True, "sentTo": to,
+            "summary": {k: s[k] for k in ("open", "overdue", "sla_breached", "sla_atrisk", "aged_30", "closed_7d")}}
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    # Weekly queue-health digest (run by a systemd timer): send + exit, never start the server.
+    if "--send-digests" in sys.argv:
+        _n = send_team_digests(verbose=True)
+        print(f"[digest] sent {_n} email(s)")
+        sys.exit(0)
     import uvicorn
     uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=False)
