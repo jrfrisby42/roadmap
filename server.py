@@ -1385,7 +1385,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.15.4"
+APP_VERSION = "5.16.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -6621,6 +6621,172 @@ def _dispatch_service_events(team: str, pid: int, role_for_client: str = _ASSETH
             _save_project(c, pid, cur)
     except Exception as e:
         log.warning(f"[AssetHub] service-event outcome record failed for item {pid}: {e}")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# WRITE-2: technician-initiated AssetHub procurement Request (contract POST /api/v1/requests)
+# ══════════════════════════════════════════════════════════════════════════════
+# Human-initiated (admin/editor only; a Contributor is refused BOTH at the route gate and by
+# AssetHubClient._require_allowed_actor). The per-request link is recorded in the item's
+# server-owned `externalRefs` through the SINGLE mutation path (_append_external_ref +
+# _save_project) - NEVER through update_project's body, whose force-restore loop pops externalRefs.
+# The entry is written status 'queued' BEFORE the send so a mid-send crash leaves a durable,
+# retryable record; it flips to 'linked'/'failed' after. `source_reference` is a per-request UUID
+# stored on the entry as `operationRef`: a retry re-sends the SAME operationRef (AssetHub is
+# idempotent -> 200 replay, same public_id), a fresh action mints a new one. No outbox table, no
+# timer - retry is an explicit human action (this stage), an admin-wide scan is a fast-follow.
+_REQUEST_MAX_QTY = 999   # sanity ceiling; the form defaults to 1
+_REQUEST_SOURCE_SYSTEM = "flow"   # MUST equal the connection provider AssetHub guards on (WRITE-1b stamps the same literal)
+
+def _find_request_ref(item: dict, operation_ref: str):
+    """The externalRefs request entry for an operationRef, or None. Same identity the retry path uses."""
+    for r in (item.get("externalRefs") or []):
+        if isinstance(r, dict) and r.get("kind") == "request" and r.get("operationRef") == operation_ref:
+            return r
+    return None
+
+def _drive_request_send(team: str, role, pid: int, op_ref: str, reqbody: dict, username: str, action: str):
+    """Send the assembled request body to AssetHub (synchronous - the technician waits for the
+    outcome), then record it on the SAME externalRefs entry via the dedicated read-append-save path.
+    Shared by create + retry. Bounded by the client's timeout/retry; never retried by a loop here."""
+    try:
+        res = AssetHubClient(team, role).post("/api/v1/requests", reqbody)
+        data = res.get("data") or {}
+        corr = res.get("correlation_id")
+        ok = True; err = None
+    except AssetHubError as e:
+        data = {}; corr = e.correlation_id; err = e.code; ok = False
+        log.warning(f"[AssetHub] request {action} failed item={pid} op={op_ref} code={e.code} corr={corr}")
+    now = datetime.now(timezone.utc).isoformat()
+    with db(team) as c:
+        row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Item not found")
+        p = json.loads(row["data"])
+        entry = _find_request_ref(p, op_ref)
+        if entry is None:
+            # Should not happen (the queued entry was written first); recreate minimally so the
+            # send outcome is never lost. Dedicated path only.
+            entry = {"system": "assethub", "kind": "request", "operationRef": op_ref, "attempts": 0}
+            _append_external_ref(p, entry)
+        entry["attempts"] = int(entry.get("attempts") or 0) + 1
+        entry["at"] = now
+        entry["lastCorrelationId"] = corr
+        if ok:
+            entry["status"] = "linked"
+            entry["id"] = data.get("public_id") or entry.get("id")
+            num = data.get("number") or data.get("reference")
+            if num: entry["number"] = str(num)
+            url = data.get("web_url") or data.get("url")
+            if url: entry["url"] = url
+            entry.pop("lastError", None)
+        else:
+            entry["status"] = "failed"
+            entry["lastError"] = err
+        _save_project(c, pid, p)
+        name = p.get("name", "")
+    write_audit(team, action, username, pid, name,
+                changes={"operationRef": op_ref, "status": entry["status"],
+                         "assetHubId": entry.get("id"), "correlationId": corr})
+    refs = p.get("externalRefs") or []
+    if ok:
+        return {"ok": True, "operationRef": op_ref, "externalRefs": refs, "correlationId": corr}
+    return {"ok": False, "operationRef": op_ref, "externalRefs": refs,
+            "error": {"code": err, "message": _assethub_plain(err), "correlationId": corr}}
+
+@app.post("/api/items/{pid}/requests")
+def create_item_request(pid: int, body: dict = Body(...),
+                        auth: dict = Depends(require_role("admin", "editor"))):
+    """Create a linked AssetHub procurement Request from a Flow item. Admin/editor only. The request
+    link is durably recorded in the server-owned externalRefs (status 'queued' BEFORE the send, then
+    'linked'/'failed') via the dedicated read-append-save path. source_reference is a per-request
+    UUID stored as operationRef. The technician identity is the SESSION user's email (never
+    client-supplied); requested_for is prefilled client-side but sent only when non-empty (else
+    AssetHub attributes to the technician - never a null actor)."""
+    team = auth["team"]
+    _require_assethub(team)
+    username = auth.get("username", "")
+    category_id = str(body.get("categoryPublicId") or body.get("categoryId") or "").strip()
+    if not category_id:
+        raise HTTPException(422, "A request category is required.")
+    try:
+        qty = int(body.get("quantity") or 1)
+    except (TypeError, ValueError):
+        raise HTTPException(422, "Quantity must be a whole number.")
+    if qty < 1 or qty > _REQUEST_MAX_QTY:
+        raise HTTPException(422, f"Quantity must be between 1 and {_REQUEST_MAX_QTY}.")
+    requested_for = (body.get("requestedForEmail") or "").strip()   # may be blank -> technician attribution
+    tech_email = _user_email(team, username)
+    if not tech_email:
+        # technician_email is REQUIRED by the contract and must be a real actor - fail BEFORE
+        # writing a queued entry rather than leave an unsendable one behind.
+        raise HTTPException(422, "Your account has no email address set - ask an admin to add one before creating a request.")
+    op_ref = _uuid.uuid4().hex
+    now = datetime.now(timezone.utc).isoformat()
+    # 1) Durable 'queued' entry FIRST (dedicated path) so a mid-send crash leaves a retryable record.
+    with db(team) as c:
+        p = _load_linkable_item(c, pid)
+        title = (p.get("name") or p.get("itemKey") or "Request").strip()[:255] or "Request"
+        _append_external_ref(p, {
+            "system": "assethub", "kind": "request", "operationRef": op_ref,
+            "status": "queued", "at": now, "attempts": 0,
+            # stashed so a later retry rebuilds the same body (title/technician are re-derived):
+            "req": {"categoryId": category_id, "quantity": qty, "requestedForEmail": requested_for},
+        })
+        _save_project(c, pid, p)
+    # 2) Assemble + send synchronously (bounded by the client's timeout/retry).
+    reqbody = {
+        "source_system":     _REQUEST_SOURCE_SYSTEM,
+        "source_reference":   op_ref,
+        "category_public_id": category_id,
+        "title":              title,
+        "quantity":           qty,
+        "technician_email":   tech_email,
+    }
+    if requested_for:
+        reqbody["requested_for_email"] = requested_for
+    return _drive_request_send(team, auth.get("role"), pid, op_ref, reqbody, username, "request-create")
+
+@app.post("/api/items/{pid}/requests/{operation_ref}/retry")
+def retry_item_request(pid: int, operation_ref: str,
+                       auth: dict = Depends(require_role("admin", "editor"))):
+    """Retry a queued/failed request using the EXISTING operationRef (idempotent: AssetHub returns
+    200 replay with the same public_id, so a send that succeeded AssetHub-side but was never recorded
+    here resolves to 'linked'). Same dedicated read-append-save path; admin/editor only."""
+    team = auth["team"]
+    _require_assethub(team)
+    username = auth.get("username", "")
+    op_ref = str(operation_ref or "").strip()
+    tech_email = _user_email(team, username)
+    if not tech_email:
+        raise HTTPException(422, "Your account has no email address set - ask an admin to add one before creating a request.")
+    with db(team) as c:
+        p = _load_linkable_item(c, pid)
+        entry = _find_request_ref(p, op_ref)
+        if entry is None:
+            raise HTTPException(404, "That request is not on this item.")
+        if entry.get("status") == "linked":
+            raise HTTPException(409, "That request is already linked.")
+        req = entry.get("req") or {}
+        title = (p.get("name") or p.get("itemKey") or "Request").strip()[:255] or "Request"
+    category_id = str(req.get("categoryId") or "").strip()
+    if not category_id:
+        raise HTTPException(422, "This request is missing its category and cannot be retried.")
+    try:
+        qty = int(req.get("quantity") or 1)
+    except (TypeError, ValueError):
+        qty = 1
+    reqbody = {
+        "source_system":     _REQUEST_SOURCE_SYSTEM,
+        "source_reference":   op_ref,
+        "category_public_id": category_id,
+        "title":              title,
+        "quantity":           qty,
+        "technician_email":   tech_email,
+    }
+    rf = (req.get("requestedForEmail") or "").strip()
+    if rf:
+        reqbody["requested_for_email"] = rf
+    return _drive_request_send(team, auth.get("role"), pid, op_ref, reqbody, username, "request-retry")
 
 def _get_all_jira_tickets(team: str) -> dict:
     """Return {ticket_key: item_id} for all items with jiraTickets."""
