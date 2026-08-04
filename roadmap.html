@@ -2191,7 +2191,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.14.2';
+const APP_VERSION = '5.14.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -22078,10 +22078,12 @@ if ('serviceWorker' in navigator) {
     });
   }
   function _kanbanSort(a,b){
-    var sa=a.start||'zzzz', sb=b.start||'zzzz';
-    if(sa!==sb) return sa<sb?-1:1;
+    // Priority first so the most urgent work heads each column (Urgent=1 at the top; unset sinks
+    // to the bottom). Ties break by earliest start, then longest estimate.
     var pa=(a.priority!=null&&a.priority!==''&&+a.priority>0)?+a.priority:100, pb=(b.priority!=null&&b.priority!==''&&+b.priority>0)?+b.priority:100;
     if(pa!==pb) return pa-pb;
+    var sa=a.start||'zzzz', sb=b.start||'zzzz';
+    if(sa!==sb) return sa<sb?-1:1;
     return (+(b.dueWeeks)||0)-(+(a.dueWeeks)||0);
   }
   // Stage 2: project-color dot (single source: projectColor). '' when no product.
