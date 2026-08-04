@@ -2693,6 +2693,7 @@ let intakeEnabled = false;      // public /report portal: is this team exposed? 
 let assethubConfigured = false; // FLOW-1: server-derived - true only when this team has BOTH an AssetHub mapping and a .env credential. Gates all asset UI. Never carries the token.
 let assethubBaseUrl = '';       // FLOW-1 item B: AssetHub host (non-secret) for the asset-tag deep link. Never the credential.
 let assethubConnection = {};    // Team Admin: the AssetHub mapping ({providerEnvironment, assethubTeam}). Non-secret.
+let externalRequestCategories = {}; // WRITE-2: curated per-system request categories {assethub:[{id,label}]}. Feeds the Create-request form. No secret.
 let assethubCredentialPresent = false;   // Team Admin: whether a .env credential exists for this team (presence bool, never the key).
 let enabledViews = null;        // Team Admin: per-team view allowlist (null = all enabled). admin + my-home always on.
 let slackNotify = {};           // Team Admin (Slack): {enabled, types}. Default {} = OFF. Webhook URL is server-side only.
@@ -7428,6 +7429,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       assethubConfigured = data.assethubConfigured === true;   // FLOW-1 gate
       assethubBaseUrl = data.assethubBaseUrl || '';            // FLOW-1 item B
       assethubConnection = (data.assethubConnection && typeof data.assethubConnection==='object') ? data.assethubConnection : {};   // Team Admin
+      externalRequestCategories = (data.externalRequestCategories && typeof data.externalRequestCategories==='object') ? data.externalRequestCategories : {};   // WRITE-2: request-form categories
       assethubCredentialPresent = data.assethubCredentialPresent === true;
       enabledViews = Array.isArray(data.enabledViews) ? data.enabledViews : null;   // null = all enabled
       slackNotify = (data.slackNotify && typeof data.slackNotify==='object') ? data.slackNotify : {};   // Team Admin (Slack)
@@ -16504,6 +16506,7 @@ async function boot(){
     assethubConfigured    = data.assethubConfigured === true;                                         // FLOW-1: gates all asset UI (mapping + .env credential present)
     assethubBaseUrl       = data.assethubBaseUrl || '';                                               // FLOW-1 item B: host for the asset-tag deep link
     assethubConnection    = (data.assethubConnection && typeof data.assethubConnection==='object') ? data.assethubConnection : {};   // Team Admin
+    externalRequestCategories = (data.externalRequestCategories && typeof data.externalRequestCategories==='object') ? data.externalRequestCategories : {};   // WRITE-2: request-form categories
     assethubCredentialPresent = data.assethubCredentialPresent === true;                              // Team Admin: which-half-missing
     enabledViews          = Array.isArray(data.enabledViews) ? data.enabledViews : null;              // Team Admin: view allowlist (null = all)
     slackNotify           = (data.slackNotify && typeof data.slackNotify==='object') ? data.slackNotify : {};   // Team Admin (Slack)
@@ -24029,7 +24032,7 @@ if ('serviceWorker' in navigator) {
   // early-return on hidden/archived for the same reason.
   function _frzExtRefSys(s){ return s==='assethub' ? 'AssetHub' : (s || 'External'); }
   function _frzExtRefKind(k){ return k==='request' ? 'Request' : (k==='service_event' ? 'Service event' : (k || 'Record')); }
-  function _frzExtRefRowHtml(r){
+  function _frzExtRefRowHtml(r, canEdit){
     r = r || {};
     var sys = _frzExtRefSys(r.system), kind = _frzExtRefKind(r.kind);
     var when = r.at ? '<span style="color:var(--muted);font-size:11px">'+esc(fmtTS(r.at))+'</span>' : '';
@@ -24043,11 +24046,16 @@ if ('serviceWorker' in navigator) {
     } else {
       var msg = r.status==='queued' ? 'Queued - not yet created'
               : r.status==='unmatched-person' ? 'No matching person in '+sys+' - not created'
-              : r.status==='failed' ? 'Handoff failed - not created'
+              : r.status==='failed' ? ('Request failed'+(r.lastError?(' - '+r.lastError):'')+' - not created')
               : (r.status ? String(r.status) : 'Unknown state');
       body = '<span style="color:var(--muted)">'+esc(msg)+'</span>';   // no link on a non-linked state
     }
-    return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+head+body+when+'</div>';
+    // WRITE-2: per-item Retry on a queued/failed request row (admin/editor only). data-op carries
+    // the operationRef; injectExternalRefs wires the click (it has the item context).
+    var retry = (canEdit && r.kind==='request' && r.operationRef && (r.status==='queued' || r.status==='failed'))
+      ? '<button type="button" class="frz-req-retry" data-op="'+escA(r.operationRef)+'" style="border:none;background:none;color:var(--frz-accent);cursor:pointer;font-size:12px;font-weight:700">Retry</button>'
+      : '';
+    return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+head+body+when+retry+'</div>';
   }
   function injectExternalRefs(p){
     if(!p) return;
@@ -24067,7 +24075,11 @@ if ('serviceWorker' in navigator) {
       anchor.parentNode.insertBefore(card, anchor.nextSibling);   // placement is finalized by _frzOrderMain, which lists frzExtRefsCard
     }
     var list = card.querySelector('#frzExtRefsList'); if(!list) return;
-    list.innerHTML = refs.map(_frzExtRefRowHtml).join('');
+    var canEdit = _frzCanEditAssets();
+    list.innerHTML = refs.map(function(r){ return _frzExtRefRowHtml(r, canEdit); }).join('');
+    if(canEdit) list.querySelectorAll('.frz-req-retry').forEach(function(b){
+      b.addEventListener('click', function(){ _frzRequestRetry(p, b.getAttribute('data-op'), b); });
+    });
   }
   // ── FLOW-1: linked AssetHub assets (item page), read-only against AssetHub ──────
   // Rendered from the cached AssetResponse (assetCache) - NO AssetHub call on render or item
@@ -24146,8 +24158,13 @@ if ('serviceWorker' in navigator) {
     var links = Array.isArray(p.assetLinks) ? p.assetLinks : [];
     var cache = p.assetCache || {};
     var canEdit = _frzCanEditAssets();
-    var head = '<div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between">'+
-      'Linked assets'+(canEdit && links.length ? '<button type="button" id="frzAssetRefresh" class="frz-cardh-btn">Refresh</button>':'')+'</div>';   // shared card-header button so the band matches other cards (item A)
+    // WRITE-2: "Create procurement request" sits in the card-header action cluster, admin/editor
+    // only (a Contributor never sees it; the endpoint + AssetHubClient refuse one anyway). It does
+    // NOT require a linked asset - a procurement request may acquire something new.
+    var hactions = (canEdit ? '<button type="button" id="frzReqCreate" class="frz-cardh-btn">Create procurement request</button>' : '')
+      + (canEdit && links.length ? '<button type="button" id="frzAssetRefresh" class="frz-cardh-btn">Refresh</button>' : '');
+    var head = '<div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between;gap:10px">'+
+      'Linked assets'+(hactions ? '<div style="display:flex;align-items:center;gap:10px">'+hactions+'</div>' : '')+'</div>';   // shared card-header buttons so the band matches other cards (item A)
     var rows = links.length ? links.map(function(l){ return _frzAssetRowHtml(l, cache[l.publicId], canEdit); }).join('') : '<div style="color:var(--muted)">No linked assets.</div>';
     return head + '<div style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">'+rows+(canEdit?_frzAssetPickerHtml():'')+'</div>';
   }
@@ -24178,6 +24195,7 @@ if ('serviceWorker' in navigator) {
   function _frzWireAssetCard(card, p){
     var rr = function(){ _frzRenderAssetCard(card, p); };   // re-render THIS container (item page OR edit modal) after an action
     var rb = card.querySelector('#frzAssetRefresh'); if(rb) rb.addEventListener('click', function(){ _frzAssetRefresh(p, rr, rb); });
+    var cq = card.querySelector('#frzReqCreate'); if(cq) cq.addEventListener('click', function(){ _frzOpenRequestModal(p); });   // WRITE-2
     card.querySelectorAll('.frz-asset-unlink').forEach(function(b){ b.addEventListener('click', function(){ _frzAssetUnlink(p, b.getAttribute('data-pubid'), rr); }); });
     card.querySelectorAll('.frz-asset-tickets').forEach(function(b){ b.addEventListener('click', function(){
       var pubid = b.getAttribute('data-pubid');
@@ -24277,6 +24295,83 @@ if ('serviceWorker' in navigator) {
         items.map(_frzAssetTicketRowHtml).join('');
       body.querySelectorAll('.frz-ati-row').forEach(function(el){ el.addEventListener('click', function(){ var id=parseInt(el.getAttribute('data-id'),10); close(); _call('openItemPage', id); }); });
     }).catch(function(e){ body.innerHTML='<div style="color:#e8394a;font-size:13px">'+esc((e&&e.message)||'Could not load tickets')+'</div>'; });
+  }
+  // ── WRITE-2: technician-initiated AssetHub procurement Request ────────────────────
+  // Human-initiated (admin/editor). The request link lives in the item's server-owned externalRefs
+  // and renders in the "Linked Records" card (injectExternalRefs); the server writes it status
+  // 'queued' before the send, then 'linked'/'failed'. A per-request Retry appears on queued/failed
+  // rows. NEVER a null actor: technician = the session user (server-derived); requested-for is
+  // prefilled here but sent only when non-empty (else AssetHub attributes to the technician).
+  function _frzRequestedForDefault(p){
+    if(p && p.reporterEmail) return String(p.reporterEmail);   // portal-origin items carry this (server-owned)
+    var assignee = p && p.assignee;
+    if(assignee){
+      var users = _val('users', []) || [];
+      for(var i=0;i<users.length;i++){ if(users[i] && users[i].username===assignee) return String(users[i].email||''); }
+    }
+    return '';
+  }
+  function _frzOpenRequestModal(p){
+    if(!p || !_frzCanEditAssets()) return;
+    var cats = ((_val('externalRequestCategories', {}) || {}).assethub) || [];
+    var reqFor = _frzRequestedForDefault(p);
+    var title = p.name || p.itemKey || 'Request';
+    var bg=document.createElement('div');
+    bg.style.cssText='position:fixed;inset:0;background:rgba(20,40,63,.38);z-index:100060;display:flex;align-items:center;justify-content:center;padding:24px;font-family:\'Lato\',system-ui,sans-serif';
+    var lbl='display:block;font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px';
+    var inp='width:100%;box-sizing:border-box;height:34px;padding:0 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px';
+    var catField = cats.length
+      ? '<select id="frzReqCat" style="'+inp+'">'+cats.map(function(c){ return '<option value="'+escA(c.id)+'">'+esc(c.label||c.id)+'</option>'; }).join('')+'</select>'
+      : '<div style="color:#e8394a;font-size:13px;font-weight:600">No request categories are configured. Ask an admin to add categories before creating a request.</div>';
+    var canSubmit = cats.length>0;
+    bg.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 18px 56px rgba(20,40,63,.28);width:460px;max-width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px">'+
+        '<span style="font-size:16px;font-weight:800;color:var(--text)">Create procurement request</span>'+
+        '<button type="button" id="frzReqClose" style="border:none;background:none;color:var(--muted);cursor:pointer;font-size:18px;line-height:1">✕</button></div>'+
+      '<div style="padding:18px 20px;overflow-y:auto;display:flex;flex-direction:column;gap:14px">'+
+        '<div><span style="'+lbl+'">Item</span><div style="font-size:13px;color:var(--text);font-weight:600">'+esc(title)+'</div></div>'+
+        '<div><span style="'+lbl+'">Category</span>'+catField+'</div>'+
+        '<div><span style="'+lbl+'">Quantity</span><input type="number" id="frzReqQty" min="1" step="1" value="1" style="'+inp+'"></div>'+
+        '<div><span style="'+lbl+'">Requested for</span><input type="text" id="frzReqFor" value="'+escA(reqFor)+'" placeholder="Leave blank to request as yourself" style="'+inp+'">'+
+          '<div style="font-size:11px;color:var(--muted);margin-top:5px">You ('+esc(_val('currentUser','')||'the signed-in technician')+') are recorded as the technician. Leave blank to also be the requester.</div></div>'+
+      '</div>'+
+      '<div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px">'+
+        '<button type="button" id="frzReqCancel" style="height:36px;padding:0 14px;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:8px;font-weight:700;cursor:pointer">Cancel</button>'+
+        '<button type="button" id="frzReqSubmit" '+(canSubmit?'':'disabled')+' style="height:36px;padding:0 16px;border:none;background:'+(canSubmit?'var(--frz-accent)':'var(--border)')+';color:#fff;border-radius:8px;font-weight:800;cursor:'+(canSubmit?'pointer':'not-allowed')+'">Create request</button>'+
+      '</div></div>';
+    document.body.appendChild(bg);
+    function close(){ if(bg.parentNode) bg.parentNode.removeChild(bg); document.removeEventListener('keydown', onKey); }
+    function onKey(e){ if(e.key==='Escape') close(); }
+    document.addEventListener('keydown', onKey);
+    bg.querySelector('#frzReqClose').addEventListener('click', close);
+    bg.querySelector('#frzReqCancel').addEventListener('click', close);
+    bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
+    var sb=bg.querySelector('#frzReqSubmit');
+    if(sb && canSubmit) sb.addEventListener('click', function(){
+      var catEl=bg.querySelector('#frzReqCat'), qtyEl=bg.querySelector('#frzReqQty'), rfEl=bg.querySelector('#frzReqFor');
+      var categoryId = catEl ? catEl.value : '';
+      if(!categoryId) return;
+      var qty = Math.max(1, parseInt((qtyEl&&qtyEl.value)||'1',10) || 1);
+      var requestedFor = rfEl ? (rfEl.value||'').trim() : '';
+      sb.disabled=true; sb.textContent='Creating...';   // double-submit guard: each click otherwise mints a distinct request
+      API.post('/api/items/'+p.id+'/requests', {categoryPublicId:categoryId, quantity:qty, requestedForEmail:requestedFor}).then(function(r){
+        if(r && r.externalRefs) p.externalRefs = r.externalRefs;
+        injectExternalRefs(p);
+        close();
+        if(r && r.ok===false) _call('showToast', 'Request failed: '+((r.error&&r.error.message)||(r.error&&r.error.code)||'AssetHub error')+'. You can retry it from Linked Records.');
+        else _call('showToast', 'Procurement request created.');
+      }).catch(function(e){ sb.disabled=false; sb.textContent='Create request'; _call('showToast', (e&&e.message)||'Could not create request'); });
+    });
+  }
+  function _frzRequestRetry(p, op, btn){
+    if(!p || !op) return;
+    if(btn){ btn.disabled=true; btn.textContent='Retrying...'; }
+    API.post('/api/items/'+p.id+'/requests/'+encodeURIComponent(op)+'/retry', {}).then(function(r){
+      if(r && r.externalRefs) p.externalRefs = r.externalRefs;
+      injectExternalRefs(p);   // re-renders the row (old btn is replaced); no re-enable needed on this path
+      if(r && r.ok===false) _call('showToast', 'Request failed: '+((r.error&&r.error.message)||(r.error&&r.error.code)||'AssetHub error'));
+      else _call('showToast', 'Procurement request created.');
+    }).catch(function(e){ if(btn){ btn.disabled=false; btn.textContent='Retry'; } _call('showToast', (e&&e.message)||'Retry failed'); });
   }
   function loadAttachments(p){
     var list=document.getElementById('frzAttList'); if(!list) return;
