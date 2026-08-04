@@ -2191,7 +2191,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.14.3';
+const APP_VERSION = '5.14.4';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -20877,6 +20877,14 @@ if ('serviceWorker' in navigator) {
     mv(cBody, _frzFieldByLabel(sched,'Start Date'));
     ['Time Estimate','Test Period','Parallel Resources'].forEach(function(l){ mv(cBody, _frzFieldByLabel(fields,l)); });
     ['Code Complete','Due Date','Revised Due','Expected Date','Release Date'].forEach(function(l){ mv(cBody, _frzFieldByLabel(sched,l)); });
+    // Created date + time (read-only), browser-local via fmtTS, at the BOTTOM of the Schedule card.
+    // Uses --muted/--text (remapped to the beta tokens) so it matches every other rail row.
+    if(cBody && p && p.createdAt){
+      var _cr=document.createElement('div');
+      _cr.innerHTML='<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">Created</div>'
+        +'<div style="font-size:13px;color:var(--text)">'+esc(_call('fmtTS', p.createdAt)||'-')+'</div>';
+      cBody.appendChild(_cr);
+    }
     var dc=document.getElementById('ipFieldsCard'); if(dc) dc.style.display='none';   // empty production Details card
     var scard=sched?sched.parentElement:null; if(scard) scard.style.display='none';   // empty production Schedule card
     _frzWireSprintField(p);   // IP1: Sprint = picker -> readiness (never a raw setter)
