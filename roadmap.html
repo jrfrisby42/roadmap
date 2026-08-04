@@ -21532,11 +21532,19 @@ if ('serviceWorker' in navigator) {
   // whitelisted param must match exactly both ways; project is enforced ONLY if the saved qs pins
   // one (legacy filters with no project don't falsely drop; a project-pinned filter must match).
   function _frzSavedStillMatches(s){
-    if(!s || s.view!==state.view) return false;
+    if(!s) return false;
+    // View-agnostic: the shared filter travels across views, so a saved filter stays "active" on
+    // ANY view as long as its FILTER matches - the active-filter dot must not drop when you switch
+    // views. View-specific params (board/sprint/panel) are in the qs and still gate via the exact
+    // comparison below (absent on views that don't use them -> those never falsely match).
     var sp=new URLSearchParams((s.qs||'').replace(/^\?/,''));
     var live=new URLSearchParams((_frzFilterQS()||'').replace(/^\?/,''));
     if(sp.has('project') && (sp.get('project')||'') !== (live.get('project')||'')) return false;
-    var keys={}; sp.forEach(function(v,k){ if(k!=='project') keys[k]=1; }); live.forEach(function(v,k){ if(k!=='project') keys[k]=1; });
+    // Ignore the date range: the Dashboard auto-applies a default from/to, which would otherwise
+    // break the match (and drop the dot) there even though the chip filter is unchanged. Range is a
+    // soft filter, not what identifies a saved filter.
+    var IGNORE={ from:1, to:1 };
+    var keys={}; sp.forEach(function(v,k){ if(k!=='project' && !IGNORE[k]) keys[k]=1; }); live.forEach(function(v,k){ if(k!=='project' && !IGNORE[k]) keys[k]=1; });
     return Object.keys(keys).every(function(k){ return (sp.get(k)||'') === (live.get(k)||''); });
   }
   // The ONE active saved filter: the clicked anchor IF it still matches, else null (match-and-drop;
