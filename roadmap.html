@@ -17403,16 +17403,17 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rpt-sub { font-size:12px; color:var(--frz-text-muted); margin-top:2px; }
   .frz-beta .frz-rpt-sec { border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); overflow:hidden; margin-bottom:18px; }
   .frz-beta .frz-rpt-sec-h { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-sunken); font-size:13px; font-weight:900; text-transform:uppercase; letter-spacing:.5px; }
-  .frz-beta .frz-rpt-filters { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; padding:12px 16px; border-bottom:1px solid var(--frz-border); }
-  .frz-beta .frz-rpt-filters label { display:flex; flex-direction:column; gap:3px; font-size:10px; font-weight:700; color:var(--frz-text-muted); text-transform:uppercase; letter-spacing:.4px; }
-  .frz-beta .frz-rpt-filters input, .frz-beta .frz-rpt-filters select { font:inherit; font-size:12.5px; padding:4px 7px; border:1px solid var(--frz-border); border-radius:6px; background:var(--frz-bg-app); color:var(--frz-text); }
+  /* Phase 1: page-level report sections (each a surface card on the page bg, like the Dashboard) */
+  .frz-beta .frz-rpt-controls { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; padding:12px 16px; margin-bottom:14px; border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); }
+  .frz-beta .frz-rpt-controls label { display:flex; flex-direction:column; gap:3px; font-size:10px; font-weight:700; color:var(--frz-text-muted); text-transform:uppercase; letter-spacing:.4px; }
+  .frz-beta .frz-rpt-controls input, .frz-beta .frz-rpt-controls select { font:inherit; font-size:12.5px; padding:4px 7px; border:1px solid var(--frz-border); border-radius:6px; background:var(--frz-bg-app); color:var(--frz-text); }
   .frz-beta .frz-rpt-total { margin-left:auto; font-size:12px; font-weight:700; color:var(--frz-text-muted); align-self:center; }
-  .frz-beta .frz-rpt-aggs { display:flex; flex-wrap:wrap; gap:12px; padding:14px 16px; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-rpt-aggs { display:flex; flex-wrap:wrap; gap:12px; padding:14px 16px; margin-bottom:14px; border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); }
   .frz-beta .frz-rpt-agg { flex:1; min-width:170px; border:1px solid var(--frz-border); border-radius:8px; overflow:hidden; }
   .frz-beta .frz-rpt-agg-h { padding:6px 10px; background:var(--frz-bg-sunken); font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); }
   .frz-beta .frz-rpt-aggrow { display:flex; justify-content:space-between; gap:8px; padding:4px 10px; font-size:12px; border-top:1px solid var(--frz-border); }
   .frz-beta .frz-rpt-aggn { font-weight:800; color:var(--frz-accent); }
-  .frz-beta .frz-rpt-tablewrap { overflow-x:auto; }
+  .frz-beta .frz-rpt-tablewrap { overflow-x:auto; border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); margin-bottom:14px; }
   .frz-beta .frz-rpt-table { border-collapse:collapse; width:100%; font-size:12px; }
   .frz-beta .frz-rpt-table th { text-align:left; padding:8px 10px; background:var(--frz-bg-sunken); border-bottom:2px solid var(--frz-border); font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); white-space:nowrap; position:sticky; top:0; }
   .frz-beta .frz-rpt-table td { padding:7px 10px; border-bottom:1px solid var(--frz-border); vertical-align:top; }
@@ -17420,7 +17421,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rpt-num { text-align:right; white-space:nowrap; }
   .frz-beta .frz-rpt-desc { max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .frz-beta .frz-rpt-na { color:var(--frz-text-muted); font-style:italic; }
-  .frz-beta .frz-rpt-kpis { display:flex; flex-wrap:wrap; gap:12px; padding:14px 16px; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-rpt-kpis { display:flex; flex-wrap:wrap; gap:12px; padding:14px 16px; margin-bottom:14px; border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); }
   .frz-beta .frz-rpt-kpi { flex:1; min-width:130px; border:1px solid var(--frz-border); border-radius:10px; padding:12px 14px; background:var(--frz-bg-app); }
   .frz-beta .frz-rpt-kpi-v { font-size:26px; font-weight:900; line-height:1.05; color:var(--frz-text); }
   .frz-beta .frz-rpt-kpi-l { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); margin-top:4px; }
@@ -18289,7 +18290,7 @@ if ('serviceWorker' in navigator) {
     'my-home':{ chips:[],                                   extra:[], opts:[] },  // Stage 5: personal landing, no chips
     'admin':  { chips:[],                                   extra:[], opts:[] },  // Phase 0: Admin full page, no chips
     'team-calendar':{ chips:[],                             extra:[], opts:[] },  // Phase 2: Team Calendar (custom filters in 2c)
-    'reports':{ chips:[],                                   extra:[], opts:[] }   // Ship C: Reports full page, owns its own in-page filters
+    'reports':{ chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:[] }   // Phase 1: Reports uses the SHARED chip bar (so Saved Views scope it); its date-basis/range/group-by are report-local controls in the page body
   };
   var PROJ_COLORS = ['#0059A9','#65B1E3','#2E8B6F','#C0700B','#8E4FB0','#C0392B','#0E7C86'];
   // Feature B: items eligible for sprint planning (single editable list).
@@ -19364,7 +19365,7 @@ if ('serviceWorker' in navigator) {
     if (!values || !values.length){ if(all) all.checked=true; items.forEach(function(c){c.checked=false;}); }
     else { if(all) all.checked=false; items.forEach(function(c){ c.checked = values.indexOf(c.value)>=0; }); }
   }
-  function rerender(){ _call('renderCurrentView'); }
+  function rerender(){ if(state.view==='reports'){ renderReports(); return; } _call('renderCurrentView'); }   // Reports is Flow-owned; renderCurrentView has no Reports case, so a chip/search/saved-view change must route here
   function setProjectPanel(){
     // project scope drives the production product filter
     if (state.project==='__all__') applyPanel('productDropPanel', null);
@@ -19613,12 +19614,12 @@ if ('serviceWorker' in navigator) {
     applyChromeHiding();
     document.getElementById('frzLeft').innerHTML=_titleHtml('reports','Reports');
     document.getElementById('frzBadges').innerHTML='';
-    document.getElementById('frzFilterBar').innerHTML='';   // Reports owns its own filter row inside the page
+    renderBar();   // Phase 1: Reports uses the SHARED chip bar (owner/assignee/type/status + priority/dept), like List/Kanban, so Saved Views scope it
     renderRail();
     _frzSyncSearchMode();
     renderReports();
   }
-  var _rptFilters = { from:'', to:'', status:'', type:'', priority:'', dept:'', assignee:'', product:'', owner:'', basis:'requested', group:'' };
+  var _rptFilters = { from:'', to:'', basis:'requested', group:'' };   // Phase 1: report-local controls ONLY; owner/assignee/type/status/priority/dept now come from the SHARED chip bar (getSelected*)
   var _PRPL = {1:'Urgent',2:'High',3:'Medium',4:'Low'};
   function _rptMedian(nums){                     // median over non-null numbers; null if none
     var xs=(nums||[]).filter(function(n){ return n!=null && !isNaN(n); }).sort(function(a,b){ return a-b; });
@@ -19680,14 +19681,24 @@ if ('serviceWorker' in navigator) {
         slaKind: (typeof slaState==='function' ? (function(){ var s=slaState(p); return s?s.kind:null; })() : null)   // IT/Ops SLA (A2): breached|atrisk|ontrack|met|missed|null
       };
     }
+    // Phase 1: scope from the SHARED filter chips + search + rail project (mirrors
+    // _kanbanFilteredItems), so top-bar chips and Saved Views drive the report. Date basis/range
+    // stay report-local (f.basis/from/to).
+    var fDev=getSelectedDevs(), fProd=getSelectedProducts(), fType=getSelectedTypes(), fSt=getSelectedStatuses(), fAsg=getSelectedAssignees();
+    var fPrio=getSelectedPriorities(), fDept=getSelectedDepartments();
+    var ownerScope=_call('getCurrentOwnerFilter');
+    var searchQ=((document.getElementById('itemSearch')||{}).value||'').trim().toLowerCase();
     var rows=all.filter(function(p){
-      if(f.status && (p.status||'')!==f.status) return false;
-      if(f.type && (p.type||'')!==f.type) return false;
-      if(f.priority && String(p.priority||'')!==f.priority) return false;
-      if(state.project && state.project!=='__all__' && (p.product||'')!==state.project) return false;   // follow the rail project scope (left menu) - single source of truth
-      if(f.owner && (p.dev||'')!==f.owner) return false;
-      if(f.dept && (p.departments||[]).indexOf(f.dept)<0) return false;
-      if(f.assignee && (p.assignee||'')!==f.assignee) return false;
+      if(fDev && fDev.indexOf(p.dev||'')<0) return false;
+      if(fProd && fProd.indexOf(p.product||'')<0) return false;
+      if(fType && fType.indexOf(p.type||'')<0) return false;
+      if(fSt && fSt.indexOf(p.status)<0) return false;
+      if(fAsg && fAsg.indexOf(p.assignee||'')<0) return false;
+      if(!priorityMatches(p, fPrio)) return false;
+      if(!departmentMatches(p, fDept)) return false;
+      if(ownerScope && p.dev!==ownerScope) return false;                                              // owner-scoped editor
+      if(state.project && state.project!=='__all__' && (p.product||'')!==state.project) return false;  // rail project scope (single source of truth)
+      if(searchQ && !_call('itemMatchesSearch',p,searchQ)) return false;
       if(f.from || f.to){                       // date-range over Requested (createdAt) OR Completed (completedAt) per basis
         var d=((f.basis==='completed' ? p.completedAt : p.createdAt)||'').slice(0,10);
         if(!d) return false;                     // no date on that basis = excluded when a range is set
@@ -19872,13 +19883,6 @@ if ('serviceWorker' in navigator) {
     var c=_rptComputed(), rows=c.rows, all=c.all, allRows=c.allRows, f=_rptFilters;
     var cols=_rptVisibleCols(allRows);                       // team-aware: only populated dimensions
     function has(k){ return _rptHas(allRows, {k:k}); }
-    // Filter option lists come from config / the team set (unfiltered) so options don't vanish.
-    var statuses=_val('statuses',[])||[], types=(_val('types',[])||[]).map(function(t){ return t.name||t; });
-    var depts=_val('departments',[])||[];
-    var productList=(_val('products',[])||[]).map(function(pp){ return pp.name||pp; });
-    var ownerSet={}, asgSet={};
-    all.forEach(function(p){ if(p.dev) ownerSet[p.dev]=1; if(p.assignee) asgSet[p.assignee]=1; });
-    var ownerList=Object.keys(ownerSet).sort(), asgList=Object.keys(asgSet).sort();
     // ── one cell, keyed by the column's kind ──
     function renderCell(col, r){
       var v=r[col.k];
@@ -19923,45 +19927,28 @@ if ('serviceWorker' in navigator) {
     }
     // IT/Ops aging (A2): open items by age bucket. Shown whenever there are open items.
     if(rows.some(function(r){ return r.open; })) aggs.push(_rptAggHtml('Aging (open)', _rptAging(rows)));
-    // ── team-aware filters: show a control only when that dimension is in use ──
+    // ── report-local controls ONLY (the shared owner/type/status/etc. live in the top chip bar).
+    //    Date basis + range + Group by have no top-bar equivalent, so they sit in this strip. ──
     var basisLbl=(f.basis==='completed'?'Completed':'Requested');
-    var filters='<label>Date basis<select id="frzRptBasis">'+_rptOpt(f.basis,'requested','Requested')+_rptOpt(f.basis,'completed','Completed')+'</select></label>'
+    var controls='<label>Date basis<select id="frzRptBasis">'+_rptOpt(f.basis,'requested','Requested')+_rptOpt(f.basis,'completed','Completed')+'</select></label>'
       +'<label>'+basisLbl+' from<input type="date" id="frzRptFrom" value="'+escA(f.from)+'"></label>'
       +'<label>to<input type="date" id="frzRptTo" value="'+escA(f.to)+'"></label>'
       +'<label>Group by<select id="frzRptGroup">'+_rptOpt(f.group,'','None')
         +['owner','assignee','dept','status','type','product','priority'].map(function(g){ return _rptOpt(f.group,g,_RPT_GROUPS[g].label); }).join('')+'</select></label>'
-      +'<label>Status<select id="frzRptStatus">'+_rptOpt(f.status,'','All')+statuses.map(function(s){ return _rptOpt(f.status,s,s); }).join('')+'</select></label>'
-      +'<label>Type<select id="frzRptType">'+_rptOpt(f.type,'','All')+types.map(function(t){ return _rptOpt(f.type,t,t); }).join('')+'</select></label>';
-    // Project filter mirrors the rail project scope (state.project) so the two are never
-    // contradictory; changing it drives setProject, which re-scopes the rail, URL, and report.
-    var projSel=(state.project && state.project!=='__all__') ? state.project : '';
-    if(productList.length) filters+='<label>Project<select id="frzRptProject">'+_rptOpt(projSel,'','All projects')+productList.map(function(pp){ return _rptOpt(projSel,pp,pp); }).join('')+'</select></label>';
-    if(has('owner'))   filters+='<label>Owner<select id="frzRptOwner">'+_rptOpt(f.owner,'','All')+ownerList.map(function(o){ return _rptOpt(f.owner,o,o); }).join('')+'</select></label>';
-    if(has('priority'))filters+='<label>Priority<select id="frzRptPriority">'+_rptOpt(f.priority,'','All')+[1,2,3,4].map(function(n){ return _rptOpt(f.priority,String(n),_PRPL[n]); }).join('')+'</select></label>';
-    if(has('dept'))    filters+='<label>Department<select id="frzRptDept">'+_rptOpt(f.dept,'','All')+depts.map(function(d){ return _rptOpt(f.dept,d,d); }).join('')+'</select></label>';
-    if(has('assigneeName')) filters+='<label>Assignee<select id="frzRptAssignee">'+_rptOpt(f.assignee,'','All')+asgList.map(function(a){ return _rptOpt(f.assignee,a,(_call('displayName',a)||a)); }).join('')+'</select></label>';
-    filters+='<span class="frz-rpt-total">'+rows.length+' item'+(rows.length===1?'':'s')+'</span>';
+      +'<span class="frz-rpt-total">'+rows.length+' item'+(rows.length===1?'':'s')+'</span>'
+      +'<button class="frz-newitem" id="frzRptCsv">Export CSV</button>';
     var flatTable='<div class="frz-rpt-tablewrap"><table class="frz-rpt-table"><thead><tr>'+thead+'</tr></thead>'
         +'<tbody>'+(tableRows || '<tr><td colspan="'+cols.length+'" style="padding:24px;text-align:center;color:var(--frz-text-muted)">No items match the current filters.</td></tr>')+'</tbody></table></div>';
+    // Page-level sections (no widget card, no redundant "Work Items" title - the top bar reads "Reports").
     host.innerHTML =
-      '<section class="frz-rpt-sec">'   // top-bar already reads "Reports"; no redundant page heading
-        +'<div class="frz-rpt-sec-h"><span>Work Items</span>'
-          +'<button class="frz-newitem" id="frzRptCsv">Export CSV</button></div>'
-        +'<div class="frz-rpt-filters">'+filters+'</div>'
+        '<div class="frz-rpt-controls">'+controls+'</div>'
         +_rptKpisHtml(_rptKpis(rows, allRows))
         +'<div class="frz-rpt-aggs">'+aggs.join('')+'</div>'
-        +(grouped ? pivotHtml : flatTable)
-      +'</section>';
-    // Wire filters (re-render on change) + CSV. Each binder no-ops when its control is hidden.
+        +(grouped ? pivotHtml : flatTable);
+    // Wire the report-local controls (re-render on change) + CSV.
     function bindF(id, key, ev){ var el=document.getElementById(id); if(el) el.addEventListener(ev||'change', function(){ _rptFilters[key]=el.value; renderReports(); }); }
     bindF('frzRptFrom','from'); bindF('frzRptTo','to');
     bindF('frzRptBasis','basis'); bindF('frzRptGroup','group');
-    bindF('frzRptStatus','status'); bindF('frzRptType','type'); bindF('frzRptPriority','priority');
-    bindF('frzRptDept','dept'); bindF('frzRptAssignee','assignee');
-    bindF('frzRptOwner','owner');
-    // Project drives the shared rail scope (not a report-local filter), so the left menu and the
-    // report stay in lockstep. setProject re-scopes + renderRail + syncURL, and (below) re-renders Reports.
-    var pj=document.getElementById('frzRptProject'); if(pj) pj.addEventListener('change', function(){ setProject(pj.value || '__all__'); });
     var csv=document.getElementById('frzRptCsv'); if(csv) csv.addEventListener('click', _rptExportCsv);
   }
   // ── Team Calendar render (Phase 2a: Month view - Owner -> Users -> chips) ──────
