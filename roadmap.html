@@ -17393,7 +17393,11 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-bcard-pbar.p4 { background:#22b96e; }   /* Low */
   .frz-beta .frz-bcard-pbar.p0 { background:var(--frz-border); }   /* unset -> neutral hairline (matches card border), never a misleading urgency color */
   .frz-beta .frz-bcard-main { flex:1 1 0; min-width:0; display:flex; flex-direction:column; }   /* fills card width minus the 4px bar */
-  .frz-beta .frz-bcard-keystrip { background:var(--frz-accent-soft); color:var(--frz-text); font-family:monospace; font-size:12px; font-weight:600; letter-spacing:.3px; padding:4px 22px 4px 10px; border-bottom:1px solid var(--frz-border); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* Key strip: bg deepened to --frz-accent-soft-border (#C3DCF1) so the band separates from the
+     Kanban column fill (--frz-bg-sunken #E6EEF6) it sits in, not just from the white body; #B7D2EC
+     bottom separator is a step deeper than the fill. Dark bg is pinned back to --frz-accent-soft
+     below (dark already reads distinct on #181E2A). */
+  .frz-beta .frz-bcard-keystrip { background:var(--frz-accent-soft-border); color:var(--frz-text); font-family:monospace; font-size:12px; font-weight:600; letter-spacing:.3px; padding:4px 22px 4px 10px; border-bottom:1px solid #B7D2EC; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .frz-beta .frz-bcard-body { padding:9px 11px; }   /* the card body padding, moved here (the card keeps its own padding; the inner negates it) */
   /* Canonical card footer chips - pts (neutral) vs weeks (accent) stay visually distinct */
   .frz-beta .frz-bchip { display:inline-flex; align-items:center; font-size:10px; font-weight:700; line-height:1; padding:2px 6px; border-radius:9px; }
@@ -17791,11 +17795,14 @@ if ('serviceWorker' in navigator) {
   body.dark-mode .frz-beta .frz-item[aria-current="true"] .frz-count { background:#15314a; }
   body.dark-mode .frz-beta .frz-bcard { background:var(--frz-bg-surface); }
   /* Priority edge bar: dark-adjusted so the light hexes never sit unaltered on the dark card; hues
-     align with the app's existing dark color language. p0 (var(--frz-border)) + the keystrip
-     (--frz-accent-soft / --frz-text) are already theme-aware and flip via their tokens. */
+     align with the app's existing dark color language. p0 (var(--frz-border)) is theme-aware and
+     flips via its token. The keystrip's LIGHT bg was deepened to --frz-accent-soft-border; dark does
+     NOT need that (it already reads as a band on #181E2A), so pin the dark bg back to --frz-accent-soft
+     and give the separator a theme value (a step off the dark strip). */
   body.dark-mode .frz-beta .frz-bcard-pbar.p1 { background:#ff6b7a; }
   body.dark-mode .frz-beta .frz-bcard-pbar.p2 { background:#ff9a4d; }
   body.dark-mode .frz-beta .frz-bcard-pbar.p3 { background:#f0cf3a; }
+  body.dark-mode .frz-beta .frz-bcard-keystrip { background:var(--frz-accent-soft); border-bottom-color:var(--frz-accent-soft-border); }
   body.dark-mode .frz-beta .frz-bcard-pbar.p4 { background:#3dd68a; }
   body.dark-mode .frz-beta .frz-pop input[type=date] { background:var(--frz-bg-surface); }
   body.dark-mode .frz-beta .frz-sh-completed { background:#15331f; color:#5fcf8a; }
