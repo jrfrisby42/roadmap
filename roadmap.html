@@ -2191,7 +2191,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.16.3';
+const APP_VERSION = '5.16.4';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -17015,7 +17015,8 @@ if ('serviceWorker' in navigator) {
 <style id="frzBetaStyle">
   .frz-beta {
     --frz-bg-app:#F5F8FB; --frz-bg-surface:#FFFFFF; --frz-bg-rail:#FAFCFE; --frz-bg-elevated:#FFFFFF; --frz-shadow-card:0 2px 8px rgba(20,40,63,.06); --frz-header-tint:#ECF3FB;
-    --frz-bg-sunken:#E6EEF6;   /* recessed lane (Kanban columns) - deeper than app so white cards read as draggable */
+    --frz-bg-sunken:#E6EEF6;   /* recessed lane, shared: Reports headers / code blocks / RTE table headers */
+    --frz-kanban-lane:#EAEDF1; /* Kanban lane ONLY: cool gray (faint blue undertone) so the subtle key strip + white cards pop */
     --frz-border:#E1E8F0; --frz-border-strong:#C9D6E3;
     --frz-accent:#0059A9; --frz-accent-hover:#004A8F; --frz-accent-soft:#E7F1FA;
     --frz-accent-soft-border:#C3DCF1; --frz-sky:#65B1E3;
@@ -17393,11 +17394,12 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-bcard-pbar.p4 { background:#22b96e; }   /* Low */
   .frz-beta .frz-bcard-pbar.p0 { background:var(--frz-border); }   /* unset -> neutral hairline (matches card border), never a misleading urgency color */
   .frz-beta .frz-bcard-main { flex:1 1 0; min-width:0; display:flex; flex-direction:column; }   /* fills card width minus the 4px bar */
-  /* Key strip: bg deepened to --frz-accent-soft-border (#C3DCF1) so the band separates from the
-     Kanban column fill (--frz-bg-sunken #E6EEF6) it sits in, not just from the white body; #B7D2EC
-     bottom separator is a step deeper than the fill. Dark bg is pinned back to --frz-accent-soft
-     below (dark already reads distinct on #181E2A). */
-  .frz-beta .frz-bcard-keystrip { background:var(--frz-accent-soft-border); color:var(--frz-text); font-family:monospace; font-size:12px; font-weight:600; letter-spacing:.3px; padding:4px 22px 4px 10px; border-bottom:1px solid #B7D2EC; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* Key strip: SUBTLE tint (--frz-accent-soft #E7F1FA light / #15314a dark). The contrast is carried
+     by the neutral-gray Kanban lane (--frz-kanban-lane) it sits in, not by deepening the strip - so
+     the header stays a light band and does not compete with the title. A thin --frz-accent-soft-border
+     bottom separator (#C3DCF1 light / #24506f dark, both from the token) defines the band. Both modes
+     flip via the tokens, so no dark override is needed. */
+  .frz-beta .frz-bcard-keystrip { background:var(--frz-accent-soft); color:var(--frz-text); font-family:monospace; font-size:12px; font-weight:600; letter-spacing:.3px; padding:4px 22px 4px 10px; border-bottom:1px solid var(--frz-accent-soft-border); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .frz-beta .frz-bcard-body { padding:9px 11px; }   /* the card body padding, moved here (the card keeps its own padding; the inner negates it) */
   /* Canonical card footer chips - pts (neutral) vs weeks (accent) stay visually distinct */
   .frz-beta .frz-bchip { display:inline-flex; align-items:center; font-size:10px; font-weight:700; line-height:1; padding:2px 6px; border-radius:9px; }
@@ -17746,7 +17748,8 @@ if ('serviceWorker' in navigator) {
     /* Dark ramp - blue-navy, each step lifted for elevation separation. */
     --frz-bg-app:#11151D; --frz-bg-surface:#1C2230; --frz-bg-rail:#161B26;
     --frz-bg-elevated:#232A3A;   /* popovers/menus (and the modal, via token) */
-    --frz-bg-sunken:#181E2A;     /* recessed lane (Kanban columns), dark */
+    --frz-bg-sunken:#181E2A;     /* recessed lane (shared: Reports/code/RTE headers), dark */
+    --frz-kanban-lane:#191C22;   /* Kanban lane ONLY, dark: neutral charcoal (not blue), a clear step off the #15314a strip band */
     --frz-border:#3A4358; --frz-border-strong:#46536E;   /* lifted so card edges/dividers/rail edge read */
     --frz-shadow-card:0 2px 10px rgba(0,0,0,.45);
     --frz-header-tint:#232A3A;   /* subtle lift off the card surface (a hair lighter), not a glowing band - flagged for the dark ticket */
@@ -17795,15 +17798,17 @@ if ('serviceWorker' in navigator) {
   body.dark-mode .frz-beta .frz-item[aria-current="true"] .frz-count { background:#15314a; }
   body.dark-mode .frz-beta .frz-bcard { background:var(--frz-bg-surface); }
   /* Priority edge bar: dark-adjusted so the light hexes never sit unaltered on the dark card; hues
-     align with the app's existing dark color language. p0 (var(--frz-border)) is theme-aware and
-     flips via its token. The keystrip's LIGHT bg was deepened to --frz-accent-soft-border; dark does
-     NOT need that (it already reads as a band on #181E2A), so pin the dark bg back to --frz-accent-soft
-     and give the separator a theme value (a step off the dark strip). */
+     align with the app's existing dark color language. p0 (var(--frz-border)) + the keystrip
+     (--frz-accent-soft bg / --frz-accent-soft-border separator) are theme-aware and flip via their
+     tokens, so no dark keystrip override is needed. */
   body.dark-mode .frz-beta .frz-bcard-pbar.p1 { background:#ff6b7a; }
   body.dark-mode .frz-beta .frz-bcard-pbar.p2 { background:#ff9a4d; }
   body.dark-mode .frz-beta .frz-bcard-pbar.p3 { background:#f0cf3a; }
-  body.dark-mode .frz-beta .frz-bcard-keystrip { background:var(--frz-accent-soft); border-bottom-color:var(--frz-accent-soft-border); }
   body.dark-mode .frz-beta .frz-bcard-pbar.p4 { background:#3dd68a; }
+  /* Kanban lane, dark: a neutral charcoal (not the blue --frz-bg-sunken), scoped to the shell and
+     forced with !important to beat the classic `body.dark-mode .kanban-col` !important rule (L149)
+     that would otherwise repaint the shell column. So the dark strip band pops the same way. */
+  body.dark-mode .frz-beta .kanban-col { background:var(--frz-kanban-lane) !important; }
   body.dark-mode .frz-beta .frz-pop input[type=date] { background:var(--frz-bg-surface); }
   body.dark-mode .frz-beta .frz-sh-completed { background:#15331f; color:#5fcf8a; }
   body.dark-mode .frz-beta .frz-sh-carried   { background:#332714; color:#e0a94d; }
@@ -22277,7 +22282,7 @@ if ('serviceWorker' in navigator) {
     inner.innerHTML = shown.map(function(s){
       var col=s.col, multi=(col.statuses||[]).length>1;
       var cards=s.items.map(function(p){ return _betaCardHtml(p, multi); }).join('');
-      return '<div class="kanban-col" style="width:'+colW+'px;min-width:160px;flex:1;background:var(--frz-bg-sunken);border-radius:10px;padding:10px">'
+      return '<div class="kanban-col" style="width:'+colW+'px;min-width:160px;flex:1;background:var(--frz-kanban-lane);border-radius:10px;padding:10px">'
         + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;padding-bottom:8px;border-bottom:2px solid var(--frz-border-strong)">'
         + '<span style="font-size:12px;font-weight:900;color:var(--frz-text)">'+esc(col.name)+'</span>'
         + '<span style="font-size:10px;color:var(--frz-text-muted);background:rgba(128,128,128,0.15);padding:1px 6px;border-radius:8px">'+s.items.length+'</span>'
