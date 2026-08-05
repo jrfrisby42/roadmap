@@ -21620,7 +21620,14 @@ if ('serviceWorker' in navigator) {
     var qs=s.qs||'';
     if(qs){ var u=new URLSearchParams(qs.replace(/^\?/,'')); u.delete('panel'); var t=u.toString(); qs=t?('?'+t):''; }
     state.activeSavedId = s.id;   // Fix 1: anchor the highlight to the CLICKED filter (survives URL canonicalization)
-    navigate('/'+s.view + qs, false);
+    // A saved filter is a CHIP filter, not a saved view: apply it on the CURRENT view so you can
+    // re-filter in place (e.g. swap filters while staying on Reports). Fall back to the filter's
+    // origin view ONLY when the current surface has no filter model (My Home, Admin, an item page) -
+    // applying chips there has nowhere to land. View-specific bits in the qs (board/sprint) simply
+    // drop on a view that doesn't use them; the chips still apply.
+    var _curFilterable = (typeof CFG!=='undefined' && CFG[state.view] && (CFG[state.view].chips||[]).length && !state.onItem);
+    var targetView = _curFilterable ? state.view : s.view;   // My Home / Admin / item page have no chip bar -> fall back to the saved view
+    navigate('/'+targetView + qs, false);
   }
   // ════════ Stage 3 (+ Fix 1): view-aware UI - saved-filter highlight + crumb + sync ════════
   // params of a stored/whitelisted qs (project excluded so we can apply project leniently).
