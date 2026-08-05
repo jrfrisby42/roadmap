@@ -17083,7 +17083,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-footer { border-top:1px solid var(--frz-border); padding:8px; flex-shrink:0; }
 
   /* Collapsed rail */
-  .frz-beta.is-collapsed-ui .frz-item { justify-content:center; padding:9px 0; }
+  .frz-beta.is-collapsed-ui .frz-item { justify-content:center; padding:9px 0; position:relative; }   /* position:relative anchors the collapsed active-filter cue dot */
   .frz-beta.is-collapsed-ui .frz-item span, .frz-beta.is-collapsed-ui .frz-item .frz-count,
   .frz-beta.is-collapsed-ui .frz-heading, .frz-beta.is-collapsed-ui .frz-brand-name,
   .frz-beta.is-collapsed-ui .frz-dot,
@@ -17091,6 +17091,13 @@ if ('serviceWorker' in navigator) {
   .frz-beta.is-collapsed-ui .frz-brand { justify-content:center; padding:0; }
   .frz-beta.is-collapsed-ui .frz-logo { height:auto; max-width:40px; }
   .frz-beta.is-collapsed-ui .frz-section--saved, .frz-beta.is-collapsed-ui .frz-section--projects, .frz-beta.is-collapsed-ui .frz-section--boards { display:none; }
+  /* Collapsed-rail active-filter cue: the SAVED FILTERS section (and its active-filter dot) is
+     hidden when the rail is icon-only, so a collapsed-rail user loses the "a filter is on" signal.
+     Light a small accent dot on the ACTIVE view's rail icon whenever the current view has an active
+     chip filter (root carries .frz-filter-on, set at the syncURL chokepoint). Expanded rail is
+     untouched - it keeps the saved-filter-row dot as the single cue. */
+  .frz-beta .frz-item-cdot { display:none; }
+  .frz-beta.is-collapsed-ui.frz-filter-on .frz-item[aria-current="true"] .frz-item-cdot { display:block; position:absolute; top:6px; right:9px; width:7px; height:7px; border-radius:50%; background:var(--frz-accent); box-shadow:0 0 0 2px var(--frz-bg-rail); }
 
   /* Main column */
   .frz-beta .frz-main { display:flex; flex-direction:column; min-width:0; min-height:0; }
@@ -19060,7 +19067,7 @@ if ('serviceWorker' in navigator) {
     hb.className='frz-item'; hb.setAttribute('data-nav','view:my-home');
     hb.setAttribute('aria-current', String(state.view==='my-home' && !state.onItem));
     hb.title='My Home';
-    hb.innerHTML = IC.home + '<span>My Home</span>' + (mwCount>0 ? '<span class="frz-count">'+mwCount+'</span>' : '');
+    hb.innerHTML = IC.home + '<span>My Home</span>' + (mwCount>0 ? '<span class="frz-count">'+mwCount+'</span>' : '') + '<span class="frz-item-cdot" aria-hidden="true"></span>';
     nav.appendChild(hb);
     // Ordered VIEWS (My Home is pinned above, always). Each entry is gated by role AND by the
     // per-team enabledViews allowlist (_viewEnabled). admin + my-home are always on and are not in
@@ -19077,7 +19084,7 @@ if ('serviceWorker' in navigator) {
       b.title = VIEW_LABEL[v];
       var icon = (v==='team-calendar') ? IC.teamCalendar : IC[v];
       var c = (v==='team-calendar' || v==='reports') ? null : viewCount(v);   // Calendar + Reports carry no count pill
-      b.innerHTML = icon + '<span>'+VIEW_LABEL[v]+'</span>' + (c!=null ? '<span class="frz-count">'+c+'</span>' : '');
+      b.innerHTML = icon + '<span>'+VIEW_LABEL[v]+'</span>' + (c!=null ? '<span class="frz-count">'+c+'</span>' : '') + '<span class="frz-item-cdot" aria-hidden="true"></span>';
       nav.appendChild(b);
     });
     // projects
@@ -21651,6 +21658,9 @@ if ('serviceWorker' in navigator) {
     // Mobile companion (Phase 5): mark the current view on root so phone CSS can show the
     // Gantt "open as List" nudge only on Gantt.
     if(root) root.setAttribute('data-view', state.onItem ? 'item' : (state.view||''));
+    // Collapsed-rail active-filter cue: light the dot on the active view's icon when the current
+    // view has an active chip filter (CSS keys off .frz-filter-on + is-collapsed-ui + aria-current).
+    if(root) root.classList.toggle('frz-filter-on', !state.onItem && !!CFG[state.view] && anyActive(state.view));
     // Fix 2: rail BOARDS highlight is part of the view sync - exactly one lit on a Kanban URL.
     // A [data-board] (incl. "All statuses") lights ONLY when NOT sprint-scoped; a sprint scope
     // lights the Active Sprint pseudo-board instead (mutually exclusive), so board + active-sprint
