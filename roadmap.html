@@ -2191,7 +2191,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.16.6';
+const APP_VERSION = '5.17.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -8902,7 +8902,7 @@ function _recordSession(team, token, username, role){
   var m=_loadSessions(); m[team]={ token:token, username:username||'', role:role||'viewer', ts:Date.now() }; _saveSessions(m);
 }
 function activeTeamSlug(){ try { return (localStorage.getItem(SK.team)||'').trim(); } catch(e){ return ''; } }
-function switchTeam(team){
+function switchTeam(team, targetUrl){
   var m=_loadSessions(), s=m[team];
   if(!s || team===activeTeamSlug()) return;
   try {
@@ -8913,7 +8913,9 @@ function switchTeam(team){
     localStorage.setItem(SK.session, '1');
     localStorage.setItem('frazil_rm_login_ts', String(s.ts||Date.now()));
   } catch(e){}
-  location.href='/';   // full re-init for the new team (safest across the whole app)
+  // Full re-init for the new team (safest across the whole app). targetUrl lets a cross-team item
+  // link land on the item AFTER the switch (default '/'); the route then matches the now-active team.
+  location.href = targetUrl || '/';
 }
 // "Add a team" = sign into another team without losing the current session. The
 // login wall lists every team; picking a different one + signing in records it and
@@ -21304,6 +21306,9 @@ if ('serviceWorker' in navigator) {
     _debrandItem(); setTimeout(_debrandItem, 500);
     // top bar: Back + breadcrumb
     var p = ps.filter(function(x){return x.id===id;})[0] || {};
+    // Mismatch guard: a stamped link that resolved to a different key on the (correct) team is stale
+    // (e.g. the id was reused). Non-blocking - the item did load, so just warn.
+    if(opts.key && p.itemKey && p.itemKey !== opts.key){ _call('showToast', 'This link referenced '+opts.key+' but opened '+p.itemKey+' - it may be outdated'); }
     // Breadcrumb: Project(dot) › [PARENT-KEY ›] ITEM-KEY  (no item name - matches Jira).
     // Parent is the subtask→parent relationship ONLY (p.parent), never recurrence_parent.
     var _ps = _val('projects',[])||[];
@@ -21342,8 +21347,11 @@ if ('serviceWorker' in navigator) {
     // on the item page (navigation may have left focus on a now-hidden element).
     try { if(document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch(_){}
     if (opts.push!==false){
-      // include itemPage:id so the production popstate handler re-opens (not closes)
-      history.pushState({ frzItem:id, itemPage:id, frzView:state.view }, '', '/item/'+id);
+      // include itemPage:id so the production popstate handler re-opens (not closes). Stamp the
+      // active team (+ key) so the address-bar / copied URL carries the team - a teammate opening it
+      // on another team gets the switch prompt instead of the wrong item.
+      var _shareQS='?team='+encodeURIComponent(_teamSlug())+(p.itemKey?('&key='+encodeURIComponent(p.itemKey)):'');
+      history.pushState({ frzItem:id, itemPage:id, frzView:state.view }, '', '/item/'+id+_shareQS);
     }
     renderRail();
     _frzSyncSearchMode();   // top bar = global search on the item page
@@ -21354,12 +21362,45 @@ if ('serviceWorker' in navigator) {
     else { navigate('/'+(state.view||'gantt'), true); }
   }
 
+  // ── Cross-team item links (v1: stamp team + switch-then-load) ─────────────────
+  // /item/{id}?team={slug} is a SWITCH instruction, not a data selector: the server derives the
+  // team from the auth token, so we must swap to the target team's session token then reload into
+  // the item. Only works when a session for that team already exists; otherwise a dead-end "sign
+  // in" prompt (no deep-link-through-login in v1). A VISIBLE prompt, never silent: localStorage is
+  // shared across tabs, so a silent switch would repoint every other open Flow tab.
+  function _frzHasUnsavedState(){
+    try {
+      var mb=document.getElementById('modalBg'); if(mb && getComputedStyle(mb).display!=='none') return true;   // item edit modal open
+      var ci=document.getElementById('ipCommentText'); if(ci && (ci.value||'').trim()) return true;             // unsent classic comment
+    } catch(e){}
+    return false;
+  }
+  // Returns true if the open was INTERCEPTED (prompt shown or switch started) -> the caller must NOT
+  // resolve the id against the current (wrong) team. False -> same team or unstamped, load normally.
+  function _frzCrossTeamGate(team, id, key){
+    team=(team||'').trim().toLowerCase();
+    if(!team || team===_teamSlug()) return false;   // unstamped or already the active team -> normal load
+    var sessions=_call('_loadSessions')||{};
+    var label=_call('teamLabel', team)||team.toUpperCase();
+    if(sessions[team]){
+      var url='/item/'+id+'?team='+encodeURIComponent(team)+(key?('&key='+encodeURIComponent(key)):'');
+      var msg='This item is on '+label+'. Switch to '+label+' to open it?'+(_frzHasUnsavedState()?'\n\nUnsaved changes will be discarded.':'');
+      if(confirm(msg)) _call('switchTeam', team, url);   // mirror the target session + reload into the item on the right team
+      return true;   // handled: switching, or the user cancelled (do NOT open the wrong-team item)
+    }
+    alert('This item is on '+label+', which you are not signed into. Sign into '+label+' to view it.');
+    return true;   // v1 dead-end (no auto deep-link through login)
+  }
   // ════════ routing ════════
   function navigate(url, replace){
     var u = new URL(url, location.origin);
     var path = u.pathname.replace(/\/+$/,'');
     var m = path.match(/^\/item\/(\d+)/);
-    if (m){ state.itemFromApp = !replace; openItem(parseInt(m[1],10), {push:!replace}); return; }
+    if (m){
+      var _iid=parseInt(m[1],10), _itm=(u.searchParams.get('team')||'').trim(), _iky=u.searchParams.get('key')||'';
+      if(_frzCrossTeamGate(_itm, _iid, _iky)) return;   // cross-team: prompt/switch handled; never load against the wrong team
+      state.itemFromApp = !replace; openItem(_iid, {push:!replace, key:_iky}); return;
+    }
     if (/^\/my-work(\/|$)/.test(path)){ navigate('/my-home', replace); return; }   // Stage 5: My Work absorbed into My Home
     var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar)/);
     var view = vm ? vm[1] : (lastView()||'gantt');
@@ -21392,8 +21433,12 @@ if ('serviceWorker' in navigator) {
     // it renders lazily on the Back popstate instead. openItem hides the view
     // containers + renders the rail/bar itself, so no eager setView is needed.
     if (m){
+      var _sp=new URLSearchParams(location.search), _itm=(_sp.get('team')||'').trim(), _iky=_sp.get('key')||'';
+      // Cross-team: switching (reload incoming) OR a cancelled/dead-end prompt -> land on a safe view,
+      // never the wrong-team item. Run the gate BEFORE resolving the id against the active team.
+      if(_frzCrossTeamGate(_itm, parseInt(m[1],10), _iky)){ navigate('/'+(lastView()||'gantt'), true); return; }
       var v = lastView()||'gantt'; state.view=v; applyChromeHiding();
-      history.replaceState({frzView:v},'','/'+v); state.itemFromApp=true; openItem(parseInt(m[1],10), {push:true}); return;
+      history.replaceState({frzView:v},'','/'+v); state.itemFromApp=true; openItem(parseInt(m[1],10), {push:true, key:_iky}); return;
     }
     if (qItem){
       var v2 = lastView()||'gantt'; state.view=v2; applyChromeHiding();
