@@ -2191,7 +2191,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.16.1';
+const APP_VERSION = '5.16.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -18865,7 +18865,8 @@ if ('serviceWorker' in navigator) {
     _frzSyncAvatar();
 
     // state restore
-    state.saved = loadSaved();
+    state.saved = loadSaved();           // instant paint from the local cache
+    _frzSyncSavedFromServer();           // then reconcile with the server (source of truth; merges this browser's local set once)
     var savedProj = ls(projKey()); if (savedProj) state.project = savedProj;
     // Route in-view item clicks (Gantt bar, List row, Kanban card → openItemPage)
     // through the beta shell so they get the shell top bar / Back / hidden filter
@@ -21470,7 +21471,35 @@ if ('serviceWorker' in navigator) {
 
   // ════════ saved filters ════════
   function loadSaved(){ _migrateSavedKey(); try { return JSON.parse(ls(savedKey())||'[]'); } catch(e){ return []; } }
-  function persistSaved(){ lset(savedKey(), JSON.stringify(state.saved)); }
+  // Saved filters are now SERVER-backed (per team+user) so they follow the user across
+  // browsers/devices. localStorage stays as an instant-paint CACHE + offline fallback. Every
+  // mutation (save/rename/delete) writes the cache AND best-effort PUTs the full set to the server.
+  function _frzWriteSavedCache(){ try { lset(savedKey(), JSON.stringify(state.saved)); } catch(e){} }
+  function _frzPutSavedServer(){ try { API.put('/api/saved-filters', { filters: state.saved }); } catch(e){} }   // best-effort; cache already holds it
+  function persistSaved(){ _frzWriteSavedCache(); _frzPutSavedServer(); }
+  // Reconcile with the server on shell load. ONE-TIME-per-browser, this device's local set is
+  // lifted into the server merged BY NAME (union; server wins on a same-name collision); after
+  // that the server row is authoritative. Offline / error keeps the cache-seeded state.saved.
+  function _frzSavedMigMark(){ return 'frazil_beta_saved_srvmig_' + _teamSlug() + '_' + uname(); }
+  function _frzSyncSavedFromServer(){
+    if(typeof API==='undefined' || !API || !API.get) return;   // API is a top-level const (bare name), NOT on window
+    API.get('/api/saved-filters').then(function(r){
+      var server = (r && Array.isArray(r.filters)) ? r.filters : [];
+      var added = 0;
+      if(ls(_frzSavedMigMark()) !== '1'){
+        var local = []; try { local = JSON.parse(ls(savedKey())||'[]'); } catch(e){ local = []; }
+        var names = {}; server.forEach(function(s){ if(s && s.name) names[String(s.name).toLowerCase()] = 1; });
+        local.forEach(function(l){
+          var nm = l && l.name ? String(l.name).toLowerCase() : '';
+          if(nm && !names[nm]){ server.push(l); names[nm] = 1; added++; }   // union: lift local-only names up
+        });
+        lset(_frzSavedMigMark(), '1');
+      }
+      state.saved = server; _frzWriteSavedCache();
+      if(added) _frzPutSavedServer();   // persist the merged union back to the server
+      if(document.getElementById('frzSavedNav')) renderSavedNav();
+    }).catch(function(){ /* offline / error: keep the cache-seeded state.saved */ });
+  }
   // Non-blocking inline name popover (replaces window.prompt - styleable, async)
   function namePopover(anchor, opts){
     closePop();

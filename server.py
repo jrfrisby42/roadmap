@@ -832,6 +832,15 @@ def init_team_db(team: str):
         );
         CREATE INDEX IF NOT EXISTS idx_item_departments_dept ON item_departments(department);
         CREATE INDEX IF NOT EXISTS idx_item_departments_item ON item_departments(item_id);
+        -- Per-user saved filters (Flow shell "SAVED FILTERS" rail). One row per user holds the
+        -- whole JSON array of {id,name,view,qs} entries - the client treats the set as one blob, so
+        -- a single-row-per-user store mirrors it exactly. Server-side so they follow a user across
+        -- browsers/devices (localStorage was per-device). Scoped to this team's DB; per-user by PK.
+        CREATE TABLE IF NOT EXISTS saved_filters (
+            username    TEXT PRIMARY KEY,
+            data        TEXT NOT NULL DEFAULT '[]',
+            updated_ts  TEXT NOT NULL DEFAULT ''
+        );
         """)
         # ── Live migrations: add new columns if they don't exist yet ─────────────
         for _col, _defn in [
@@ -1385,7 +1394,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.16.1"
+APP_VERSION = "5.16.2"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -4517,6 +4526,43 @@ def put_boards(body = Body(...), auth: dict = Depends(require_role("admin", "edi
                   (json.dumps(boards),))
     write_audit(team, "beta:boards", auth["username"], changes={"count": len(boards)})
     return {"boards": boards}
+
+# ── Beta: Saved filters (per-user, follows the user across browsers/devices) ──
+# The Flow shell "SAVED FILTERS" rail. PER-USER (not shared): one row per user in the team's
+# saved_filters table holds the whole JSON array of {id,name,view,qs} entries. Any authed user
+# (incl. viewers) may read/write their OWN set - it is personal UI state, not privileged config.
+# There is no cross-user read: a user only ever sees their own row (auth["username"]).
+_SAVED_FILTERS_MAX = 200   # sanity ceiling on the number of saved filters per user
+
+@app.get("/api/saved-filters")
+def get_saved_filters(auth: dict = Depends(require_auth)):
+    with db(auth["team"]) as c:
+        row = c.execute("SELECT data FROM saved_filters WHERE username=?", (auth["username"],)).fetchone()
+    try:
+        filters = json.loads(row["data"]) if row else []
+    except Exception:
+        filters = []
+    if not isinstance(filters, list):
+        filters = []
+    return {"filters": filters}
+
+@app.put("/api/saved-filters")
+def put_saved_filters(body = Body(...), auth: dict = Depends(require_auth)):
+    """Replace the caller's saved-filter set wholesale (the client owns the array and sends the
+    full list on every change - save/rename/delete). Entries are kept verbatim EXCEPT they must be
+    objects carrying a non-empty name; anything else is dropped. Bounded by _SAVED_FILTERS_MAX."""
+    filters = body.get("filters") if isinstance(body, dict) else body
+    if not isinstance(filters, list):
+        raise HTTPException(422, "filters must be a list")
+    if len(filters) > _SAVED_FILTERS_MAX:
+        raise HTTPException(422, f"Too many saved filters (max {_SAVED_FILTERS_MAX}).")
+    clean = [f for f in filters if isinstance(f, dict) and (f.get("name") or "").strip()]
+    now = datetime.now(timezone.utc).isoformat()
+    with db(auth["team"]) as c:
+        c.execute("INSERT INTO saved_filters(username,data,updated_ts) VALUES(?,?,?) "
+                  "ON CONFLICT(username) DO UPDATE SET data=excluded.data, updated_ts=excluded.updated_ts",
+                  (auth["username"], json.dumps(clean), now))
+    return {"filters": clean}
 
 # ── Beta: Sprints (shared, global per team; single Active) ────────────────────
 # Additive, /beta-only. Sprints are stored in the config table under key 'sprints'.
