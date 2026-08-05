@@ -25880,13 +25880,13 @@ if ('serviceWorker' in navigator) {
 
     // ── 1. Getting started ──
     '<div class="frz-man-sec" id="man-start"><h2>1 &nbsp;Getting started</h2>'+
-      '<p><b>Flow</b> is your team’s shared workspace for planning and tracking work. The same items appear as a <b>Gantt</b> timeline, a <b>Kanban</b> board, a sortable <b>List</b>, a <b>Planning</b> board, a <b>Team Calendar</b>, and a <b>Dashboard</b> - pick whichever view fits the moment. Everything is live and shared: changes you make are visible to your teammates immediately.</p>'+
+      '<p><b>Flow</b> is your team’s shared workspace for planning and tracking work. The same items appear as a <b>Gantt</b> timeline, a <b>Kanban</b> board, a sortable <b>List</b>, a <b>Planning</b> board, a <b>Team Calendar</b>, a <b>Dashboard</b>, and <b>Reports</b> - pick whichever view fits the moment. Everything is live and shared: changes you make are visible to your teammates immediately.</p>'+
       '<h3>Signing in</h3>'+
       '<p>Open Flow and sign in with your <b>username or email</b> and password. Forgot it? Choose <b>Forgot password?</b> on the sign-in screen to receive a reset link by email. New accounts are often created with an emailed <b>set-password link</b>; until you use it, the account is <i>pending</i> and cannot sign in.</p>'+
       '<h3>The workspace</h3>'+
       '<p>Flow has three regions:</p>'+
       '<ul>'+
-        '<li><b>Left rail</b> - navigation. <b>Views</b> (My Home, Gantt, Kanban, List, Planning, Calendar, Dashboard), <b>Projects</b> (scope to one product or all), <b>Boards</b> (Kanban layouts), <b>Saved filters</b>, and <b>Settings</b> / <b>Admin</b>. Collapse the rail with the toggle to widen the workspace.</li>'+
+        '<li><b>Left rail</b> - navigation. <b>Views</b> (My Home, Gantt, Kanban, List, Planning, Calendar, Dashboard, Reports), <b>Projects</b> (scope to one product or all), <b>Boards</b> (Kanban layouts), <b>Saved filters</b>, and <b>Settings</b> / <b>Admin</b>. Collapse the rail with the toggle to widen the workspace.</li>'+
         '<li><b>Top bar</b> - search, the notifications bell '+_mi('bell')+', the <b>New item</b> button '+_mi('plus')+', and your <b>account</b> menu (top right).</li>'+
         '<li><b>Main content</b> - the current view.</li>'+
       '</ul>'+
@@ -25916,6 +25916,10 @@ if ('serviceWorker' in navigator) {
 
       '<div class="frz-man-note"><b>The two editor guardrails to remember:</b> (1) an active item’s dates are locked - adjust them through <b>Delay</b>; and (2) an editor’s delay change waits for <b>admin approval</b>. Everything else an editor changes saves immediately.</div>'+
 
+      '<h3>Working across teams</h3>'+
+      '<p>Flow is multi-team. If you belong to more than one team, use <b>Add a team</b> in your account menu to sign into another, then switch between them from the same menu - your other sessions stay signed in. Each team is fully separate: its own items, boards, and saved filters.</p>'+
+      '<p>Item links carry their team, so opening a link to an item on a team you are not currently viewing - a <b>Slack</b> notification, an email, or a link a teammate shared - offers to <b>switch to that team</b> and then opens the correct item, instead of showing a same-numbered item on your current team. If you are not signed into that team yet, Flow tells you to sign in first.</p>'+
+
       '<h3>Dark mode, mobile &amp; installing</h3>'+
       '<p>Toggle <b>dark mode</b> from the menu; your choice is remembered. Flow is a <b>Progressive Web App</b>: your browser can <b>Install</b> it so it opens in its own window like a desktop app. On a phone, Flow shows a compact layout with a bottom tab bar and a New-item button; tapping an item opens its full page.</p>'+
     '</div>'+
@@ -25930,7 +25934,7 @@ if ('serviceWorker' in navigator) {
       '</ul>'+
       '<p>Filters <b>travel with you</b>: switch from List to Kanban and the same chips stay applied. The current project scope and filters live in the page address, so a link you copy reproduces exactly what you were looking at.</p>'+
       '<h3>Saved filters</h3>'+
-      '<p>Set the chips the way you like, then use <b>+</b> in the <b>Saved filters</b> rail section to name and save that combination. Re-apply it any time with one click; rename or delete from its <b>…</b> menu. A <b>default</b> saved view applies automatically when you open Flow.</p>'+
+      '<p>Set the chips the way you like, then use <b>+</b> in the <b>Saved filters</b> rail section to name and save that combination. Re-apply it any time with one click; rename or delete from its <b>…</b> menu. A <b>default</b> saved view applies automatically when you open Flow. Saved filters are stored <b>per person, per team</b>, so they follow you across browsers and devices. The one you have applied is marked with a <b>dot</b> in the rail - and, when the rail is collapsed to icons, a dot on the current view’s icon - so you can always tell a filter is on. The dot stays as you move between views, boards, and sprints.</p>'+
       '<h3>Search</h3>'+
       '<p>The top-bar search is a <b>global jump</b> on My Home and item pages (type to find any item by key or name). On other views it filters the current list. On Planning and the Team Calendar the box is hidden - those surfaces have their own in-place search and filter chips.</p>'+
     '</div>'+
@@ -25951,6 +25955,8 @@ if ('serviceWorker' in navigator) {
       '<p>Who is working on what, and who is out. Switch between <b>Month</b>, <b>Week</b> and <b>Timeline</b>. Rows are grouped by owner then by person, showing assignments (PTO, Training, On Call, and so on) and scheduled tickets. A <b>Work days / All days</b> toggle controls whether weekends appear. On a phone the calendar shows a compact month agenda.</p>'+
       '<h3>'+_mi('dashboard')+' Dashboard</h3>'+
       '<p>A management overview: a <b>capacity heatmap</b> per owner and week, <b>at-risk</b> and needs-decision items, estimate-vs-actual <b>variance</b>, and a <b>Maintenance &amp; Operations</b> section that reports each sprint’s maintenance-duty work.</p>'+
+      '<h3>'+_mi('reports')+' Reports</h3>'+
+      '<p>Measures and breakdowns for the work that matches your filters. <b>KPI tiles</b> summarise open, overdue, completed, throughput and resolution/response times; a <b>Requested / Completed</b> date basis and a <b>Group by</b> pivot break the numbers down by owner, type, status and more; and everything <b>exports to CSV</b>. Reports honours the top-bar chips and Saved Filters like the other views, with its own date-range and grouping controls. For support and IT teams it also surfaces <b>SLA</b> (on-time vs at-risk vs breached against your targets) and an <b>aging</b> view of how long open items have waited. Reports is available to editors and admins.</p>'+
     '</div>'+
 
     // ── 4. Working with items ──
@@ -25990,7 +25996,7 @@ if ('serviceWorker' in navigator) {
       '<p>To push a date during a meeting, open the item from the Gantt and set the <b>Delay Date</b> (choose how many weeks to move it) and pick a <b>Delay Reason</b>. Flow records the change in the item’s history. Admins apply it immediately; an editor’s delay is submitted for admin approval. A reason is required only when the delay date actually changes. Both editors and admins can capture delays.</p>'+
       '<div class="frz-man-note"><b>Recurrence.</b> An item can repeat (weekly, biweekly, monthly). When a recurring item is completed, Flow spawns the next occurrence automatically, dated from the previous start.</div>'+
       '<h3>Notifications &amp; watching</h3>'+
-      '<p>The bell '+_mi('bell')+' in the top bar is your inbox. You are notified when someone <b>@mentions</b> you, <b>assigns</b> you an item, <b>replies</b> to your comment, or changes an item you <b>watch</b>. Use <b>Watch</b> on an item page to follow it; commenting or being mentioned auto-watches. Click <b>Mark all read</b> to clear the badge.</p>'+
+      '<p>The bell '+_mi('bell')+' in the top bar is your inbox. You are notified when someone <b>@mentions</b> you, <b>assigns</b> you an item, <b>replies</b> to your comment, or changes an item you <b>watch</b>. Use <b>Watch</b> on an item page to follow it; commenting or being mentioned auto-watches. Click <b>Mark all read</b> to clear the badge. If your team has connected <b>Slack</b>, these notifications can also arrive in a Slack channel or as a direct message.</p>'+
     '</div>'+
 
     // ── 5. Planning, sprints & releases ──
@@ -26027,7 +26033,7 @@ if ('serviceWorker' in navigator) {
 
     // ── 7. Admin & setup ──
     '<div class="frz-man-sec" id="man-admin"><h2>7 &nbsp;Admin &amp; setup <span style="font-size:12px;font-weight:700;color:#7a8899">(admins)</span></h2>'+
-      '<p>Open <b>Admin</b> '+_mi('admin')+' from the rail. Highlights:</p>'+
+      '<p>Open <b>Admin</b> '+_mi('admin')+' from the rail. It is organised into tabs across the top (<b>Configuration</b>, <b>Integrations</b>, <b>Views &amp; Access</b>). Highlights:</p>'+
       '<h3>Users &amp; roles</h3>'+
       '<p>Add users with a role (viewer / editor / admin) and an email. Choose <b>Set password now</b> or <b>Email a setup link</b> (a 7-day invite; reset links last 1 hour). A <b>pending</b> badge marks accounts with no password yet. Set a user’s first/last name (used everywhere their name is shown) and their <b>owner pod</b>. Only the original built-in admin can change another admin’s password.</p>'+
       '<h3>Workflow configuration</h3>'+
@@ -26040,6 +26046,8 @@ if ('serviceWorker' in navigator) {
       '<p>Set per-owner base capacity and per-day <b>overrides</b> (a contractor can push a day above base). Create Kanban <b>boards</b>, and manage <b>sprints</b> and <b>releases</b>.</p>'+
       '<h3>Jira integration</h3>'+
       '<p>Connect Atlassian Jira, then map Flow projects, statuses and types to Jira. Status sync is <b>forward-only</b> (it never moves an item backwards). Feature flags are gathered across the linked Jira hierarchy. Descriptions sync in a formatting-preserving subset.</p>'+
+      '<h3>Other integrations</h3>'+
+      '<p><b>Slack</b> - deliver notifications to a team channel and/or as per-user direct messages, filtered by notification type. <b>Asset links</b> - teams connected to AssetHub can link an item to hardware or software assets, see live asset detail on the item page, and raise a linked <b>procurement request</b>. <b>SLA &amp; digest</b> - set resolution targets that drive the SLA badges and Reports, and send a periodic email digest of open work to the team.</p>'+
       '<h3>Intake portal</h3>'+
       '<p>An optional <b>public</b> ticket portal lets people outside Flow submit requests at <code>/report</code> without signing in. Submitters get a token-gated status page (<code>/ticket</code>) and a personal list (<code>/my-tickets</code>); teams can watch a no-login department queue. Configure allowed types, projects, notification emails and departments in Admin. (On these public pages the word <b>ticket</b> is used; inside Flow the same record is an <b>Item</b>.)</p>'+
       '<h3>Data</h3>'+
@@ -26052,7 +26060,8 @@ if ('serviceWorker' in navigator) {
       '<table><tbody>'+
         '<tr><td>'+_mi('home')+' My Home</td><td>'+_mi('gantt')+' Gantt</td><td>'+_mi('kanban')+' Kanban</td></tr>'+
         '<tr><td>'+_mi('list')+' List</td><td>'+_mi('planning')+' Planning</td><td>'+_mi('teamCalendar')+' Calendar</td></tr>'+
-        '<tr><td>'+_mi('dashboard')+' Dashboard</td><td>'+_mi('settings')+' Settings</td><td>'+_mi('admin')+' Admin</td></tr>'+
+        '<tr><td>'+_mi('dashboard')+' Dashboard</td><td>'+_mi('reports')+' Reports</td><td>'+_mi('settings')+' Settings</td></tr>'+
+        '<tr><td>'+_mi('admin')+' Admin</td><td></td><td></td></tr>'+
       '</tbody></table>'+
       '<h3>Action icons</h3>'+
       '<p>'+_mi('plus')+' New item &nbsp;·&nbsp; '+_mi('bell')+' Notifications &nbsp;·&nbsp; '+_mi('flag')+' Flag / at-risk &nbsp;·&nbsp; '+_mi('back')+' Back &nbsp;·&nbsp; '+_mi('collapse')+' Collapse the rail</p>'+
