@@ -2090,7 +2090,11 @@ def _intake_send_emails(team, item, pid):
         try: send_email(reporter_email, f"[{key}] Ticket received - {item.get('name','')}", text, body)
         except Exception as e: log.warning(f"[Intake] reporter email failed for {pid}: {e}")
     notify  = _intake_notify_email(team, item.get("product") or "")
-    app_url = f"{APP_BASE_URL}/item/{pid}"
+    # Stamp the team slug (+ item key) so a staff click lands on the RIGHT team's item, not
+    # id-{pid} on whatever team the reader's browser is active on (ids are per-team). team is the
+    # slug (lowercase, DB path), NOT the display label.
+    _ikey = item.get("itemKey") or ""
+    app_url = f"{APP_BASE_URL}/item/{pid}?team={team}" + (f"&key={_urlq(_ikey, safe='')}" if _ikey else "")
     team_rows = base_rows + [("Reporter", f"{item.get('reporter','')} <{reporter_email}>".strip())]
     for addr in [a.strip() for a in re.split(r"[,;]", notify) if a.strip()]:
         body = _intake_email_html(item, team_rows, "New ticket submitted",
@@ -2496,7 +2500,9 @@ def ticket_reply(body: dict = Body(...), request: FRequest = None):
         notify = _intake_notify_email(team, item.get("product") or "")
         if notify and mail_configured():
             key = item.get("itemKey") or f"#{pid}"
-            app_url = f"{APP_BASE_URL}/item/{pid}"
+            # Team-stamped so the staff link opens the correct team's item (see the portal-submit note).
+            _ikey = item.get("itemKey") or ""
+            app_url = f"{APP_BASE_URL}/item/{pid}?team={team}" + (f"&key={_urlq(_ikey, safe='')}" if _ikey else "")
             html_body = _intake_email_html(item, [("Ticket", key), ("Status", item.get("status") or "")],
                 "The reporter replied", f"{who} added a reply to their ticket:", "Open in Flow", app_url, note=msg)
             for addr in [a.strip() for a in re.split(r"[,;]", notify) if a.strip()]:
@@ -5233,7 +5239,22 @@ def _slack_dispatch(team, ntype, item_id, item_name, message, actor, recips):
             want_dm = mode in ("dm", "both") and bool(token)
         if not (want_channel or want_dm):
             return
-        link = f"{APP_BASE_URL}/item/{item_id}" if item_id else APP_BASE_URL
+        # Team-stamp the link so a Slack click (inherently cross-context) opens the RIGHT team's item
+        # rather than id-{item_id} on whatever team the reader is active on. team is the slug. Look up
+        # the item key for the mismatch guard - only reached when Slack IS sending (gated above), so
+        # this adds no cost to the common (Slack-off) path; best-effort, no key on any failure.
+        if item_id:
+            _ikey = ""
+            try:
+                with db(team) as c:
+                    _r = c.execute("SELECT data FROM projects WHERE id=?", (item_id,)).fetchone()
+                if _r:
+                    _ikey = (json.loads(_r["data"]).get("itemKey") or "")
+            except Exception:
+                _ikey = ""
+            link = f"{APP_BASE_URL}/item/{item_id}?team={team}" + (f"&key={_urlq(_ikey, safe='')}" if _ikey else "")
+        else:
+            link = APP_BASE_URL
         recips_l = list(recips or [])
         def _fmt(msg_text):
             t = "*" + _slack_esc(item_name or "Item") + "*: " + _slack_esc(msg_text or "")
