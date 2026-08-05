@@ -21579,16 +21579,17 @@ if ('serviceWorker' in navigator) {
   function _frzSavedStillMatches(s){
     if(!s) return false;
     // View-agnostic: the shared filter travels across views, so a saved filter stays "active" on
-    // ANY view as long as its FILTER matches - the active-filter dot must not drop when you switch
-    // views. View-specific params (board/sprint/panel) are in the qs and still gate via the exact
-    // comparison below (absent on views that don't use them -> those never falsely match).
+    // ANY view as long as its CHIP filter matches - the active-filter dot must not drop when you
+    // switch views OR pick a Kanban board / sprint.
     var sp=new URLSearchParams((s.qs||'').replace(/^\?/,''));
     var live=new URLSearchParams((_frzFilterQS()||'').replace(/^\?/,''));
     if(sp.has('project') && (sp.get('project')||'') !== (live.get('project')||'')) return false;
-    // Ignore the date range: the Dashboard auto-applies a default from/to, which would otherwise
-    // break the match (and drop the dot) there even though the chip filter is unchanged. Range is a
-    // soft filter, not what identifies a saved filter.
-    var IGNORE={ from:1, to:1 };
+    // A saved filter is identified by its CHIP filter (owner/type/status/assignee/priority/dept) +
+    // project. Ignore board/sprint - they are an ORTHOGONAL scope axis, so clicking a board (which
+    // carries the chips into that board) or a sprint must NOT drop the dot while the chips still
+    // match - and the date range (the Dashboard auto-applies a default from/to). These are scope,
+    // not what identifies the saved filter.
+    var IGNORE={ from:1, to:1, board:1, sprint:1 };
     var keys={}; sp.forEach(function(v,k){ if(k!=='project' && !IGNORE[k]) keys[k]=1; }); live.forEach(function(v,k){ if(k!=='project' && !IGNORE[k]) keys[k]=1; });
     return Object.keys(keys).every(function(k){ return (sp.get(k)||'') === (live.get(k)||''); });
   }
