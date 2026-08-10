@@ -11027,8 +11027,19 @@ function getKanbanStatuses(filteredItems, selectedProds){
     }
   }
 
+  // Rescue pass (KAN-VIS-1): never hide a non-terminal status that holds work in the
+  // current scope. Guards against project status lists that have drifted from the team's
+  // status list - a status missing from every project list previously got no column while
+  // real cards existed. Both callers pass their post-scope, post-filter, hidden-excluded
+  // collection, so a rescued column has at least one visible card by construction.
+  // Terminal statuses stay excluded (custom boards serve terminal work and never call this).
+  const rescued = new Set();
+  (filteredItems || []).forEach(it => {
+    if(it && it.status && !isTerminalStatus(it.status)) rescued.add(it.status);
+  });
+
   // Return in the global statuses ordering, excluding terminal statuses
-  return statuses.filter(s => configuredStatuses.has(s) && !isTerminalStatus(s));
+  return statuses.filter(s => (configuredStatuses.has(s) || rescued.has(s)) && !isTerminalStatus(s));
 }
 
 function renderKanban(){
@@ -18906,7 +18917,7 @@ if ('serviceWorker' in navigator) {
       window.openProjectModal = function(id){ var r=_origOPM.apply(this, arguments); try{ _frzInitModalNotes(id); }catch(e){} return r; };
       window.openProjectModal._frzWrapped = true;
     }
-    // Wrap renderKanban: in beta, EVERY board (incl. "All statuses") renders through
+    // Wrap renderKanban: in beta, EVERY board (incl. the built-in "Open work") renders through
     // renderBetaKanban so all boards share one canonical card. The production
     // renderKanban is no longer called in beta - and is left untouched for classic.
     _origRenderKanban = window.renderKanban;
@@ -19137,7 +19148,7 @@ if ('serviceWorker' in navigator) {
   // Stage 4: per-user default Kanban board. Loads when Kanban opens with no explicit
   // ?board=; an explicit board click still overrides for that navigation.
   function _defaultBoardKey(){ return 'frazil_beta_defaultboard_'+uname(); }
-  function _defaultBoard(){ var d=ls(_defaultBoardKey()); return (d && _boards.some(function(b){return b.id===d;})) ? d : '__all__'; }   // validate; deleted board → All statuses
+  function _defaultBoard(){ var d=ls(_defaultBoardKey()); return (d && _boards.some(function(b){return b.id===d;})) ? d : '__all__'; }   // validate; deleted board → Open work (id '__all__')
   function _setDefaultBoard(id){ if(id && id!=='__all__') lset(_defaultBoardKey(), id); else { try{ localStorage.removeItem(_defaultBoardKey()); }catch(e){} } renderBoardNav(); }
 
   // ════════ sprints data (Feature B) ════════
@@ -19194,16 +19205,19 @@ if ('serviceWorker' in navigator) {
     var bn = document.getElementById('frzBoardNav'); if(!bn) return;
     bn.querySelectorAll('.frz-item').forEach(function(b){ b.remove(); });
     var onKanban = (state.view==='kanban' && !state.onItem);
-    // built-in "All statuses"
+    // built-in "Open work" board (KAN-VIS-1: was "All statuses" - the old label asserted a
+    // completeness the board never delivered; it shows non-terminal work only). The stable
+    // id stays '__all__' everywhere (data-board, ?board=, the per-user default-board key),
+    // so no stored reference is orphaned by the rename.
     var all = document.createElement('button');
-    all.className='frz-item'; all.setAttribute('data-board','__all__'); all.title='All statuses';
-    // Mutually exclusive with Active Sprint: All statuses is "selected" only when NOT sprint-scoped
+    all.className='frz-item'; all.setAttribute('data-board','__all__'); all.title='Open work';
+    // Mutually exclusive with Active Sprint: Open work is "selected" only when NOT sprint-scoped
     // (a sprint scope means the Active-Sprint pseudo-board is the active selection, not this one).
     all.setAttribute('aria-current', String(onKanban && state.board==='__all__' && !state.sprintFilter));
-    all.innerHTML = KANBAN_IC + '<span>All statuses</span>';
+    all.innerHTML = KANBAN_IC + '<span>Open work</span>';
     bn.appendChild(all);
     // Built-in "Active Sprint" board: shows only while a sprint is Active (only one can be at a
-    // time). Reuses the Stage 3 ?sprint= Kanban scoping - navigates to All-statuses columns
+    // time). Reuses the Stage 3 ?sprint= Kanban scoping - navigates to the Open-work columns
     // filtered to the active sprint's items. Hidden when no sprint is Active.
     var _as=activeSprint();
     if(_as){
@@ -19929,7 +19943,9 @@ if ('serviceWorker' in navigator) {
     // ── one cell, keyed by the column's kind ──
     function renderCell(col, r){
       var v=r[col.k];
-      if(col.kind==='key')    return '<td class="frz-rpt-key">'+esc(String(v))+'</td>';
+      // Key cell is a real link to the item page: normal click navigates in-app (SPA),
+      // ctrl/cmd/middle-click keeps the href for open-in-new-tab.
+      if(col.kind==='key')    return '<td class="frz-rpt-key"><a href="/item/'+r._id+'" class="frz-rpt-keylink" data-id="'+r._id+'" style="color:var(--frz-accent);font-weight:700;text-decoration:none">'+esc(String(v))+'</a></td>';
       if(col.kind==='status') return '<td>'+(v?'<span class="'+(_call('statusCls',v)||'')+'" style="padding:1px 8px;border-radius:9px;font-size:11px;font-weight:700">'+esc(String(v))+'</span>':'<span class="frz-rpt-na">n/a</span>')+'</td>';
       if(col.kind==='desc')   return '<td class="frz-rpt-desc" title="'+escA(String(v||''))+'">'+(v?esc(String(v).slice(0,80)):'<span class="frz-rpt-na">n/a</span>')+'</td>';
       if(col.kind==='num')    return v==null ? '<td class="frz-rpt-num"><span class="frz-rpt-na">n/a</span></td>' : '<td class="frz-rpt-num">'+v+'</td>';
@@ -19993,6 +20009,13 @@ if ('serviceWorker' in navigator) {
     bindF('frzRptFrom','from'); bindF('frzRptTo','to');
     bindF('frzRptBasis','basis'); bindF('frzRptGroup','group');
     var csv=document.getElementById('frzRptCsv'); if(csv) csv.addEventListener('click', _rptExportCsv);
+    // Key links: plain click opens the item in-app; modified clicks fall through to the href.
+    host.querySelectorAll('a.frz-rpt-keylink').forEach(function(a){
+      a.addEventListener('click', function(e){
+        if(e.ctrlKey||e.metaKey||e.shiftKey||e.altKey||e.button!==0) return;
+        e.preventDefault(); navigate('/item/'+a.getAttribute('data-id'), false);
+      });
+    });
   }
   // ── Team Calendar render (Phase 2a: Month view - Owner -> Users -> chips) ──────
   function _calShortD(ymd){ if(!ymd) return ''; var p=String(ymd).split('-'); if(p.length!==3) return ymd; return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString(undefined,{month:'short',day:'numeric'}); }
@@ -21493,6 +21516,14 @@ if ('serviceWorker' in navigator) {
       _frzSyncReleaseFromURL();   // Stage 1b: expand/collapse the release to match ?release on back/forward
     }
   });
+  // Stray FILE-drop guard: a file dropped anywhere the app does not explicitly handle must
+  // never trigger the browser default (navigating the whole app away to the dropped file -
+  // how non-image uploads "failed"). Files only, so Kanban/Gantt element drags are untouched;
+  // the real drop targets (attachments card, editors) preventDefault in their own handlers
+  // before this bubble-phase fallback runs. Flow shell only (frz-beta-active).
+  function _frzDragHasFiles(e){ var t=(e.dataTransfer&&e.dataTransfer.types)||[]; return Array.prototype.indexOf.call(t,'Files')>=0; }
+  document.addEventListener('dragover', function(e){ if(_frzDragHasFiles(e) && document.body.classList.contains('frz-beta-active')) e.preventDefault(); });
+  document.addEventListener('drop', function(e){ if(_frzDragHasFiles(e) && document.body.classList.contains('frz-beta-active')) e.preventDefault(); });
 
   // ════════ collapse ════════
   function applyDefaultCollapse(view){
@@ -21714,7 +21745,7 @@ if ('serviceWorker' in navigator) {
     // view has an active chip filter (CSS keys off .frz-filter-on + is-collapsed-ui + aria-current).
     if(root) root.classList.toggle('frz-filter-on', !state.onItem && !!CFG[state.view] && anyActive(state.view));
     // Fix 2: rail BOARDS highlight is part of the view sync - exactly one lit on a Kanban URL.
-    // A [data-board] (incl. "All statuses") lights ONLY when NOT sprint-scoped; a sprint scope
+    // A [data-board] (incl. the built-in "Open work") lights ONLY when NOT sprint-scoped; a sprint scope
     // lights the Active Sprint pseudo-board instead (mutually exclusive), so board + active-sprint
     // highlighting is single-sourced here (syncURL runs on every filter/nav change).
     var bnav=document.getElementById('frzBoardNav');
@@ -21907,7 +21938,7 @@ if ('serviceWorker' in navigator) {
       }
       var asBtn = e.target.closest && e.target.closest('[data-activesprint]');
       if (asBtn){
-        // Active Sprint board = All-statuses Kanban scoped to the active sprint (?sprint=), carrying chips.
+        // Active Sprint board = Open-work Kanban scoped to the active sprint (?sprint=), carrying chips.
         var _asid=asBtn.getAttribute('data-activesprint'); var _asu=new URLSearchParams(_frzCarryQS(true).replace(/^\?/,''));
         _asu.delete('board'); _asu.set('sprint', _asid); navigate('/kanban?'+_asu.toString(), false); return;
       }
@@ -22330,7 +22361,7 @@ if ('serviceWorker' in navigator) {
     var items=_kanbanFilteredItems();
     var board=activeBoard();
     if(!board){
-      // "All statuses" (no custom board selected): synthesize one column per
+      // Built-in "Open work" (no custom board selected): synthesize one column per
       // non-terminal status, in global order - the exact column set production
       // builds - so this board renders through the same path + canonical card.
       var sts=getKanbanStatuses(items, getSelectedProducts())||(_val('statuses',[])||[]);
@@ -24116,11 +24147,12 @@ if ('serviceWorker' in navigator) {
         notesEl.addEventListener('dragover', function(e){ if(Array.prototype.indexOf.call((e.dataTransfer&&e.dataTransfer.types)||[], 'Files')>=0) e.preventDefault(); });
         notesEl.addEventListener('drop', function(e){
           if(notesEl._frzRich) return;   // Tiptap owns description drop (editorProps)
-          var files=[].slice.call((e.dataTransfer&&e.dataTransfer.files)||[]).filter(function(f){ return /^image\//.test(f.type||''); });
-          if(!files.length) return;
+          var all=[].slice.call((e.dataTransfer&&e.dataTransfer.files)||[]);
+          if(!all.length) return;
           e.preventDefault();
           var cur=_frzCurItem()||p;
-          files.forEach(function(f){ pasteInlineImage(cur, f); });
+          all.filter(function(f){ return /^image\//.test(f.type||''); }).forEach(function(f){ pasteInlineImage(cur, f); });
+          _frzAttachNonImageDrops(cur, all);   // Excel/PDF/etc -> attachment, never browser-navigate
         });
       }
     }
@@ -24541,6 +24573,18 @@ if ('serviceWorker' in navigator) {
   }
   // Returns a Promise resolving to the attachment record {attId,key,name,...}
   // on success (null/throws on failure) so the inline-paste path can reference it.
+  // Non-image files dropped on an editor become ATTACHMENTS (the same pipeline the card
+  // uses). Without this, a non-image drop fell through every editor's image-only handler
+  // to the browser default - navigating the app away to the dropped file - which read as
+  // "Excel/PDF uploads fail" while screenshots worked. Returns the non-image count so the
+  // caller can preventDefault even when there is nothing to attach.
+  function _frzAttachNonImageDrops(item, files){
+    var rest=[].slice.call(files||[]).filter(function(f){ return !/^image\//.test(f.type||''); });
+    if(!rest.length) return 0;
+    if(item && item.id) rest.forEach(function(f){ uploadAttachment(item, f); });
+    else _call('showToast','Save the item first, then attach files.','info');
+    return rest.length;
+  }
   function uploadAttachment(p, file){
     // What-if: the raw S3 PUT below (fetch, not API.*) must never fire mid-scenario.
     // The presign is an API.post the guard would reject anyway, but guard here too so it
@@ -24895,9 +24939,12 @@ if ('serviceWorker' in navigator) {
           },
           handleDrop:function(view, event){
             var files=(event.dataTransfer&&event.dataTransfer.files)||[];
+            if(!files.length) return false;   // text/HTML drags stay with ProseMirror
             var imgs=[].slice.call(files).filter(function(f){ return /^image\//.test(f.type||''); });
-            if(imgs.length){ event.preventDefault(); imgs.forEach(function(f){ _frzInsertImage(f, ed, frzSaveDescription); }); return true; }
-            return false;
+            event.preventDefault();
+            imgs.forEach(function(f){ _frzInsertImage(f, ed, frzSaveDescription); });
+            _frzAttachNonImageDrops(_frzCurItem()||p, files);   // Excel/PDF/etc -> attachment, never browser-navigate
+            return true;
           }
         }
       });
@@ -24988,7 +25035,7 @@ if ('serviceWorker' in navigator) {
         element:host, extensions:_frzMakeExtensions(T), content:initial||'',
         editorProps:{
           handlePaste:function(view, e){ var it=(e.clipboardData&&e.clipboardData.items)||[]; for(var i=0;i<it.length;i++){ if(it[i].kind==='file'&&/^image\//.test(it[i].type||'')){ var f=it[i].getAsFile(); if(f){ _frzInsertImage(f, ed, null, p); return true; } } } return false; },
-          handleDrop:function(view, e){ var fs=(e.dataTransfer&&e.dataTransfer.files)||[]; var ig=[].slice.call(fs).filter(function(f){ return /^image\//.test(f.type||''); }); if(ig.length){ e.preventDefault(); ig.forEach(function(f){ _frzInsertImage(f, ed, null, p); }); return true; } return false; }
+          handleDrop:function(view, e){ var fs=(e.dataTransfer&&e.dataTransfer.files)||[]; if(!fs.length) return false; var ig=[].slice.call(fs).filter(function(f){ return /^image\//.test(f.type||''); }); e.preventDefault(); ig.forEach(function(f){ _frzInsertImage(f, ed, null, p); }); _frzAttachNonImageDrops(p, fs); return true; }
         }
       });
       host._frzEd=ed;
@@ -25294,9 +25341,12 @@ if ('serviceWorker' in navigator) {
           },
           handleDrop:function(view, event){
             var files=(event.dataTransfer&&event.dataTransfer.files)||[];
+            if(!files.length) return false;
             var imgs=[].slice.call(files).filter(function(f){ return /^image\//.test(f.type||''); });
-            if(imgs.length){ event.preventDefault(); imgs.forEach(function(f){ _frzInsertImage(f, ed, null, imgItem); }); return true; }
-            return false;
+            event.preventDefault();
+            imgs.forEach(function(f){ _frzInsertImage(f, ed, null, imgItem); });
+            _frzAttachNonImageDrops(imgItem||_frzCurItem(), files);
+            return true;
           },
           handleKeyDown:function(view, event){ if((event.metaKey||event.ctrlKey) && event.key==='Enter'){ event.preventDefault(); _frzPostCommentNow(ctx||undefined); return true; } return false; }
         }
@@ -25694,7 +25744,7 @@ if ('serviceWorker' in navigator) {
         element:host, extensions:_frzMakeExtensions(T), content:'',
         editorProps:{
           handlePaste:function(view, event){ var items=(event.clipboardData&&event.clipboardData.items)||[]; for(var i=0;i<items.length;i++){ if(items[i].kind==='file' && /^image\//.test(items[i].type||'')){ var f=items[i].getAsFile(); if(f){ _frzInsertImage(f, ed); return true; } } } return false; },
-          handleDrop:function(view, event){ var files=(event.dataTransfer&&event.dataTransfer.files)||[]; var imgs=[].slice.call(files).filter(function(f){ return /^image\//.test(f.type||''); }); if(imgs.length){ event.preventDefault(); imgs.forEach(function(f){ _frzInsertImage(f, ed); }); return true; } return false; },
+          handleDrop:function(view, event){ var files=(event.dataTransfer&&event.dataTransfer.files)||[]; if(!files.length) return false; var imgs=[].slice.call(files).filter(function(f){ return /^image\//.test(f.type||''); }); event.preventDefault(); imgs.forEach(function(f){ _frzInsertImage(f, ed); }); _frzAttachNonImageDrops(_frzCurItem(), files); return true; },
           handleKeyDown:function(view, event){ if((event.metaKey||event.ctrlKey) && event.key==='Enter'){ event.preventDefault(); post(); return true; } return false; }
         }
       });
@@ -25992,7 +26042,7 @@ if ('serviceWorker' in navigator) {
       '<h3>'+_mi('gantt')+' Gantt</h3>'+
       '<p>A timeline of items as horizontal bars across weeks. Each bar shows the work phases - development, then a lighter <b>testing</b> tail, and a <b>delay</b> extension if a revised date pushes it out. Turn on <b>Show Capacity</b> to overlay a per-owner load graph (green = at capacity, yellow = under, red = over). Click a bar to open the edit modal (viewers open the read-only item page). Weekend days are skipped in all scheduling.</p>'+
       '<h3>'+_mi('kanban')+' Kanban</h3>'+
-      '<p>Cards in columns. The built-in <b>All statuses</b> board shows one column per status. <b>Custom boards</b> (created by admins) map your own columns onto groups of statuses; dragging a card between columns changes the item’s status. The built-in <b>Active Sprint</b> board (shown only while a sprint is running) scopes the board to that sprint’s items. Selecting a board is exclusive - only one is highlighted, and switching boards clears any sprint scope. Click a card to open it.</p>'+
+      '<p>Cards in columns. The built-in <b>Open work</b> board shows one column per open (non-terminal) status - a status with cards in scope always gets its column, even if a project status list omits it. Completed work lives on custom boards. <b>Custom boards</b> (created by admins) map your own columns onto groups of statuses; dragging a card between columns changes the item’s status. The built-in <b>Active Sprint</b> board (shown only while a sprint is running) scopes the board to that sprint’s items. Selecting a board is exclusive - only one is highlighted, and switching boards clears any sprint scope. Click a card to open it.</p>'+
       '<h3>'+_mi('list')+' List</h3>'+
       '<p>A dense, sortable table. Click a column header to sort. Open the <b>Columns</b> picker to show/hide columns, reorder them (↑/↓), and drag the <b>Name</b> / <b>Description</b> borders to resize - your layout is saved per user. Select rows with the checkboxes to run <b>bulk actions</b> (set status, owner, assignee, add to a release). <b>Export CSV</b> follows your column order. Clicking a row opens a side <b>detail panel</b> with status, comments and key fields.</p>'+
       '<h3>'+_mi('planning')+' Planning</h3>'+
