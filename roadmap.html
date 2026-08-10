@@ -11218,6 +11218,21 @@ function promptKanbanOwner(p){
   });
 }
 
+// KAN-VIS-1 Stage 2: confirm before a drag COMMITS a terminal status. completedAt is
+// server-owned, set-once and forward-only (server _stamp_measurement_ts, "first completion
+// wins"), so a terminal drop is NOT undoable by dragging the card back out. On an
+// AssetHub-configured team a resolution also posts a ServiceEvent per linked asset
+// (WRITE-1b). Global so BOTH the classic (wireKanbanDragDrop) and beta (betaBoardDrop)
+// drag paths share one guard. Native confirm, matching the existing alert() gates. The
+// caller guarantees newStatus is terminal AND differs from the item's current status.
+function kanbanTerminalDropConfirm(p, newStatus){
+  const nm = (p && (p.name || p.itemKey)) || 'this item';
+  let msg = 'Move "' + nm + '" to "' + newStatus + '"?\n\n'
+    + 'That marks it complete and stamps a completion date that is NOT cleared if you move the card back out.';
+  let ah = false; try { ah = !!assethubConfigured; } catch(e){}   // gated per KAN-VIS-1 so we never describe an integration the team lacks
+  if(ah) msg += '\n\nIf this item is linked to any AssetHub assets, a service record will be posted to each.';
+  return confirm(msg);
+}
 function wireKanbanDragDrop(){
   let dragId = null;
   const tip = document.getElementById('tooltip');
@@ -11278,6 +11293,11 @@ function wireKanbanDragDrop(){
         alert('You cannot move an active item to a non-active status. Contact an admin to regress this item.');
         return;
       }
+
+      // KAN-VIS-1 Stage 2: terminal-drop confirm - after the alert gates and the owner/start
+      // prompt above, BEFORE any mutation of p, so a cancel leaves the in-memory item untouched
+      // (no re-render needed: the card only moves on the render() after a successful save).
+      if(isTerminalStatus(newStatus) && !kanbanTerminalDropConfirm(p, newStatus)) return;
 
       const oldStatus = p.status, oldStart = p.start, oldDev = p.dev;
       p.status = newStatus;
@@ -22461,6 +22481,10 @@ if ('serviceWorker' in navigator) {
     // Start date defaults to today (if blank); owner is prompted (if blank).
     var setStart = null;
     function commit(setOwner){
+      // KAN-VIS-1 Stage 2: terminal-drop confirm. Placed here so it runs AFTER the terminal
+      // admin gate above and AFTER promptKanbanOwner resolves, and BEFORE any mutation of p,
+      // so a cancel leaves the in-memory item untouched; re-render restores the card's column.
+      if(isTermStatus(newStatus) && !_call('kanbanTerminalDropConfirm', p, newStatus)){ renderBetaKanban(); return; }
       var oldStatus=p.status, oldStart=p.start, oldDev=p.dev;
       p.status=newStatus;
       if(setStart) p.start=setStart;
