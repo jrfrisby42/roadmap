@@ -486,11 +486,15 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .sla-ontrack  { background: rgba(130,152,173,0.14);color:#5b6b7d; border-color: rgba(130,152,173,0.30); }
   .sla-met      { background: rgba(29,184,106,0.12); color:#1a9a59; border-color: rgba(29,184,106,0.30); }
   .sla-missed   { background: rgba(232,57,74,0.10);  color:#b04252; border-color: rgba(232,57,74,0.24); }
+  /* SLA-2 S2: closed-with-no-first-touch. NEUTRAL and factual, not a judgment - a cool slate with a
+     DASHED border, distinct from met (green), breached (red), and the solid-border ontrack gray. */
+  .sla-nofirsttouch { background: rgba(99,110,130,0.10); color:#5a6478; border-style:dashed; border-color: rgba(99,110,130,0.45); font-style:italic; }
   body.dark-mode .sla-breached { background: rgba(232,57,74,0.20);  color:#ff6b7a; }
   body.dark-mode .sla-atrisk   { background: rgba(212,160,0,0.22);  color:#e6b800; }
   body.dark-mode .sla-ontrack  { background: rgba(130,152,173,0.22);color:#9fb3c8; }
   body.dark-mode .sla-met      { background: rgba(29,184,106,0.20);  color:#3dd68a; }
   body.dark-mode .sla-missed   { background: rgba(232,57,74,0.16);  color:#e58a95; }
+  body.dark-mode .sla-nofirsttouch { background: rgba(148,160,180,0.16); color:#aab4c6; border-color: rgba(148,160,180,0.5); }
 
   /* CHART */
   .chart-panel { flex: 1; position: relative; }
@@ -2196,7 +2200,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.19.4';
+const APP_VERSION = '5.20.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -3151,12 +3155,27 @@ function _slaDur(ms){
   if(h < 48) return Math.round(h)+'h';
   return Math.round(h/24)+'d';
 }
+// SLA-2 S6: the team-wide activation date. When set, an item created BEFORE it is not
+// measured by EITHER clock. Blank/absent/unparseable -> NaN -> _slaBeforeEffective is always
+// false, so resolution behavior is byte-identical to before S6. Shared by slaState (resolution)
+// and firstTouchState, and mirrored server-side in _digest_sla_kind.
+function _slaEffectiveFromMs(){
+  var ef = slaTargets && slaTargets.effectiveFrom;
+  if(!ef) return NaN;
+  var t = Date.parse(ef); return isNaN(t) ? NaN : t;
+}
+function _slaBeforeEffective(createdMs){ var ef = _slaEffectiveFromMs(); return !isNaN(ef) && createdMs < ef; }
+// Resolution clock. Return contract is UNCHANGED except the S6 gate (the Reports compliance
+// tiles consume slaState().kind - do NOT extend this to return first-touch states; that lives
+// in firstTouchState). S9 disambiguation ("Resolution:") is applied in slaBadgeHtml's tooltip
+// only when BOTH clocks apply, so a resolution-only team's badges are byte-identical to before.
 function slaState(p){
   if(!p || !slaTargets || !slaTargets.enabled) return null;
   var H = (slaTargets.resolution || {})[String(p.priority || '')];
   if(!(H > 0)) return null;                                   // no target for this priority
   var created = p.createdAt ? Date.parse(p.createdAt) : NaN;
   if(isNaN(created)) return null;
+  if(_slaBeforeEffective(created)) return null;              // S6: created before the activation date -> not measured
   var targetMs = created + H*3600000;
   if(statusIsTerminal && statusIsTerminal[p.status]){          // resolved: met/missed vs target
     var done = p.completedAt ? Date.parse(p.completedAt) : NaN;
@@ -3174,10 +3193,54 @@ function slaState(p){
     ? {kind:'atrisk',  cls:'sla-atrisk',  short:short, full:'SLA at risk - '+short}
     : {kind:'ontrack', cls:'sla-ontrack', short:short, full:'SLA on track - '+short};
 }
+// SLA-2 Stage 1: the FIRST-TOUCH clock. SEPARATE function so slaState()'s contract is untouched.
+// Measures createdAt -> firstResponseAt (first assignment or first non-reporter comment; S9: this
+// is "time to first touch", not necessarily requester contact). Evaluation order is exact:
+//   1 disabled  2 S6 gate  3 no target  4 no createdAt  5 firstResponseAt judged (before any
+//   terminal check, no completedAt comparison - S7 removed)  6 terminal -> neutral S2, frozen at
+//   completedAt (never vs now)  7 open -> live clock. Same {kind,cls,short,full} shape as slaState.
+function firstTouchState(p){
+  if(!p || !slaTargets || !slaTargets.enabled) return null;                       // 1
+  var created = p.createdAt ? Date.parse(p.createdAt) : NaN;
+  if(!isNaN(created) && _slaBeforeEffective(created)) return null;                // 2 (S6; NaN created falls to step 4)
+  var H = (slaTargets.firstTouch || {})[String(p.priority || '')];
+  if(!(H > 0)) return null;                                                       // 3
+  if(isNaN(created)) return null;                                                // 4
+  var targetMs = created + H*3600000;
+  var fr = p.firstResponseAt ? Date.parse(p.firstResponseAt) : NaN;
+  if(!isNaN(fr)){                                                                 // 5 (precedes terminal; no completedAt compare)
+    return fr <= targetMs
+      ? {kind:'met',    cls:'sla-met',    short:'Met',    full:'First touch met'}
+      : {kind:'missed', cls:'sla-missed', short:'Missed', full:'First touch missed by '+_slaDur(fr-targetMs)};
+  }
+  if(statusIsTerminal && statusIsTerminal[p.status]){                            // 6 (S2 neutral, frozen)
+    var done = p.completedAt ? Date.parse(p.completedAt) : NaN;
+    if(isNaN(done)) return null;
+    return {kind:'nofirsttouch', cls:'sla-nofirsttouch', short:'No first touch',
+            full:'Closed with no first touch recorded ('+_slaDur(done-created)+' to close)'};
+  }
+  var now = Date.now(), remaining = targetMs - now;                              // 7 (open live clock)
+  if(remaining <= 0) return {kind:'breached', cls:'sla-breached', short:'Overdue', full:'First touch overdue by '+_slaDur(-remaining)};
+  var elapsedPct = ((now - created)/(H*3600000))*100;
+  var atRisk = (typeof slaTargets.atRiskPct === 'number' ? slaTargets.atRiskPct : 80);
+  var short = _slaDur(remaining)+' left';
+  return (elapsedPct >= atRisk)
+    ? {kind:'atrisk',  cls:'sla-atrisk',  short:short, full:'First touch at risk - due in '+_slaDur(remaining)}
+    : {kind:'ontrack', cls:'sla-ontrack', short:short, full:'First touch on track - due in '+_slaDur(remaining)};
+}
+// S3 precedence lives HERE, in the render layer (never inside slaState). One badge slot: while no
+// firstResponseAt exists the first-touch state occupies it; once a first touch is recorded the
+// resolution state does. Both states appear in the tooltip when both exist.
 function slaBadgeHtml(p, compact){
-  var s = slaState(p); if(!s) return '';
-  var txt = compact ? s.short : s.full;
-  return '<span class="sla-badge '+s.cls+'" title="'+escA(s.full)+'">'+esc(txt)+'</span>';
+  var ft = firstTouchState(p), res = slaState(p);
+  var touched = !!(p && p.firstResponseAt);
+  var primary = touched ? (res || ft) : (ft || res);
+  if(!primary) return '';
+  var txt = compact ? primary.short : primary.full;
+  // Tooltip: when BOTH clocks apply, label each so a bare "SLA" is never ambiguous (S9). With
+  // only one clock the tooltip is byte-identical to before (resolution-only teams see no change).
+  var title = (ft && res) ? ('First touch: '+ft.full+'  |  Resolution: '+res.full) : primary.full;
+  return '<span class="sla-badge '+primary.cls+'" title="'+escA(title)+'">'+esc(txt)+'</span>';
 }
 // Display label for a team SLUG (the slug itself stays lowercase - it is the identity used in URLs,
 // the X-Team header and the DB path). Short slugs (<=3 chars) read as acronyms and go all-caps
@@ -19923,16 +19986,19 @@ if ('serviceWorker' in navigator) {
     ];
     if(hasRes)  tiles.push({label:'Median resolution', value:fmtD(_rptMedian(resVals)), sub:'days'});
     if(hasRes)  tiles.push({label:'Avg resolution',    value:fmtD(_rptAvg(resVals)),    sub:'days'});
-    if(hasResp) tiles.push({label:'Avg first response',value:fmtD(_rptAvg(respVals)),   sub:'days'});
-    // IT/Ops SLA tiles (A2): only when SLA is enabled AND some row carries a state (team-aware).
-    if(slaTargets && slaTargets.enabled && allRows.some(function(r){ return r.slaKind!=null; })){
+    if(hasResp) tiles.push({label:'Avg time to first touch',value:fmtD(_rptAvg(respVals)),   sub:'days'});   // S9: was "Avg first response" (same firstResponseAt accessor)
+    // RESOLUTION SLA tiles. slaKind is the RESOLUTION state (slaState().kind). SLA-2 1d: render
+    // whenever SLA is ENABLED, even when nothing is measured yet (S6 can exclude every item on
+    // day one) - showing zeroes plus the explanatory line (_rptSlaNoteHtml) instead of vanishing.
+    // S9: labels qualified "resolution"; Within % carries its fraction.
+    if(slaTargets && slaTargets.enabled){
       var breachedN=rows.filter(function(r){ return r.slaKind==='breached'; }).length;
       var atRiskN=rows.filter(function(r){ return r.slaKind==='atrisk'; }).length;
       var judged=rows.filter(function(r){ return r.slaKind==='met' || r.slaKind==='missed'; }).length;   // closed with a target
       var metN=rows.filter(function(r){ return r.slaKind==='met'; }).length;
-      tiles.push({label:'SLA breached', value:String(breachedN), sub:'open', warn:breachedN>0});
-      tiles.push({label:'SLA at risk',  value:String(atRiskN),  sub:'open'});
-      tiles.push({label:'Within SLA',   value:(judged ? Math.round(metN/judged*100)+'%' : 'n/a'), sub:'resolved in window'});
+      tiles.push({label:'Resolution SLA breached', value:String(breachedN), sub:'open', warn:breachedN>0});
+      tiles.push({label:'Resolution SLA at risk',  value:String(atRiskN),  sub:'open'});
+      tiles.push({label:'Within resolution SLA',   value:(judged ? Math.round(metN/judged*100)+'% ('+metN+'/'+judged+')' : 'n/a'), sub:'resolved in window'});
     }
     return tiles;
   }
@@ -19951,6 +20017,17 @@ if ('serviceWorker' in navigator) {
         +(t.sub?'<div class="frz-rpt-kpi-s">'+esc(t.sub)+'</div>':'')
       +'</div>';
     }).join('')+'</div>';
+  }
+  // SLA-2 1d: when SLA is enabled but NOTHING is measured yet (e.g. S6 effectiveFrom excludes
+  // every existing item on day one), the resolution tiles show zeroes AND this line explains why,
+  // rather than the tiles vanishing and reading as "the feature is broken".
+  function _rptSlaNoteHtml(allRows){
+    if(!(slaTargets && slaTargets.enabled)) return '';
+    if((allRows||[]).some(function(r){ return r.slaKind!=null; })) return '';   // something measured -> no note
+    var ef = slaTargets.effectiveFrom;
+    var why = ef ? (' SLA is effective from '+esc(String(ef))+'; items created before then are not measured.')
+                 : ' No items currently qualify (check that priorities and targets are set).';
+    return '<div style="margin:2px 0 14px;padding:9px 13px;background:var(--frz-accent-soft,rgba(0,89,169,0.08));border:1px solid var(--frz-accent-soft-border,rgba(0,89,169,0.2));border-radius:8px;font-size:12.5px;color:var(--text)">No items measured yet.'+why+'</div>';
   }
   // ── Group-by pivot. groupKey is one of owner|assignee|dept|status|type|product|priority.
   //    Returns {rows:[{k, count, open, overdue, pctOverdue, avgAge, medRes, avgResp}], total}. ──
@@ -20070,6 +20147,7 @@ if ('serviceWorker' in navigator) {
     host.innerHTML =
         '<div class="frz-rpt-controls">'+controls+'</div>'
         +_rptKpisHtml(_rptKpis(rows, allRows))
+        +_rptSlaNoteHtml(allRows)
         +'<div class="frz-rpt-aggs">'+aggs.join('')+'</div>'
         +(grouped ? pivotHtml : flatTable);
     // Wire the report-local controls (re-render on change) + CSV.
@@ -21180,22 +21258,33 @@ if ('serviceWorker' in navigator) {
         + '<div style="display:flex;gap:10px;align-items:center"><button type="button" id="tsSlackTest" '+btn+'>Send test message</button><span id="tsSlackTestResult" style="font-size:12px;color:var(--muted)"></span></div>'
         + '<div style="font-size:11px;color:var(--muted)">Secrets are never entered here - they live in the server .env. Channel posts need an Incoming Webhook at SLACK_WEBHOOK_'+esc(team)+'. DMs need a Slack app bot token (scopes chat:write + users:read.email) at SLACK_BOT_TOKEN_'+esc(team)+'; DMs reach a user only if their Flow email matches a Slack account.</div>'
       + '</div></div>';
-    // IT/Ops resolution SLA card (Stage A): per-priority calendar-hour targets + at-risk threshold.
-    var sla = _val('slaTargets', {}) || {}, slaRes = sla.resolution || {};
+    // IT/Ops SLA card: per-priority calendar-hour targets for BOTH clocks (time to first touch +
+    // resolution) + at-risk threshold + the S6 activation date. Single enable toggle for both.
+    var sla = _val('slaTargets', {}) || {}, slaRes = sla.resolution || {}, slaFt = sla.firstTouch || {};
     var slaAtRisk = (typeof sla.atRiskPct === 'number') ? sla.atRiskPct : 80;
-    function _slaHr(prio, label){
-      var v = slaRes[String(prio)];
+    var _slaInp = 'width:88px;height:30px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px';
+    function _slaHrRow(map, cls, prio, label){
+      var v = map[String(prio)];
       return '<label style="display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)">'+esc(label)+' (hrs)'
-        + '<input type="number" min="0" step="1" class="ts-sla-hr" data-prio="'+prio+'" value="'+escA(v!=null?v:'')+'" style="width:88px;height:30px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px"></label>';
+        + '<input type="number" min="0" step="1" class="'+cls+'" data-prio="'+prio+'" value="'+escA(v!=null?v:'')+'" style="'+_slaInp+'"></label>';
     }
+    function _slaHrGroup(map, cls){ return _slaHrRow(map,cls,1,'Urgent')+_slaHrRow(map,cls,2,'High')+_slaHrRow(map,cls,3,'Medium')+_slaHrRow(map,cls,4,'Low'); }
+    var _slaSub = 'font-size:12px;font-weight:800;color:var(--text);margin-top:2px';
     var slaCard = '<div style="border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-top:18px">'
-      + _tsCardHead('Resolution SLA', '<button type="button" id="tsSlaSave" '+btn+'>Save SLA settings</button>')
+      + _tsCardHead('SLA targets', '<button type="button" id="tsSlaSave" '+btn+'>Save SLA settings</button>')
       + '<div style="padding:14px 16px;font-size:13px;color:var(--text);display:flex;flex-direction:column;gap:12px">'
-        + '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="tsSlaEnabled"'+(sla.enabled?' checked':'')+'> Track resolution SLA (badges on List, Kanban, and the item page)</label>'
-        + '<div style="color:var(--muted);font-size:12px">Target time from ticket creation to a terminal status, in calendar hours, by priority. Blank = no SLA for that priority.</div>'
-        + '<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end">'+_slaHr(1,'Urgent')+_slaHr(2,'High')+_slaHr(3,'Medium')+_slaHr(4,'Low')
+        + '<label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="tsSlaEnabled"'+(sla.enabled?' checked':'')+'> Track SLA (badges on List, Kanban, and the item page)</label>'
+        + '<div style="'+_slaSub+'">Time to first touch</div>'
+        + '<div style="color:var(--muted);font-size:12px">Time from ticket creation to the first assignment or first non-reporter comment, in calendar hours, by priority. Blank = no target for that priority.</div>'
+        + '<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end">'+_slaHrGroup(slaFt,'ts-slaft-hr')+'</div>'
+        + '<div style="'+_slaSub+'">Resolution</div>'
+        + '<div style="color:var(--muted);font-size:12px">Time from ticket creation to a terminal status, in calendar hours, by priority. Blank = no target for that priority.</div>'
+        + '<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end">'+_slaHrGroup(slaRes,'ts-sla-hr')+'</div>'
+        + '<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end">'
           + '<label style="display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)">At risk at (% elapsed)<input type="number" min="1" max="100" step="1" id="tsSlaAtRisk" value="'+escA(slaAtRisk)+'" style="width:100px;height:30px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px"></label>'
+          + '<label style="display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)">Effective from<input type="date" id="tsSlaEffFrom" value="'+escA(sla.effectiveFrom||'')+'" style="height:30px;padding:0 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px"></label>'
         + '</div>'
+        + '<div style="font-size:11px;color:var(--muted)">Items created before the effective-from date are not measured by either clock. Leave it blank to measure every item.</div>'
       + '</div></div>';
     // IT/Ops weekly digest card (Stage B): enable + send-preview. Recipients reuse intakeNotifyEmail + dept emails.
     var dg = _val('digestConfig', {}) || {};
@@ -21267,10 +21356,12 @@ if ('serviceWorker' in navigator) {
     var slaSave=host.querySelector('#tsSlaSave');
     if(slaSave) slaSave.addEventListener('click', function(){
       var enabled=!!host.querySelector('#tsSlaEnabled').checked;
-      var res={};
+      var res={}, ft={};
       [].slice.call(host.querySelectorAll('.ts-sla-hr')).forEach(function(inp){ var v=parseFloat(inp.value); if(v>0) res[inp.getAttribute('data-prio')]=v; });
+      [].slice.call(host.querySelectorAll('.ts-slaft-hr')).forEach(function(inp){ var v=parseFloat(inp.value); if(v>0) ft[inp.getAttribute('data-prio')]=v; });
       var arEl=host.querySelector('#tsSlaAtRisk'); var ar=parseInt(arEl&&arEl.value,10); if(!(ar>0&&ar<=100)) ar=80;
-      var val={enabled:enabled, resolution:res, atRiskPct:ar};
+      var effEl=host.querySelector('#tsSlaEffFrom'); var eff=(effEl&&effEl.value||'').trim();
+      var val={enabled:enabled, resolution:res, firstTouch:ft, atRiskPct:ar, effectiveFrom:eff};
       API.put('/api/config/slaTargets', val).then(function(){
         slaTargets = val; _call('showToast','SLA settings saved','success');
         renderTeamSettings(); if(typeof rerender==='function') rerender();   // repaint List/Kanban so badges + column appear/disappear

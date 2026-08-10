@@ -1398,7 +1398,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.19.4"
+APP_VERSION = "5.20.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -8985,6 +8985,12 @@ def _digest_sla_kind(p, sla, term_map, now_dt):
         return None
     created = _digest_parse_iso(p.get("createdAt"))
     if not created:
+        return None
+    # SLA-2 S6: items created before the activation date are not measured. Mirror of the client
+    # slaState() effectiveFrom gate (roadmap.html _slaBeforeEffective) - both treat a date-only
+    # effectiveFrom as midnight UTC. Blank/unparseable -> no gate -> byte-identical to before S6.
+    eff = _digest_parse_iso(sla.get("effectiveFrom")) if isinstance(sla, dict) else None
+    if eff and created < eff:
         return None
     target = created + timedelta(hours=H)
     if term_map.get(p.get("status") or ""):
