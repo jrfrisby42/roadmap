@@ -1394,7 +1394,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.18.0"
+APP_VERSION = "5.18.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -6886,6 +6886,7 @@ def refresh_item_request_status(pid: int, operation_ref: str,
                 "error": {"code": e.code, "message": _assethub_plain(e.code),
                           "correlationId": e.correlation_id}}
     new_status = str(data.get("status") or "")
+    web_url = str(data.get("web_url") or "")
     now = datetime.now(timezone.utc).isoformat()
     with db(team) as c:
         p = _load_linkable_item(c, pid)
@@ -6896,6 +6897,10 @@ def refresh_item_request_status(pid: int, operation_ref: str,
         entry["requestStatus"] = new_status or entry.get("requestStatus")
         entry["statusCheckedAt"] = now
         entry["lastCorrelationId"] = corr
+        if web_url:
+            # Adopt the browser link (contract 1.3.1) - entries created before web_url
+            # existed get their hyperlink on the first status check.
+            entry["url"] = web_url
         _save_project(c, pid, p)
         name = p.get("name", "")
         refs = p.get("externalRefs") or []
