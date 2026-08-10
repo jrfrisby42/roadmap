@@ -2107,6 +2107,11 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
             <div id="tsIntakeProjects" style="display:flex;flex-direction:column;gap:6px;max-width:520px"></div>
             <div style="font-size:12px;font-weight:700;color:var(--text);margin:12px 0 6px">Types offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all)</span></div>
             <div id="tsIntakeTypes" style="display:flex;flex-wrap:wrap;gap:8px 16px"></div>
+            <div style="margin:10px 0 4px;display:flex;align-items:center;gap:8px">
+              <span style="font-size:12px;font-weight:700;color:var(--text)">Default type</span>
+              <select id="tsIntakeDefType" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)"></select>
+              <span style="font-size:11px;color:var(--muted)">None = reporters must pick a type (recommended when several are offered)</span>
+            </div>
             <div style="margin:14px 0 4px">
               <label style="display:block;font-size:12px;font-weight:700;color:var(--text);margin-bottom:4px">Allowed email domains <span style="font-weight:400;color:var(--muted)">- only these domains may submit tickets (comma-separated; leave blank to allow any)</span></label>
               <input type="text" id="tsIntakeDomains" placeholder="frazil.com, frazil.app" style="width:100%;max-width:480px;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;font-family:'Lato',sans-serif;outline:none">
@@ -2707,6 +2712,7 @@ let intakeNotifyEmail = '';     // team inbox that gets a copy of each portal ti
 let intakeTypes = [];           // which item Types the portal offers (empty = all). (config)
 let intakeProjectEmails = {};   // optional per-Project notify email override {product: email}; falls back to intakeNotifyEmail. (config)
 let intakeProjectStatus = {};   // optional per-Project DEFAULT STATUS for portal tickets {product: status}; falls back to the team default. (config)
+let intakeDefaultType = '';     // portal Type preselect ('' = none: reporters must choose when several types are offered). (config)
 let intakeDomains = [];         // allowed reporter email domains for the portal (empty = allow any). (config)
 let intakeNotifyTeam = false;   // notify the team (in-app + Slack channel) on a new portal ticket. (config)
 let departmentMeta = {};        // per-department {name:{color,emails}} - pill color + notify list. (config)
@@ -7444,6 +7450,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       intakeTypes   = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];
       if(data.intakeProjectEmails && typeof data.intakeProjectEmails === 'object') intakeProjectEmails = data.intakeProjectEmails;
       if(data.intakeProjectStatus && typeof data.intakeProjectStatus === 'object') intakeProjectStatus = data.intakeProjectStatus;
+      if(typeof data.intakeDefaultType === 'string') intakeDefaultType = data.intakeDefaultType;
       if(Array.isArray(data.intakeDomains)) intakeDomains = data.intakeDomains;
       if(data.productIgnoreConflicts) productIgnoreConflicts = data.productIgnoreConflicts;
       // Don't import users unless explicitly present - protects login
@@ -15699,6 +15706,14 @@ function renderIntakePortalSettings(){
     ).join('') : '<span style="font-size:12px;color:var(--muted)">No Types configured - add some in the Types tab.</span>';
     typesWrap.querySelectorAll('.ts-intake-type').forEach(cb => cb.onchange = _saveIntakeTypes);
   }
+  const defTypeSel = document.getElementById('tsIntakeDefType');
+  if(defTypeSel){
+    const offeredList = [...offered];
+    defTypeSel.innerHTML = '<option value="">None - reporters choose</option>'
+      + offeredList.map(n => `<option value="${escA(n)}" ${intakeDefaultType===n?'selected':''}>${esc(n)}</option>`).join('');
+    if(intakeDefaultType && !offered.has(intakeDefaultType)) defTypeSel.value = '';   // stale default: show None (server ignores it too)
+    defTypeSel.onchange = () => { intakeDefaultType = defTypeSel.value; saveConfig('intakeDefaultType', intakeDefaultType); };
+  }
   const doms = document.getElementById('tsIntakeDomains');
   if(doms){
     doms.value = (intakeDomains||[]).join(', ');
@@ -16549,6 +16564,7 @@ async function boot(){
     intakeNotifyEmail     = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : ''; // team inbox copy
     intakeProjectEmails   = (data.intakeProjectEmails && typeof data.intakeProjectEmails === 'object') ? data.intakeProjectEmails : {}; // per-project override
     intakeProjectStatus   = (data.intakeProjectStatus && typeof data.intakeProjectStatus === 'object') ? data.intakeProjectStatus : {}; // per-project default status
+    intakeDefaultType     = (typeof data.intakeDefaultType === 'string') ? data.intakeDefaultType : ''; // portal Type preselect
     intakeDomains         = Array.isArray(data.intakeDomains) ? data.intakeDomains : [];              // allowed reporter email domains (empty = any)
     departmentMeta        = (data.departmentMeta && typeof data.departmentMeta === 'object') ? data.departmentMeta : {};  // per-dept color + notify emails
     productIgnoreConflicts = data.productIgnoreConflicts || {};

@@ -77,9 +77,11 @@ def test_default_status_resolves_per_team_not_hardcoded(client, team, admin_head
 def test_intake_creates_item_with_status(client, team):
     _set_cfg(team, "intakeEnabled", True)
     _set_cfg(team, "statusIsDefault", {"Planned": True})
+    # A type is now required when several are offered (no silent coercion) - send one.
     r = client.post(f"/api/intake/{team}",
-                    json={"title": "Need a thing", "email": "user@example.com", "name": "U"})
-    assert r.status_code == 200
+                    json={"title": "Need a thing", "type": "Feature",
+                          "email": "user@example.com", "name": "U"})
+    assert r.status_code == 200, r.text
     assert _stored_status(team, r.json()["id"])        # non-empty
 
 
