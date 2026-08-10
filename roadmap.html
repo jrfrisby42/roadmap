@@ -24137,6 +24137,18 @@ if ('serviceWorker' in navigator) {
   // early-return on hidden/archived for the same reason.
   function _frzExtRefSys(s){ return s==='assethub' ? 'AssetHub' : (s || 'External'); }
   function _frzExtRefKind(k){ return k==='request' ? 'Request' : (k==='service_event' ? 'Service event' : (k || 'Record')); }
+  // WRITE-2 Stage 3 read-back: the AssetHub RequestStatus lifecycle value, humanized. The
+  // vocabulary can grow (contract D.4 says tolerate unknown values) - an unknown value renders
+  // humanized in the neutral tint rather than failing or being hidden.
+  function _frzReqStatusPill(v){
+    if(!v) return '';
+    var label = String(v).replace(/_/g,' ').toLowerCase(); label = label.charAt(0).toUpperCase()+label.slice(1);
+    var tint = 'background:#EEF2F6;color:#4A6178';                                    // neutral (pending-ish)
+    if(v==='APPROVED' || v==='CLOSED') tint = 'background:#E4F3EA;color:#1E7B46';     // done-good
+    else if(v==='REJECTED' || v==='CANCELLED') tint = 'background:#FBEAEA;color:#B3261E';
+    else if(v==='CHANGES_REQUESTED') tint = 'background:#FBF3E4;color:#9A6B15';
+    return '<span style="'+tint+';padding:1px 8px;border-radius:9px;font-size:11px;font-weight:700">'+esc(label)+'</span>';
+  }
   function _frzExtRefRowHtml(r, canEdit){
     r = r || {};
     var sys = _frzExtRefSys(r.system), kind = _frzExtRefKind(r.kind);
@@ -24160,7 +24172,16 @@ if ('serviceWorker' in navigator) {
     var retry = (canEdit && r.kind==='request' && r.operationRef && (r.status==='queued' || r.status==='failed'))
       ? '<button type="button" class="frz-req-retry" data-op="'+escA(r.operationRef)+'" style="border:none;background:none;color:var(--frz-accent);cursor:pointer;font-size:12px;font-weight:700">Retry</button>'
       : '';
-    return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+head+body+when+retry+'</div>';
+    // Stage 3 read-back: on a linked request, the last-pulled lifecycle status + a Check
+    // status action (admin/editor). Pull-only, human-initiated - never fetched on render.
+    var statusBits = '';
+    if(r.kind==='request' && r.status==='linked' && r.operationRef){
+      var pill = _frzReqStatusPill(r.requestStatus);
+      var age = r.statusCheckedAt ? '<span style="color:var(--muted);font-size:11px">checked '+esc(_frzAssetAge(r.statusCheckedAt))+'</span>' : '';
+      var check = canEdit ? '<button type="button" class="frz-req-status" data-op="'+escA(r.operationRef)+'" style="border:none;background:none;color:var(--frz-accent);cursor:pointer;font-size:12px;font-weight:700">Check status</button>' : '';
+      statusBits = pill+age+check;
+    }
+    return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+head+body+when+statusBits+retry+'</div>';
   }
   function injectExternalRefs(p){
     if(!p) return;
@@ -24184,6 +24205,9 @@ if ('serviceWorker' in navigator) {
     list.innerHTML = refs.map(function(r){ return _frzExtRefRowHtml(r, canEdit); }).join('');
     if(canEdit) list.querySelectorAll('.frz-req-retry').forEach(function(b){
       b.addEventListener('click', function(){ _frzRequestRetry(p, b.getAttribute('data-op'), b); });
+    });
+    if(canEdit) list.querySelectorAll('.frz-req-status').forEach(function(b){
+      b.addEventListener('click', function(){ _frzRequestStatusCheck(p, b.getAttribute('data-op'), b); });
     });
   }
   // ── FLOW-1: linked AssetHub assets (item page), read-only against AssetHub ──────
@@ -24477,6 +24501,18 @@ if ('serviceWorker' in navigator) {
       if(r && r.ok===false) _call('showToast', 'Request failed: '+((r.error&&r.error.message)||(r.error&&r.error.code)||'AssetHub error'));
       else _call('showToast', 'Procurement request created.');
     }).catch(function(e){ if(btn){ btn.disabled=false; btn.textContent='Retry'; } _call('showToast', (e&&e.message)||'Retry failed'); });
+  }
+  // Stage 3 read-back: pull the linked request's lifecycle status on demand. The row re-renders
+  // with the pill + checked-age from the returned externalRefs; a failed check leaves the row as
+  // it was (last-known status kept) and only shows a toast.
+  function _frzRequestStatusCheck(p, op, btn){
+    if(!p || !op) return;
+    if(btn){ btn.disabled=true; btn.textContent='Checking...'; }
+    API.post('/api/items/'+p.id+'/requests/'+encodeURIComponent(op)+'/refresh', {}).then(function(r){
+      if(r && r.externalRefs) p.externalRefs = r.externalRefs;
+      injectExternalRefs(p);   // re-renders the row (old btn is replaced)
+      if(r && r.ok===false) _call('showToast', 'Status check failed: '+((r.error&&r.error.message)||(r.error&&r.error.code)||'AssetHub error'));
+    }).catch(function(e){ if(btn){ btn.disabled=false; btn.textContent='Check status'; } _call('showToast', (e&&e.message)||'Status check failed'); });
   }
   function loadAttachments(p){
     var list=document.getElementById('frzAttList'); if(!list) return;
