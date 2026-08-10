@@ -94,15 +94,15 @@ def test_submit_to_disabled_team_404(client, team, admin_headers):
                        json={"title": "x", "email": "a@b.com"}).status_code == 404
 
 
-def test_submit_coerces_disallowed_type(client, team, admin_headers):
+def test_submit_rejects_disallowed_type(client, team, admin_headers):
+    # WAS test_submit_coerces_disallowed_type: silent coercion to allowed[0] misallocated
+    # tickets (the portal preselected the first type and users never changed it). A type
+    # outside the offered list is now a 422, never a silent rewrite.
     _expose(client, admin_headers, types=["Bug"])           # only Bug offered
     server._rate.clear()
     r = client.post(f"/api/intake/{team}",
                     json={"title": "T", "email": "a@b.com", "type": "Feature"})  # not allowed
-    assert r.status_code == 200
-    allr = client.get("/api/all", headers=admin_headers).json()
-    it = next(p for p in allr["projects"] if p["name"] == "T")
-    assert it["type"] == "Bug"                              # coerced to an allowed Type
+    assert r.status_code == 422
 
 
 def test_report_page_served(client):
@@ -829,3 +829,59 @@ def test_intake_presign_accepts_spreadsheets(client, team, admin_headers):
     assert client.post(f"/api/intake/{team}/attach",
                        json={"filename": "a.exe", "contentType": "application/x-msdownload",
                              "size": 10}).status_code == 415
+
+
+# ── portal Type: no silent coercion; admin default; forced choice ─────────────
+def test_blank_type_with_multiple_offered_is_rejected(client, team, admin_headers):
+    # OLD behavior coerced blank/invalid to allowed[0] -> misallocated tickets.
+    _expose(client, admin_headers, types=["Bug", "Feature"])
+    server._rate.clear()
+    r = client.post(f"/api/intake/{team}",
+                    json={"title": "No type", "email": "reporter@example.com", "name": "Pat"})
+    assert r.status_code == 422
+    assert "type" in r.json()["detail"].lower()
+
+
+def test_blank_type_uses_admin_default(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug", "Feature"])
+    _set(client, admin_headers, "intakeDefaultType", "Feature")
+    cfg = client.get(f"/api/intake/config/{team}").json()
+    assert cfg["defaultType"] == "Feature"
+    server._rate.clear()
+    r = client.post(f"/api/intake/{team}",
+                    json={"title": "Defaulted", "email": "reporter@example.com", "name": "Pat"})
+    assert r.status_code == 200, r.text
+    allr = client.get("/api/all", headers=admin_headers).json()
+    it = next(p for p in allr["projects"] if p["name"] == "Defaulted")
+    assert it["type"] == "Feature"
+
+
+def test_blank_type_with_single_offered_autofills(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    server._rate.clear()
+    r = client.post(f"/api/intake/{team}",
+                    json={"title": "Only one", "email": "reporter@example.com", "name": "Pat"})
+    assert r.status_code == 200, r.text
+    allr = client.get("/api/all", headers=admin_headers).json()
+    it = next(p for p in allr["projects"] if p["name"] == "Only one")
+    assert it["type"] == "Bug"
+
+
+def test_stale_default_type_is_ignored(client, team, admin_headers):
+    # Default set, then that type removed from the portal -> back to forced choice.
+    _expose(client, admin_headers, types=["Bug", "Feature"])
+    _set(client, admin_headers, "intakeDefaultType", "Request")   # not offered
+    assert client.get(f"/api/intake/config/{team}").json()["defaultType"] == ""
+    server._rate.clear()
+    r = client.post(f"/api/intake/{team}",
+                    json={"title": "Stale default", "email": "reporter@example.com", "name": "Pat"})
+    assert r.status_code == 422
+
+
+def test_unknown_explicit_type_rejected_not_coerced(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug", "Feature"])
+    server._rate.clear()
+    r = client.post(f"/api/intake/{team}",
+                    json={"title": "Bad type", "type": "Nonsense",
+                          "email": "reporter@example.com", "name": "Pat"})
+    assert r.status_code == 422

@@ -938,6 +938,7 @@ def init_team_db(team: str):
             "intakeTypes": [],     # empty = offer ALL of the team's types
             "intakeProjectEmails": {},  # optional per-project notify override {product: email}; falls back to intakeNotifyEmail
             "intakeProjectStatus": {},  # optional per-project DEFAULT STATUS for portal tickets {product: status}; falls back to statusIsDefault
+            "intakeDefaultType": "",    # portal Type preselect ("" = none: reporters must choose when several types are offered)
             "intakeDomains": [],   # allowed reporter email domains (empty = allow any)
             "departmentMeta": {},  # per-department {name: {color, emails}} - pill color + notify list
             # AssetHub integration (contract-independent plumbing, PR1): the curated set
@@ -1055,6 +1056,7 @@ def _migrate_config_keys(team: str):
         "intakeNotifyEmail": "",
         "intakeProjectEmails": {},
         "intakeProjectStatus": {},
+        "intakeDefaultType": "",
         "intakeDomains": [],
         "intakeNotifyTeam": False,   # notify the team (in-app + Slack channel) on a new portal ticket
         "departmentMeta": {},
@@ -1071,7 +1073,7 @@ def _migrate_config_keys(team: str):
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
     # an admin who deletes all types isn't re-seeded on next boot.)
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeProjectStatus", "intakeDomains", "intakeNotifyTeam", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify", "slaTargets", "digestConfig"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeProjectStatus", "intakeDefaultType", "intakeDomains", "intakeNotifyTeam", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify", "slaTargets", "digestConfig"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -1396,7 +1398,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.19.1"
+APP_VERSION = "5.19.2"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1636,6 +1638,12 @@ def _intake_types(team: str) -> list:
     names = [n for n in names if n]
     return [n for n in names if n in allow] if allow else names
 
+def _intake_default_type(team: str) -> str:
+    """The admin-chosen portal Type preselect - honored only while still offered
+    (a type removed from the portal/team silently stops preselecting)."""
+    d = (_cfg_val(team, "intakeDefaultType", "") or "").strip()
+    return d if d and d in _intake_types(team) else ""
+
 def _intake_projects(team: str) -> list:
     """Exposed product/project names for a team (intakeProjects ∩ products; empty = all)."""
     sel = _cfg_val(team, "intakeProjects", []) or []
@@ -1750,6 +1758,7 @@ def intake_team_config(team: str):
     if not team or not valid_team(team) or not _intake_open(team):
         raise HTTPException(404, "This team is not accepting portal submissions.")
     return {"team": team, "name": _intake_label(team), "types": _intake_types(team),
+            "defaultType": _intake_default_type(team),
             "departments": _intake_departments(team), "projects": _intake_projects(team)}
 
 @app.post("/api/intake/{team}")
@@ -1792,8 +1801,15 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     # Department: keep only a value the team actually defines.
     departments = [dept] if dept and dept in _intake_departments(team) else []
     allowed = _intake_types(team)
-    if allowed and ttype not in allowed:
-        ttype = allowed[0]           # coerce to a valid Type rather than reject the report
+    if not ttype:
+        # Blank type: use the admin-chosen preselect, or the only offered type. With
+        # several types and no default, the reporter MUST choose - the old behavior
+        # (coerce to allowed[0]) silently misallocated tickets to the first type.
+        ttype = _intake_default_type(team) or (allowed[0] if len(allowed) == 1 else "")
+        if not ttype and allowed:
+            raise HTTPException(422, "Please choose a type for this ticket.")
+    elif allowed and ttype not in allowed:
+        raise HTTPException(422, "Unknown type for this team.")
     # Attachments: accept only records whose key sits under THIS team's intake
     # prefix (uploaded via the presign endpoint below) - never let a client record
     # an arbitrary S3 key. Capped at 10; size clamped to the public limit.
@@ -2358,8 +2374,12 @@ async function selectProject(idx){
   _selTeam=p.team; _selProduct=p.product;
   var ts=$('#type'); ts.innerHTML='<option value="">Loading…</option>';
   try{ var d=await (await fetch('/api/intake/config/'+encodeURIComponent(p.team))).json();
-    ts.innerHTML=(d.types&&d.types.length?'':'<option value="">-</option>')+(d.types||[]).map(function(t){return '<option value="'+esc(t)+'">'+esc(t)+'</option>'}).join('');
-    var qt=qs.get('type'); if(qt && (d.types||[]).indexOf(qt)>=0) ts.value=qt;
+    var tps=d.types||[];
+    // Placeholder-first: with several types and no admin default, the reporter must
+    // actively choose (a preselected first type silently misallocated tickets).
+    ts.innerHTML='<option value="">- Choose a type -</option>'+tps.map(function(t){return '<option value="'+esc(t)+'">'+esc(t)+'</option>'}).join('');
+    ts.value = (d.defaultType && tps.indexOf(d.defaultType)>=0) ? d.defaultType : (tps.length===1 ? tps[0] : '');
+    var qt=qs.get('type'); if(qt && tps.indexOf(qt)>=0) ts.value=qt;
     var depts=d.departments||[], dw=$('#deptWrap'), ds=$('#dept');
     if(depts.length){ dw.style.display=''; ds.innerHTML='<option value="">-</option>'+depts.map(function(x){return '<option value="'+esc(x)+'">'+esc(x)+'</option>'}).join('');
       var qd=qs.get('dept'); if(qd && depts.indexOf(qd)>=0) ds.value=qd;
@@ -2405,6 +2425,7 @@ document.addEventListener('drop',function(e){
 async function submitForm(ev){
   ev.preventDefault(); clearErr();
   var team=_selTeam; if(!team){ showErr('Please choose a project.'); return false; }
+  if($('#type').options.length>1 && !$('#type').value){ showErr('Please choose a type for your ticket.'); return false; }
   var cf=document.querySelector('[name="cf-turnstile-response"]');   // present only when Turnstile is enabled
   if(cf && !cf.value){ showErr('Please complete the verification below.'); return false; }
   var btn=$('#submitBtn'); btn.disabled=true;
@@ -3177,6 +3198,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "intakeNotifyEmail": cfg_map.get("intakeNotifyEmail", ""),
             "intakeProjectEmails": cfg_map.get("intakeProjectEmails", {}),
             "intakeProjectStatus": cfg_map.get("intakeProjectStatus", {}),
+            "intakeDefaultType": cfg_map.get("intakeDefaultType", ""),
             "intakeNotifyTeam": bool(cfg_map.get("intakeNotifyTeam", False)),
             "intakeDomains": cfg_map.get("intakeDomains", []),
             "departmentMeta": cfg_map.get("departmentMeta", {}),
@@ -4412,7 +4434,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow",
-              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeProjectStatus","intakeDomains","intakeNotifyTeam","departmentMeta","maintenanceDutyTypeId",
+              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeProjectStatus","intakeDefaultType","intakeDomains","intakeNotifyTeam","departmentMeta","maintenanceDutyTypeId",
               "externalRequestCategories","assethubConnection","assethubServiceTypeMapping","enabledViews",
               "slackNotify","slaTargets","digestConfig"}
 
