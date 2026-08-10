@@ -771,3 +771,61 @@ def test_intake_label_acronym_heuristic():
     assert server._intake_label("development") == "Development"
     assert server._intake_label("logistics") == "Logistics"
     assert server._intake_label("") == ""
+
+
+# ── per-project default status + spreadsheet attachments ─────────────────────
+def test_submit_honors_project_status_override(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    _set(client, admin_headers, "intakeProjectStatus", {"Fraznet": "In Progress"})
+    server._rate.clear()
+    r = client.post(f"/api/intake/{team}",
+                    json={"title": "Override me", "type": "Bug", "product": "Fraznet",
+                          "email": "reporter@example.com", "name": "Pat"})
+    assert r.status_code == 200, r.text
+    allr = client.get("/api/all", headers=admin_headers).json()
+    it = next(p for p in allr["projects"] if p["name"] == "Override me")
+    assert it["status"] == "In Progress"
+    # exposed to the admin UI via /api/all
+    assert allr["intakeProjectStatus"] == {"Fraznet": "In Progress"}
+    # an un-mapped project still lands at the team default
+    server._rate.clear()
+    r2 = client.post(f"/api/intake/{team}",
+                     json={"title": "Default me", "type": "Bug", "product": "HubSpot",
+                           "email": "reporter@example.com", "name": "Pat"})
+    assert r2.status_code == 200, r2.text
+    allr = client.get("/api/all", headers=admin_headers).json()
+    it2 = next(p for p in allr["projects"] if p["name"] == "Default me")
+    assert it2["status"] == "New"
+
+
+def test_project_status_override_unknown_status_falls_back(client, team, admin_headers):
+    # A renamed/deleted status in the map must not create items at a ghost status.
+    _expose(client, admin_headers, types=["Bug"])
+    _set(client, admin_headers, "intakeProjectStatus", {"Fraznet": "Ghost Status"})
+    server._rate.clear()
+    r = client.post(f"/api/intake/{team}",
+                    json={"title": "Ghost fallback", "type": "Bug", "product": "Fraznet",
+                          "email": "reporter@example.com", "name": "Pat"})
+    assert r.status_code == 200, r.text
+    allr = client.get("/api/all", headers=admin_headers).json()
+    it = next(p for p in allr["projects"] if p["name"] == "Ghost fallback")
+    assert it["status"] == "New"
+
+
+def test_intake_presign_accepts_spreadsheets(client, team, admin_headers):
+    _expose(client, admin_headers, types=["Bug"])
+    # The type gate must pass Excel/CSV types; the request then proceeds to the S3
+    # presign (502 in this credential-less test env, 200 with real creds) - the
+    # assertion is only that the TYPE is no longer rejected.
+    for ct in ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+               "application/vnd.ms-excel", "text/csv"):
+        server._rate.clear()
+        rc = client.post(f"/api/intake/{team}/attach",
+                         json={"filename": "sheet.xlsx", "contentType": ct,
+                               "size": 10}).status_code
+        assert rc != 415, ct
+    # untouched: executables still refused
+    server._rate.clear()
+    assert client.post(f"/api/intake/{team}/attach",
+                       json={"filename": "a.exe", "contentType": "application/x-msdownload",
+                             "size": 10}).status_code == 415

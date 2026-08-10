@@ -2706,6 +2706,7 @@ let intakeProjects = [];        // which Projects (products) the portal offers (
 let intakeNotifyEmail = '';     // team inbox that gets a copy of each portal ticket. (config)
 let intakeTypes = [];           // which item Types the portal offers (empty = all). (config)
 let intakeProjectEmails = {};   // optional per-Project notify email override {product: email}; falls back to intakeNotifyEmail. (config)
+let intakeProjectStatus = {};   // optional per-Project DEFAULT STATUS for portal tickets {product: status}; falls back to the team default. (config)
 let intakeDomains = [];         // allowed reporter email domains for the portal (empty = allow any). (config)
 let intakeNotifyTeam = false;   // notify the team (in-app + Slack channel) on a new portal ticket. (config)
 let departmentMeta = {};        // per-department {name:{color,emails}} - pill color + notify list. (config)
@@ -7442,6 +7443,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       intakeNotifyTeam = data.intakeNotifyTeam === true;
       intakeTypes   = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];
       if(data.intakeProjectEmails && typeof data.intakeProjectEmails === 'object') intakeProjectEmails = data.intakeProjectEmails;
+      if(data.intakeProjectStatus && typeof data.intakeProjectStatus === 'object') intakeProjectStatus = data.intakeProjectStatus;
       if(Array.isArray(data.intakeDomains)) intakeDomains = data.intakeDomains;
       if(data.productIgnoreConflicts) productIgnoreConflicts = data.productIgnoreConflicts;
       // Don't import users unless explicitly present - protects login
@@ -15679,10 +15681,15 @@ function renderIntakePortalSettings(){
       `<div style="display:flex;align-items:center;gap:8px">
          <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;flex:0 0 auto;min-width:140px"><input type="checkbox" class="ts-intake-proj" data-name="${escA(n)}" ${projOffered.has(n)?'checked':''} style="accent-color:var(--accent)"> ${esc(n)}</label>
          <input type="email" class="ts-intake-proj-email" data-name="${escA(n)}" value="${escA(intakeProjectEmails[n]||'')}" placeholder="project-inbox@example.com" style="flex:1;min-width:0;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">
+         <select class="ts-intake-proj-status" data-name="${escA(n)}" title="Status new portal tickets for this project start at" style="flex:0 0 130px;padding:5px 6px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">
+           <option value="">Team default</option>
+           ${(statuses||[]).map(st=>`<option value="${escA(st)}" ${intakeProjectStatus[n]===st?'selected':''}>${esc(st)}</option>`).join('')}
+         </select>
        </div>`
     ).join('') : '<span style="font-size:12px;color:var(--muted)">No Projects configured - add some in the Projects tab.</span>';
     projWrap.querySelectorAll('.ts-intake-proj').forEach(cb => cb.onchange = _saveIntakeProjects);
     projWrap.querySelectorAll('.ts-intake-proj-email').forEach(inp => inp.onchange = _saveIntakeProjectEmails);
+    projWrap.querySelectorAll('.ts-intake-proj-status').forEach(sel => sel.onchange = _saveIntakeProjectStatus);
   }
   const allNames = (types||[]).map(t => (t&&t.name)||t).filter(Boolean);
   const offered = intakeTypes.length ? new Set(intakeTypes) : new Set(allNames);   // empty = all
@@ -15719,6 +15726,16 @@ function _saveIntakeProjects(){
   const checked = [...document.querySelectorAll('.ts-intake-proj')].filter(c=>c.checked).map(c=>c.getAttribute('data-name'));
   intakeProjects = (checked.length === 0 || checked.length === allNames.length) ? [] : checked;
   saveConfig('intakeProjects', intakeProjects);
+}
+function _saveIntakeProjectStatus(){
+  // Per-project default status for portal tickets {product: status}; only overrides stored.
+  const map = {};
+  [...document.querySelectorAll('.ts-intake-proj-status')].forEach(sel => {
+    const name = sel.getAttribute('data-name'), val = sel.value;
+    if(val) map[name] = val;
+  });
+  intakeProjectStatus = map;
+  saveConfig('intakeProjectStatus', intakeProjectStatus);
 }
 function _saveIntakeProjectEmails(){
   // Per-project notify overrides {product: email}; only non-empty entries stored.
@@ -16531,6 +16548,7 @@ async function boot(){
     intakeTypes           = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];                  // offered Types (empty = all)
     intakeNotifyEmail     = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : ''; // team inbox copy
     intakeProjectEmails   = (data.intakeProjectEmails && typeof data.intakeProjectEmails === 'object') ? data.intakeProjectEmails : {}; // per-project override
+    intakeProjectStatus   = (data.intakeProjectStatus && typeof data.intakeProjectStatus === 'object') ? data.intakeProjectStatus : {}; // per-project default status
     intakeDomains         = Array.isArray(data.intakeDomains) ? data.intakeDomains : [];              // allowed reporter email domains (empty = any)
     departmentMeta        = (data.departmentMeta && typeof data.departmentMeta === 'object') ? data.departmentMeta : {};  // per-dept color + notify emails
     productIgnoreConflicts = data.productIgnoreConflicts || {};
@@ -17346,6 +17364,14 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-content > #listView,
   .frz-beta .frz-content > #dashboardView,
   .frz-beta .frz-content > #planningView { min-height:0; }
+  /* Kanban horizontal overflow: the board already scrolls (inline overflow-x:auto), but the
+     default scrollbar auto-hides on Windows and reads as "columns cut off". Styling the
+     scrollbar forces the classic always-visible bar and makes it an obvious affordance. */
+  .frz-beta #kanbanBoard { scrollbar-color: var(--frz-border-strong) transparent; }   /* Firefox */
+  .frz-beta #kanbanBoard::-webkit-scrollbar { height:12px; }
+  .frz-beta #kanbanBoard::-webkit-scrollbar-track { background:var(--frz-bg-app); border-top:1px solid var(--frz-border-strong); }
+  .frz-beta #kanbanBoard::-webkit-scrollbar-thumb { background:var(--frz-border-strong); border-radius:6px; border:2px solid var(--frz-bg-app); }
+  .frz-beta #kanbanBoard::-webkit-scrollbar-thumb:hover { background:var(--frz-accent); }
   /* Gantt: lift the chart plotting area to the surface color (white in light /
      dark surface in dark) so the UNCHANGED gray group-bands, row separators, and
      column headers read with more contrast against it. Beta-scoped; classic Gantt

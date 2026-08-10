@@ -937,6 +937,7 @@ def init_team_db(team: str):
             "intakeNotifyEmail": "",  # team inbox that gets a copy of each portal ticket
             "intakeTypes": [],     # empty = offer ALL of the team's types
             "intakeProjectEmails": {},  # optional per-project notify override {product: email}; falls back to intakeNotifyEmail
+            "intakeProjectStatus": {},  # optional per-project DEFAULT STATUS for portal tickets {product: status}; falls back to statusIsDefault
             "intakeDomains": [],   # allowed reporter email domains (empty = allow any)
             "departmentMeta": {},  # per-department {name: {color, emails}} - pill color + notify list
             # AssetHub integration (contract-independent plumbing, PR1): the curated set
@@ -1053,6 +1054,7 @@ def _migrate_config_keys(team: str):
         "intakeTypes":      [],
         "intakeNotifyEmail": "",
         "intakeProjectEmails": {},
+        "intakeProjectStatus": {},
         "intakeDomains": [],
         "intakeNotifyTeam": False,   # notify the team (in-app + Slack channel) on a new portal ticket
         "departmentMeta": {},
@@ -1069,7 +1071,7 @@ def _migrate_config_keys(team: str):
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
     # an admin who deletes all types isn't re-seeded on next boot.)
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeDomains", "intakeNotifyTeam", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify", "slaTargets", "digestConfig"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeProjectStatus", "intakeDomains", "intakeNotifyTeam", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify", "slaTargets", "digestConfig"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -1709,7 +1711,11 @@ def _intake_departments(team: str) -> list:
 # than the authenticated flow (it's a no-auth surface). Objects go under an
 # intake/{team}/{uuid}/ prefix; the submit endpoint only accepts keys with that shape.
 _INTAKE_ATTACH_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp",
-                        "application/pdf", "text/plain"}
+                        "application/pdf", "text/plain",
+                        # Spreadsheets: .xlsx / .xls / .csv (Windows browsers report .csv
+                        # as text/csv OR application/vnd.ms-excel depending on registry).
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "application/vnd.ms-excel", "text/csv"}
 _INTAKE_MAX_ATTACH_BYTES = 15 * 1024 * 1024   # 15 MB
 
 def _intake_attachment_key(team: str, att_id: str, name: str) -> str:
@@ -1815,6 +1821,11 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     def_map = _cfg_val(team, "statusIsDefault", {}) or {}
     default_status = next((s for s, v in def_map.items() if v), "") \
         or ((_cfg_val(team, "statuses", []) or ["New"])[0])
+    # Per-project override {product: status} - honored only when the status still exists
+    # on the team (a renamed/deleted status silently falls back to the team default).
+    proj_status = (_cfg_val(team, "intakeProjectStatus", {}) or {}).get(product) or ""
+    if proj_status and proj_status in (_cfg_val(team, "statuses", []) or []):
+        default_status = proj_status
     # NOTE (AssetHub integration): this blob is built field-by-field from named, validated
     # inputs and never merges the request body wholesale, so an anonymous submitter cannot
     # seed a server-owned field (e.g. externalRefs) here. This is the ONE untrusted creation
@@ -1866,7 +1877,7 @@ def intake_presign(team: str, body: dict = Body(...), request: FRequest = None):
     except (TypeError, ValueError):
         raise HTTPException(422, "size must be an integer")
     if ctype not in _INTAKE_ATTACH_TYPES:
-        raise HTTPException(415, "Only images (PNG/JPG/GIF/WebP), PDF, or plain text are allowed.")
+        raise HTTPException(415, "Only images (PNG/JPG/GIF/WebP), PDF, spreadsheets (XLSX/XLS/CSV), or plain text are allowed.")
     if size > _INTAKE_MAX_ATTACH_BYTES:
         raise HTTPException(413, "File exceeds the 15 MB limit.")
     att_id = _uuid.uuid4().hex
@@ -2302,7 +2313,7 @@ _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
     <div><label class="req">Summary</label><input id="title" maxlength="200" placeholder="Short summary of the request or issue" required></div>
     <div><label>Details</label><textarea id="desc" maxlength="5000" placeholder="What happened? What do you need? Steps, links, etc."></textarea></div>
     <div><label>Attachments <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--mut)">- screenshots, PDFs (optional, up to 10)</span></label>
-      <input id="files" type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain" style="font-size:13px;padding:6px 0;border:none">
+      <input id="files" type="file" multiple accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,.xlsx,.xls,.csv" style="font-size:13px;padding:6px 0;border:none">
       <div id="attStatus" style="font-size:12px;color:var(--mut);display:none;margin-top:4px"></div>
       <div id="attList" style="display:flex;flex-direction:column;gap:6px;margin-top:8px"></div>
     </div>
@@ -2362,7 +2373,11 @@ function renderAtts(){
   Array.prototype.forEach.call(document.querySelectorAll('.attrm'),function(b){ b.onclick=function(){ _atts.splice(+b.getAttribute('data-i'),1); renderAtts(); }; });
 }
 async function onFiles(ev){
-  var files=[].slice.call(ev.target.files||[]); ev.target.value=''; clearErr();
+  var files=[].slice.call(ev.target.files||[]); ev.target.value='';
+  return addFiles(files);
+}
+async function addFiles(files){
+  clearErr();
   var team=_selTeam; if(!team){ showErr('Choose a project before attaching files.'); return; }
   var st=$('#attStatus');
   for(var i=0;i<files.length;i++){
@@ -2379,6 +2394,14 @@ async function onFiles(ev){
   if(st) st.style.display='none';
 }
 $('#files').addEventListener('change',onFiles);
+// Drag-drop: dropping files anywhere on the form attaches them; a stray drop must never
+// navigate the page away to the file (the browser default without these guards).
+document.addEventListener('dragover',function(e){ e.preventDefault(); });
+document.addEventListener('drop',function(e){
+  e.preventDefault();
+  var fs=(e.dataTransfer&&e.dataTransfer.files)||[];
+  if(fs.length) addFiles([].slice.call(fs));
+});
 async function submitForm(ev){
   ev.preventDefault(); clearErr();
   var team=_selTeam; if(!team){ showErr('Please choose a project.'); return false; }
@@ -3153,6 +3176,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "intakeTypes": cfg_map.get("intakeTypes", []),
             "intakeNotifyEmail": cfg_map.get("intakeNotifyEmail", ""),
             "intakeProjectEmails": cfg_map.get("intakeProjectEmails", {}),
+            "intakeProjectStatus": cfg_map.get("intakeProjectStatus", {}),
             "intakeNotifyTeam": bool(cfg_map.get("intakeNotifyTeam", False)),
             "intakeDomains": cfg_map.get("intakeDomains", []),
             "departmentMeta": cfg_map.get("departmentMeta", {}),
@@ -4388,7 +4412,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow",
-              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeDomains","intakeNotifyTeam","departmentMeta","maintenanceDutyTypeId",
+              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeProjectStatus","intakeDomains","intakeNotifyTeam","departmentMeta","maintenanceDutyTypeId",
               "externalRequestCategories","assethubConnection","assethubServiceTypeMapping","enabledViews",
               "slackNotify","slaTargets","digestConfig"}
 
