@@ -1394,7 +1394,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.17.2"
+APP_VERSION = "5.18.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -6854,6 +6854,58 @@ def retry_item_request(pid: int, operation_ref: str,
     if rf:
         reqbody["requested_for_email"] = rf
     return _drive_request_send(team, auth.get("role"), pid, op_ref, reqbody, username, "request-retry")
+
+@app.post("/api/items/{pid}/requests/{operation_ref}/refresh")
+def refresh_item_request_status(pid: int, operation_ref: str,
+                                auth: dict = Depends(require_role("admin", "editor"))):
+    """WRITE-2 Stage 3 read-back: pull the linked AssetHub request's lifecycle status (GET
+    /api/v1/requests/{public_id}, scope request.read) and record it on the SAME externalRefs entry
+    (requestStatus + statusCheckedAt) via the dedicated read-modify-save path. Explicit human
+    action only - no timer, no render-time fan-out (Part 7). A failed check changes nothing on
+    the entry (it stays linked with its last-known status); the error is surfaced to the caller."""
+    team = auth["team"]
+    _require_assethub(team)
+    username = auth.get("username", "")
+    op_ref = str(operation_ref or "").strip()
+    with db(team) as c:
+        p = _load_linkable_item(c, pid)
+        entry = _find_request_ref(p, op_ref)
+        if entry is None:
+            raise HTTPException(404, "That request is not on this item.")
+        if entry.get("status") != "linked" or not entry.get("id"):
+            raise HTTPException(409, "Only a linked request has a status to check.")
+        public_id = str(entry["id"])
+    try:
+        res = AssetHubClient(team, auth.get("role")).get(f"/api/v1/requests/{public_id}")
+        data = res.get("data") or {}
+        corr = res.get("correlation_id")
+    except AssetHubError as e:
+        log.warning(f"[AssetHub] request status check failed item={pid} op={op_ref} "
+                    f"code={e.code} corr={e.correlation_id}")
+        return {"ok": False, "operationRef": op_ref, "externalRefs": p.get("externalRefs") or [],
+                "error": {"code": e.code, "message": _assethub_plain(e.code),
+                          "correlationId": e.correlation_id}}
+    new_status = str(data.get("status") or "")
+    now = datetime.now(timezone.utc).isoformat()
+    with db(team) as c:
+        p = _load_linkable_item(c, pid)
+        entry = _find_request_ref(p, op_ref)
+        if entry is None:
+            raise HTTPException(404, "That request is not on this item.")
+        changed = new_status and new_status != (entry.get("requestStatus") or "")
+        entry["requestStatus"] = new_status or entry.get("requestStatus")
+        entry["statusCheckedAt"] = now
+        entry["lastCorrelationId"] = corr
+        _save_project(c, pid, p)
+        name = p.get("name", "")
+        refs = p.get("externalRefs") or []
+    if changed:
+        # Audit only a CHANGED status - repeated checks of an unchanged request are not events.
+        write_audit(team, "request-status", username, pid, name,
+                    changes={"operationRef": op_ref, "requestStatus": new_status,
+                             "correlationId": corr})
+    return {"ok": True, "operationRef": op_ref, "requestStatus": entry.get("requestStatus"),
+            "externalRefs": refs, "correlationId": corr}
 
 def _get_all_jira_tickets(team: str) -> dict:
     """Return {ticket_key: item_id} for all items with jiraTickets."""
