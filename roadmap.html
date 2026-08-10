@@ -2200,7 +2200,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.20.0';
+const APP_VERSION = '5.20.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -19634,6 +19634,15 @@ if ('serviceWorker' in navigator) {
     // an ABSENT param falls back to the localStorage default (plain nav = cross-session
     // memory). Routing never overwrites the ls default (only setProject does).
     state.project = qp.has('project') ? (qp.get('project') || '__all__') : (ls(projKey()) || '__all__');
+    // The project scope is stored per-USER (projKey), so it carries across teams. A value from
+    // another team (or a since-deleted project) matches no product here: the rail pills filter
+    // in-memory to 0 while the server-backed List still shows everything - the "List pill says 0
+    // but the page is full" bug. Coerce any unknown project back to All so pill/page/crumb agree.
+    if (state.project !== '__all__'){
+      var _prods = _val('products', []) || [];
+      var _known = _prods.some(function(pr){ return (pr && pr.name || pr) === state.project; });
+      if (!_known){ state.project = '__all__'; try { lset(projKey(), '__all__'); } catch(e){} }
+    }
     // board is URL state for the kanban view (navigation scope, not a chip)
     if (view==='kanban') state.board = qp.get('board') || _defaultBoard();   // Stage 4: fall back to the user's default board
     // Stage 3: sprint scope (seed BEFORE syncURL so a cold-loaded ?sprint= isn't stripped).
