@@ -24156,7 +24156,10 @@ if ('serviceWorker' in navigator) {
     var head = '<span style="font-weight:700;color:var(--text)">'+esc(sys)+' '+esc(kind)+'</span>';
     var body;
     if(r.status==='linked'){
-      var label = r.number || r.id || 'Open';
+      // With a browser link (web_url via the public-id resolver, contract 1.3.1) show a
+      // friendly "Open" instead of the raw UUID; the UUID only shows when there is no link
+      // (a number, when AssetHub ever mints one, would win over both).
+      var label = r.number || (r.url ? 'Open in AssetHub' : r.id) || 'Open';
       body = r.url
         ? '<a href="'+esc(String(r.url))+'" target="_blank" rel="noopener" style="color:var(--accent);font-weight:700;text-decoration:none">'+esc(String(label))+' ↗</a>'
         : '<span style="font-weight:700;color:var(--text)">'+esc(String(label))+'</span>';

@@ -55,6 +55,7 @@ class _FakeClient:
     status = "PENDING_BUDGET"
     calls: list = []
     fail_code = None
+    web_url = None
 
     def __init__(self, team, role, **kw):
         self.team, self.role = team, role
@@ -66,6 +67,7 @@ class _FakeClient:
         return {"data": {"public_id": PUBLIC_ID, "status": _FakeClient.status,
                          "title": "Readback item", "quantity": 1,
                          "source_system": "flow", "source_reference": OP_REF,
+                         "web_url": _FakeClient.web_url,
                          "created_at": "2026-08-01T00:00:00Z",
                          "updated_at": "2026-08-09T00:00:00Z"},
                 "correlation_id": "corr-ok"}
@@ -76,6 +78,7 @@ def assethub(monkeypatch):
     _FakeClient.calls = []
     _FakeClient.fail_code = None
     _FakeClient.status = "PENDING_BUDGET"
+    _FakeClient.web_url = None
     monkeypatch.setattr(server, "AssetHubClient", _FakeClient)
     monkeypatch.setattr(server, "_assethub_configured", lambda team: True)
     return _FakeClient
@@ -112,6 +115,20 @@ def test_refresh_updates_on_change(client, team, admin_headers, assethub):
     r = client.post(_url(pid), headers=admin_headers)
     assert r.json()["requestStatus"] == "APPROVED"
     assert _read_ref(team, pid)["requestStatus"] == "APPROVED"
+
+
+def test_refresh_adopts_web_url(client, team, admin_headers, assethub):
+    # contract 1.3.1: a returned web_url becomes the entry's url (link on the row) -
+    # entries created before web_url existed get their hyperlink on the first check.
+    pid = _mk_item(client, admin_headers)
+    _seed_request_ref(team, pid)
+    assethub.web_url = f"https://assethub.frazil.app/requests/p/{PUBLIC_ID}"
+    client.post(_url(pid), headers=admin_headers)
+    assert _read_ref(team, pid)["url"] == assethub.web_url
+    # absent web_url (older AssetHub / no PUBLIC_BASE_URL) never clears a stored url
+    assethub.web_url = None
+    client.post(_url(pid), headers=admin_headers)
+    assert _read_ref(team, pid)["url"] == f"https://assethub.frazil.app/requests/p/{PUBLIC_ID}"
 
 
 def test_refresh_failure_changes_nothing(client, team, admin_headers, assethub):
