@@ -1,0 +1,25 @@
+{
+  "_comment": "SLA-2 resolution-clock parity fixture. ONE source of truth for both halves: the Python test (test_sla_parity.py) asserts server _digest_sla_kind() matches `expected`; the client half asserts slaState().kind matches the same cases in a browser with Date.now pinned to `now`. Covers the S6 effectiveFrom gate (the rule that had to land in BOTH implementations) plus every resolution kind and priority-normalization. Times chosen so outcomes are deterministic at the pinned `now`.",
+  "now": "2026-08-10T12:00:00Z",
+  "sla": {
+    "enabled": true,
+    "resolution": { "1": 4, "2": 24, "3": 72, "4": 168 },
+    "atRiskPct": 80,
+    "effectiveFrom": "2026-06-01"
+  },
+  "statusIsTerminal": { "Done": true, "Workaround": true },
+  "cases": [
+    { "name": "terminal met",              "priority": "2", "status": "Done",        "createdAt": "2026-08-09T00:00:00Z", "completedAt": "2026-08-09T10:00:00Z", "expected": "met" },
+    { "name": "terminal missed",           "priority": "1", "status": "Done",        "createdAt": "2026-08-09T00:00:00Z", "completedAt": "2026-08-09T10:00:00Z", "expected": "missed" },
+    { "name": "terminal no completedAt",   "priority": "2", "status": "Done",        "createdAt": "2026-08-09T00:00:00Z", "completedAt": "",                     "expected": null },
+    { "name": "workaround terminal met",   "priority": "2", "status": "Workaround",  "createdAt": "2026-08-09T00:00:00Z", "completedAt": "2026-08-09T10:00:00Z", "expected": "met" },
+    { "name": "open breached",             "priority": "1", "status": "In Progress", "createdAt": "2026-08-10T00:00:00Z", "completedAt": "",                     "expected": "breached" },
+    { "name": "open at risk",              "priority": "3", "status": "In Progress", "createdAt": "2026-08-08T00:00:00Z", "completedAt": "",                     "expected": "atrisk" },
+    { "name": "open on track",             "priority": "3", "status": "In Progress", "createdAt": "2026-08-10T02:00:00Z", "completedAt": "",                     "expected": "ontrack" },
+    { "name": "no priority target",        "priority": "5", "status": "In Progress", "createdAt": "2026-08-10T00:00:00Z", "completedAt": "",                     "expected": null },
+    { "name": "no createdAt",              "priority": "2", "status": "In Progress", "createdAt": "",                     "completedAt": "",                     "expected": null },
+    { "name": "S6 excluded (before eff)",  "priority": "2", "status": "In Progress", "createdAt": "2026-05-01T00:00:00Z", "completedAt": "",                     "expected": null },
+    { "name": "S6 included (after eff)",   "priority": "1", "status": "In Progress", "createdAt": "2026-08-10T00:00:00Z", "completedAt": "",                     "expected": "breached" },
+    { "name": "numeric priority normalizes","priority": 2,  "status": "Done",        "createdAt": "2026-08-09T00:00:00Z", "completedAt": "2026-08-09T10:00:00Z", "expected": "met" }
+  ]
+}
