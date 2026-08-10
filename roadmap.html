@@ -2196,7 +2196,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.19.3';
+const APP_VERSION = '5.19.4';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -17400,11 +17400,17 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-content > #listView,
   .frz-beta .frz-content > #dashboardView,
   .frz-beta .frz-content > #planningView { min-height:0; }
-  /* Kanban horizontal overflow: the board already scrolls (inline overflow-x:auto), but the
-     default scrollbar auto-hides on Windows and reads as "columns cut off". Styling the
-     scrollbar forces the classic always-visible bar and makes it an obvious affordance. */
+  /* Kanban scroll: the board must own BOTH scroll axes and fill the visible content area,
+     so the horizontal scrollbar pins to the bottom of the VIEWPORT. Before this, vertical
+     scroll lived on .frz-content and the board grew as tall as its tallest column - a team
+     with 80+ cards in one status pushed the horizontal scrollbar thousands of px below the
+     fold, so the last (often empty) column was unreachable. height:100% + overflow:auto
+     bounds the board to the content area; frz-content then has nothing to scroll. */
+  .frz-beta .frz-content > #kanbanBoard { height:100%; overflow:auto; }
+  /* Styled scrollbars so the bars are always visible (Windows auto-hides the default,
+     which read as "columns cut off"). */
   .frz-beta #kanbanBoard { scrollbar-color: var(--frz-border-strong) transparent; }   /* Firefox */
-  .frz-beta #kanbanBoard::-webkit-scrollbar { height:12px; }
+  .frz-beta #kanbanBoard::-webkit-scrollbar { height:12px; width:12px; }   /* width too: the board now scrolls vertically as well */
   .frz-beta #kanbanBoard::-webkit-scrollbar-track { background:var(--frz-bg-app); border-top:1px solid var(--frz-border-strong); }
   .frz-beta #kanbanBoard::-webkit-scrollbar-thumb { background:var(--frz-border-strong); border-radius:6px; border:2px solid var(--frz-bg-app); }
   .frz-beta #kanbanBoard::-webkit-scrollbar-thumb:hover { background:var(--frz-accent); }
