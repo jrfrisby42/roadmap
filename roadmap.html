@@ -2200,7 +2200,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.20.1';
+const APP_VERSION = '5.20.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -3181,17 +3181,19 @@ function slaState(p){
     var done = p.completedAt ? Date.parse(p.completedAt) : NaN;
     if(isNaN(done)) return null;                              // terminal but no completedAt -> can't judge
     return done <= targetMs
-      ? {kind:'met',    cls:'sla-met',    short:'Met',    full:'SLA met'}
-      : {kind:'missed', cls:'sla-missed', short:'Missed', full:'SLA missed by '+_slaDur(done-targetMs)};
+      ? {kind:'met',    cls:'sla-met',    short:'Met',      full:'Met'}
+      : {kind:'missed', cls:'sla-missed', short:'Breached', full:'Breached by '+_slaDur(done-targetMs)};   // T2: the 'missed' KIND is kept (parity fixture asserts kind) but displays "Breached"
   }
   var now = Date.now(), remaining = targetMs - now;
-  if(remaining <= 0) return {kind:'breached', cls:'sla-breached', short:'Breached', full:'SLA breached '+_slaDur(-remaining)+' ago'};
+  if(remaining <= 0) return {kind:'breached', cls:'sla-breached', short:'Breached', full:'Breached '+_slaDur(-remaining)+' ago'};
   var elapsedPct = ((now - created)/(H*3600000))*100;
   var atRisk = (typeof slaTargets.atRiskPct === 'number' ? slaTargets.atRiskPct : 80);
   var short = _slaDur(remaining)+' left';
+  // SLA-3 T3: strings are CLOCK-AGNOSTIC (no "SLA"/"First touch" embedded). slaBadgeHtml prepends the
+  // clock name, which removes the bare-"SLA" copy and the "First touch: First touch met" stutter.
   return (elapsedPct >= atRisk)
-    ? {kind:'atrisk',  cls:'sla-atrisk',  short:short, full:'SLA at risk - '+short}
-    : {kind:'ontrack', cls:'sla-ontrack', short:short, full:'SLA on track - '+short};
+    ? {kind:'atrisk',  cls:'sla-atrisk',  short:short, full:'At risk, '+short}
+    : {kind:'ontrack', cls:'sla-ontrack', short:short, full:'On track, '+short};
 }
 // SLA-2 Stage 1: the FIRST-TOUCH clock. SEPARATE function so slaState()'s contract is untouched.
 // Measures createdAt -> firstResponseAt (first assignment or first non-reporter comment; S9: this
@@ -3210,36 +3212,37 @@ function firstTouchState(p){
   var fr = p.firstResponseAt ? Date.parse(p.firstResponseAt) : NaN;
   if(!isNaN(fr)){                                                                 // 5 (precedes terminal; no completedAt compare)
     return fr <= targetMs
-      ? {kind:'met',    cls:'sla-met',    short:'Met',    full:'First touch met'}
-      : {kind:'missed', cls:'sla-missed', short:'Missed', full:'First touch missed by '+_slaDur(fr-targetMs)};
+      ? {kind:'met',    cls:'sla-met',    short:'Met',      full:'Met'}
+      : {kind:'missed', cls:'sla-missed', short:'Breached', full:'Breached by '+_slaDur(fr-targetMs)};   // T2: 'missed' kind kept, displays "Breached"
   }
   if(statusIsTerminal && statusIsTerminal[p.status]){                            // 6 (S2 neutral, frozen)
     var done = p.completedAt ? Date.parse(p.completedAt) : NaN;
     if(isNaN(done)) return null;
-    return {kind:'nofirsttouch', cls:'sla-nofirsttouch', short:'No first touch',
-            full:'Closed with no first touch recorded ('+_slaDur(done-created)+' to close)'};
+    return {kind:'nofirsttouch', cls:'sla-nofirsttouch', short:'None recorded',
+            full:'Closed, none recorded ('+_slaDur(done-created)+' to close)'};   // clock name added by slaBadgeHtml -> "First touch: Closed, none recorded (...)"
   }
   var now = Date.now(), remaining = targetMs - now;                              // 7 (open live clock)
-  if(remaining <= 0) return {kind:'breached', cls:'sla-breached', short:'Overdue', full:'First touch overdue by '+_slaDur(-remaining)};
+  if(remaining <= 0) return {kind:'breached', cls:'sla-breached', short:'Breached', full:'Breached '+_slaDur(-remaining)+' ago'};   // T2: was "Overdue"
   var elapsedPct = ((now - created)/(H*3600000))*100;
   var atRisk = (typeof slaTargets.atRiskPct === 'number' ? slaTargets.atRiskPct : 80);
   var short = _slaDur(remaining)+' left';
   return (elapsedPct >= atRisk)
-    ? {kind:'atrisk',  cls:'sla-atrisk',  short:short, full:'First touch at risk - due in '+_slaDur(remaining)}
-    : {kind:'ontrack', cls:'sla-ontrack', short:short, full:'First touch on track - due in '+_slaDur(remaining)};
+    ? {kind:'atrisk',  cls:'sla-atrisk',  short:short, full:'At risk, due in '+_slaDur(remaining)}
+    : {kind:'ontrack', cls:'sla-ontrack', short:short, full:'On track, due in '+_slaDur(remaining)};
 }
 // S3 precedence lives HERE, in the render layer (never inside slaState). One badge slot: while no
 // firstResponseAt exists the first-touch state occupies it; once a first touch is recorded the
-// resolution state does. Both states appear in the tooltip when both exist.
+// resolution state does. Both states appear in the tooltip when both exist. SLA-3 T3: every badge
+// and tooltip NAMES its clock ("Resolution:" / "First touch:"). Because the state strings are now
+// clock-agnostic, there is no "First touch: First touch met" stutter and no bare "SLA" anywhere.
 function slaBadgeHtml(p, compact){
   var ft = firstTouchState(p), res = slaState(p);
   var touched = !!(p && p.firstResponseAt);
   var primary = touched ? (res || ft) : (ft || res);
   if(!primary) return '';
-  var txt = compact ? primary.short : primary.full;
-  // Tooltip: when BOTH clocks apply, label each so a bare "SLA" is never ambiguous (S9). With
-  // only one clock the tooltip is byte-identical to before (resolution-only teams see no change).
-  var title = (ft && res) ? ('First touch: '+ft.full+'  |  Resolution: '+res.full) : primary.full;
+  var pClock = (primary === ft) ? 'First touch' : 'Resolution';
+  var txt = pClock + ': ' + (compact ? primary.short : primary.full);
+  var title = (ft && res) ? ('First touch: '+ft.full+'  |  Resolution: '+res.full) : (pClock+': '+primary.full);
   return '<span class="sla-badge '+primary.cls+'" title="'+escA(title)+'">'+esc(txt)+'</span>';
 }
 // Display label for a team SLUG (the slug itself stays lowercase - it is the identity used in URLs,
