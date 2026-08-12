@@ -4,6 +4,10 @@ docstring: "Server mirror of the client slaState()"). This asserts the SERVER ha
 JSON fixture; the CLIENT half is asserted against the SAME fixture in a browser with Date.now pinned
 to the fixture's `now` (documented manual procedure - the repo has no committed JS test harness). The
 fixture centres on the S6 effectiveFrom gate, the one rule this build added to both halves.
+
+Copy-paste browser-console checks for the client side (including the SLA-3 Stage 2 paused-clock
+FREEZE guard, addendum A2 item A1-2) live in tests/sla_client_checks.js - run them on an SLA-enabled
+team. See that file's header for why the freeze guard is a console snippet, not a Node/pytest test.
 """
 import json
 import os
@@ -26,11 +30,15 @@ def _now(fx):
 def test_digest_sla_kind_matches_fixture():
     fx = _load()
     sla, term_map, now_dt = fx["sla"], fx["statusIsTerminal"], _now(fx)
+    waiting_map = fx.get("statusIsWaiting", {})
+    parked_map = fx.get("statusIsParked", {})
     mism = []
     for c in fx["cases"]:
         p = {"priority": c["priority"], "status": c["status"],
              "createdAt": c["createdAt"], "completedAt": c["completedAt"]}
-        got = server._digest_sla_kind(p, sla, term_map, now_dt)
+        if c.get("basis"):       p["basis"] = c["basis"]                # SLA-3 Stage 2 clock basis
+        if c.get("pausedSince"): p["pausedSince"] = c["pausedSince"]
+        got = server._digest_sla_kind(p, sla, term_map, now_dt, waiting_map, parked_map)
         if got != c["expected"]:
             mism.append(f"{c['name']}: expected {c['expected']!r}, got {got!r}")
     assert not mism, "server _digest_sla_kind diverged from the fixture:\n  " + "\n  ".join(mism)
