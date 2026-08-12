@@ -489,7 +489,11 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   /* SLA-2 S2: closed-with-no-first-touch. NEUTRAL and factual, not a judgment - a cool slate with a
      DASHED border, distinct from met (green), breached (red), and the solid-border ontrack gray. */
   .sla-nofirsttouch { background: rgba(99,110,130,0.10); color:#5a6478; border-style:dashed; border-color: rgba(99,110,130,0.45); font-style:italic; }
+  /* SLA-3 Stage 2: clock PAUSED (item in a waiting status). Frozen, not a judgment - a calm blue with
+     a dashed border to read as "on hold". Never shows Breached while paused. */
+  .sla-paused   { background: rgba(0,89,169,0.10);   color:#0059a9; border-style:dashed; border-color: rgba(0,89,169,0.38); }
   body.dark-mode .sla-breached { background: rgba(232,57,74,0.20);  color:#ff6b7a; }
+  body.dark-mode .sla-paused   { background: rgba(47,134,222,0.20); color:#7fb4ec; border-color: rgba(47,134,222,0.5); }
   body.dark-mode .sla-atrisk   { background: rgba(212,160,0,0.22);  color:#e6b800; }
   body.dark-mode .sla-ontrack  { background: rgba(130,152,173,0.22);color:#9fb3c8; }
   body.dark-mode .sla-met      { background: rgba(29,184,106,0.20);  color:#3dd68a; }
@@ -2694,6 +2698,8 @@ let statusIsApproved = {}; // { [statusName]: bool } - exactly ONE true: marks t
 let statusIsTesting  = {}; // { [statusName]: bool } - exactly ONE true: marks the Testing status
 let statusIsBlocked  = {}; // { [statusName]: bool } - optional, at most ONE true: the Blocked status (empty = feature off)
 let statusIsOffFlow  = {}; // { [statusName]: bool } - many: parking/flag states off the linear progression (e.g. Blocked); rank-exempt for the Contributor status rule
+let statusIsWaiting  = {}; // { [statusName]: bool } - many: PAUSE the SLA clock while an item sits here (SLA-3 Stage 2, e.g. "Waiting on reporter"). Empty = no pausing.
+let statusIsParked   = {}; // { [statusName]: bool } - many: STOP the SLA clock (no badge; restart from revival on exit) (SLA-3 A1-1, e.g. Inactive/Backlogged). Distinct from statusIsDeferred (planning-defer). Parked wins over waiting.
 let typeIgnoreConflicts = {};   // { [typeName]: bool }
 let typeScheduled = {};         // { [typeName]: bool } - scheduled types appear on the Gantt + consume capacity; missing = scheduled (fail-safe)
 let richTextEditor = true;      // /beta Tiptap editor master switch (config). Default ON; admin can flip false to revert Description+Comments to the classic editor with no redeploy. Classic root ignores this.
@@ -3165,6 +3171,25 @@ function _slaEffectiveFromMs(){
   var t = Date.parse(ef); return isNaN(t) ? NaN : t;
 }
 function _slaBeforeEffective(createdMs){ var ef = _slaEffectiveFromMs(); return !isNaN(ef) && createdMs < ef; }
+// SLA-3 Stage 2: the SLA clock BASIS. Both clocks measure from here, not raw createdAt: the server
+// advances `basis` past any time spent in a waiting status (pause) and restarts it on revival from a
+// parked status. Falls back to createdAt so a pre-Stage-2 item with no basis behaves exactly as before.
+// Mirrored server-side in _digest_sla_kind. The S6 activation gate stays on createdAt (entry time), not basis.
+function _slaBasisMs(p){
+  var b = (p && p.basis) ? Date.parse(p.basis) : NaN;
+  if(!isNaN(b)) return b;
+  return (p && p.createdAt) ? Date.parse(p.createdAt) : NaN;
+}
+// SLA-3 Stage 2: paused-badge builder. While an item sits in a statusIsWaiting status its clock is
+// frozen at pausedSince (R3 fallback: now, when no pausedSince was recorded - never NaN) and it never
+// shows Breached (the wait is the reporter's court, not the team's). Shared by both clocks.
+function _slaPausedState(targetMs, basisMs, p){
+  var frozen = (p && p.pausedSince) ? Date.parse(p.pausedSince) : Date.now();   // R3: no pausedSince -> now
+  if(isNaN(frozen)) frozen = Date.now();
+  var rem = targetMs - frozen;
+  var d = rem > 0 ? (_slaDur(rem)+' left') : ('overdue by '+_slaDur(-rem));
+  return {kind:'paused', cls:'sla-paused', short:'Paused', full:'Paused, '+d};
+}
 // Resolution clock. Return contract is UNCHANGED except the S6 gate (the Reports compliance
 // tiles consume slaState().kind - do NOT extend this to return first-touch states; that lives
 // in firstTouchState). S9 disambiguation ("Resolution:") is applied in slaBadgeHtml's tooltip
@@ -3176,7 +3201,9 @@ function slaState(p){
   var created = p.createdAt ? Date.parse(p.createdAt) : NaN;
   if(isNaN(created)) return null;
   if(_slaBeforeEffective(created)) return null;              // S6: created before the activation date -> not measured
-  var targetMs = created + H*3600000;
+  if(statusIsParked && statusIsParked[p.status]) return null;   // SLA-3 T8/A1-1: parked -> not measured, no badge (parked wins, checked before waiting)
+  var basis = _slaBasisMs(p); if(isNaN(basis)) basis = created;
+  var targetMs = basis + H*3600000;                          // SLA-3: clock runs from basis (wait time excluded)
   if(statusIsTerminal && statusIsTerminal[p.status]){          // resolved: met/missed vs target
     var done = p.completedAt ? Date.parse(p.completedAt) : NaN;
     if(isNaN(done)) return null;                              // terminal but no completedAt -> can't judge
@@ -3184,9 +3211,10 @@ function slaState(p){
       ? {kind:'met',    cls:'sla-met',    short:'Met',      full:'Met'}
       : {kind:'missed', cls:'sla-missed', short:'Breached', full:'Breached by '+_slaDur(done-targetMs)};   // T2: the 'missed' KIND is kept (parity fixture asserts kind) but displays "Breached"
   }
+  if(statusIsWaiting && statusIsWaiting[p.status]) return _slaPausedState(targetMs, basis, p);   // SLA-3 R1: frozen while waiting, never breaches
   var now = Date.now(), remaining = targetMs - now;
   if(remaining <= 0) return {kind:'breached', cls:'sla-breached', short:'Breached', full:'Breached '+_slaDur(-remaining)+' ago'};
-  var elapsedPct = ((now - created)/(H*3600000))*100;
+  var elapsedPct = ((now - basis)/(H*3600000))*100;
   var atRisk = (typeof slaTargets.atRiskPct === 'number' ? slaTargets.atRiskPct : 80);
   var short = _slaDur(remaining)+' left';
   // SLA-3 T3: strings are CLOCK-AGNOSTIC (no "SLA"/"First touch" embedded). slaBadgeHtml prepends the
@@ -3208,7 +3236,9 @@ function firstTouchState(p){
   var H = (slaTargets.firstTouch || {})[String(p.priority || '')];
   if(!(H > 0)) return null;                                                       // 3
   if(isNaN(created)) return null;                                                // 4
-  var targetMs = created + H*3600000;
+  if(statusIsParked && statusIsParked[p.status]) return null;                    // SLA-3 T8/A1-1: parked -> not measured, no badge (parked wins, checked before waiting)
+  var basis = _slaBasisMs(p); if(isNaN(basis)) basis = created;
+  var targetMs = basis + H*3600000;                                              // SLA-3: clock runs from basis (wait time excluded)
   var fr = p.firstResponseAt ? Date.parse(p.firstResponseAt) : NaN;
   if(!isNaN(fr)){                                                                 // 5 (precedes terminal; no completedAt compare)
     return fr <= targetMs
@@ -3221,9 +3251,10 @@ function firstTouchState(p){
     return {kind:'nofirsttouch', cls:'sla-nofirsttouch', short:'None recorded',
             full:'Closed, none recorded ('+_slaDur(done-created)+' to close)'};   // clock name added by slaBadgeHtml -> "First touch: Closed, none recorded (...)"
   }
+  if(statusIsWaiting && statusIsWaiting[p.status]) return _slaPausedState(targetMs, basis, p);   // SLA-3 R1: frozen while waiting (not yet touched)
   var now = Date.now(), remaining = targetMs - now;                              // 7 (open live clock)
   if(remaining <= 0) return {kind:'breached', cls:'sla-breached', short:'Breached', full:'Breached '+_slaDur(-remaining)+' ago'};   // T2: was "Overdue"
-  var elapsedPct = ((now - created)/(H*3600000))*100;
+  var elapsedPct = ((now - basis)/(H*3600000))*100;
   var atRisk = (typeof slaTargets.atRiskPct === 'number' ? slaTargets.atRiskPct : 80);
   var short = _slaDur(remaining)+' left';
   return (elapsedPct >= atRisk)
@@ -7492,6 +7523,8 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       if(data.statusIsTesting)       statusIsTesting        = data.statusIsTesting;
       if(data.statusIsBlocked)       statusIsBlocked        = data.statusIsBlocked;
       if(data.statusIsOffFlow)       statusIsOffFlow        = data.statusIsOffFlow;
+      if(data.statusIsWaiting)       statusIsWaiting        = data.statusIsWaiting;
+      if(data.statusIsParked)        statusIsParked         = data.statusIsParked;
       _relatedStubs = {}; (data.relatedStubs||[]).forEach(s=>{ _relatedStubs[s.id]=s; });
       if(data.statusIgnoreConflicts) statusIgnoreConflicts = data.statusIgnoreConflicts;
       if(data.typeIgnoreConflicts)   typeIgnoreConflicts   = data.typeIgnoreConflicts;
@@ -7837,6 +7870,8 @@ function renderStatusList(){
     <span style="width:62px;text-align:center" title="Status used when item is in testing (one only)">Testing</span>
     <span style="width:60px;text-align:center" title="Optional: the status an item moves to when flagged Blocked (at most one; empty = feature off)">Blocked</span>
     <span style="width:64px;text-align:center" title="Off-flow (parking/flag) status - sits off the linear progression, so it is not rank-ordered. Contributors may enter it from anywhere and return from it; reordering does not affect an off-flow status.">Off-Flow</span>
+    <span style="width:64px;text-align:center" title="Pauses the SLA clock: while an item sits in this status its resolution and first-touch SLA clocks are frozen (e.g. Waiting on reporter). Time spent here is excluded from the SLA. Any number of statuses may pause.">Pauses<br>SLA</span>
+    <span style="width:64px;text-align:center" title="Parks the SLA clock: an item in this status shows no SLA badge at all, and its clock restarts from the revival time when it leaves (e.g. Inactive, Backlogged). Distinct from Deferred (which sets the planning-session defer target). Any number of statuses may park; parked wins over Pauses SLA.">Parks<br>SLA</span>
     <span style="width:54px"></span>
   </div>` + statuses.map((s,i) => {
     const cnt        = projects.filter(p=>p.status===s).length;
@@ -7857,11 +7892,13 @@ function renderStatusList(){
     const isTesting2 = !!statusIsTesting[s];
     const isBlocked2 = !!statusIsBlocked[s];
     const isOffFlow  = !!statusIsOffFlow[s];
+    const isWaiting  = !!statusIsWaiting[s];
+    const isParked   = !!statusIsParked[s];
     const chk = (val, fn) => `<input type="checkbox" ${val?'checked':''} onchange="${fn}" style="accent-color:var(--accent);cursor:pointer;width:15px;height:15px">`;
     const radio = (val, fn, name) => `<input type="radio" name="${name}" ${val?'checked':''} onchange="${fn}" style="accent-color:var(--accent);cursor:pointer;width:15px;height:15px">`;
     return `<div class="dev-item" draggable="true" data-idx="${i}" style="gap:8px">
       <span class="drag-handle" title="Drag to reorder">⠿</span>
-      <span class="dev-nm" style="flex:1">${esc(s)}${tag}${isDef?` <span style="font-size:9px;background:rgba(0,89,169,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Default</span>`:''}${isDefer?` <span style="font-size:9px;background:rgba(232,160,0,0.12);color:#c06000;padding:1px 5px;border-radius:5px">Deferred</span>`:''}${isReleased?` <span style="font-size:9px;background:rgba(34,185,110,0.12);color:#22b96e;padding:1px 5px;border-radius:5px">Released</span>`:''}${isApproved?` <span style="font-size:9px;background:rgba(0,144,212,0.12);color:#0090d4;padding:1px 5px;border-radius:5px">Approved</span>`:''}${isTesting2?` <span style="font-size:9px;background:rgba(0,89,169,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Testing</span>`:''}${isBlocked2?` <span style="font-size:9px;background:rgba(232,57,74,0.12);color:#e8394a;padding:1px 5px;border-radius:5px">Blocked</span>`:''}${isOffFlow?` <span style="font-size:9px;background:rgba(128,128,128,0.15);color:var(--muted);padding:1px 5px;border-radius:5px">Off-Flow</span>`:''} <span style="font-size:10px;color:var(--muted);font-weight:400">(${cnt})</span></span>
+      <span class="dev-nm" style="flex:1">${esc(s)}${tag}${isDef?` <span style="font-size:9px;background:rgba(0,89,169,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Default</span>`:''}${isDefer?` <span style="font-size:9px;background:rgba(232,160,0,0.12);color:#c06000;padding:1px 5px;border-radius:5px">Deferred</span>`:''}${isReleased?` <span style="font-size:9px;background:rgba(34,185,110,0.12);color:#22b96e;padding:1px 5px;border-radius:5px">Released</span>`:''}${isApproved?` <span style="font-size:9px;background:rgba(0,144,212,0.12);color:#0090d4;padding:1px 5px;border-radius:5px">Approved</span>`:''}${isTesting2?` <span style="font-size:9px;background:rgba(0,89,169,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Testing</span>`:''}${isBlocked2?` <span style="font-size:9px;background:rgba(232,57,74,0.12);color:#e8394a;padding:1px 5px;border-radius:5px">Blocked</span>`:''}${isOffFlow?` <span style="font-size:9px;background:rgba(128,128,128,0.15);color:var(--muted);padding:1px 5px;border-radius:5px">Off-Flow</span>`:''}${isWaiting?` <span style="font-size:9px;background:rgba(232,160,0,0.12);color:#c06000;padding:1px 5px;border-radius:5px">Pauses SLA</span>`:''}${isParked?` <span style="font-size:9px;background:rgba(0,89,169,0.12);color:var(--accent);padding:1px 5px;border-radius:5px">Parks SLA</span>`:''} <span style="font-size:10px;color:var(--muted);font-weight:400">(${cnt})</span></span>
       <span style="width:56px;text-align:center">${chk(isActive,   `toggleStatusActive(${i},this.checked)`)}</span>
       <span style="width:60px;text-align:center">${chk(isTerm,     `toggleStatusTerminal(${i},this.checked)`)}</span>
       <span style="width:80px;text-align:center">${chk(ignored,    `toggleStatusIgnore(${i},this.checked)`)}</span>
@@ -7872,6 +7909,8 @@ function renderStatusList(){
       <span style="width:62px;text-align:center">${radio(isTesting2,`setTestingStatus(${i})`,   'statusTesting')}</span>
       <span style="width:60px;text-align:center"><input type="radio" name="statusBlocked" ${isBlocked2?'checked':''} onclick="setBlockedStatus(${i})" title="Optional Blocked status - click again to clear" style="accent-color:#e8394a;cursor:pointer;width:15px;height:15px"></span>
       <span style="width:64px;text-align:center">${chk(isOffFlow, `toggleStatusOffFlow(${i},this.checked)`)}</span>
+      <span style="width:64px;text-align:center">${chk(isWaiting, `toggleStatusWaiting(${i},this.checked)`)}</span>
+      <span style="width:64px;text-align:center">${chk(isParked, `toggleStatusParked(${i},this.checked)`)}</span>
       <button class="btn-ic" onclick="startEditStatus(${i})" title="Rename"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
       ${deleteBtn}
     </div>`;
@@ -8350,6 +8389,24 @@ function toggleStatusTerminal(i, val){
 function toggleStatusOffFlow(i, val){
   statusIsOffFlow[statuses[i]] = val;
   saveConfig('statusIsOffFlow', statusIsOffFlow);
+  renderStatusList();
+}
+
+// SLA-3 Stage 2 (many): statuses that PAUSE the SLA clock. While an item sits in a
+// pausing status its resolution + first-touch clocks are frozen (the server advances
+// the item's clock basis past the wait on resume). Any number of statuses may pause.
+function toggleStatusWaiting(i, val){
+  statusIsWaiting[statuses[i]] = val;
+  saveConfig('statusIsWaiting', statusIsWaiting);
+  renderStatusList();
+}
+
+// SLA-3 A1-1 (many): statuses that STOP the SLA clock entirely (no badge; the clock
+// restarts from the revival timestamp on exit). Distinct from statusIsDeferred (which
+// only sets the planning-session defer target - untouched here). Parked wins over waiting.
+function toggleStatusParked(i, val){
+  statusIsParked[statuses[i]] = val;
+  saveConfig('statusIsParked', statusIsParked);
   renderStatusList();
 }
 
@@ -16623,6 +16680,8 @@ async function boot(){
     statusIsTesting       = data.statusIsTesting       || {};
     statusIsBlocked       = data.statusIsBlocked       || {};
     statusIsOffFlow       = data.statusIsOffFlow       || {};
+    statusIsWaiting       = data.statusIsWaiting       || {};
+    statusIsParked        = data.statusIsParked        || {};
     _relatedStubs = {}; (data.relatedStubs||[]).forEach(s=>{ _relatedStubs[s.id]=s; });
 
     // Seed capacity override cache from any overrides stored with /api/all boot

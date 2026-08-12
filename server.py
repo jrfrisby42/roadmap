@@ -1122,6 +1122,34 @@ def _migrate_config_keys(team: str):
             c.execute("INSERT INTO config(key,value) VALUES('statusIsOffFlowSeeded',?) "
                       "ON CONFLICT(key) DO NOTHING", (json.dumps(True),))
             print(f"[Migration] Seeded config key 'statusIsOffFlow' for team '{team}' (derived from statusIsBlocked)")
+        # statusIsWaiting (SLA-3 Stage 2): statuses that PAUSE the SLA clock (e.g. "Waiting on
+        # reporter"). While an item sits in a waiting status its resolution/first-touch clocks are
+        # frozen. Seeded from the existing blocked flag - a team's Blocked status is the natural
+        # first pause status - WITHOUT hardcoding a name (rule 3). Same one-shot marker discipline
+        # as statusIsOffFlow: derive ONCE, then never resurrect a cleared value. An admin refines
+        # the set in Admin -> Statuses. Empty by default (new teams with no Blocked status).
+        if not existing.get("statusIsWaitingSeeded"):
+            _waiting_seed = dict(existing.get("statusIsBlocked") or {})
+            c.execute("INSERT INTO config(key,value) VALUES('statusIsWaiting',?) "
+                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(_waiting_seed),))
+            c.execute("INSERT INTO config(key,value) VALUES('statusIsWaitingSeeded',?) "
+                      "ON CONFLICT(key) DO NOTHING", (json.dumps(True),))
+            print(f"[Migration] Seeded config key 'statusIsWaiting' for team '{team}' (derived from statusIsBlocked)")
+        # statusIsParked (SLA-3 Stage 2, A1-1): statuses that STOP the SLA clock entirely - an item
+        # here shows no SLA badge and, on leaving, restarts its clock from the revival timestamp (T8).
+        # A separate MANY-valued map from statusIsDeferred: that flag is exactly-one and answers a
+        # different question (which status a planning-session defer applies). Coupling them would cap
+        # parking at one status forever (a team may carry both e.g. Inactive AND Backlogged) and make
+        # a change to either silently move the other. Seeded ONCE from statusIsDeferred so current
+        # behaviour is preserved on upgrade, then admin-editable. Same one-shot marker discipline as
+        # statusIsWaiting/off-flow - never resurrect a cleared value.
+        if not existing.get("statusIsParkedSeeded"):
+            _parked_seed = dict(existing.get("statusIsDeferred") or {})
+            c.execute("INSERT INTO config(key,value) VALUES('statusIsParked',?) "
+                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(_parked_seed),))
+            c.execute("INSERT INTO config(key,value) VALUES('statusIsParkedSeeded',?) "
+                      "ON CONFLICT(key) DO NOTHING", (json.dumps(True),))
+            print(f"[Migration] Seeded config key 'statusIsParked' for team '{team}' (derived from statusIsDeferred)")
         if "typeScheduled" not in existing:
             _types = existing.get("types") or []
             seeded = {}
@@ -3181,6 +3209,8 @@ def get_all(auth: dict = Depends(require_auth)):
             "statusIsTesting": cfg("statusIsTesting") or {},
             "statusIsBlocked": cfg("statusIsBlocked") or {},
             "statusIsOffFlow": cfg("statusIsOffFlow") or {},
+            "statusIsWaiting": cfg("statusIsWaiting") or {},
+            "statusIsParked": cfg("statusIsParked") or {},
             "changeReasons": cfg("changeReasons") or [],
             "deferReasons": cfg("deferReasons") or [],
             "departments": cfg("departments") or [],
@@ -3433,6 +3463,78 @@ def _stamp_measurement_ts(old: dict, merged: dict, terminal_map: dict, now_iso: 
     if merged.get("assignee") and not (old.get("assignee") or "") and not merged.get("firstResponseAt"):
         merged["firstResponseAt"] = now_iso
 
+# ── SLA-3 Stage 2: status-pause clock maintenance (basis + pausedSince) ────────────────────────
+# Both fields are server-owned and forward-only. The SLA engines (client slaState/firstTouchState
+# and server _digest_sla_kind) measure from `basis` (falling back to createdAt when absent, so an
+# item with no basis behaves exactly as before this shipped). `pausedSince` records when the
+# CURRENT wait began; while an item sits in a statusIsWaiting status its clock is frozen and the
+# displayed elapsed is (pausedSince - basis), NOT (now - basis).
+def _sla_add_delta(base_iso, from_iso, to_iso):
+    """base + (to - from), returned as ISO. Advances the clock basis past a just-ended wait."""
+    b = _digest_parse_iso(base_iso); f = _digest_parse_iso(from_iso); t = _digest_parse_iso(to_iso)
+    if not (b and f and t):
+        return base_iso
+    return (b + (t - f)).isoformat()
+
+def _maintain_sla_clock(old: dict, merged: dict, waiting_map: dict, parked_map: dict, now_iso: str):
+    """Maintain basis + pausedSince across a status transition. Returns a list of
+    (field, old_value, new_value, trigger) for the item-history audit. Rules (SLA-3 rev C):
+      - enter waiting            -> pausedSince = now
+      - leave waiting (resume)   -> basis += (now - pausedSince); clear pausedSince  (R3: only if a
+                                    pausedSince exists; pre-existing waiting items get no advance)
+      - close FROM waiting (R2)  -> handled by the same resume advance firing on the waiting->terminal
+                                    transition, so completedAt-based elapsed excludes the final wait
+      - leave parked (statusIsParked) -> basis = revival timestamp (T8 restart, not resume)
+      - enter parked             -> clear pausedSince (R4)
+    Parked keys off statusIsParked (A1-1), a many-valued map distinct from statusIsDeferred.
+    PRECEDENCE (A1-1): parked wins over waiting - entering a parked status returns before the waiting
+    branch, so a status flagged BOTH is treated as parked (clock stopped) not paused (clock frozen).
+    R1: paused-ness is read from the STATUS by the engines, never from pausedSince != null, so a stale
+    pausedSince is inert. No status change -> nothing touched (basis/pausedSince pass through)."""
+    old_s = old.get("status") or ""
+    new_s = merged.get("status") or ""
+    if old_s == new_s:
+        return []
+    old_wait = bool(waiting_map.get(old_s)); new_wait = bool(waiting_map.get(new_s))
+    old_park = bool(parked_map.get(old_s)); new_park = bool(parked_map.get(new_s))
+    changes = []
+    def _set(field, val, trig):
+        prev = merged.get(field)
+        if (prev or "") != (val or ""):
+            changes.append((field, prev, val, trig))
+        if val:
+            merged[field] = val
+        else:
+            merged.pop(field, None)
+    if new_park:                                          # entering parked: no clock while parked (T8), clear pause (R4)
+        _set("pausedSince", None, f"parked ({new_s})")
+        return changes
+    if old_park:                                          # leaving parked: restart the basis at revival (T8)
+        _set("basis", now_iso, f"revived from parked ({old_s})")
+        _set("pausedSince", None, f"revived from parked ({old_s})")
+        # fall through: a revival can land directly in a waiting status
+    if old_wait and not new_wait:                         # resume: advance the basis past the wait just spent
+        ps = merged.get("pausedSince")
+        if ps:                                            # R3: no pausedSince -> no advance (pre-existing waiting item)
+            base = merged.get("basis") or old.get("createdAt") or now_iso
+            _set("basis", _sla_add_delta(base, ps, now_iso), f"resumed from waiting ({old_s})")
+        _set("pausedSince", None, f"resumed from waiting ({old_s})")
+    if new_wait and not old_wait:                         # entering waiting: mark the pause start
+        _set("pausedSince", now_iso, f"entered waiting ({new_s})")
+    return changes
+
+def _log_clock_history(c, pid: int, item: dict, changes: list, username: str, now_iso: str):
+    """Write one item-history activity per basis/pausedSince change (the ONLY record of a mutable
+    measurement field, so a corrupted value stays auditable + manually correctable)."""
+    for field, oldv, newv, trig in changes:
+        c.execute(
+            "INSERT INTO activities(activity_type,source,item_id,item_name,owner,project,"
+            "created_by,created_ts,note,status,message,previous_value,new_value)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("SLA clock", "System", pid, item.get("name", ""), item.get("dev", ""),
+             item.get("product", ""), username, now_iso, "", "Info",
+             f"SLA clock {field}: {trig}", oldv or "", newv or ""))
+
 def _append_external_ref(item: dict, entry: dict) -> dict:
     """SINGLE mutation path for the server-owned `externalRefs` link list (AssetHub etc.).
 
@@ -3476,6 +3578,7 @@ SERVER_OWNED_FIELDS = ("reporter", "reporterEmail", "source", "createdAt", "spri
                        "jiraLastKnownStatus", "jiraSyncSkipped", "jiraFeatureFlags",
                        "recurrence_parent", "hubspotId",
                        "completedAt", "firstResponseAt",
+                       "basis", "pausedSince",        # SLA-3 Stage 2: server-owned SLA clock basis + wait-start
                        "externalRefs",
                        "assetLinks", "assetCache",    # FLOW-1: server-owned asset links + display cache
                        "assetServiceSync")            # WRITE-1b: per-asset service-event send outcomes
@@ -3501,6 +3604,10 @@ RECURRENCE_SKIP_KEYS = {
     # child's real completion time permanently unrecordable. Stripped now: _insert_project mints
     # a fresh createdAt and the other two begin absent so the child records its OWN values.
     "createdAt", "completedAt", "firstResponseAt",
+    # SLA-3 Stage 2: the SLA clock basis + wait-start are per-cycle. A new occurrence starts its
+    # clock fresh from its own createdAt (basis absent -> engines fall back to createdAt), and it
+    # has never been paused, so both are dropped, not inherited.
+    "basis", "pausedSince",
     # FLOW-1: asset links + display cache. A new occurrence is a new ticket and inherits no asset
     # relationships (same rationale as externalRefs). Both are in SERVER_OWNED_FIELDS, so the
     # recurrence-inheritance invariant requires them here (dropped) or on RECURRENCE_INHERITED.
@@ -3979,13 +4086,15 @@ def update_project(pid: int, body: dict, background: BackgroundTasks = None,
 
         cfg = {r["key"]: json.loads(r["value"]) for r in c.execute(
             "SELECT key, value FROM config WHERE key IN "
-            "('statusIsActive','statusIsReleased','statusIsBlocked','statusIsTerminal','statusIsOffFlow','statuses')"
+            "('statusIsActive','statusIsReleased','statusIsBlocked','statusIsTerminal','statusIsOffFlow','statusIsWaiting','statusIsParked','statuses')"
         ).fetchall()}
         active_map   = cfg.get("statusIsActive", {})
         released_map = cfg.get("statusIsReleased", {})
         blocked_map  = cfg.get("statusIsBlocked", {})
         terminal_map = cfg.get("statusIsTerminal", {})
         offflow_map  = cfg.get("statusIsOffFlow", {})
+        waiting_map  = cfg.get("statusIsWaiting", {})
+        parked_map   = cfg.get("statusIsParked", {})   # SLA-3 A1-1: park = clock stopped (NOT statusIsDeferred)
         statuses_cfg = cfg.get("statuses", []) or []
         blocked_status = next((k for k, v in (blocked_map or {}).items() if v), "")
 
@@ -4091,6 +4200,14 @@ def update_project(pid: int, body: dict, background: BackgroundTasks = None,
             changes["dev"] = {"from": old.get("dev"), "to": merged.get("dev")}
         now_ts = datetime.now(timezone.utc).isoformat()
         _stamp_measurement_ts(old, merged, terminal_map, now_ts)   # C1: completedAt (first terminal) + firstResponseAt (first assignment)
+        # SLA-3 Stage 2: maintain the SLA clock basis + pausedSince across this status transition.
+        # Runs AFTER the SERVER_OWNED restore (so basis/pausedSince start from the stored blob, not
+        # the client body) and AFTER _stamp_measurement_ts (so a close-from-waiting sees completedAt
+        # already set). Every change is written to item history as an attributed audit entry - the
+        # only record of these mutable measurement fields.
+        _clock_changes = _maintain_sla_clock(old, merged, waiting_map, parked_map, now_ts)
+        if _clock_changes:
+            _log_clock_history(c, pid, merged, _clock_changes, username, now_ts)
         _save_project(c, pid, merged, now_ts)
         # Return the fresh token so the client's cached copy is current for its NEXT
         # edit (else the next save would 409 with a stale base token).
@@ -4433,7 +4550,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "changeReasons","deferReasons","departments",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
-              "statusIsOffFlow",
+              "statusIsOffFlow","statusIsWaiting","statusIsParked",
               "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeProjectStatus","intakeDefaultType","intakeDomains","intakeNotifyTeam","departmentMeta","maintenanceDutyTypeId",
               "externalRequestCategories","assethubConnection","assethubServiceTypeMapping","enabledViews",
               "slackNotify","slaTargets","digestConfig"}
@@ -8474,8 +8591,13 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
     # completion timestamp here too - the same set-once rule as update_project. to_save
     # carries each item's full current blob, so the guard never overwrites an existing value.
     with db(team) as c:
-        _tr = c.execute("SELECT value FROM config WHERE key='statusIsTerminal'").fetchone()
-        _commit_terminal = json.loads(_tr["value"]) if _tr else {}
+        _cmap = {r["key"]: json.loads(r["value"]) for r in c.execute(
+            "SELECT key, value FROM config WHERE key IN "
+            "('statusIsTerminal','statusIsWaiting','statusIsParked')"
+        ).fetchall()}
+        _commit_terminal = _cmap.get("statusIsTerminal", {})
+        _commit_waiting  = _cmap.get("statusIsWaiting", {})
+        _commit_parked   = _cmap.get("statusIsParked", {})   # SLA-3 A1-1: park map (NOT statusIsDeferred)
         # A session commits exactly ONCE. If it's already committed (a retry, a
         # double-click, or two workers), abort BEFORE re-applying changes or
         # re-inserting activity rows. Also refuse if another user holds the advisory
@@ -8491,6 +8613,15 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
             _cs = updated.get("status", "")
             if _cs and _commit_terminal.get(_cs) and not updated.get("completedAt"):
                 updated["completedAt"] = committed_ts   # C1: first completion wins
+            # SLA-3 Stage 2: this path bypasses update_project, so maintain the SLA clock here too.
+            # Read the stored status to know the transition (a Deferred commit parks the clock; a
+            # Release commit resumes-then-closes a waiting item). committed_ts is the single clock now.
+            _pre = c.execute("SELECT data FROM projects WHERE id=?", (item_id,)).fetchone()
+            if _pre:
+                _old_blob = json.loads(_pre["data"])
+                _cc = _maintain_sla_clock(_old_blob, updated, _commit_waiting, _commit_parked, committed_ts)
+                if _cc:
+                    _log_clock_history(c, item_id, updated, _cc, auth["username"], committed_ts)
             _save_project(c, item_id, updated)
         for act in activities:
             act.setdefault("created_ts", committed_ts)
@@ -8972,8 +9103,11 @@ def _digest_parse_iso(s):
             return None
     return None
 
-def _digest_sla_kind(p, sla, term_map, now_dt):
-    """Server mirror of the client slaState() kind (breached|atrisk|met|missed|ontrack|None)."""
+def _digest_sla_kind(p, sla, term_map, now_dt, waiting_map=None, parked_map=None):
+    """Server mirror of the client slaState() kind (breached|atrisk|met|missed|ontrack|paused|None).
+    SLA-3 Stage 2: measures from the SLA clock `basis` (fallback createdAt) and honors pause/park:
+    a parked (statusIsParked) item is not measured (no badge, T8); a paused (statusIsWaiting) item
+    has a frozen clock and never breaches while waiting. Parked wins over waiting (checked first)."""
     from datetime import timedelta
     if not sla or not sla.get("enabled"):
         return None
@@ -8983,31 +9117,46 @@ def _digest_sla_kind(p, sla, term_map, now_dt):
         return None
     if not (H > 0):
         return None
+    status = p.get("status") or ""
+    # SLA-3 T8: a parked (statusIsParked) item is not measured while parked - it shows no badge in
+    # the client and must not count toward breach/at-risk here (mirror of the client engine's null).
+    # Checked before the waiting branch below: parked wins over waiting (A1-1 precedence).
+    if parked_map and parked_map.get(status):
+        return None
     created = _digest_parse_iso(p.get("createdAt"))
     if not created:
         return None
-    # SLA-2 S6: items created before the activation date are not measured. Mirror of the client
-    # slaState() effectiveFrom gate (roadmap.html _slaBeforeEffective) - both treat a date-only
-    # effectiveFrom as midnight UTC. Blank/unparseable -> no gate -> byte-identical to before S6.
+    # SLA-2 S6: items created before the activation date are not measured. The gate is on createdAt
+    # (when the item entered the system), NOT the clock basis. Mirror of the client slaState()
+    # effectiveFrom gate (roadmap.html _slaBeforeEffective) - both treat a date-only effectiveFrom
+    # as midnight UTC. Blank/unparseable -> no gate -> byte-identical to before S6.
     eff = _digest_parse_iso(sla.get("effectiveFrom")) if isinstance(sla, dict) else None
     if eff and created < eff:
         return None
-    target = created + timedelta(hours=H)
-    if term_map.get(p.get("status") or ""):
+    # SLA-3: the clock runs from basis (advanced past any waits), falling back to createdAt so a
+    # pre-Stage-2 item with no basis behaves exactly as before.
+    basis = _digest_parse_iso(p.get("basis")) or created
+    target = basis + timedelta(hours=H)
+    if term_map.get(status):
         done = _digest_parse_iso(p.get("completedAt"))
         if not done:
             return None
         return "met" if done <= target else "missed"
+    # SLA-3 R1/R2: while in a waiting status the clock is frozen and cannot breach (the wait is the
+    # reporter's court, not the team's). Returns the 'paused' kind (matches the client slaState) -
+    # _digest_summary counts only 'breached'/'atrisk', so a paused item is naturally excluded from both.
+    if waiting_map and waiting_map.get(status):
+        return "paused"
     if now_dt > target:
         return "breached"
     try:
         at_risk = float(sla.get("atRiskPct", 80))
     except (TypeError, ValueError):
         at_risk = 80.0
-    elapsed_pct = (now_dt - created).total_seconds() / (H * 3600) * 100
+    elapsed_pct = (now_dt - basis).total_seconds() / (H * 3600) * 100
     return "atrisk" if elapsed_pct >= at_risk else "ontrack"
 
-def _digest_summary(items, term_map, sla, now_dt):
+def _digest_summary(items, term_map, sla, now_dt, waiting_map=None, parked_map=None):
     """Queue-health counts + the oldest open tickets, over a list of item blobs."""
     today = now_dt.date().isoformat()
     counts = {"open": 0, "overdue": 0, "sla_breached": 0, "sla_atrisk": 0, "aged_30": 0, "closed_7d": 0}
@@ -9027,7 +9176,7 @@ def _digest_summary(items, term_map, sla, now_dt):
         age = (now_dt - created).days if created else None
         if age is not None and age > 30:
             counts["aged_30"] += 1
-        kind = _digest_sla_kind(p, sla, term_map, now_dt)
+        kind = _digest_sla_kind(p, sla, term_map, now_dt, waiting_map, parked_map)
         if kind == "breached":
             counts["sla_breached"] += 1
         elif kind == "atrisk":
@@ -9102,6 +9251,8 @@ def send_team_digests(verbose=False):
             if not (_cfg_val(team, "digestConfig", {}) or {}).get("enabled"):
                 continue
             term_map = _cfg_val(team, "statusIsTerminal", {}) or {}
+            waiting_map = _cfg_val(team, "statusIsWaiting", {}) or {}
+            parked_map = _cfg_val(team, "statusIsParked", {}) or {}
             sla = _cfg_val(team, "slaTargets", {}) or {}
             with db(team) as c:
                 rows = c.execute("SELECT data FROM projects").fetchall()
@@ -9126,7 +9277,7 @@ def send_team_digests(verbose=False):
                     targets.append((dname, em, subset))
             for label, email, subset in targets:
                 try:
-                    s = _digest_summary(subset, term_map, sla, now_dt)
+                    s = _digest_summary(subset, term_map, sla, now_dt, waiting_map, parked_map)
                     subj, text, html_body = _render_digest_email(team, label, s, APP_BASE_URL)
                     send_email(email, subj, text, html_body)
                     sent += 1
@@ -9150,6 +9301,8 @@ def send_digest_preview(body: dict = Body(default={}), auth: dict = Depends(requ
         raise HTTPException(400, "No email to send to. Add an email to your user, or pass one.")
     now_dt = datetime.now(timezone.utc)
     term_map = _cfg_val(team, "statusIsTerminal", {}) or {}
+    waiting_map = _cfg_val(team, "statusIsWaiting", {}) or {}
+    parked_map = _cfg_val(team, "statusIsParked", {}) or {}
     sla = _cfg_val(team, "slaTargets", {}) or {}
     with db(team) as c:
         rows = c.execute("SELECT data FROM projects").fetchall()
@@ -9161,7 +9314,7 @@ def send_digest_preview(body: dict = Body(default={}), auth: dict = Depends(requ
             continue
         if not (p.get("archived") or p.get("hidden")):
             items.append(p)
-    s = _digest_summary(items, term_map, sla, now_dt)
+    s = _digest_summary(items, term_map, sla, now_dt, waiting_map, parked_map)
     subj, text, html_body = _render_digest_email(team, "", s, APP_BASE_URL)
     try:
         send_email(to, "[Preview] " + subj, text, html_body)

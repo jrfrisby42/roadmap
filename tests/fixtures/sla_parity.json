@@ -1,5 +1,5 @@
 {
-  "_comment": "SLA-2 resolution-clock parity fixture. ONE source of truth for both halves: the Python test (test_sla_parity.py) asserts server _digest_sla_kind() matches `expected`; the client half asserts slaState().kind matches the same cases in a browser with Date.now pinned to `now`. Covers the S6 effectiveFrom gate (the rule that had to land in BOTH implementations) plus every resolution kind and priority-normalization. Times chosen so outcomes are deterministic at the pinned `now`.",
+  "_comment": "SLA resolution-clock parity fixture. ONE source of truth for both halves: the Python test (test_sla_parity.py) asserts server _digest_sla_kind() matches `expected`; the client half asserts slaState().kind matches the same cases in a browser with Date.now pinned to `now` (and statusIsWaiting/statusIsDeferred loaded to match the maps below). Covers the S6 effectiveFrom gate, every resolution kind and priority-normalization (SLA-2), and the SLA-3 Stage 2 clock basis + pause (statusIsWaiting -> 'paused') + park (statusIsParked -> null). Times chosen so outcomes are deterministic at the pinned `now`.",
   "now": "2026-08-10T12:00:00Z",
   "sla": {
     "enabled": true,
@@ -8,6 +8,8 @@
     "effectiveFrom": "2026-06-01"
   },
   "statusIsTerminal": { "Done": true, "Workaround": true },
+  "statusIsWaiting": { "Waiting": true },
+  "statusIsParked": { "Parked": true },
   "cases": [
     { "name": "terminal met",              "priority": "2", "status": "Done",        "createdAt": "2026-08-09T00:00:00Z", "completedAt": "2026-08-09T10:00:00Z", "expected": "met" },
     { "name": "terminal missed",           "priority": "1", "status": "Done",        "createdAt": "2026-08-09T00:00:00Z", "completedAt": "2026-08-09T10:00:00Z", "expected": "missed" },
@@ -20,6 +22,11 @@
     { "name": "no createdAt",              "priority": "2", "status": "In Progress", "createdAt": "",                     "completedAt": "",                     "expected": null },
     { "name": "S6 excluded (before eff)",  "priority": "2", "status": "In Progress", "createdAt": "2026-05-01T00:00:00Z", "completedAt": "",                     "expected": null },
     { "name": "S6 included (after eff)",   "priority": "1", "status": "In Progress", "createdAt": "2026-08-10T00:00:00Z", "completedAt": "",                     "expected": "breached" },
-    { "name": "numeric priority normalizes","priority": 2,  "status": "Done",        "createdAt": "2026-08-09T00:00:00Z", "completedAt": "2026-08-09T10:00:00Z", "expected": "met" }
+    { "name": "numeric priority normalizes","priority": 2,  "status": "Done",        "createdAt": "2026-08-09T00:00:00Z", "completedAt": "2026-08-09T10:00:00Z", "expected": "met" },
+    { "name": "basis rescues open from breach", "priority": "1", "status": "In Progress", "createdAt": "2026-08-10T00:00:00Z", "basis": "2026-08-10T11:00:00Z", "completedAt": "", "expected": "ontrack" },
+    { "name": "basis excludes wait on terminal", "priority": "1", "status": "Done", "createdAt": "2026-08-09T00:00:00Z", "basis": "2026-08-09T07:00:00Z", "completedAt": "2026-08-09T10:00:00Z", "expected": "met" },
+    { "name": "paused never breaches",     "priority": "1", "status": "Waiting",     "createdAt": "2026-08-01T00:00:00Z", "basis": "2026-08-01T00:00:00Z", "pausedSince": "2026-08-02T00:00:00Z", "completedAt": "", "expected": "paused" },
+    { "name": "paused missing pausedSince (R3)", "priority": "1", "status": "Waiting", "createdAt": "2026-08-01T00:00:00Z", "completedAt": "", "expected": "paused" },
+    { "name": "parked not measured (T8)",  "priority": "1", "status": "Parked",      "createdAt": "2026-08-01T00:00:00Z", "completedAt": "",                     "expected": null }
   ]
 }
