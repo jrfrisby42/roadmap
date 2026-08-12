@@ -3181,13 +3181,20 @@ function _slaBasisMs(p){
   return (p && p.createdAt) ? Date.parse(p.createdAt) : NaN;
 }
 // SLA-3 Stage 2: paused-badge builder. While an item sits in a statusIsWaiting status its clock is
-// frozen at pausedSince (R3 fallback: now, when no pausedSince was recorded - never NaN) and it never
-// shows Breached (the wait is the reporter's court, not the team's). Shared by both clocks.
+// frozen at pausedSince and it never shows Breached-as-a-live-state (the wait is the reporter's court).
+// D1 (A3): the displayed figure freezes at pausedSince. When pausedSince is ABSENT (an item already
+// waiting when Stage 2 shipped - the server only stamps it on a transition) the pause start is
+// unknown, so no remaining/overdue figure can be honestly stated: render just "Paused", no number.
+// R3 governs the basis advance on EXIT, not the display - do NOT substitute basis/createdAt/now here
+// (a moving number under a stopped-clock label is worse than none). Self-heals once the item next
+// transitions out of and back into a waiting status and the server stamps pausedSince.
 function _slaPausedState(targetMs, basisMs, p){
-  var frozen = (p && p.pausedSince) ? Date.parse(p.pausedSince) : Date.now();   // R3: no pausedSince -> now
-  if(isNaN(frozen)) frozen = Date.now();
-  var rem = targetMs - frozen;
-  var d = rem > 0 ? (_slaDur(rem)+' left') : ('overdue by '+_slaDur(-rem));
+  var ps = (p && p.pausedSince) ? Date.parse(p.pausedSince) : NaN;
+  if(isNaN(ps)) return {kind:'paused', cls:'sla-paused', short:'Paused', full:'Paused'};   // D1: no pausedSince -> no duration
+  var rem = targetMs - ps;
+  // D2 (A3): past-target while paused is "breached by", NOT "overdue" - T1/T2 retired "Overdue"/"Missed"
+  // (and "Overdue" is a separate due-date KPI in Reports). Frozen at a breached value is informative.
+  var d = rem > 0 ? (_slaDur(rem)+' left') : ('breached by '+_slaDur(-rem));
   return {kind:'paused', cls:'sla-paused', short:'Paused', full:'Paused, '+d};
 }
 // Resolution clock. Return contract is UNCHANGED except the S6 gate (the Reports compliance

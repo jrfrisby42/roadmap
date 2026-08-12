@@ -2,7 +2,8 @@
  *
  * WHY THIS EXISTS, AND WHY IT IS NOT A NODE SCRIPT
  * ------------------------------------------------
- * The paused-elapsed FREEZE (SLA-3 Stage 2 / addendum A2 item A1-2) is a client-only display rule:
+ * The paused-elapsed FREEZE (SLA-3 Stage 2 / addendum A2 item A1-2, extended by A3/D1 for the
+ * absent-pausedSince branch - see slaFreezeCheckNoPaused below) is a client-only display rule:
  * the server digest returns only the `paused` KIND, never an elapsed figure, so there is nothing to
  * assert in the Python suite. A2 preferred a dependency-free Node assertion that runtime-extracts the
  * real SLA functions from roadmap.html. That extraction IS clean (the SLA cluster - _slaDur,
@@ -56,5 +57,37 @@ function slaFreezeCheckBroken(){
   var r;
   try { r = slaFreezeCheck(); } finally { _slaPausedState = orig; }
   console.log('[slaFreezeCheckBroken] with the freeze deliberately broken -> frozen='+r.pass+' (expected false)');
+  return r;
+}
+
+// ── A3 / D1: the ABSENT-pausedSince branch renders NO duration and does not move ──────────────────
+// The branch that ships to production on day one is the one with no pausedSince (the server only
+// stamps it on a transition). It must render exactly "Paused" - no remaining/overdue figure - and be
+// invariant under `now`. A1-2's original guard only exercised the pausedSince-PRESENT branch, which is
+// how D1 shipped. Returns {f1, f2, noDuration, frozen}. Correct: f1===f2==='Paused'.
+function slaFreezeCheckNoPaused(){
+  var p = {priority:'1', status:'__frzWait__', createdAt:'2026-08-01T00:00:00Z', basis:'2026-08-01T00:00:00Z'}; // NO pausedSince
+  var savedWait = statusIsWaiting, savedNow = Date.now;
+  statusIsWaiting = Object.assign({}, statusIsWaiting, {'__frzWait__':true});
+  function full(nowMs){ Date.now = function(){ return nowMs; }; var s = slaState(p); return s && s.full; }
+  var f1 = full(Date.parse('2026-08-02T00:00:00Z'));
+  var f2 = full(Date.parse('2026-08-05T12:00:00Z'));
+  Date.now = savedNow; statusIsWaiting = savedWait;
+  return {f1:f1, f2:f2, noDuration:(f1==='Paused'), frozen:(f1===f2)};
+}
+
+// Demonstrate the D1 guard can FAIL: revert the absent-pausedSince branch to the old Date.now()
+// fallback (which emits a moving duration), re-run, restore. Expect noDuration=false, frozen=false.
+function slaFreezeCheckNoPausedBroken(){
+  var orig = _slaPausedState;
+  _slaPausedState = function(targetMs, basisMs, p){
+    var frozen = (p && p.pausedSince) ? Date.parse(p.pausedSince) : Date.now();   // BUG: the reverted D1 branch
+    if(isNaN(frozen)) frozen = Date.now();
+    var rem = targetMs - frozen;
+    var d = rem > 0 ? (_slaDur(rem)+' left') : ('breached by '+_slaDur(-rem));
+    return {kind:'paused', cls:'sla-paused', short:'Paused', full:'Paused, '+d};
+  };
+  var r; try { r = slaFreezeCheckNoPaused(); } finally { _slaPausedState = orig; }
+  console.log('[slaFreezeCheckNoPausedBroken] reverted to Date.now() -> noDuration='+r.noDuration+' frozen='+r.frozen+' (expected both false)');
   return r;
 }
