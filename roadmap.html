@@ -1929,10 +1929,12 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 
     <!-- STATUSES TAB -->
     <div class="admin-pane" id="statusTab">
+      <!-- SLA-GATE-1 (2c) + RPT-DRILL-1 D1: shown only when slaTargets.enabled is false. Placed ABOVE the
+           status table so a long status list (e.g. development's 13) can't push it below the fold - the
+           note is the whole justification for keeping the Pauses/Parks columns visible on a disabled team.
+           Both facts required: SLA badges off AND the Pauses/Parks columns still write stored clock timestamps. -->
+      <div id="statusSlaNote" style="display:none;font-size:11.5px;color:var(--muted);line-height:1.5;padding:8px 13px;margin-bottom:4px"></div>
       <div class="dev-list" id="statusList"></div>
-      <!-- SLA-GATE-1 (2c): shown only when slaTargets.enabled is false. Both facts required: SLA badges
-           off AND the Pauses/Parks columns still write stored clock timestamps (the clock runs regardless). -->
-      <div id="statusSlaNote" style="display:none;font-size:11.5px;color:var(--muted);line-height:1.5;padding:8px 13px;margin-top:2px"></div>
       <div class="add-dev-row">
         <input type="text" id="newStatusName" placeholder="New status name…">
         <button class="btn-add-dev" id="addStatusBtn">+ Add</button>
@@ -19944,6 +19946,14 @@ if ('serviceWorker' in navigator) {
     var all=(_val('projects',[])||[]).filter(function(p){ return !p.archived && !p.hidden; });
     var f=_rptFilters, nowIso=new Date().toISOString(), today=nowIso.slice(0,10);
     var termMap=_val('statusIsTerminal',{})||{};   // for overdue: past-due AND not terminal
+    // RPT-DRILL-1 Stage 1: state object -> column/CSV string. null (parked / pre-effectiveFrom /
+    // no priority target / SLA disabled) -> '' (blank). The verbose no-first-touch `.full` ("Closed,
+    // none recorded (3d to close)") is trimmed to "None recorded"; every other kind uses `.full` as-is.
+    function _rptStateStr(st){
+      if(!st) return '';
+      if(st.kind==='nofirsttouch') return 'None recorded';
+      return st.full || '';
+    }
     function row(p){
       var closed=!!p.completedAt, due=(p.due||'').slice(0,10);
       return {
@@ -19975,7 +19985,14 @@ if ('serviceWorker' in navigator) {
         age: closed ? _rptDays(p.createdAt, p.completedAt) : _rptDays(p.createdAt, nowIso),
         resolutionTime: _rptDays(p.createdAt, p.completedAt),
         responseTime: _rptDays(p.createdAt, p.firstResponseAt),
-        slaKind: (typeof slaState==='function' ? (function(){ var s=slaState(p); return s?s.kind:null; })() : null)   // IT/Ops SLA (A2): breached|atrisk|ontrack|met|missed|null
+        slaKind: (typeof slaState==='function' ? (function(){ var s=slaState(p); return s?s.kind:null; })() : null),   // IT/Ops SLA (A2): breached|atrisk|ontrack|met|missed|null
+        // RPT-DRILL-1 Stage 1: the display strings the SLA engines already produce (`.full`, which is
+        // clock-agnostic - the "Resolution:"/"First touch:" prefix lives in slaBadgeHtml, not here).
+        // `.full` is used (not `.short`) so atrisk vs ontrack are distinguishable ("At risk, .." vs
+        // "On track, .."). Blank ('') where no state applies -> _rptHas auto-hides the column when SLA
+        // is off (every row blank) and the state render shows blank, not "n/a".
+        resState: _rptStateStr(typeof slaState==='function' ? slaState(p) : null),
+        ftState:  _rptStateStr(typeof firstTouchState==='function' ? firstTouchState(p) : null)
       };
     }
     // Phase 1: scope from the SHARED filter chips + search + rail project (mirrors
@@ -20030,7 +20047,9 @@ if ('serviceWorker' in navigator) {
     {h:'Jira',           k:'jira'},
     {h:'Attach',         k:'attachCount',    kind:'num'},
     {h:'Age (d)',        k:'age',            always:true, kind:'num'},
+    {h:'Resolution SLA', k:'resState',       state:true},   // RPT-DRILL-1 S1: paired with Resolution (d)
     {h:'Resolution (d)', k:'resolutionTime', kind:'num'},
+    {h:'First touch SLA',k:'ftState',        state:true},   // RPT-DRILL-1 S1: paired with Response (d)
     {h:'Response (d)',   k:'responseTime',   kind:'num'}
   ];
   function _rptHas(allRows, col){
@@ -20244,6 +20263,7 @@ if ('serviceWorker' in navigator) {
       if(col.kind==='status') return '<td>'+(v?'<span class="'+(_call('statusCls',v)||'')+'" style="padding:1px 8px;border-radius:9px;font-size:11px;font-weight:700">'+esc(String(v))+'</span>':'<span class="frz-rpt-na">n/a</span>')+'</td>';
       if(col.kind==='desc')   return '<td class="frz-rpt-desc" title="'+escA(String(v||''))+'">'+(v?esc(String(v).slice(0,80)):'<span class="frz-rpt-na">n/a</span>')+'</td>';
       if(col.ft)              return '<td class="frz-rpt-ft" title="'+escA(String(v||''))+'">'+(v?'<div class="frz-rpt-clamp">'+esc(String(v))+'</div>':'<span class="frz-rpt-na">n/a</span>')+'</td>';   // SLA-GATE-1 4b: clamp free-text height
+      if(col.state)           return '<td style="white-space:nowrap">'+(v?esc(String(v)):'')+'</td>';   // RPT-DRILL-1 S1: SLA state string; BLANK (not n/a) where no state applies
       if(col.kind==='num')    return v==null ? '<td class="frz-rpt-num"><span class="frz-rpt-na">n/a</span></td>' : '<td class="frz-rpt-num">'+v+'</td>';
       if(col.kind==='due')    return '<td'+(r.overdue?' style="color:#e8394a;font-weight:700"':'')+'>'+(v?esc(String(v)):'<span class="frz-rpt-na">n/a</span>')+'</td>';
       return '<td>'+(v==null||v===''?'<span class="frz-rpt-na">n/a</span>':esc(String(v)))+'</td>';
