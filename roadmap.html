@@ -17656,8 +17656,13 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rpt-controls label { display:flex; flex-direction:column; gap:3px; font-size:10px; font-weight:700; color:var(--frz-text-muted); text-transform:uppercase; letter-spacing:.4px; }
   .frz-beta .frz-rpt-controls input, .frz-beta .frz-rpt-controls select { font:inherit; font-size:12.5px; padding:4px 7px; border:1px solid var(--frz-border); border-radius:6px; background:var(--frz-bg-app); color:var(--frz-text); }
   .frz-beta .frz-rpt-total { margin-left:auto; font-size:12px; font-weight:700; color:var(--frz-text-muted); align-self:center; }
-  .frz-beta .frz-rpt-aggs { display:flex; flex-wrap:wrap; gap:12px; padding:14px 16px; margin-bottom:14px; border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); }
-  .frz-beta .frz-rpt-agg { flex:1; min-width:170px; border:1px solid var(--frz-border); border-radius:8px; overflow:hidden; }
+  /* RPT-LAY-1 Defect 2a: multi-column (masonry-style) packing, NOT flex. Flex stretched every panel in
+     a wrapped row to the tallest sibling (BY DEPARTMENT's 10 rows), so a 2-row panel wasted ~8 rows of
+     height and pushed the table off-screen. Columns let a short panel stack into the gap under a tall
+     one, so the block collapses to roughly its tallest single panel. break-inside:avoid keeps a panel whole. */
+  .frz-beta .frz-rpt-aggs { column-width:210px; column-gap:12px; padding:14px 16px; margin-bottom:14px; border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); }
+  .frz-beta .frz-rpt-agg { break-inside:avoid; width:100%; margin-bottom:12px; border:1px solid var(--frz-border); border-radius:8px; overflow:hidden; }
+  .frz-beta .frz-rpt-agg:last-child { margin-bottom:0; }
   .frz-beta .frz-rpt-agg-h { padding:6px 10px; background:var(--frz-bg-sunken); font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); }
   .frz-beta .frz-rpt-aggrow { display:flex; justify-content:space-between; gap:8px; padding:4px 10px; font-size:12px; border-top:1px solid var(--frz-border); }
   .frz-beta .frz-rpt-aggn { font-weight:800; color:var(--frz-accent); }
@@ -20227,15 +20232,38 @@ if ('serviceWorker' in navigator) {
     }
     // The wrap keeps NATIVE horizontal scroll (overflow:auto) so trackpad / shift-scroll over the table
     // body still moves it and the header stays column-aligned. Its own h-scrollbar sits at the wrap
-    // bottom, though, which is off-screen exactly when the panels are tall. So show the sticky proxy
-    // ONLY when that native bar is below the viewport fold - giving exactly one VISIBLE h-scrollbar in
-    // every case (native when the table fits, proxy when it does not), never a redundant pair.
+    // bottom; the sticky proxy is the affordance when that bar is off-screen. Size the proxy here; its
+    // VISIBILITY is recomputed DYNAMICALLY on page scroll (_rptUpdateProxyVis, RPT-LAY-1 Defect 1) so
+    // exactly one bar shows at every PAGE-scroll position - the old static "is the wrap bottom below the
+    // fold" check went stale once the user scrolled the page and both bars became visible at once.
     var need=table.scrollWidth > wrap.clientWidth + 2;               // horizontal scroll actually required?
+    inner.style.width = need ? table.scrollWidth+'px' : '0px';
+    proxy.scrollLeft = wrap.scrollLeft;
+    _rptUpdateProxyVis();
+    _rptWireContentScroll();
+  }
+  // RPT-LAY-1 Defect 1: proxy visibility is DYNAMIC - show the sticky proxy ONLY while the wrap's bottom
+  // edge (its native h-scrollbar) is below the content viewport fold, recomputed on PAGE scroll (not just
+  // render/resize as C2 did - the static check went stale once the user scrolled and BOTH bars showed).
+  // A single-element rect read + a change-guarded style write; scroll does not dirty layout, so the read
+  // is cheap and there is no table reflow. (IntersectionObserver is the tidier primitive, but its
+  // callbacks - like rAF - do not fire when the tab is backgrounded, which made it unverifiable in the
+  // headless test harness; a plain scroll listener fires regardless and is demonstrably correct.)
+  function _rptUpdateProxyVis(){
+    var sc=document.getElementById('frzContent')||document.querySelector('.frz-content');
+    var wrap=document.querySelector('.frz-rpt-tablewrap'), proxy=document.querySelector('.frz-rpt-hscroll');
+    if(!(wrap && proxy)) return;
+    var need=wrap.scrollWidth > wrap.clientWidth + 2;
     var vpBottom=sc ? sc.getBoundingClientRect().bottom : window.innerHeight;
-    var nativeBarOffscreen=wrap.getBoundingClientRect().bottom > vpBottom + 1;
-    var showProxy=need && nativeBarOffscreen;
-    proxy.style.display = showProxy ? '' : 'none';
-    if(showProxy){ inner.style.width=table.scrollWidth+'px'; proxy.scrollLeft=wrap.scrollLeft; }
+    var want=(need && wrap.getBoundingClientRect().bottom > vpBottom + 1) ? '' : 'none';   // native bar below the fold?
+    if(proxy.style.display !== want) proxy.style.display = want;
+  }
+  var _rptContentScrollWired=false;
+  function _rptWireContentScroll(){
+    if(_rptContentScrollWired) return;
+    var sc=document.getElementById('frzContent')||document.querySelector('.frz-content');
+    if(!sc) return; _rptContentScrollWired=true;
+    sc.addEventListener('scroll', function(){ if(document.querySelector('.frz-rpt-tablewrap')) _rptUpdateProxyVis(); }, { passive:true });
   }
   // C2 required item 1: handle window resize. RECOMPUTE (not clear-inline) because the proxy's inner
   // width must be re-measured against the new viewport - clearing the wrap max-height alone would leave
@@ -20248,6 +20276,11 @@ if ('serviceWorker' in navigator) {
       _rptResizeTimer=setTimeout(function(){ if(document.querySelector('.frz-rpt-tablewrap')) _rptSyncScroll(); }, 150);
     });
   }
+  // RPT-LAY-1 Defect 2b: per-user collapse of the summary-panel block, so the table can use the full
+  // viewport when a user wants rows over aggregates. PER-USER key (authorized), DEFAULT EXPANDED (a
+  // missing/'"0"' value is expanded). This is a view preference, not a team/global setting.
+  function _rptPanelsKey(){ try { return 'frazil_beta_rptpanels_'+((typeof uname==='function'?uname():'')||localStorage.getItem('frazil_rm_user')||''); } catch(e){ return 'frazil_beta_rptpanels_'; } }
+  function _rptPanelsCollapsed(){ try { return localStorage.getItem(_rptPanelsKey())==='1'; } catch(e){ return false; } }
 
   function renderReports(){
     var host=document.getElementById('reportsBody'); if(!host) return;
@@ -20306,12 +20339,14 @@ if ('serviceWorker' in navigator) {
     // ── report-local controls ONLY (the shared owner/type/status/etc. live in the top chip bar).
     //    Date basis + range + Group by have no top-bar equivalent, so they sit in this strip. ──
     var basisLbl=(f.basis==='completed'?'Completed':'Requested');
+    var _panelsCollapsed=_rptPanelsCollapsed();   // RPT-LAY-1 2b: per-user, default expanded
     var controls='<label>Date basis<select id="frzRptBasis">'+_rptOpt(f.basis,'requested','Requested')+_rptOpt(f.basis,'completed','Completed')+'</select></label>'
       +'<label>'+basisLbl+' from<input type="date" id="frzRptFrom" value="'+escA(f.from)+'"></label>'
       +'<label>to<input type="date" id="frzRptTo" value="'+escA(f.to)+'"></label>'
       +'<label>Group by<select id="frzRptGroup">'+_rptOpt(f.group,'','None')
         +['owner','assignee','dept','status','type','product','priority'].map(function(g){ return _rptOpt(f.group,g,_RPT_GROUPS[g].label); }).join('')+'</select></label>'
       +'<span class="frz-rpt-total">'+rows.length+' item'+(rows.length===1?'':'s')+'</span>'
+      +'<button class="frz-newitem" id="frzRptPanelsToggle" title="Show or hide the summary panels to give the table more room">'+(_panelsCollapsed?'Show panels':'Hide panels')+'</button>'
       +'<button class="frz-newitem" id="frzRptCsv">Export CSV</button>';
     var flatTable='<div class="frz-rpt-tablewrap"><table class="frz-rpt-table"><thead><tr>'+thead+'</tr></thead>'
         +'<tbody>'+(tableRows || '<tr><td colspan="'+cols.length+'" style="padding:24px;text-align:center;color:var(--frz-text-muted)">No items match the current filters.</td></tr>')+'</tbody></table></div>'
@@ -20321,7 +20356,7 @@ if ('serviceWorker' in navigator) {
         '<div class="frz-rpt-controls">'+controls+'</div>'
         +_rptKpisHtml(_rptKpis(rows, allRows))
         +_rptSlaNoteHtml(allRows)
-        +'<div class="frz-rpt-aggs">'+aggs.join('')+'</div>'
+        +'<div class="frz-rpt-aggs"'+(_panelsCollapsed?' style="display:none"':'')+'>'+aggs.join('')+'</div>'
         +(grouped ? pivotHtml : flatTable);
     // SLA-GATE-1 4a + C2: bound the wrap vertically (sticky header + vertical scroll) and drive the
     // HORIZONTAL affordance through the sticky proxy, which stays reachable no matter how tall the
@@ -20341,6 +20376,13 @@ if ('serviceWorker' in navigator) {
     bindF('frzRptFrom','from'); bindF('frzRptTo','to');
     bindF('frzRptBasis','basis'); bindF('frzRptGroup','group');
     var csv=document.getElementById('frzRptCsv'); if(csv) csv.addEventListener('click', _rptExportCsv);
+    // RPT-LAY-1 2b: collapse/expand the summary panels (per-user, persisted). Re-render so the table
+    // refits to the freed space (or gives it back). Never writes to any shared/team key.
+    var pt=document.getElementById('frzRptPanelsToggle');
+    if(pt) pt.addEventListener('click', function(){
+      try{ localStorage.setItem(_rptPanelsKey(), _rptPanelsCollapsed()?'0':'1'); }catch(e){}
+      renderReports();
+    });
     // Key links: plain click opens the item in-app; modified clicks fall through to the href.
     host.querySelectorAll('a.frz-rpt-keylink').forEach(function(a){
       a.addEventListener('click', function(e){
