@@ -1930,6 +1930,9 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     <!-- STATUSES TAB -->
     <div class="admin-pane" id="statusTab">
       <div class="dev-list" id="statusList"></div>
+      <!-- SLA-GATE-1 (2c): shown only when slaTargets.enabled is false. Both facts required: SLA badges
+           off AND the Pauses/Parks columns still write stored clock timestamps (the clock runs regardless). -->
+      <div id="statusSlaNote" style="display:none;font-size:11.5px;color:var(--muted);line-height:1.5;padding:8px 13px;margin-top:2px"></div>
       <div class="add-dev-row">
         <input type="text" id="newStatusName" placeholder="New status name…">
         <button class="btn-add-dev" id="addStatusBtn">+ Add</button>
@@ -7922,6 +7925,16 @@ function renderStatusList(){
       ${deleteBtn}
     </div>`;
   }).join('');
+
+  // SLA-GATE-1 (2c): when SLA is OFF for this team, the Pauses/Parks columns stay visible + editable
+  // (2a cancelled - they are LIVE config: _maintain_sla_clock writes basis/pausedSince regardless of
+  // enablement). Disclose both facts so the settings are not mistaken for inert.
+  const _slaNote = document.getElementById('statusSlaNote');
+  if(_slaNote){
+    if(slaTargets && slaTargets.enabled){ _slaNote.style.display='none'; _slaNote.textContent=''; }
+    else { _slaNote.style.display='';
+      _slaNote.textContent='SLA badges are off for this team, but Pauses SLA and Parks SLA still apply - they set the stored clock timestamps used if SLA is enabled later.'; }
+  }
 
   // Drag-and-drop reorder
   list.querySelectorAll('.dev-item').forEach(item => {
@@ -17646,13 +17659,22 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rpt-agg-h { padding:6px 10px; background:var(--frz-bg-sunken); font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); }
   .frz-beta .frz-rpt-aggrow { display:flex; justify-content:space-between; gap:8px; padding:4px 10px; font-size:12px; border-top:1px solid var(--frz-border); }
   .frz-beta .frz-rpt-aggn { font-weight:800; color:var(--frz-accent); }
-  .frz-beta .frz-rpt-tablewrap { overflow-x:auto; border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); margin-bottom:14px; }
+  /* SLA-GATE-1 (4a): bound the wrap height so overflow-y ENGAGES (previously the box grew to full
+     content height, ~7,800px, stranding the horizontal scrollbar far below the fold). With a height
+     bound the wrap becomes a two-axis scroll container and the existing sticky <th> (position:sticky;
+     top:0) keeps column labels visible while the body scrolls. Value derived below. */
+  .frz-beta .frz-rpt-tablewrap { max-height:calc(100vh - 230px); overflow:auto; border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); margin-bottom:14px; }
   .frz-beta .frz-rpt-table { border-collapse:collapse; width:100%; font-size:12px; }
   .frz-beta .frz-rpt-table th { text-align:left; padding:8px 10px; background:var(--frz-bg-sunken); border-bottom:2px solid var(--frz-border); font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); white-space:nowrap; position:sticky; top:0; }
   .frz-beta .frz-rpt-table td { padding:7px 10px; border-bottom:1px solid var(--frz-border); vertical-align:top; }
   .frz-beta .frz-rpt-key { font-family:monospace; font-weight:700; white-space:nowrap; }
   .frz-beta .frz-rpt-num { text-align:right; white-space:nowrap; }
   .frz-beta .frz-rpt-desc { max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* SLA-GATE-1 (4b): free-text columns (Notes, Resolution) were unbounded, so a long value drove row
+     height to 700px+. Cap width and clamp to 3 lines; full text stays in the title tooltip, item page
+     and CSV export. min-width widens Resolution (was 91px) to a readable free-text size. */
+  .frz-beta .frz-rpt-ft { min-width:200px; max-width:320px; }
+  .frz-beta .frz-rpt-clamp { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; white-space:normal; word-break:break-word; }
   .frz-beta .frz-rpt-na { color:var(--frz-text-muted); font-style:italic; }
   .frz-beta .frz-rpt-kpis { display:flex; flex-wrap:wrap; gap:12px; padding:14px 16px; margin-bottom:14px; border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); }
   .frz-beta .frz-rpt-kpi { flex:1; min-width:130px; border:1px solid var(--frz-border); border-radius:10px; padding:12px 14px; background:var(--frz-bg-app); }
@@ -19996,8 +20018,8 @@ if ('serviceWorker' in navigator) {
     {h:'Revised',        k:'revised'},
     {h:'Completion',     k:'completion'},
     {h:'Description',    k:'description',    always:true, kind:'desc'},
-    {h:'Notes',          k:'notes'},
-    {h:'Resolution',     k:'resolution'},
+    {h:'Notes',          k:'notes',          ft:true},
+    {h:'Resolution',     k:'resolution',     ft:true},
     {h:'Jira',           k:'jira'},
     {h:'Attach',         k:'attachCount',    kind:'num'},
     {h:'Age (d)',        k:'age',            always:true, kind:'num'},
@@ -20173,6 +20195,7 @@ if ('serviceWorker' in navigator) {
       if(col.kind==='key')    return '<td class="frz-rpt-key"><a href="/item/'+r._id+'" class="frz-rpt-keylink" data-id="'+r._id+'" style="color:var(--frz-accent);font-weight:700;text-decoration:none">'+esc(String(v))+'</a></td>';
       if(col.kind==='status') return '<td>'+(v?'<span class="'+(_call('statusCls',v)||'')+'" style="padding:1px 8px;border-radius:9px;font-size:11px;font-weight:700">'+esc(String(v))+'</span>':'<span class="frz-rpt-na">n/a</span>')+'</td>';
       if(col.kind==='desc')   return '<td class="frz-rpt-desc" title="'+escA(String(v||''))+'">'+(v?esc(String(v).slice(0,80)):'<span class="frz-rpt-na">n/a</span>')+'</td>';
+      if(col.ft)              return '<td class="frz-rpt-ft" title="'+escA(String(v||''))+'">'+(v?'<div class="frz-rpt-clamp">'+esc(String(v))+'</div>':'<span class="frz-rpt-na">n/a</span>')+'</td>';   // SLA-GATE-1 4b: clamp free-text height
       if(col.kind==='num')    return v==null ? '<td class="frz-rpt-num"><span class="frz-rpt-na">n/a</span></td>' : '<td class="frz-rpt-num">'+v+'</td>';
       if(col.kind==='due')    return '<td'+(r.overdue?' style="color:#e8394a;font-weight:700"':'')+'>'+(v?esc(String(v)):'<span class="frz-rpt-na">n/a</span>')+'</td>';
       return '<td>'+(v==null||v===''?'<span class="frz-rpt-na">n/a</span>':esc(String(v)))+'</td>';
@@ -20230,6 +20253,18 @@ if ('serviceWorker' in navigator) {
         +_rptSlaNoteHtml(allRows)
         +'<div class="frz-rpt-aggs">'+aggs.join('')+'</div>'
         +(grouped ? pivotHtml : flatTable);
+    // SLA-GATE-1 (4a): size the table wrap to the space LEFT below the tiles + aggregate panels, so the
+    // horizontal scrollbar stays in view. A static CSS max-height can't know where the table starts -
+    // the panels above are tall and vary by team/data - so derive it from the live geometry. Floor at
+    // 240px so it is never uselessly short; the CSS max-height stays as an upper cap. Recomputed every render.
+    try {
+      var _wrap=host.querySelector('.frz-rpt-tablewrap');
+      var _sc=document.getElementById('frzContent')||document.querySelector('.frz-content');
+      if(_wrap && _sc){
+        var _avail=_sc.getBoundingClientRect().bottom - _wrap.getBoundingClientRect().top - 16;
+        _wrap.style.maxHeight=Math.max(240, Math.round(_avail))+'px';
+      }
+    } catch(e){}
     // Wire the report-local controls (re-render on change) + CSV.
     function bindF(id, key, ev){ var el=document.getElementById(id); if(el) el.addEventListener(ev||'change', function(){ _rptFilters[key]=el.value; renderReports(); }); }
     bindF('frzRptFrom','from'); bindF('frzRptTo','to');
