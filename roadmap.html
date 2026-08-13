@@ -2204,7 +2204,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.21.1';
+const APP_VERSION = '5.21.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -10408,7 +10408,9 @@ const _LIST_COL_DEF = {
                 td:(it)=>{ const w=_listColWidth('description'); const wcss=w?`width:${w}px;max-width:${w}px`:`max-width:320px`;
                   return `<td data-col="description" style="padding:7px 10px;${wcss};overflow:hidden;text-overflow:ellipsis;white-space:nowrap"${(()=>{ const t=descToPlainText(it.description); return t?` title="${escA(t)}">${esc(t)}`:`>-`; })()}</td>`; } },
   status:     { label:'Status',      sort:'status',
-                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(it.status)}</span>` : '-'}</td>` },
+                // data-col lets the panel's live status patch (_frzUpdateRowStatus) find this cell by
+                // key, not by a positional index that breaks when a column before Status is hidden/shown.
+                td:(it)=>`<td data-col="status" style="padding:7px 10px;white-space:nowrap">${it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(it.status)}</span>` : '-'}</td>` },
   priority:   { label:'Priority',    sort:'priority',
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${(it.priority && PRIO_LABELS[it.priority]) ? `<span style="background:${PRIO_COLORS[it.priority]}22;color:${PRIO_COLORS[it.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[it.priority])}</span>` : '-'}</td>` },
   owner:      { label:'Owner',       sort:'owner',
@@ -25793,11 +25795,15 @@ if ('serviceWorker' in navigator) {
     var sel=_frzPanelEl.querySelector('#frzLpStatus'); if(!sel) return;
     sel.value=p.status||''; sel.className='frz-lp-status '+(_call('statusCls', p.status)||'');
   }
-  // Update the open list row's status badge live (5th cell: cb,key,type,name,STATUS,…).
+  // Update the open list row's status cell live. Resolve the cell by data-col, NOT by a positional
+  // index: column visibility is per-user (frazil_beta_listcols_*) and the renderer OMITS hidden
+  // columns, so a fixed index mis-targets whenever the columns before Status differ from the default
+  // (e.g. Description shown put the chip in the Description cell - LIST-CELL-1). Same reasoning as the
+  // renderer's retired nth-child column hiding.
   function _frzUpdateRowStatus(id, status){
     if(id==null) return;
     var row=document.querySelector('#listBody tr.list-row[data-id="'+id+'"]'); if(!row) return;
-    var td=row.querySelectorAll('td')[4]; if(!td) return;
+    var td=row.querySelector('td[data-col="status"]'); if(!td) return;
     var cls=_call('statusCls', status)||'';
     td.innerHTML = status ? '<span class="'+cls+'" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">'+esc(status)+'</span>' : '-';
   }
