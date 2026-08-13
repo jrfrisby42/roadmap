@@ -17659,11 +17659,18 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rpt-agg-h { padding:6px 10px; background:var(--frz-bg-sunken); font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); }
   .frz-beta .frz-rpt-aggrow { display:flex; justify-content:space-between; gap:8px; padding:4px 10px; font-size:12px; border-top:1px solid var(--frz-border); }
   .frz-beta .frz-rpt-aggn { font-weight:800; color:var(--frz-accent); }
-  /* SLA-GATE-1 (4a): bound the wrap height so overflow-y ENGAGES (previously the box grew to full
-     content height, ~7,800px, stranding the horizontal scrollbar far below the fold). With a height
-     bound the wrap becomes a two-axis scroll container and the existing sticky <th> (position:sticky;
-     top:0) keeps column labels visible while the body scrolls. Value derived below. */
-  .frz-beta .frz-rpt-tablewrap { max-height:calc(100vh - 230px); overflow:auto; border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); margin-bottom:14px; }
+  /* SLA-GATE-1 4a + C2: bound the wrap height so overflow-y ENGAGES (the box grew to full content
+     height, ~7,800px, stranding the scrollbar) and the existing sticky <th> keeps labels in view.
+     Horizontal scroll is delegated to a SEPARATE sticky proxy (below) pinned to the viewport bottom,
+     because on a team with tall tiles+panels (prod IT: ~822px of 855px) the table starts near the
+     fold and its own bottom-edge h-scrollbar is unreachable regardless of the wrap's height. So the
+     wrap scrolls vertically only; the proxy provides a horizontal affordance that never leaves view. */
+  .frz-beta .frz-rpt-tablewrap { max-height:calc(100vh - 230px); overflow:auto; border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); margin-bottom:0; }
+  /* C2: sticky horizontal scroll proxy - pinned to the bottom of the shell scroll viewport, its inner
+     width mirrors the table's full width, and its scrollLeft is kept in sync with the wrap. Reachable
+     no matter how tall the panels above are. Hidden when the table fits (no horizontal scroll needed). */
+  .frz-beta .frz-rpt-hscroll { position:sticky; bottom:0; z-index:4; overflow-x:auto; overflow-y:hidden; height:15px; margin-bottom:14px; background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-top:none; border-radius:0 0 12px 12px; }
+  .frz-beta .frz-rpt-hscroll-inner { height:1px; }
   .frz-beta .frz-rpt-table { border-collapse:collapse; width:100%; font-size:12px; }
   .frz-beta .frz-rpt-table th { text-align:left; padding:8px 10px; background:var(--frz-bg-sunken); border-bottom:2px solid var(--frz-border); font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); white-space:nowrap; position:sticky; top:0; }
   .frz-beta .frz-rpt-table td { padding:7px 10px; border-bottom:1px solid var(--frz-border); vertical-align:top; }
@@ -20182,6 +20189,47 @@ if ('serviceWorker' in navigator) {
     return String(v);
   }
 
+  // C2: size the Reports table wrap to the space left below the panels (vertical scroll + sticky
+  // header) and mirror the table's full width into the sticky horizontal-scroll proxy. Re-queries the
+  // DOM so a debounced window resize can call it. The horizontal affordance is INDEPENDENT of panel
+  // height: the proxy is position:sticky;bottom:0, so it never leaves the viewport even when the table
+  // starts near the fold (prod IT: ~822px of panels in an 855px viewport, which stranded the old
+  // bottom-edge scrollbar). The 200px vertical floor is only a secondary guard, not the reachability fix.
+  function _rptSyncScroll(){
+    var wrap=document.querySelector('.frz-rpt-tablewrap');
+    var table=wrap && wrap.querySelector('table');
+    var proxy=document.querySelector('.frz-rpt-hscroll');
+    var inner=proxy && proxy.querySelector('.frz-rpt-hscroll-inner');
+    if(!(wrap && table && proxy && inner)) return;
+    var sc=document.getElementById('frzContent')||document.querySelector('.frz-content');
+    if(sc){
+      var avail=sc.getBoundingClientRect().bottom - wrap.getBoundingClientRect().top - 16;
+      wrap.style.maxHeight=Math.max(200, Math.round(avail))+'px';   // vertical fit; CSS calc() is the upper cap
+    }
+    // The wrap keeps NATIVE horizontal scroll (overflow:auto) so trackpad / shift-scroll over the table
+    // body still moves it and the header stays column-aligned. Its own h-scrollbar sits at the wrap
+    // bottom, though, which is off-screen exactly when the panels are tall. So show the sticky proxy
+    // ONLY when that native bar is below the viewport fold - giving exactly one VISIBLE h-scrollbar in
+    // every case (native when the table fits, proxy when it does not), never a redundant pair.
+    var need=table.scrollWidth > wrap.clientWidth + 2;               // horizontal scroll actually required?
+    var vpBottom=sc ? sc.getBoundingClientRect().bottom : window.innerHeight;
+    var nativeBarOffscreen=wrap.getBoundingClientRect().bottom > vpBottom + 1;
+    var showProxy=need && nativeBarOffscreen;
+    proxy.style.display = showProxy ? '' : 'none';
+    if(showProxy){ inner.style.width=table.scrollWidth+'px'; proxy.scrollLeft=wrap.scrollLeft; }
+  }
+  // C2 required item 1: handle window resize. RECOMPUTE (not clear-inline) because the proxy's inner
+  // width must be re-measured against the new viewport - clearing the wrap max-height alone would leave
+  // the proxy width stale. Debounced; only acts while a Reports table is present, so it is inert elsewhere.
+  var _rptResizeWired=false, _rptResizeTimer=null;
+  function _rptWireResize(){
+    if(_rptResizeWired) return; _rptResizeWired=true;
+    window.addEventListener('resize', function(){
+      clearTimeout(_rptResizeTimer);
+      _rptResizeTimer=setTimeout(function(){ if(document.querySelector('.frz-rpt-tablewrap')) _rptSyncScroll(); }, 150);
+    });
+  }
+
   function renderReports(){
     var host=document.getElementById('reportsBody'); if(!host) return;
     var c=_rptComputed(), rows=c.rows, all=c.all, allRows=c.allRows, f=_rptFilters;
@@ -20216,7 +20264,8 @@ if ('serviceWorker' in navigator) {
       var pTotal='<tr class="frz-rpt-pivtotal"><td>TOTAL</td>'
         +pcols.map(function(c){ return '<td class="frz-rpt-num">'+_rptPivotCell(c,pv.total)+'</td>'; }).join('')+'</tr>';
       pivotHtml='<div class="frz-rpt-tablewrap"><table class="frz-rpt-table frz-rpt-pivot"><thead><tr>'+pHead+'</tr></thead>'
-        +'<tbody>'+(pBody||'')+pTotal+'</tbody></table></div>';
+        +'<tbody>'+(pBody||'')+pTotal+'</tbody></table></div>'
+        +'<div class="frz-rpt-hscroll"><div class="frz-rpt-hscroll-inner"></div></div>';   // C2 sticky h-scroll proxy
     }
     // ── team-aware aggregates: only for dimensions the team populates ──
     var aggs=[];
@@ -20245,7 +20294,8 @@ if ('serviceWorker' in navigator) {
       +'<span class="frz-rpt-total">'+rows.length+' item'+(rows.length===1?'':'s')+'</span>'
       +'<button class="frz-newitem" id="frzRptCsv">Export CSV</button>';
     var flatTable='<div class="frz-rpt-tablewrap"><table class="frz-rpt-table"><thead><tr>'+thead+'</tr></thead>'
-        +'<tbody>'+(tableRows || '<tr><td colspan="'+cols.length+'" style="padding:24px;text-align:center;color:var(--frz-text-muted)">No items match the current filters.</td></tr>')+'</tbody></table></div>';
+        +'<tbody>'+(tableRows || '<tr><td colspan="'+cols.length+'" style="padding:24px;text-align:center;color:var(--frz-text-muted)">No items match the current filters.</td></tr>')+'</tbody></table></div>'
+        +'<div class="frz-rpt-hscroll"><div class="frz-rpt-hscroll-inner"></div></div>';   // C2 sticky h-scroll proxy
     // Page-level sections (no widget card, no redundant "Work Items" title - the top bar reads "Reports").
     host.innerHTML =
         '<div class="frz-rpt-controls">'+controls+'</div>'
@@ -20253,18 +20303,19 @@ if ('serviceWorker' in navigator) {
         +_rptSlaNoteHtml(allRows)
         +'<div class="frz-rpt-aggs">'+aggs.join('')+'</div>'
         +(grouped ? pivotHtml : flatTable);
-    // SLA-GATE-1 (4a): size the table wrap to the space LEFT below the tiles + aggregate panels, so the
-    // horizontal scrollbar stays in view. A static CSS max-height can't know where the table starts -
-    // the panels above are tall and vary by team/data - so derive it from the live geometry. Floor at
-    // 240px so it is never uselessly short; the CSS max-height stays as an upper cap. Recomputed every render.
-    try {
-      var _wrap=host.querySelector('.frz-rpt-tablewrap');
-      var _sc=document.getElementById('frzContent')||document.querySelector('.frz-content');
-      if(_wrap && _sc){
-        var _avail=_sc.getBoundingClientRect().bottom - _wrap.getBoundingClientRect().top - 16;
-        _wrap.style.maxHeight=Math.max(240, Math.round(_avail))+'px';
-      }
-    } catch(e){}
+    // SLA-GATE-1 4a + C2: bound the wrap vertically (sticky header + vertical scroll) and drive the
+    // HORIZONTAL affordance through the sticky proxy, which stays reachable no matter how tall the
+    // panels above grow. _rptSyncScroll re-queries the DOM so a debounced resize can call it too.
+    _rptSyncScroll();
+    _rptWireResize();
+    // Keep the proxy <-> wrap horizontal scroll in sync. Fresh elements each render (innerHTML replace),
+    // so these listeners are GC'd with the old DOM - no accumulation.
+    (function(){
+      var w=host.querySelector('.frz-rpt-tablewrap'), px=host.querySelector('.frz-rpt-hscroll');
+      if(!(w&&px)) return; var sy=false;
+      px.addEventListener('scroll', function(){ if(sy)return; sy=true; w.scrollLeft=px.scrollLeft; sy=false; });
+      w.addEventListener('scroll',  function(){ if(sy)return; sy=true; px.scrollLeft=w.scrollLeft; sy=false; });
+    })();
     // Wire the report-local controls (re-render on change) + CSV.
     function bindF(id, key, ev){ var el=document.getElementById(id); if(el) el.addEventListener(ev||'change', function(){ _rptFilters[key]=el.value; renderReports(); }); }
     bindF('frzRptFrom','from'); bindF('frzRptTo','to');
