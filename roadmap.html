@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.22.3';
+const APP_VERSION = '5.22.4';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -17659,7 +17659,13 @@ if ('serviceWorker' in navigator) {
   /* RPT-LAY-1 Defect 2a: multi-column (masonry-style) packing, NOT flex. Flex stretched every panel in
      a wrapped row to the tallest sibling (BY DEPARTMENT's 10 rows), so a 2-row panel wasted ~8 rows of
      height and pushed the table off-screen. Columns let a short panel stack into the gap under a tall
-     one, so the block collapses to roughly its tallest single panel. break-inside:avoid keeps a panel whole. */
+     one, so the block collapses to roughly its tallest single panel. break-inside:avoid keeps a panel whole.
+     WARNING (do NOT try to gain table ROWS by shrinking these panels further): packing makes this block
+     TIDIER but reclaims ZERO table rows. The table is height-fitted to the space BELOW its own top edge
+     (_rptSyncScroll: sc.bottom - wrap.top - 16); shrinking the panels moves the wrap UP by exactly the
+     amount they shrank, so the space below it - and thus the row count - is unchanged (measured 184px both
+     before and after; the wrap stays at its 200px floor). Only REMOVING the panels from the flow changes the
+     row count, which is why the collapse toggle (2b, default-collapsed) works and packing does not. */
   .frz-beta .frz-rpt-aggs { column-width:210px; column-gap:12px; padding:14px 16px; margin-bottom:14px; border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); }
   .frz-beta .frz-rpt-agg { break-inside:avoid; width:100%; margin-bottom:12px; border:1px solid var(--frz-border); border-radius:8px; overflow:hidden; }
   .frz-beta .frz-rpt-agg:last-child { margin-bottom:0; }
@@ -20277,10 +20283,13 @@ if ('serviceWorker' in navigator) {
     });
   }
   // RPT-LAY-1 Defect 2b: per-user collapse of the summary-panel block, so the table can use the full
-  // viewport when a user wants rows over aggregates. PER-USER key (authorized), DEFAULT EXPANDED (a
-  // missing/'"0"' value is expanded). This is a view preference, not a team/global setting.
+  // viewport. PER-USER key (authorized). DEFAULT COLLAPSED (J.R.-authorized): collapsing the panels is the
+  // ONLY lever that produces a usable table - packing tidies the block but reclaims zero rows (see the
+  // WARNING beside .frz-rpt-aggs), so an expanded default leaves the table at ~3 rows. Precedence: an ABSENT
+  // key means default (collapsed); only an explicit toggle ever WRITES the key, so a stored '0' (expanded)
+  // or '1' (collapsed) always wins and is never overwritten on load. A view preference, not a team setting.
   function _rptPanelsKey(){ try { return 'frazil_beta_rptpanels_'+((typeof uname==='function'?uname():'')||localStorage.getItem('frazil_rm_user')||''); } catch(e){ return 'frazil_beta_rptpanels_'; } }
-  function _rptPanelsCollapsed(){ try { return localStorage.getItem(_rptPanelsKey())==='1'; } catch(e){ return false; } }
+  function _rptPanelsCollapsed(){ try { var v=localStorage.getItem(_rptPanelsKey()); return v===null ? true : v==='1'; } catch(e){ return true; } }
 
   function renderReports(){
     var host=document.getElementById('reportsBody'); if(!host) return;
