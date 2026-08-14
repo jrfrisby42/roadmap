@@ -1762,18 +1762,22 @@ def intake_projects_list(team: str = None):
     """Public: exposed projects across all opted-in teams (team + product + label).
     Labels are disambiguated with the team when the same product name spans teams.
     PORTAL-SCOPE-1: an optional `team` scopes the result to ONE team, FAIL-CLOSED. A
-    team that is unknown, not portal-enabled, malformed, or present-but-empty returns
-    {"projects": []} (never all teams), so the scoping cannot be bypassed by omitting
-    or mistyping the param. Absent param (team is None) keeps the all-teams behaviour."""
-    # Distinguish ABSENT (team is None -> all teams) from PRESENT (any string, incl "" ->
-    # scope, fail-closed). A present param signals intent to scope, so an empty/bad value
-    # returns nothing rather than silently widening to every team.
+    NON-EMPTY value that is unknown, not portal-enabled, or malformed returns
+    {"projects": []} (never all teams), so the scoping cannot be bypassed by mistyping.
+    Absent (team is None) OR a genuinely empty value (?team=) keeps the all-teams
+    behaviour - see F1 below."""
+    # F1: test the RAW value for absence/emptiness BEFORE sanitizing. A None param or a
+    # genuinely empty value (?team=) is ABSENT -> all open teams: no scope was requested, so
+    # nothing is bypassed, and a link template that always appends an empty ?team= is not left
+    # with a dead dropdown. A NON-EMPTY value that merely SANITIZES to empty (?team=%20 -> " ",
+    # ?team=!!!, ?team=../) is still INVALID -> fail-closed, because someone passed something and
+    # it was not a team. Those two look identical AFTER re.sub, so the emptiness test comes FIRST.
     scoped = None
-    if team is not None:
-        # Reuse the SAME sanitize + gates as the path-param endpoints (1785 / 1797):
-        # lowercase + strip to [a-z0-9], valid_team, _intake_open. Case is normalized so a
-        # human-typed ?team=IT scopes to `it` instead of failing closed on capitalization.
-        s = re.sub(r"[^a-z0-9]", "", (team or "").lower())
+    if team is not None and team != "":
+        # Reuse the SAME sanitize + gates as the path-param endpoints (1785 / 1797): lowercase +
+        # strip to [a-z0-9], valid_team, _intake_open. Case is normalized so a human-typed
+        # ?team=IT scopes to `it` instead of failing closed on capitalization.
+        s = re.sub(r"[^a-z0-9]", "", team.lower())
         if not (s and valid_team(s) and _intake_open(s)):
             return {"projects": [], "team": s, "open": False}   # fail-closed; `open:false` marks a rejected scope
         scoped = s
