@@ -17697,7 +17697,20 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rpt-clamp { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; white-space:normal; word-break:break-word; }
   .frz-beta .frz-rpt-na { color:var(--frz-text-muted); font-style:italic; }
   .frz-beta .frz-rpt-kpis { display:flex; flex-wrap:wrap; gap:12px; padding:14px 16px; margin-bottom:14px; border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); }
-  .frz-beta .frz-rpt-kpi { flex:1; min-width:130px; border:1px solid var(--frz-border); border-radius:10px; padding:12px 14px; background:var(--frz-bg-app); }
+  .frz-beta .frz-rpt-kpi { flex:1; min-width:116px; border:1px solid var(--frz-border); border-radius:10px; padding:12px 14px; background:var(--frz-bg-app); }   /* RPT-DRILL-1 Stage 3: 130->116 so 11 tiles (incl PAUSED) fit one row at the 1452px max-width content */
+  /* RPT-DRILL-1 Stage 3: clickable drill affordance on tiles + panel rows. Distinct cursor/hover so a
+     user does not click a non-clickable median/average and conclude the feature is broken. */
+  .frz-beta .frz-rpt-kpi.frz-rpt-click, .frz-beta .frz-rpt-aggrow.frz-rpt-click { cursor:pointer; }
+  .frz-beta .frz-rpt-kpi.frz-rpt-click:hover { border-color:var(--frz-accent); background:var(--frz-accent-soft,rgba(0,89,169,0.06)); }
+  .frz-beta .frz-rpt-aggrow.frz-rpt-click:hover { background:var(--frz-accent-soft,rgba(0,89,169,0.06)); }
+  .frz-beta .frz-rpt-kpi.frz-rpt-on { border-color:var(--frz-accent); box-shadow:0 0 0 1px var(--frz-accent) inset; }
+  .frz-beta .frz-rpt-aggrow.frz-rpt-on { background:var(--frz-accent-soft,rgba(0,89,169,0.12)); font-weight:800; }
+  .frz-beta .frz-rpt-kpi.frz-rpt-click:focus-visible, .frz-beta .frz-rpt-aggrow.frz-rpt-click:focus-visible { outline:2px solid var(--frz-accent); outline-offset:1px; }
+  /* active-drill chip bar */
+  .frz-beta .frz-rpt-drills { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 12px; }
+  .frz-beta .frz-rpt-drill { display:inline-flex; align-items:center; gap:5px; padding:3px 8px; font-size:12px; font-weight:700; border:1px solid var(--frz-accent); border-radius:999px; background:var(--frz-accent-soft,rgba(0,89,169,0.08)); color:var(--frz-accent); }
+  .frz-beta .frz-rpt-drill button { border:0; background:transparent; color:inherit; cursor:pointer; font-size:14px; line-height:1; padding:0; }
+  .frz-beta .frz-rpt-drill-clear { font-size:12px; font-weight:700; color:var(--frz-accent); background:transparent; border:0; cursor:pointer; text-decoration:underline; }
   .frz-beta .frz-rpt-kpi-v { font-size:26px; font-weight:900; line-height:1.05; color:var(--frz-text); }
   .frz-beta .frz-rpt-kpi-l { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); margin-top:4px; }
   .frz-beta .frz-rpt-kpi-s { font-size:10.5px; color:var(--frz-text-muted); margin-top:1px; }
@@ -19941,7 +19954,15 @@ if ('serviceWorker' in navigator) {
   // Stage 3 - no UI, nothing clickable. Priority + Department drill-downs (D3) reuse the SHARED chips
   // (CHIPS.priority/dept, already URL-backed), so they are deliberately NOT here; a consequence to note
   // for Stage 3 is that those two therefore travel cross-view like the other shared chips.
-  var _rptScope = { tech:'', sla:'', age:'' };   // D4 drill dims - unset until Stage 3 populates them
+  // RPT-DRILL-1 Stage 3: report-scoped DRILL dims. rsla/rage/rflag are report-owned (in _rptScope);
+  // owner/status/type/assignee/priority/dept reuse the SHARED chips (D3/S4) and project reuses the rail
+  // scope (state.project) - those are NOT here, so this is the whole report-scoped drill namespace.
+  // (Stage 2's inert `rtech` was dropped: VOLUME BY TECHNICIAN drills by assignee, which already has a
+  // shared chip - reusing it avoids two mechanisms fighting over p.assignee, J.R.-confirmed.)
+  var _rptScope = { sla:'', age:'', flag:'' };
+  var _RPT_SLA_VALS  = { breached:1, atrisk:1, met:1, paused:1, notarget:1, presla:1 };   // S3 valid value space (drill targets)
+  var _RPT_AGE_VALS  = { '0-2':1, '3-7':1, '8-30':1, '30plus':1 };
+  var _RPT_FLAG_VALS = { open:1, overdue:1, completed:1 };
   function _rptIsoDate(v){   // graceful: keep only a REAL calendar date (rejects 2026-13-99, Feb 30, ...); anything else -> ''
     if(typeof v!=='string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return '';
     var m=v.split('-'), y=+m[0], mo=+m[1], d=+m[2];
@@ -19954,12 +19975,48 @@ if ('serviceWorker' in navigator) {
     { p:'rfrom',  get:function(){ return _rptFilters.from; },  set:function(v){ _rptFilters.from = _rptIsoDate(v); }, isDef:function(){ return !_rptFilters.from; } },
     { p:'rto',    get:function(){ return _rptFilters.to; },    set:function(v){ _rptFilters.to = _rptIsoDate(v); }, isDef:function(){ return !_rptFilters.to; } },
     { p:'rgroup', get:function(){ return _rptFilters.group; }, set:function(v){ _rptFilters.group = (v && _RPT_GROUPS[v]) ? v : ''; }, isDef:function(){ return !_rptFilters.group; } },
-    { p:'rtech',  get:function(){ return _rptScope.tech; }, set:function(v){ _rptScope.tech = v||''; }, isDef:function(){ return !_rptScope.tech; } },   // D4 - Stage 3
-    { p:'rsla',   get:function(){ return _rptScope.sla; },  set:function(v){ _rptScope.sla = v||''; }, isDef:function(){ return !_rptScope.sla; } },     // D4 - Stage 3
-    { p:'rage',   get:function(){ return _rptScope.age; },  set:function(v){ _rptScope.age = v||''; }, isDef:function(){ return !_rptScope.age; } }      // D4 - Stage 3
+    // Stage 3 drill dims - S3: validate against the known value space; unknown -> '' (dropped + ignored, never an empty-filter-that-looks-broken)
+    { p:'rsla',   get:function(){ return _rptScope.sla; },  set:function(v){ _rptScope.sla  = _RPT_SLA_VALS[v]  ? v : ''; }, isDef:function(){ return !_rptScope.sla; } },
+    { p:'rage',   get:function(){ return _rptScope.age; },  set:function(v){ _rptScope.age  = _RPT_AGE_VALS[v]  ? v : ''; }, isDef:function(){ return !_rptScope.age; } },
+    { p:'rflag',  get:function(){ return _rptScope.flag; }, set:function(v){ _rptScope.flag = _RPT_FLAG_VALS[v] ? v : ''; }, isDef:function(){ return !_rptScope.flag; } }
   ];
   function _rptEmitURL(params){ _RPT_URL.forEach(function(e){ if(!e.isDef()) params.set(e.p, e.get()); }); }   // only NON-default keys -> clean unfiltered URL
   function _rptSeedURL(qp){ _RPT_URL.forEach(function(e){ e.set(qp.has(e.p) ? qp.get(e.p) : ''); }); }          // present -> apply (validated); absent -> default
+  // ── drill helpers ── report-scoped dims live in _rptScope; _rptDrillActive answers the tile/row highlight.
+  function _rptScopeGet(k){ return k==='rsla'?_rptScope.sla : k==='rage'?_rptScope.age : k==='rflag'?_rptScope.flag : ''; }
+  function _rptScopeSet(k,v){ if(k==='rsla')_rptScope.sla=v; else if(k==='rage')_rptScope.age=v; else if(k==='rflag')_rptScope.flag=v; }
+  function _rptDrillActive(k,v){ return !!v && _rptScopeGet(k)===v; }
+  function _rptScopedActive(){ return !!(_rptScope.sla || _rptScope.age || _rptScope.flag); }   // any report-scoped drill on? (drives "of total" + auto-expand)
+  // S1: why is an item's RESOLUTION SLA state blank? Mirrors slaState()'s null-order EXACTLY (disabled ->
+  // no-resolution-target -> no/invalid createdAt -> pre-effectiveFrom -> parked), so the buckets match the
+  // engine's own reasons rather than a second, drifting classifier. Only meaningful when slaKind==null.
+  function _rptResBlankReason(p){
+    if(!(slaTargets && slaTargets.enabled)) return 'disabled';
+    var H=(slaTargets.resolution||{})[String(p.priority||'')];
+    if(!(H>0)) return 'notarget';                                   // no resolution target for this priority (T9-style)
+    var c=p.createdAt?Date.parse(p.createdAt):NaN;
+    if(isNaN(c)) return 'nocreated';
+    if(typeof _slaBeforeEffective==='function' && _slaBeforeEffective(c)) return 'presla';   // created before SLA start
+    if(statusIsParked && statusIsParked[p.status]) return 'parked';
+    return 'other';                                                 // e.g. terminal with no completedAt
+  }
+  var _RPT_AGE_OF = function(a){ return a<=2?'0-2':a<=7?'3-7':a<=30?'8-30':'30plus'; };   // single source for aging buckets
+  // cross-filter predicate: does this computed row survive the ACTIVE report-scoped drill dims?
+  function _rptRowMatchesDrill(r){
+    var s=_rptScope;
+    if(s.flag){ if(s.flag==='open'&&!r.open) return false; if(s.flag==='overdue'&&!r.overdue) return false; if(s.flag==='completed'&&!r.completion) return false; }
+    if(s.sla){
+      var k=r.slaKind;
+      if(s.sla==='breached'){ if(!(k==='breached'||k==='missed')) return false; }          // D10: past target = both kinds, excludes paused
+      else if(s.sla==='paused'){ if(k!=='paused') return false; }
+      else if(s.sla==='atrisk'){ if(k!=='atrisk') return false; }
+      else if(s.sla==='met'){ if(k!=='met') return false; }
+      else if(s.sla==='notarget'){ if(!(k==null && r.resBlank==='notarget')) return false; }
+      else if(s.sla==='presla'){ if(!(k==null && r.resBlank==='presla')) return false; }
+    }
+    if(s.age){ if(!r.open || r.age==null || _RPT_AGE_OF(r.age)!==s.age) return false; }
+    return true;
+  }
   var _PRPL = {1:'Urgent',2:'High',3:'Medium',4:'Low'};
   function _rptMedian(nums){                     // median over non-null numbers; null if none
     var xs=(nums||[]).filter(function(n){ return n!=null && !isNaN(n); }).sort(function(a,b){ return a-b; });
@@ -19997,6 +20054,7 @@ if ('serviceWorker' in navigator) {
     }
     function row(p){
       var closed=!!p.completedAt, due=(p.due||'').slice(0,10);
+      var _ss=(typeof slaState==='function') ? slaState(p) : null;   // resolution SLA state, computed once
       return {
         _id:p.id,
         key:p.itemKey||('#'+p.id),
@@ -20026,7 +20084,8 @@ if ('serviceWorker' in navigator) {
         age: closed ? _rptDays(p.createdAt, p.completedAt) : _rptDays(p.createdAt, nowIso),
         resolutionTime: _rptDays(p.createdAt, p.completedAt),
         responseTime: _rptDays(p.createdAt, p.firstResponseAt),
-        slaKind: (typeof slaState==='function' ? (function(){ var s=slaState(p); return s?s.kind:null; })() : null),   // IT/Ops SLA (A2): breached|atrisk|ontrack|met|missed|null
+        slaKind: _ss ? _ss.kind : null,   // IT/Ops SLA (A2): breached|atrisk|ontrack|met|missed|paused|null
+        resBlank: _ss ? '' : _rptResBlankReason(p),   // S1: when blank, WHY (notarget|presla|parked|...) - for the split blank buckets
         // RPT-DRILL-1 Stage 1: the display strings the SLA engines already produce (`.full`, which is
         // clock-agnostic - the "Resolution:"/"First touch:" prefix lives in slaBadgeHtml, not here).
         // `.full` is used (not `.short`) so atrisk vs ontrack are distinguishable ("At risk, .." vs
@@ -20043,7 +20102,7 @@ if ('serviceWorker' in navigator) {
     var fPrio=getSelectedPriorities(), fDept=getSelectedDepartments();
     var ownerScope=_call('getCurrentOwnerFilter');
     var searchQ=((document.getElementById('itemSearch')||{}).value||'').trim().toLowerCase();
-    var rows=all.filter(function(p){
+    var baseRows=all.filter(function(p){
       if(fDev && fDev.indexOf(p.dev||'')<0) return false;
       if(fProd && fProd.indexOf(p.product||'')<0) return false;
       if(fType && fType.indexOf(p.type||'')<0) return false;
@@ -20062,7 +20121,12 @@ if ('serviceWorker' in navigator) {
       }
       return true;
     }).map(row);
-    return { rows:rows, all:all, allRows:all.map(row) };
+    // RPT-DRILL-1 Stage 3: baseRows = chip/project/search/date scope (the "total"); rows = baseRows
+    // narrowed by the active report-scoped drill dims (rsla/rage/rflag). EVERY tile/panel/the table
+    // consumes `rows`, so they all recompute against the drilled set for free (D1 cross-filter).
+    var drillActive=_rptScopedActive();
+    var rows=drillActive ? baseRows.filter(_rptRowMatchesDrill) : baseRows;
+    return { rows:rows, baseRows:baseRows, drillActive:drillActive, all:all, allRows:all.map(row) };
   }
   // Ordered column spec. `always` columns always render; the rest render only when the team
   // actually populates them (item 3: team-aware), detected over the full team set so columns
@@ -20129,58 +20193,139 @@ if ('serviceWorker' in navigator) {
   function _rptOpt(sel, val, label){ return '<option value="'+escA(val)+'"'+(sel===val?' selected':'')+'>'+esc(label)+'</option>'; }
   function _rptCount(rows, keyFn){
     var m={}; rows.forEach(function(r){ var k=keyFn(r)||'(none)'; m[k]=(m[k]||0)+1; });
-    return Object.keys(m).sort(function(a,b){ return m[b]-m[a]; }).map(function(k){ return {k:k,n:m[k]}; });
+    return Object.keys(m).sort(function(a,b){ return m[b]-m[a]; }).map(function(k){ return {k:k, n:m[k], dv:k}; });
   }
-  function _rptAggHtml(title, entries){
-    var body=entries.length ? entries.map(function(e){ return '<div class="frz-rpt-aggrow"><span>'+esc(e.k)+'</span><span class="frz-rpt-aggn">'+e.n+'</span></div>'; }).join('')
-                            : '<div class="frz-rpt-aggrow" style="color:var(--frz-text-muted)">No data</div>';
+  // like _rptCount but groups by a RAW value (the chip checkbox value) while DISPLAYING a friendly label,
+  // for the panels where display != filter value (assignee username vs name, priority number vs label).
+  function _rptCountBy(rows, rawFn, dispFn){
+    var m={}, disp={};
+    rows.forEach(function(r){ var rk=rawFn(r); rk=(rk==null?'':String(rk)); m[rk]=(m[rk]||0)+1; if(!(rk in disp)) disp[rk]=dispFn(r,rk); });
+    return Object.keys(m).sort(function(a,b){ return m[b]-m[a]; }).map(function(rk){ return {k:disp[rk], n:m[rk], dv:rk}; });
+  }
+  // BY DEPARTMENT counts INDIVIDUAL departments (an item in two depts counts in each), so a drill on one
+  // dept maps cleanly to the dept chip (which matches any selected dept). dv = the single dept name.
+  function _rptCountDept(rows){
+    var m={};
+    rows.forEach(function(r){ (r.dept?String(r.dept).split('; '):['']).forEach(function(d){ d=(d||'').trim(); m[d]=(m[d]||0)+1; }); });
+    return Object.keys(m).sort(function(a,b){ return m[b]-m[a]; }).map(function(d){ return {k:d||'(none)', n:m[d], dv:d}; });
+  }
+  // is a panel-row / bucket drill currently ACTIVE (for the highlight)? chip:X -> single value selected in
+  // that shared chip; project -> the rail scope; rsla/rage/rflag -> the report-scoped dim.
+  function _rptRowActive(dk, dv){
+    if(dk==='project') return (state.project||'__all__')===dv;
+    if(dk && dk.indexOf('chip:')===0){ var ck=dk.slice(5), sel=(CHIPS[ck]&&CHIPS[ck].get())||[]; return sel.length===1 && String(sel[0])===String(dv); }
+    return _rptDrillActive(dk, dv);
+  }
+  // RPT-DRILL-1 Stage 3: dispatch a drill. project reuses setProject (self-renders + syncs); shared chips
+  // (owner/status/type/assignee/priority/dept) toggle via applyPanel; rsla/rage/rflag toggle _rptScope.
+  // Clicking the ACTIVE selection again clears just that dimension. Multiple dimensions compose (AND).
+  function _rptDrill(dk, dv){
+    if(dk==='project'){ setProject(_rptRowActive('project',dv) ? '__all__' : dv); return; }   // setProject re-renders + syncs
+    if(dk && dk.indexOf('chip:')===0){
+      var ck=dk.slice(5); if(!CHIPS[ck]) return;
+      var on=_rptRowActive(dk, dv);
+      applyPanel(CHIPS[ck].panel, on ? null : [String(dv)]);
+    } else {
+      _rptScopeSet(dk, _rptScopeGet(dk)===dv ? '' : dv);
+    }
+    syncURL(true); renderReports();
+  }
+  function _rptClearDrills(){   // clear-all: report-scoped dims + the shared chips/project used as drills
+    _rptScope.sla=''; _rptScope.age=''; _rptScope.flag='';
+    ['owner','status','type','assignee','priority','dept'].forEach(function(ck){ if(CHIPS[ck]) applyPanel(CHIPS[ck].panel, null); });
+    if(state.project && state.project!=='__all__'){ setProject('__all__'); return; }   // setProject re-renders + syncs
+    syncURL(true); renderReports();
+  }
+  function _rptAggHtml(title, entries, dk){
+    var body=entries.length ? entries.map(function(e){
+      var dv=(e.dv==null?e.k:e.dv), clickable=!!dk && dv!=='', on=clickable && _rptRowActive(dk, dv);
+      return '<div class="frz-rpt-aggrow'+(clickable?' frz-rpt-click':'')+(on?' frz-rpt-on':'')+'"'
+        +(clickable?' data-dk="'+escA(dk)+'" data-dv="'+escA(String(dv))+'" role="button" tabindex="0" title="Filter to these items"':'')
+        +'><span>'+esc(e.k)+'</span><span class="frz-rpt-aggn">'+e.n+'</span></div>';
+    }).join('') : '<div class="frz-rpt-aggrow" style="color:var(--frz-text-muted)">No data</div>';
     return '<div class="frz-rpt-agg"><div class="frz-rpt-agg-h">'+esc(title)+'</div>'+body+'</div>';
+  }
+  var _RPT_SLA_LBL={breached:'Breached',atrisk:'At risk',met:'Within SLA',paused:'Paused',notarget:'No target set',presla:'Before SLA start'};
+  var _RPT_FLAG_LBL={open:'Open',overdue:'Overdue',completed:'Completed'};
+  // is any panel-representable filter active (report-scoped dim, a shared chip, or a rail project scope)?
+  // Drives S2 auto-expand so a shared drill link is never visually empty. TRANSIENT - never writes the key.
+  function _rptChipDrillActive(){
+    return ['owner','status','type','assignee','priority','dept'].some(function(ck){ var s=CHIPS[ck]&&CHIPS[ck].get(); return !!(s&&s.length); })
+      || !!(state.project && state.project!=='__all__');
+  }
+  function _rptAutoExpand(){ return _rptScopedActive() || _rptChipDrillActive(); }
+  function _rptActiveDrills(){
+    var out=[];
+    if(_rptScope.flag) out.push({dk:'rflag', dv:_rptScope.flag, label:(_RPT_FLAG_LBL[_rptScope.flag]||_rptScope.flag)});
+    if(_rptScope.sla)  out.push({dk:'rsla',  dv:_rptScope.sla,  label:'SLA: '+(_RPT_SLA_LBL[_rptScope.sla]||_rptScope.sla)});
+    if(_rptScope.age)  out.push({dk:'rage',  dv:_rptScope.age,  label:'Age: '+_rptScope.age});
+    if(state.project && state.project!=='__all__') out.push({dk:'project', dv:state.project, label:'Project: '+state.project});
+    ['owner','status','type','assignee','priority','dept'].forEach(function(ck){
+      var s=CHIPS[ck]&&CHIPS[ck].get();
+      if(s&&s.length) out.push({dk:'chip:'+ck, clearChip:ck, label:CHIPS[ck].label+': '+s.map(function(v){ return ck==='priority'?(_PRPL[v]||v):v; }).join(', ')});
+    });
+    return out;
+  }
+  function _rptDrillsHtml(){
+    var d=_rptActiveDrills(); if(!d.length) return '';
+    return '<div class="frz-rpt-drills"><span style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;color:var(--frz-text-muted)">Drilled:</span>'
+      +d.map(function(x){ return '<span class="frz-rpt-drill" data-dk="'+escA(x.dk)+'"'+(x.dv!=null?' data-dv="'+escA(String(x.dv))+'"':'')+(x.clearChip?' data-clearchip="'+escA(x.clearChip)+'"':'')+'>'+esc(x.label)+' <button type="button" title="Remove" aria-label="Remove filter">×</button></span>'; }).join('')
+      +(d.length>1?'<button type="button" class="frz-rpt-drill-clear" id="frzRptClearDrills">Clear all</button>':'')
+      +'</div>';
   }
   // ── KPI tiles over the FILTERED rows. Team-aware: a tile is dropped when its source measure
   //    is unpopulated across allRows (mirrors _rptHas); in-scope-but-empty renders "n/a". ──
-  function _rptKpis(rows, allRows){
-    var openN=rows.filter(function(r){ return r.open; }).length;
-    var overdueN=rows.filter(function(r){ return r.overdue; }).length;
-    var completedN=rows.filter(function(r){ return r.completion; }).length;
-    var resVals=rows.map(function(r){ return r.resolutionTime; });
-    var respVals=rows.map(function(r){ return r.responseTime; });
+  function _rptKpis(rows, allRows, baseRows, drillActive){
+    baseRows = baseRows || rows;
     var hasRes=allRows.some(function(r){ return r.resolutionTime!=null; });
     var hasResp=allRows.some(function(r){ return r.responseTime!=null; });
     function fmtD(v){ return v==null ? 'n/a' : String(v); }
+    function cnt(set, pred){ return set.filter(pred).length; }
+    // D6: while a report-scoped drill is active, a COUNTED tile reads "filtered of total" (e.g. "6 of 16")
+    // so clicking Breached does not silently make OPEN read the same number and look broken. Matches the
+    // existing "82% (21/26)" fraction convention. Median/avg are not counts -> plain value, over the drilled set.
+    function tileN(pred){ var fN=cnt(rows,pred); return drillActive ? (fN+' of '+cnt(baseRows,pred)) : String(fN); }
+    var pOpen=function(r){return r.open;}, pOver=function(r){return r.overdue;}, pComp=function(r){return r.completion;};
+    // RPT-DRILL-1 Stage 3: each COUNTED tile carries drill metadata {k,v}; median/avg tiles carry none
+    // (D5: no subset behind a median), so _rptKpisHtml renders only the counted ones clickable.
     var tiles=[
-      {label:'Open',                value:String(openN)},
-      {label:'Overdue',             value:String(overdueN), warn:overdueN>0},
-      {label:'Completed (in window)', value:String(completedN)},
-      {label:'Throughput',          value:String(completedN), sub:'completed in window'}
+      {label:'Open',                value:tileN(pOpen), drill:{k:'rflag',v:'open'}},
+      {label:'Overdue',             value:tileN(pOver), warn:cnt(rows,pOver)>0, drill:{k:'rflag',v:'overdue'}},
+      {label:'Completed (in window)', value:tileN(pComp), drill:{k:'rflag',v:'completed'}},
+      {label:'Throughput',          value:tileN(pComp), sub:'completed in window', drill:{k:'rflag',v:'completed'}}
     ];
-    if(hasRes)  tiles.push({label:'Median resolution', value:fmtD(_rptMedian(resVals)), sub:'days'});
-    if(hasRes)  tiles.push({label:'Avg resolution',    value:fmtD(_rptAvg(resVals)),    sub:'days'});
-    if(hasResp) tiles.push({label:'Avg time to first touch',value:fmtD(_rptAvg(respVals)),   sub:'days'});   // S9: was "Avg first response" (same firstResponseAt accessor)
+    if(hasRes)  tiles.push({label:'Median resolution', value:fmtD(_rptMedian(rows.map(function(r){return r.resolutionTime;}))), sub:'days'});   // D5: not clickable
+    if(hasRes)  tiles.push({label:'Avg resolution',    value:fmtD(_rptAvg(rows.map(function(r){return r.resolutionTime;}))),    sub:'days'});   // D5: not clickable
+    if(hasResp) tiles.push({label:'Avg time to first touch',value:fmtD(_rptAvg(rows.map(function(r){return r.responseTime;}))),   sub:'days'});   // D5: not clickable
     // RESOLUTION SLA tiles. slaKind is the RESOLUTION state (slaState().kind). SLA-2 1d: render
     // whenever SLA is ENABLED, even when nothing is measured yet (S6 can exclude every item on
     // day one) - showing zeroes plus the explanatory line (_rptSlaNoteHtml) instead of vanishing.
-    // S9: labels qualified "resolution"; Within % carries its fraction.
     if(slaTargets && slaTargets.enabled){
-      var breachedN=rows.filter(function(r){ return r.slaKind==='breached'; }).length;
-      var atRiskN=rows.filter(function(r){ return r.slaKind==='atrisk'; }).length;
-      var judged=rows.filter(function(r){ return r.slaKind==='met' || r.slaKind==='missed'; }).length;   // closed with a target
-      var metN=rows.filter(function(r){ return r.slaKind==='met'; }).length;
-      tiles.push({label:'Resolution SLA breached', value:String(breachedN), sub:'open', warn:breachedN>0});
-      tiles.push({label:'Resolution SLA at risk',  value:String(atRiskN),  sub:'open'});
-      tiles.push({label:'Within resolution SLA',   value:(judged ? Math.round(metN/judged*100)+'% ('+metN+'/'+judged+')' : 'n/a'), sub:'resolved in window'});
+      // D10: "Breached" = ALL past target, both internal kinds `breached` (open) and `missed` (resolved
+      // late) - both display "Breached" and the user means "past target". This makes the tile count equal
+      // the drill result (acceptance 2 + 4). `paused` is excluded here - it lives in the PAUSED tile (S5).
+      var pPast=function(r){return r.slaKind==='breached'||r.slaKind==='missed';};
+      var judged=cnt(rows, function(r){return r.slaKind==='met'||r.slaKind==='missed';}), metN=cnt(rows, function(r){return r.slaKind==='met';});
+      tiles.push({label:'Resolution SLA breached', value:tileN(pPast), sub:'past target', warn:cnt(rows,pPast)>0, drill:{k:'rsla',v:'breached'}});
+      tiles.push({label:'Resolution SLA at risk',  value:tileN(function(r){return r.slaKind==='atrisk';}),  sub:'open', drill:{k:'rsla',v:'atrisk'}});
+      tiles.push({label:'Paused',                  value:tileN(function(r){return r.slaKind==='paused';}),  sub:'clock stopped', drill:{k:'rsla',v:'paused'}});   // S5/D9: render even at zero
+      tiles.push({label:'Within resolution SLA',   value:(judged ? Math.round(metN/judged*100)+'% ('+metN+'/'+judged+')' : 'n/a'), sub:'resolved in window', drill:{k:'rsla',v:'met'}});
     }
     return tiles;
   }
   // IT/Ops aging (A2): OPEN items bucketed by age. Only buckets with a count render.
   function _rptAging(rows){
-    var b=[{k:'0-2 days',n:0},{k:'3-7 days',n:0},{k:'8-30 days',n:0},{k:'30+ days',n:0}];
+    var b=[{k:'0-2 days',n:0,dv:'0-2'},{k:'3-7 days',n:0,dv:'3-7'},{k:'8-30 days',n:0,dv:'8-30'},{k:'30+ days',n:0,dv:'30plus'}];
     rows.forEach(function(r){ if(!r.open || r.age==null) return;
       if(r.age<=2) b[0].n++; else if(r.age<=7) b[1].n++; else if(r.age<=30) b[2].n++; else b[3].n++; });
     return b;
   }
   function _rptKpisHtml(tiles){
     return '<div class="frz-rpt-kpis">'+tiles.map(function(t){
-      return '<div class="frz-rpt-kpi'+(t.warn?' is-warn':'')+'">'
+      var d=t.drill, on=d && _rptDrillActive(d.k,d.v);
+      return '<div class="frz-rpt-kpi'+(t.warn?' is-warn':'')+(d?' frz-rpt-click':'')+(on?' frz-rpt-on':'')+'"'
+        +(d?' data-dk="'+escA(d.k)+'" data-dv="'+escA(d.v)+'" role="button" tabindex="0" title="Filter to these items"':'')
+        +'>'
         +'<div class="frz-rpt-kpi-v">'+esc(t.value)+'</div>'
         +'<div class="frz-rpt-kpi-l">'+esc(t.label)+'</div>'
         +(t.sub?'<div class="frz-rpt-kpi-s">'+esc(t.sub)+'</div>':'')
@@ -20360,25 +20505,36 @@ if ('serviceWorker' in navigator) {
         +'<div class="frz-rpt-hscroll"><div class="frz-rpt-hscroll-inner"></div></div>';   // C2 sticky h-scroll proxy
     }
     // ── team-aware aggregates: only for dimensions the team populates ──
+    // RPT-DRILL-1 Stage 3: every counted panel row is a drill (D5). Owner/status/type/assignee/priority/
+    // dept reuse the SHARED chips; project reuses the rail scope; schedule -> rflag; aging -> rage.
     var aggs=[];
-    if(has('product'))      aggs.push(_rptAggHtml('By project', _rptCount(rows, function(r){ return r.product; })));
-    if(has('owner'))        aggs.push(_rptAggHtml('By owner',   _rptCount(rows, function(r){ return r.owner || '(no owner)'; })));
-    if(has('assigneeName')) aggs.push(_rptAggHtml('Volume by technician', _rptCount(rows, function(r){ return r.assignee ? (r.assigneeName||r.assignee) : '(unassigned)'; })));
-    aggs.push(_rptAggHtml('By status', _rptCount(rows, function(r){ return r.status; })));
-    aggs.push(_rptAggHtml('By type',   _rptCount(rows, function(r){ return r.type; })));
-    if(has('priority'))     aggs.push(_rptAggHtml('By priority', _rptCount(rows, function(r){ return r.priority; })));
-    if(has('dept'))         aggs.push(_rptAggHtml('By department', _rptCount(rows, function(r){ return r.dept; })));
+    if(has('product'))      aggs.push(_rptAggHtml('By project', _rptCountBy(rows, function(r){ return r.product; }, function(r,rk){ return rk||'(none)'; }), 'project'));
+    if(has('owner'))        aggs.push(_rptAggHtml('By owner',   _rptCountBy(rows, function(r){ return r.owner; }, function(r,rk){ return rk||'(no owner)'; }), 'chip:owner'));
+    if(has('assigneeName')) aggs.push(_rptAggHtml('Volume by technician', _rptCountBy(rows, function(r){ return r.assignee; }, function(r,rk){ return rk ? (r.assigneeName||rk) : '(unassigned)'; }), 'chip:assignee'));
+    aggs.push(_rptAggHtml('By status', _rptCount(rows, function(r){ return r.status; }), 'chip:status'));
+    aggs.push(_rptAggHtml('By type',   _rptCount(rows, function(r){ return r.type; }), 'chip:type'));
+    if(has('priority'))     aggs.push(_rptAggHtml('By priority', _rptCountBy(rows, function(r){ return r.priorityNum; }, function(r,rk){ return rk ? (_PRPL[rk]||rk) : '(none)'; }), 'chip:priority'));
+    if(has('dept'))         aggs.push(_rptAggHtml('By department', _rptCountDept(rows), 'chip:dept'));
     if(has('due')){
       var openN=rows.filter(function(r){ return r.open; }).length;
       var overdueN=rows.filter(function(r){ return r.overdue; }).length;
-      aggs.push(_rptAggHtml('Schedule', [{k:'Open',n:openN},{k:'Open & overdue',n:overdueN}]));
+      aggs.push(_rptAggHtml('Schedule', [{k:'Open',n:openN,dv:'open'},{k:'Open & overdue',n:overdueN,dv:'overdue'}], 'rflag'));
     }
     // IT/Ops aging (A2): open items by age bucket. Shown whenever there are open items.
-    if(rows.some(function(r){ return r.open; })) aggs.push(_rptAggHtml('Aging (open)', _rptAging(rows)));
+    if(rows.some(function(r){ return r.open; })) aggs.push(_rptAggHtml('Aging (open)', _rptAging(rows), 'rage'));
+    // S1: two labelled, separately-clickable blank-state buckets (resolution SLA), split by the engine's
+    // own reason so an intentionally no-target population is not bundled with pre-activation items.
+    if(slaTargets && slaTargets.enabled){
+      var noTgt=rows.filter(function(r){ return r.slaKind==null && r.resBlank==='notarget'; }).length;
+      var preSla=rows.filter(function(r){ return r.slaKind==null && r.resBlank==='presla'; }).length;
+      aggs.push(_rptAggHtml('Resolution SLA: unmeasured', [{k:'No target set',n:noTgt,dv:'notarget'},{k:'Before SLA start',n:preSla,dv:'presla'}], 'rsla'));
+    }
     // ── report-local controls ONLY (the shared owner/type/status/etc. live in the top chip bar).
     //    Date basis + range + Group by have no top-bar equivalent, so they sit in this strip. ──
     var basisLbl=(f.basis==='completed'?'Completed':'Requested');
-    var _panelsCollapsed=_rptPanelsCollapsed();   // RPT-LAY-1 2b: per-user, default expanded
+    // RPT-LAY-1 2b: per-user collapse. RPT-DRILL-1 S2: auto-expand (TRANSIENT, no key write) while a drill
+    // is active so a shared drill link is never visually empty; collapses back to preference when cleared.
+    var _panelsCollapsed=_rptPanelsCollapsed() && !_rptAutoExpand();
     var controls='<label>Date basis<select id="frzRptBasis">'+_rptOpt(f.basis,'requested','Requested')+_rptOpt(f.basis,'completed','Completed')+'</select></label>'
       +'<label>'+basisLbl+' from<input type="date" id="frzRptFrom" value="'+escA(f.from)+'"></label>'
       +'<label>to<input type="date" id="frzRptTo" value="'+escA(f.to)+'"></label>'
@@ -20393,7 +20549,8 @@ if ('serviceWorker' in navigator) {
     // Page-level sections (no widget card, no redundant "Work Items" title - the top bar reads "Reports").
     host.innerHTML =
         '<div class="frz-rpt-controls">'+controls+'</div>'
-        +_rptKpisHtml(_rptKpis(rows, allRows))
+        +_rptKpisHtml(_rptKpis(rows, allRows, c.baseRows, c.drillActive))
+        +_rptDrillsHtml()
         +_rptSlaNoteHtml(allRows)
         +'<div class="frz-rpt-aggs"'+(_panelsCollapsed?' style="display:none"':'')+'>'+aggs.join('')+'</div>'
         +(grouped ? pivotHtml : flatTable);
@@ -20429,6 +20586,22 @@ if ('serviceWorker' in navigator) {
         e.preventDefault(); navigate('/item/'+a.getAttribute('data-id'), false);
       });
     });
+    // RPT-DRILL-1 Stage 3: drill clicks on counted TILES + PANEL ROWS (data-dk/data-dv). role=button, so
+    // Enter/Space act too. Median/avg tiles + empty-value rows carry no data-dk, so they are inert.
+    host.querySelectorAll('.frz-rpt-kpi[data-dk], .frz-rpt-aggrow[data-dk]').forEach(function(el){
+      function fire(e){ e.preventDefault(); _rptDrill(el.getAttribute('data-dk'), el.getAttribute('data-dv')); }
+      el.addEventListener('click', fire);
+      el.addEventListener('keydown', function(e){ if(e.key==='Enter'||e.key===' ') fire(e); });
+    });
+    // active-drill chip: × removes just that dimension; Clear all removes them all.
+    host.querySelectorAll('.frz-rpt-drill button').forEach(function(b){
+      b.addEventListener('click', function(){
+        var chip=b.parentNode; var cc=chip.getAttribute('data-clearchip');
+        if(cc){ applyPanel(CHIPS[cc].panel, null); syncURL(true); renderReports(); }
+        else _rptDrill(chip.getAttribute('data-dk'), chip.getAttribute('data-dv'));   // active -> toggles off
+      });
+    });
+    var cd=document.getElementById('frzRptClearDrills'); if(cd) cd.addEventListener('click', _rptClearDrills);
   }
   // ── Team Calendar render (Phase 2a: Month view - Owner -> Users -> chips) ──────
   function _calShortD(ymd){ if(!ymd) return ''; var p=String(ymd).split('-'); if(p.length!==3) return ymd; return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString(undefined,{month:'short',day:'numeric'}); }
