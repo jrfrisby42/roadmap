@@ -19730,6 +19730,7 @@ if ('serviceWorker' in navigator) {
     }
     if (view==='team-calendar' && state.calDate) params.set('d', _ymdLocal(state.calDate));  // Stage 2c: displayed period
     if (view==='team-calendar'){ var _cf=state.calFilter||{}; Object.keys(_CAL_FILTER_PARAMS).forEach(function(k){ if(_cf[k]) params.set(_CAL_FILTER_PARAMS[k], _cf[k]); }); }  // Stage 5a: filter chips in the URL
+    if (view==='reports') _rptEmitURL(params);   // RPT-DRILL-1 Stage 2: report-owned r-prefixed controls (+ D4 drill dims when Stage 3 sets them)
     var qs = params.toString();
     var base = '/'+view;
     if (view==='planning' && state.planTab && state.planTab!=='plan') base = '/planning/'+state.planTab;  // planning sub-tab is URL state
@@ -19780,6 +19781,7 @@ if ('serviceWorker' in navigator) {
       var ff=document.getElementById('filterFrom'), ft=document.getElementById('filterTo');
       if(ff) ff.value = qp.get('from')||''; if(ft) ft.value = qp.get('to')||'';
     }
+    if (view==='reports') _rptSeedURL(qp);   // RPT-DRILL-1 Stage 2: seed report-local controls (+ D4 dims) from the URL; absent -> defaults
   }
 
   // ════════ view switching ════════
@@ -19930,6 +19932,34 @@ if ('serviceWorker' in navigator) {
     renderReports();
   }
   var _rptFilters = { from:'', to:'', basis:'requested', group:'' };   // Phase 1: report-local controls ONLY; owner/assignee/type/status/priority/dept now come from the SHARED chip bar (getSelected*)
+  // ── RPT-DRILL-1 Stage 2 (D2): report-owned URL state ────────────────────────────────────────────
+  // ALL keys are r-prefixed so every OTHER view ignores them - no ride-along, no teardown, no
+  // provenance tracking. This is the same reason the calendar c-prefixes its filters (a bare `from`
+  // here would otherwise fight the shared range chip / Dashboard `from`, exactly the collision the
+  // _FRZ_SHARED_VIEWS ride-along made fragile). The four CONTROLS (basis/from/to/group) round-trip now;
+  // the D4 drill DIMS (tech/sla/age) are plumbed so Stage 3 is URL-native, but NOTHING sets them until
+  // Stage 3 - no UI, nothing clickable. Priority + Department drill-downs (D3) reuse the SHARED chips
+  // (CHIPS.priority/dept, already URL-backed), so they are deliberately NOT here; a consequence to note
+  // for Stage 3 is that those two therefore travel cross-view like the other shared chips.
+  var _rptScope = { tech:'', sla:'', age:'' };   // D4 drill dims - unset until Stage 3 populates them
+  function _rptIsoDate(v){   // graceful: keep only a REAL calendar date (rejects 2026-13-99, Feb 30, ...); anything else -> ''
+    if(typeof v!=='string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return '';
+    var m=v.split('-'), y=+m[0], mo=+m[1], d=+m[2];
+    if(mo<1 || mo>12 || d<1 || d>31) return '';
+    var dt=new Date(Date.UTC(y, mo-1, d));
+    return (dt.getUTCMonth()===mo-1 && dt.getUTCDate()===d) ? v : '';
+  }
+  var _RPT_URL = [
+    { p:'rbasis', get:function(){ return _rptFilters.basis; }, set:function(v){ _rptFilters.basis = (v==='completed'?'completed':'requested'); }, isDef:function(){ return _rptFilters.basis!=='completed'; } },
+    { p:'rfrom',  get:function(){ return _rptFilters.from; },  set:function(v){ _rptFilters.from = _rptIsoDate(v); }, isDef:function(){ return !_rptFilters.from; } },
+    { p:'rto',    get:function(){ return _rptFilters.to; },    set:function(v){ _rptFilters.to = _rptIsoDate(v); }, isDef:function(){ return !_rptFilters.to; } },
+    { p:'rgroup', get:function(){ return _rptFilters.group; }, set:function(v){ _rptFilters.group = (v && _RPT_GROUPS[v]) ? v : ''; }, isDef:function(){ return !_rptFilters.group; } },
+    { p:'rtech',  get:function(){ return _rptScope.tech; }, set:function(v){ _rptScope.tech = v||''; }, isDef:function(){ return !_rptScope.tech; } },   // D4 - Stage 3
+    { p:'rsla',   get:function(){ return _rptScope.sla; },  set:function(v){ _rptScope.sla = v||''; }, isDef:function(){ return !_rptScope.sla; } },     // D4 - Stage 3
+    { p:'rage',   get:function(){ return _rptScope.age; },  set:function(v){ _rptScope.age = v||''; }, isDef:function(){ return !_rptScope.age; } }      // D4 - Stage 3
+  ];
+  function _rptEmitURL(params){ _RPT_URL.forEach(function(e){ if(!e.isDef()) params.set(e.p, e.get()); }); }   // only NON-default keys -> clean unfiltered URL
+  function _rptSeedURL(qp){ _RPT_URL.forEach(function(e){ e.set(qp.has(e.p) ? qp.get(e.p) : ''); }); }          // present -> apply (validated); absent -> default
   var _PRPL = {1:'Urgent',2:'High',3:'Medium',4:'Low'};
   function _rptMedian(nums){                     // median over non-null numbers; null if none
     var xs=(nums||[]).filter(function(n){ return n!=null && !isNaN(n); }).sort(function(a,b){ return a-b; });
@@ -20381,7 +20411,7 @@ if ('serviceWorker' in navigator) {
       w.addEventListener('scroll',  function(){ if(sy)return; sy=true; px.scrollLeft=w.scrollLeft; sy=false; });
     })();
     // Wire the report-local controls (re-render on change) + CSV.
-    function bindF(id, key, ev){ var el=document.getElementById(id); if(el) el.addEventListener(ev||'change', function(){ _rptFilters[key]=el.value; renderReports(); }); }
+    function bindF(id, key, ev){ var el=document.getElementById(id); if(el) el.addEventListener(ev||'change', function(){ _rptFilters[key]=el.value; syncURL(true); renderReports(); }); }   // RPT-DRILL-1 Stage 2: control change -> URL (replace, matching the calendar/shared-chip convention)
     bindF('frzRptFrom','from'); bindF('frzRptTo','to');
     bindF('frzRptBasis','basis'); bindF('frzRptGroup','group');
     var csv=document.getElementById('frzRptCsv'); if(csv) csv.addEventListener('click', _rptExportCsv);
