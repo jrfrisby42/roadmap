@@ -1758,16 +1758,34 @@ def _intake_attachment_key(team: str, att_id: str, name: str) -> str:
     return f"intake/{team}/{att_id}/{_sanitize_filename(name)}"
 
 @app.get("/api/intake/projects")
-def intake_projects_list():
+def intake_projects_list(team: str = None):
     """Public: exposed projects across all opted-in teams (team + product + label).
-    Labels are disambiguated with the team when the same product name spans teams."""
+    Labels are disambiguated with the team when the same product name spans teams.
+    PORTAL-SCOPE-1: an optional `team` scopes the result to ONE team, FAIL-CLOSED. A
+    team that is unknown, not portal-enabled, malformed, or present-but-empty returns
+    {"projects": []} (never all teams), so the scoping cannot be bypassed by omitting
+    or mistyping the param. Absent param (team is None) keeps the all-teams behaviour."""
+    # Distinguish ABSENT (team is None -> all teams) from PRESENT (any string, incl "" ->
+    # scope, fail-closed). A present param signals intent to scope, so an empty/bad value
+    # returns nothing rather than silently widening to every team.
+    scoped = None
+    if team is not None:
+        # Reuse the SAME sanitize + gates as the path-param endpoints (1785 / 1797):
+        # lowercase + strip to [a-z0-9], valid_team, _intake_open. Case is normalized so a
+        # human-typed ?team=IT scopes to `it` instead of failing closed on capitalization.
+        s = re.sub(r"[^a-z0-9]", "", (team or "").lower())
+        if not (s and valid_team(s) and _intake_open(s)):
+            return {"projects": [], "team": s, "open": False}   # fail-closed; `open:false` marks a rejected scope
+        scoped = s
     raw = []
     try:
-        for d in sorted(os.listdir(TENANTS_DIR)):
+        teams = [scoped] if scoped else [
+            d for d in sorted(os.listdir(TENANTS_DIR))
             if (os.path.isdir(os.path.join(TENANTS_DIR, d))
-                    and re.match(r"^[a-z0-9]+$", d) and _intake_open(d)):
-                for prod in _intake_projects(d):
-                    raw.append({"team": d, "product": prod})
+                and re.match(r"^[a-z0-9]+$", d) and _intake_open(d))]
+        for d in teams:
+            for prod in _intake_projects(d):
+                raw.append({"team": d, "product": prod})
     except FileNotFoundError:
         pass
     dup = {}
@@ -1777,7 +1795,10 @@ def intake_projects_list():
             "label": r["product"] if dup[r["product"]] == 1
                      else f'{r["product"]} · {_intake_label(r["team"])}'} for r in raw]
     out.sort(key=lambda x: x["label"].lower())
-    return {"projects": out}
+    resp = {"projects": out}
+    if scoped:
+        resp["team"] = scoped; resp["open"] = True   # `open:true` + projects:[] = a genuinely empty open team
+    return resp
 
 @app.get("/api/intake/config/{team}")
 def intake_team_config(team: str):
@@ -2390,9 +2411,18 @@ function showErr(m){var e=$('#msg');e.textContent=m;e.className='msg err'}
 function clearErr(){$('#msg').className='msg'}
 var _projects=[], _selTeam='', _selProduct='';
 async function loadProjects(){
-  try{ var d=await (await fetch('/api/intake/projects')).json(); _projects=d.projects||[];
+  try{
+    // PORTAL-SCOPE-1: forward the page's team param so the SERVER scopes the list (fail-closed).
+    // qs.get is null when the param is ABSENT (=> all teams) and '' when present-but-empty (=> server
+    // returns none). This is server-side scoping, NOT a client filter - the all-teams response is
+    // never fetched once a team is given.
+    var _pt=qs.get('team');
+    var d=await (await fetch('/api/intake/projects'+(_pt!==null?('?team='+encodeURIComponent(_pt)):''))).json();
+    _projects=d.projects||[];
     $('#project').innerHTML='<option value="">Select a project…</option>'+_projects.map(function(p,i){return '<option value="'+i+'">'+esc(p.label)+'</option>'}).join('');
-    var pp=qs.get('product'), pt=qs.get('team'), idx=-1;
+    // Keep preselection for the ?product= deep-link (now near-redundant for team, but it still picks a
+    // specific product WITHIN the scoped team). pt lowercased so ?team=IT preselects like the server scopes.
+    var pp=qs.get('product'), pt=(_pt||'').toLowerCase(), idx=-1;
     for(var i=0;i<_projects.length;i++){ if(_projects[i].product===pp && (!pt||_projects[i].team===pt)){ idx=i; break; } }
     if(idx>=0){ $('#project').value=String(idx); selectProject(idx); }
   }catch(e){ $('#project').innerHTML='<option value="">Unavailable</option>'; }
