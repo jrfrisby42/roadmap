@@ -20301,12 +20301,17 @@ if ('serviceWorker' in navigator) {
     // whenever SLA is ENABLED, even when nothing is measured yet (S6 can exclude every item on
     // day one) - showing zeroes plus the explanatory line (_rptSlaNoteHtml) instead of vanishing.
     if(slaTargets && slaTargets.enabled){
-      // D10: "Breached" = ALL past target, both internal kinds `breached` (open) and `missed` (resolved
-      // late) - both display "Breached" and the user means "past target". This makes the tile count equal
-      // the drill result (acceptance 2 + 4). `paused` is excluded here - it lives in the PAUSED tile (S5).
+      // RPT-DRILL-1 D4 (deliberate, do NOT "fix" the asymmetry back): the PAST TARGET tile counts BOTH
+      // internal kinds `breached` (open, currently failing) AND `missed` (terminal, finished late). Both
+      // are "past their SLA target"; the internal key names differ from the display vocabulary on purpose
+      // (the parity fixture asserts on the kinds; 5.20.2 retired "Missed"/"Overdue" from user copy). The
+      // label is "Past target" (not "breached") so it accurately spans open + resolved-late, and its count
+      // equals the drill result (acceptance 2 + 4). `paused` is excluded - it has its own tile (S5). The
+      // AT RISK tile below is OPEN-ONLY BY NATURE (a resolved item is either met or past target), so its
+      // "open" sub-label is correct and intentionally NOT symmetric with this tile.
       var pPast=function(r){return r.slaKind==='breached'||r.slaKind==='missed';};
       var judged=cnt(rows, function(r){return r.slaKind==='met'||r.slaKind==='missed';}), metN=cnt(rows, function(r){return r.slaKind==='met';});
-      tiles.push({label:'Resolution SLA breached', value:tileN(pPast), sub:'past target', warn:cnt(rows,pPast)>0, drill:{k:'rsla',v:'breached'}});
+      tiles.push({label:'Past target', value:tileN(pPast), sub:'open + resolved late', warn:cnt(rows,pPast)>0, drill:{k:'rsla',v:'breached'}});
       tiles.push({label:'Resolution SLA at risk',  value:tileN(function(r){return r.slaKind==='atrisk';}),  sub:'open', drill:{k:'rsla',v:'atrisk'}});
       tiles.push({label:'Paused',                  value:tileN(function(r){return r.slaKind==='paused';}),  sub:'clock stopped', drill:{k:'rsla',v:'paused'}});   // S5/D9: render even at zero
       tiles.push({label:'Within resolution SLA',   value:(judged ? Math.round(metN/judged*100)+'% ('+metN+'/'+judged+')' : 'n/a'), sub:'resolved in window', drill:{k:'rsla',v:'met'}});
