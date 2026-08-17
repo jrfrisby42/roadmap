@@ -4350,6 +4350,36 @@ def delete_project(pid: int, username: str = "",
 _ITEMS_SORTABLE = {"updated_ts", "item_key", "status", "type", "product",
                    "owner", "assignee", "priority", "story_points", "sprint_id", "id"}
 
+# ── FN5: the FLAGGED predicate, single source ──────────────────────────────────────────────────────
+# An item is "flagged" iff it has an activity of a user-raisable FLAG_TYPE whose status is NOT terminal
+# (unresolved). Defined by EXCLUSION of terminal states, not by enumerating Open/Read, so a new
+# non-terminal activity state does not silently fall out of the filter. This SAME definition must be
+# used by: the List filter (below), the flagged-ids endpoint (Kanban), the client dot/Kanban mirror, and
+# FN2's notify hook when it lands - a parity test (tests/test_flag_parity.py) fails if the halves drift.
+# The three types are exactly what the Flag Issue modal offers (roadmap.html flagType select).
+FLAG_TYPES = ("At Risk", "Blocked", "Needs Decision")
+# Terminal (resolved) activity states - mirrors the local set in the resolve-activity handler.
+FLAG_TERMINAL_STATUSES = ("Resolved", "Approved", "Rejected", "Dismissed", "Auto-Cleared")
+
+def _flagged_item_ids(team: str) -> set:
+    """Item ids with at least one UNRESOLVED flag activity. Uncapped (reads the full activities table,
+    NOT the latest-500 /api/activities window), so it is correct at any activity volume."""
+    qmarks_t = ",".join("?" * len(FLAG_TYPES))
+    qmarks_s = ",".join("?" * len(FLAG_TERMINAL_STATUSES))
+    with db(team) as c:
+        rows = c.execute(
+            f"SELECT DISTINCT item_id FROM activities WHERE item_id IS NOT NULL "
+            f"AND activity_type IN ({qmarks_t}) AND status NOT IN ({qmarks_s})",
+            (*FLAG_TYPES, *FLAG_TERMINAL_STATUSES)
+        ).fetchall()
+    return {r["item_id"] for r in rows}
+
+@app.get("/api/items/flagged-ids")
+def flagged_item_ids(auth: dict = Depends(require_auth)):
+    """FN5: the uncapped set of flagged item ids, for the client-side (Kanban) filter - which must not
+    inherit the /api/activities latest-500 window. Any authed user; read-only."""
+    return {"ids": sorted(_flagged_item_ids(auth["team"]))}
+
 @app.get("/api/items")
 def list_items(
     auth: dict = Depends(require_auth),
@@ -4364,6 +4394,7 @@ def list_items(
     q: Optional[str] = None,
     priority: Optional[str] = None,
     department: Optional[str] = None,
+    flag: Optional[str] = None,        # FN5: '1' -> only items with an unresolved flag (server-side, uncapped)
     sort: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
@@ -4424,6 +4455,16 @@ def list_items(
             _clauses.append("id NOT IN (SELECT item_id FROM item_departments)")
         if _clauses:
             where.append("(" + " OR ".join(_clauses) + ")")
+
+    # FN5: flag filter - only items with an UNRESOLVED flag activity. Server-side subquery over the FULL
+    # activities table (not the /api/activities latest-500 window), so it is correct at any volume and
+    # constrains BOTH the COUNT(*) total and the page. Uses the single-source FLAG_TYPES/terminal sets.
+    if flag not in (None, "") and str(flag).lower() in ("1", "true", "yes"):
+        _ft = ",".join("?" * len(FLAG_TYPES))
+        _fs = ",".join("?" * len(FLAG_TERMINAL_STATUSES))
+        where.append(f"id IN (SELECT DISTINCT item_id FROM activities WHERE item_id IS NOT NULL "
+                     f"AND activity_type IN ({_ft}) AND status NOT IN ({_fs}))")
+        params.extend(FLAG_TYPES); params.extend(FLAG_TERMINAL_STATUSES)
 
     # PHASE B: a Contributor sees only their read set. Added to `where`, so it constrains
     # BOTH the COUNT(*) (scoped total) and the page query - pagination can't report rows
