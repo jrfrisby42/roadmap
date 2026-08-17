@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.22.12';
+const APP_VERSION = '5.22.14';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -7446,6 +7446,10 @@ document.querySelectorAll('.admin-tab').forEach(tab => {
     if(tab.dataset.tab === 'teamSettingsTab') openTeamSettingsTab();
     if(tab.dataset.tab === 'deptTab') renderDepartments();
     if(tab.dataset.tab === 'assignmentsTab') renderAssignmentTypesList();
+    // ADMIN-URL-1: reflect the sub-tab in the URL, but ONLY in the Flow shell. This handler runs on the
+    // SHARED .admin-modal DOM, which is ALSO the classic modal (frz-beta-active absent there) - the
+    // classic modal must never push /admin history entries.
+    if(document.body.classList.contains('frz-beta-active') && window._frzAdminEmitSub) window._frzAdminEmitSub(tab.dataset.tab);
   });
 });
 
@@ -19208,11 +19212,8 @@ if ('serviceWorker' in navigator) {
     var tsA=document.createElement('div'); tsA.id='frzTeamAccess'; tsA.style.cssText='max-width:760px;margin:16px auto 40px'; paneAccess.appendChild(tsA);
     _admTabs.addEventListener('click', function(e){
       var b=e.target.closest('[data-admtab]'); if(!b) return;
-      var t=b.getAttribute('data-admtab'); state.adminTab=t;
-      [].slice.call(_admTabs.querySelectorAll('.frz-plan-tab')).forEach(function(x){ x.classList.toggle('is-active', x.getAttribute('data-admtab')===t); });
-      paneConfig.style.display = t==='config' ? '' : 'none';
-      paneIntegr.style.display = t==='integrations' ? '' : 'none';
-      paneAccess.style.display = t==='access' ? '' : 'none';
+      _setAdminTopTab(b.getAttribute('data-admtab'));   // ADMIN-URL-1: apply the top-level pane...
+      _adminEmitURL();                                   // ...and reflect it in the URL (pushState, no re-render)
     });
     // Team Calendar (Phase 2): Flow-owned view, Month/Week/Timeline sub-tabs.
     var cal = document.createElement('div');
@@ -19851,6 +19852,7 @@ if ('serviceWorker' in navigator) {
     var base = '/'+view;
     if (view==='planning' && state.planTab && state.planTab!=='plan') base = '/planning/'+state.planTab;  // planning sub-tab is URL state
     if (view==='my-home' && state.homeTab && state.homeTab!=='assigned') base = '/my-home/'+state.homeTab;  // home sub-tab is URL state
+    if (view==='admin') base = _adminPathFromState();  // ADMIN-URL-1: admin tab is URL state (Owners default -> bare /admin)
     if (view==='team-calendar' && state.calTab && state.calTab!=='month') base = '/team-calendar/'+state.calTab;  // Stage 2c: tab is path state
     var url = base + (qs?('?'+qs):'');
     var st = { frzView:view };
@@ -19988,6 +19990,56 @@ if ('serviceWorker' in navigator) {
     _frzSyncSearchMode();   // top-bar search = global "Search items" (jump), like the item page
     renderHome();
   }
+  // ── ADMIN-URL-1: per-admin-tab URL addressability (routing only) ─────────────────────────────────
+  // Flat slug space - the sub-tab names are already unique, so a nested /admin/configuration/statuses
+  // buys nothing and lengthens both URLs and the regexes. Each slug maps to a (top-level pane,
+  // Configuration sub-tab) PAIR, because the admin surface has TWO independent tab systems: the 3
+  // top-level panes (data-admtab, Flow-shell only) and the 10 re-parented classic .admin-tab sub-tabs.
+  // Slugs are explicit and stable - NEVER derived from display labels, so a label edit cannot silently
+  // break a saved link. Owners is the default sub-tab, so it keeps BARE /admin (today's behaviour),
+  // not /admin/owners. NOTE: the three top-level view regexes (navigate/routeFromLocation/popstate) are
+  // deliberately UNCHANGED - `/^\/(...|admin|...)/` already matches /admin/<slug> as view 'admin'; only
+  // the per-view sub-path PARSE is added in those three, mirroring planning/my-home/team-calendar.
+  var _ADMIN_SLUG_TO_TAB = {
+    'owners':{top:'config',sub:'devTab'},        'projects':{top:'config',sub:'productTab'},
+    'types':{top:'config',sub:'typesTab'},       'statuses':{top:'config',sub:'statusTab'},
+    'reasons':{top:'config',sub:'delayTab'},     'departments':{top:'config',sub:'deptTab'},
+    'users':{top:'config',sub:'usersTab'},       'assignments':{top:'config',sub:'assignmentsTab'},
+    'data':{top:'config',sub:'dataTab'},         'team-settings':{top:'config',sub:'teamSettingsTab'},
+    'integrations':{top:'integrations'},         'views-access':{top:'access'}
+  };
+  var _ADMIN_SUB_TO_SLUG = {}, _ADMIN_TOP_TO_SLUG = {};
+  Object.keys(_ADMIN_SLUG_TO_TAB).forEach(function(slug){ var t=_ADMIN_SLUG_TO_TAB[slug];
+    if(t.sub) _ADMIN_SUB_TO_SLUG[t.sub]=slug; else _ADMIN_TOP_TO_SLUG[t.top]=slug; });
+  function _adminTargetFromPath(path){   // /admin[/slug] -> {top, sub}; bare /admin or unknown slug -> default
+    var m=(path||'').match(/^\/admin\/([a-z-]+)/); var t=m?_ADMIN_SLUG_TO_TAB[m[1]]:null;
+    if(!t) return {top:'config', sub:'devTab'};
+    return {top:t.top, sub:t.sub||'devTab'};
+  }
+  function _adminPathFromState(){   // canonical path for the active tab state (Owners default -> bare /admin, per 1.2.5)
+    var top=state.adminTab||'config';
+    if(top!=='config') return '/admin/'+(_ADMIN_TOP_TO_SLUG[top]||'');
+    var sub=state.adminSubTab||'devTab';
+    return sub==='devTab' ? '/admin' : '/admin/'+(_ADMIN_SUB_TO_SLUG[sub]||'');
+  }
+  function _setAdminTopTab(t){   // APPLY only (no URL write): toggle the top-level pane + its tab highlight
+    state.adminTab=t;
+    [].slice.call(document.querySelectorAll('[data-admtab]')).forEach(function(x){ x.classList.toggle('is-active', x.getAttribute('data-admtab')===t); });
+    var pc=document.getElementById('frzAdminPane_config'), pi=document.getElementById('frzAdminPane_integrations'), pa=document.getElementById('frzAdminPane_access');
+    if(pc) pc.style.display = t==='config' ? '' : 'none';
+    if(pi) pi.style.display = t==='integrations' ? '' : 'none';
+    if(pa) pa.style.display = t==='access' ? '' : 'none';
+  }
+  function _adminEmitURL(){   // PUSH only (no re-render): the DOM was already switched by the handler
+    if(state.view!=='admin') return;
+    var p=_adminPathFromState()+location.search;
+    if((location.pathname.replace(/\/+$/,'')+location.search)!==p) history.pushState({frzView:'admin'},'',p);
+  }
+  // Exposed for the classic sub-tab handler (roadmap.html:7439), which runs on the SHARED .admin-modal
+  // DOM in BOTH the classic modal and the re-parented Flow page. That handler guards this on
+  // frz-beta-active so the classic modal never pushes /admin history entries.
+  window._frzAdminEmitSub = function(subTabId){ state.adminTab='config'; state.adminSubTab=subTabId; _adminEmitURL(); };
+
   function setAdmin(){
     // Flow-owned full page (like My Home). Admins only.
     if(!_val('isAdmin', false)){ navigate('/gantt', true); return; }
@@ -20005,8 +20057,12 @@ if ('serviceWorker' in navigator) {
     document.getElementById('frzFilterBar').innerHTML='';   // Admin has no chip filter bar
     renderRail();
     _frzSyncSearchMode();
-    _call('renderAdminPanes','devTab');
+    // ADMIN-URL-1: apply the tab seeded by the route parse (state.adminTab/adminSubTab), not a hardcoded
+    // Owners. renderAdminPanes activates + inits the sub-tab; _setAdminTopTab activates the top pane.
+    var _asub = state.adminSubTab || 'devTab';
+    _call('renderAdminPanes', _asub);
     renderTeamSettings();   // Team Admin: (re)build the per-team settings panel below the classic admin box
+    _setAdminTopTab(state.adminTab || 'config');
   }
   function setCalendar(tab){
     // Flow-owned Team Calendar view (like My Home). Any logged-in role.
@@ -22145,6 +22201,7 @@ if ('serviceWorker' in navigator) {
     if (!_viewEnabled(view)){ navigate('/'+_firstEnabledView(), replace); return; }
     if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
     if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
+    if (view==='admin'){ var _adt=_adminTargetFromPath(path); state.adminTab=_adt.top; state.adminSubTab=_adt.sub; }   // ADMIN-URL-1: sub-path -> tab (regex above unchanged)
     if (view==='team-calendar'){ state.calTab = _calTabFromURL(path, u.searchParams); _calSeedDateFromURL(u.searchParams); _calSeedFiltersFromURL(u.searchParams); }   // Stage 2c/5a: tab + period + filters before render/syncURL
     applyURLToFilters(view, u.searchParams);
     setView(view);
@@ -22191,6 +22248,7 @@ if ('serviceWorker' in navigator) {
       // reads it. With it set, syncURL preserves ?release= and renderReleasesTab auto-expands the row.
       state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }
     if (vm[1]==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
+    if (vm[1]==='admin'){ var _adt2=_adminTargetFromPath(path); state.adminTab=_adt2.top; state.adminSubTab=_adt2.sub; }   // ADMIN-URL-1: cold-load sub-path -> tab (regex above unchanged)
     if (vm[1]==='team-calendar'){ var _csp=new URLSearchParams(location.search); state.calTab = _calTabFromURL(path, _csp); _calSeedDateFromURL(_csp); _calSeedFiltersFromURL(_csp); }   // Stage 2c/5a: seed tab + period + filters BEFORE the syncURL below (or the params get stripped on cold load)
     applyDefaultCollapse(vm[1]);
     applyURLToFilters(vm[1], new URLSearchParams(location.search));
@@ -22214,6 +22272,7 @@ if ('serviceWorker' in navigator) {
       if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
         state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }   // Stage 1b: seed before rerender (popstate doesn't syncURL, but keep symmetric + avoids a stale-expand flash)
       if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
+      if (view==='admin'){ var _adt3=_adminTargetFromPath(path); state.adminTab=_adt3.top; state.adminSubTab=_adt3.sub; }   // ADMIN-URL-1: back/forward sub-path -> tab (regex above unchanged)
     if (view==='team-calendar'){ var _psp=new URLSearchParams(location.search); state.calTab = _calTabFromURL(path, _psp); _calSeedDateFromURL(_psp); _calSeedFiltersFromURL(_psp); }   // Stage 2c/5a: tab + period + filters on back/forward
       applyURLToFilters(view, new URLSearchParams(location.search));
       setView(view);
