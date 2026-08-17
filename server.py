@@ -1426,7 +1426,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.22.9"
+APP_VERSION = "5.22.10"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -6100,13 +6100,28 @@ def get_jira_tickets(body: dict = Body(...), auth: dict = Depends(require_auth))
 
 # ── Activities ────────────────────────────────────────────────────────────────
 @app.get("/api/activities")
-def get_activities(auth: dict = Depends(require_auth)):
+def get_activities(status: Optional[str] = None, auth: dict = Depends(require_auth)):
     team = auth["team"]
     with db(team) as c:
-        rows = c.execute("SELECT * FROM activities ORDER BY id DESC LIMIT 500").fetchall()
+        if status is not None and str(status).lower() == "open":
+            # ACT-WINDOW-1: the unresolved set is a WORK QUEUE, not a recency sample. The default path
+            # below is the latest-500 window (fine for History), but on a busy team routine `Action Taken`
+            # bookkeeping (the dominant type) evicts still-open flags from it, so the Activity Center Open
+            # tab, the indicator dot and the At-Risk tiles silently miss items that need attention. This
+            # branch returns EVERY unresolved activity, UNBOUNDED - defined by EXCLUSION of the terminal
+            # set (shared with FN5's FLAG_TERMINAL_STATUSES, so a future non-terminal status stays in),
+            # mirroring _flagged_item_ids. Safe unbounded because unresolved rows are sparse - the
+            # terminal `Action Taken` bulk is excluded by construction.
+            _fs = ",".join("?" * len(FLAG_TERMINAL_STATUSES))
+            rows = c.execute(
+                f"SELECT * FROM activities WHERE status NOT IN ({_fs}) ORDER BY id DESC",
+                tuple(FLAG_TERMINAL_STATUSES)
+            ).fetchall()
+        else:
+            rows = c.execute("SELECT * FROM activities ORDER BY id DESC LIMIT 500").fetchall()
         # PHASE B: activity rows carry item_name/owner/project, so unscoped they leak titles
         # of work a Contributor cannot see. Filter to their read set; rows with no item_id
-        # (system-wide notices) are kept - they name no specific item.
+        # (system-wide notices) are kept - they name no specific item. Applies to BOTH paths.
         if auth.get("role") == "contributor":
             readable = _contributor_readable_ids(c, auth)
             rows = [r for r in rows if r["item_id"] is None or r["item_id"] in readable]

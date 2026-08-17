@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.22.9';
+const APP_VERSION = '5.22.10';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -9534,14 +9534,56 @@ const AC_SORT_ORDER = {
   'Flagged Issue':3, 'Admin Override':4, 'Capacity Conflict':3
 };
 
+// ── ACT-WINDOW-1: server-authoritative unresolved-activity set ────────────────
+// The Activity Center Open tab, the indicator dot, the Dashboard At Risk / Blocked /
+// Needs-Decision tiles, the Planning at-risk bucket, the sys_atrisk saved view and
+// the unread badge are WORK QUEUES: each must reflect EVERY unresolved activity, not
+// the latest-500 /api/activities window that `activities` holds. On a busy team,
+// routine `Action Taken` bookkeeping (413 of 500 rows on dev) evicts still-open flags
+// from that window, so those consumers silently miss items that need attention (see
+// ACT-WINDOW-RECON). This set is fetched UNCAPPED from /api/activities?status=open
+// (status NOT IN the terminal set, server-side), mirroring FN5's _flaggedIds. The
+// History-style consumers keep the capped `activities` array on purpose. State model:
+//   _openActs === null  -> not loaded yet (LOADING; never treat as "empty"/all-clear)
+//   _openActs === []/[.] -> loaded (may legitimately be empty)
+//   _openActsErr === true -> last fetch failed (show error, not "all clear")
+let _openActs = null, _openActsErr = false, _openActsInited = false, _openActsLoading = false;
+function _fetchOpenActs(){
+  // Always fetch fresh - loadActivities() calls this after every activity mutation, so it must
+  // not return a coalesced pre-mutation result. Defensive/cold reads use _ensureOpenActs() below.
+  _openActsLoading = true;
+  return API.get('/api/activities?status=open').then(rows => {
+    _openActs = Array.isArray(rows) ? rows : [];
+    _openActsErr = false; _openActsLoading = false;
+    // The first load can land AFTER the initial render() (boot races the capacity chain against
+    // loadActivities). Repaint once so the dot/tiles that painted before the set arrived upgrade
+    // from the cold window to the full set.
+    if(!_openActsInited){ _openActsInited = true; try { render(); } catch(e){} }
+    return _openActs;
+  }).catch(() => {
+    _openActsErr = true; _openActsLoading = false;   // never flip a good set to null on a transient failure
+    return (_openActs || []);                         // a cold failure leaves _openActs===null -> consumers show LOADING/ERROR, not "all clear"
+  });
+}
+function _ensureOpenActs(){
+  // Fetch only if nothing is loaded and nothing is in flight (used by defensive cold-path reads).
+  if(_openActs !== null || _openActsLoading) return Promise.resolve(_openActs || []);
+  return _fetchOpenActs();
+}
+
 async function loadActivities(){
-  try { activities = await API.get('/api/activities'); } catch(e){ activities = []; }
+  // Load BOTH in parallel: the capped feed (History consumers) and the uncapped open set (work
+  // queues). Both settle before updateActivityBadge(), so the badge never computes off a null set.
+  const capped = API.get('/api/activities').then(r => { activities = Array.isArray(r) ? r : []; })
+                                            .catch(() => { activities = []; });
+  await Promise.all([ capped, _fetchOpenActs() ]);
   updateActivityBadge();
 }
 
 function openActivities(){
+  // ACT-WINDOW-1: sourced from the uncapped open set, not the latest-500 `activities` window.
   const scope = isEditor ? getCurrentOwnerFilter() : null;
-  return activities.filter(a => {
+  return (_openActs || []).filter(a => {
     if(scope && a.owner !== scope) return false;
     return a.status === 'Open' || a.status === 'Read';
   });
@@ -9606,6 +9648,19 @@ const AC_STATUS_COLOR = {
 
 function renderAcOpen(){
   const pane = document.getElementById('acPaneOpen');
+  if(!pane) return;
+  // ACT-WINDOW-1: the open set is server-sourced and may not have loaded yet. A pending or failed
+  // fetch must NOT render as "All clear" - that is the silent-wrong answer this fix removes. Show a
+  // distinct Loading / Retry state and repaint when the set lands.
+  if(_openActs === null){
+    _ensureOpenActs().then(()=>{ if(document.getElementById('acPaneOpen')) renderAcOpen(); });
+    pane.innerHTML = _openActsErr
+      ? `<div style="text-align:center;padding:48px 20px;color:var(--muted)">
+           <strong>Couldn't load open items.</strong>
+           <div style="margin-top:10px"><button onclick="renderAcOpen()" style="padding:6px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer">Retry</button></div></div>`
+      : `<div style="text-align:center;padding:48px 20px;color:var(--muted)">Loading open items…</div>`;
+    return;
+  }
   const ownerFilter = getCurrentOwnerFilter();
   // Sort: user-generated first (by severity then newest), system-generated at bottom (newest)
   const isSystemActivity = a => a.source === 'System' || a.created_by === 'System';
@@ -10209,7 +10264,12 @@ function getItemActivityIndicator(itemId){
   // FN5: "active" = not in a terminal state (shared exclusion), not the enumerated Open/Read, so a new
   // non-terminal activity state stays lit. Type scope stays broader than FLAG_TYPES on purpose - this dot
   // is a general activity indicator (incl. Needs Date Check / Flagged Issue), not only the 3 flag types.
-  const open = activities.filter(a => a.item_id===itemId && FLAG_TERMINAL_STATUSES.indexOf(a.status)<0);
+  // ACT-WINDOW-1: source the dot from the uncapped open set, not the latest-500 `activities` window,
+  // so an item whose flag activity aged out of that window still lights. While the set is loading
+  // (_openActs===null, only the sub-second cold-boot window) no dot paints; _fetchOpenActs() repaints
+  // once via its first-load nudge. Type scope is unchanged - the return branches below still fire only
+  // for the 5 indicator types even though _openActs carries every non-terminal type.
+  const open = (_openActs || []).filter(a => a.item_id===itemId && FLAG_TERMINAL_STATUSES.indexOf(a.status)<0);
   if(!open.length) return '';
   const types = open.map(a=>a.activity_type);
   if(types.some(t=>t==='Blocked'))          return `<span style="color:#e8394a;font-size:10px;cursor:pointer" onclick="openConflictActivityModal(${itemId});event.stopPropagation();" title="Blocked"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="10" height="10" fill="#e8394a" style="display:inline-block;vertical-align:middle"><circle cx="8" cy="8" r="6"/></svg></span>`;
@@ -10872,11 +10932,16 @@ function renderDashboard(){
   const terminalItems = items.filter(p => isTerminalStatus(p.status));
   const releasedItems = items.filter(p => statusIsReleased[p.status] && p.releaseDate);
 
-  const atRiskActs  = activities.filter(a=>a.activity_type==='At Risk'&&(a.status==='Open'||a.status==='Read'));
+  // ACT-WINDOW-1: the At Risk / Blocked / Needs-Decision tiles are work-queue counts, so they read the
+  // uncapped open set, not the latest-500 `activities` window. _openReady=false only in the cold-boot
+  // window; the tiles show "…" (distinct from a real "0") and repaint via the fetch's first-load nudge.
+  const _openReady = _openActs !== null;
+  const _openSrc   = _openActs || [];
+  const atRiskActs  = _openSrc.filter(a=>a.activity_type==='At Risk'&&(a.status==='Open'||a.status==='Read'));
   const atRiskIds   = new Set(atRiskActs.map(a=>a.item_id));
   const atRiskItems = items.filter(p=>atRiskIds.has(p.id)&&!isTerminalStatus(p.status));
 
-  const blockedActs  = activities.filter(a=>a.activity_type==='Blocked'&&(a.status==='Open'||a.status==='Read'));
+  const blockedActs  = _openSrc.filter(a=>a.activity_type==='Blocked'&&(a.status==='Open'||a.status==='Read'));
   const blockedItems = items.filter(p=>blockedActs.some(a=>a.item_id===p.id));
 
   // Releases (unique release numbers)
@@ -10917,8 +10982,10 @@ function renderDashboard(){
     return units > eff + 0.001;
   });
 
-  // Needs Decision - start date arrived, not active
-  const needsDecisionActs = activities.filter(a=>a.activity_type==='Needs Decision'&&a.source==='System'&&(a.status==='Open'||a.status==='Read'));
+  // Needs Decision - start date arrived, not active (ACT-WINDOW-1: uncapped open set, not the 500-window)
+  const needsDecisionActs = _openSrc.filter(a=>a.activity_type==='Needs Decision'&&a.source==='System'&&(a.status==='Open'||a.status==='Read'));
+  // Cold-boot only: repaint the dashboard once the open set lands, so the three tiles above leave "…".
+  if(!_openReady) _ensureOpenActs().then(()=>{ if(viewMode==='dashboard') renderDashboard(); });
 
   // Helper: click-to-filter card wrapper
   // Store function directly to avoid string eval and extension interference
@@ -10949,11 +11016,11 @@ function renderDashboard(){
       ()=>{ viewMode='gantt'; document.getElementById('viewSelect').value='gantt'; applyViewMode(); })}
     ${clickKpi('Active Items', activeItems.length, 'of '+items.filter(p=>!isTerminalStatus(p.status)).length+' in pipeline', 'var(--accent)',
       ()=>{ document.getElementById('statusDropBtn')?.click(); })}
-    ${clickKpi('At Risk', atRiskItems.length, atRiskItems.length>0?'needs attention':'all clear', atRiskItems.length>0?'var(--accent2)':'#22b96e',
+    ${clickKpi('At Risk', _openReady?atRiskItems.length:'…', !_openReady?'loading…':atRiskItems.length>0?'needs attention':'all clear', !_openReady?'var(--muted)':atRiskItems.length>0?'var(--accent2)':'#22b96e',
       ()=>{ openActivityCenter(); })}
-    ${clickKpi('Blocked', blockedItems.length, blockedItems.length>0?'needs resolution':'all clear', blockedItems.length>0?'var(--accent2)':'#22b96e',
+    ${clickKpi('Blocked', _openReady?blockedItems.length:'…', !_openReady?'loading…':blockedItems.length>0?'needs resolution':'all clear', !_openReady?'var(--muted)':blockedItems.length>0?'var(--accent2)':'#22b96e',
       ()=>{ openActivityCenter(); })}
-    ${clickKpi('Needs Decision', needsDecisionActs.length, 'start date passed', needsDecisionActs.length>0?'#f0c030':'#22b96e',
+    ${clickKpi('Needs Decision', _openReady?needsDecisionActs.length:'…', !_openReady?'loading…':'start date passed', !_openReady?'var(--muted)':needsDecisionActs.length>0?'#f0c030':'#22b96e',
       ()=>{ openActivityCenter(); })}
   </div>`;
 
@@ -11717,14 +11784,19 @@ document.getElementById('fChangeReason')?.addEventListener('change', ()=>{
 
 // ── ACTIVITY CENTER BADGE (UNREAD ONLY) ───────────────────────────────────────
 function unreadActivities(){
+  // ACT-WINDOW-1: unread count is a work-queue signal, so it reads the uncapped open set, not the
+  // latest-500 `activities` window (an unread Open activity aged out of that window was undercounted).
   const scope2 = isEditor ? getCurrentOwnerFilter() : null;
-  return activities.filter(a => {
+  return (_openActs || []).filter(a => {
     if(scope2 && a.owner !== scope2) return false;
     return a.status === 'Open';
   }); // unread = Open, scoped for editors
 }
 
 function updateActivityBadge(){
+  // Do not paint a badge off a set that has not loaded - that would flash a false "0". loadActivities()
+  // calls this only after the open set settles; other early callers just no-op until it is ready.
+  if(_openActs === null) return;
   const count = unreadActivities().length;
   const badge   = document.getElementById('hamburgerBadge');
   const countEl = document.getElementById('hamburgerActivityCount');
@@ -12210,8 +12282,11 @@ function applySavedView(viewId){
       dateFrom: '', dateTo: '', groupBy: 'developer', search: '', view: 'gantt'
     };
   } else if(sv.id === 'sys_atrisk'){
+    // ACT-WINDOW-1: derive the at-risk owner scope from the uncapped open set. Defensive cold path:
+    // if it has not loaded yet, fetch then re-apply, so the view never scopes off a partial window.
+    if(_openActs === null){ _ensureOpenActs().then(()=>applySavedView(viewId)); return; }
     const atRiskOwners = [...new Set(
-      activities.filter(a => a.activity_type==='At Risk' && (a.status==='Open'||a.status==='Read'))
+      (_openActs || []).filter(a => a.activity_type==='At Risk' && (a.status==='Open'||a.status==='Read'))
                 .map(a => a.owner).filter(Boolean)
     )];
     state = {
@@ -12437,8 +12512,10 @@ function getPlanningItems(){
   const fDept  = getSelectedDepartments();// null = all (opt-in Department chip)
   const fStatusFilters = getPlanningStatusFilters(); // null = all
   const searchQ = getSearchQuery();
-  // At-risk item IDs from open activities
-  const atRiskIds = new Set(activities.filter(a=>a.activity_type==='At Risk'&&(a.status==='Open'||a.status==='Read')).map(a=>a.item_id));
+  // At-risk item IDs from open activities (ACT-WINDOW-1: uncapped open set, not the 500-window; while it
+  // loads the board still shows every non-terminal item, just without the at-risk marker, then repaints).
+  if(_openActs === null) _ensureOpenActs().then(()=>{ if(viewMode==='planning') renderPlanningBoard(); });
+  const atRiskIds = new Set((_openActs||[]).filter(a=>a.activity_type==='At Risk'&&(a.status==='Open'||a.status==='Read')).map(a=>a.item_id));
 
   return projects.filter(p => {
     if(p.hidden) return false;
