@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.22.11';
+const APP_VERSION = '5.22.12';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -8049,7 +8049,17 @@ function _syncMaintDutyTypeSel(){
   const types = _assignmentTypes || [];
   sel.innerHTML = '<option value="">Auto-detect by name</option>' +
     types.map(t => `<option value="${escA(t.id)}" ${maintenanceDutyTypeId===t.id?'selected':''}>${esc(t.name||t.id)}</option>`).join('');
-  if(!sel._wired){ sel._wired = true; sel.addEventListener('change', ()=>{ maintenanceDutyTypeId = sel.value || ''; API.putConfig('maintenanceDutyTypeId', maintenanceDutyTypeId).catch(()=>{}); }); }
+  if(!sel._wired){ sel._wired = true; sel.addEventListener('change', async ()=>{
+    // PUTCONFIG-1: was API.putConfig(...) which does not exist (threw a TypeError before .catch, so the
+    // change never persisted and reverted on reload). Use the standard saveConfig path (PUT /api/config/
+    // {key}, admin-gated, shows the save badge). On failure, revert BOTH the global and the select so the
+    // in-memory value can't diverge from what persisted, and surface the error (no silent catch).
+    const prev = maintenanceDutyTypeId;
+    maintenanceDutyTypeId = sel.value || '';
+    try { await saveConfig('maintenanceDutyTypeId', maintenanceDutyTypeId); }
+    catch(e){ maintenanceDutyTypeId = prev; sel.value = prev;
+      if(typeof showToast==='function') showToast('Could not save the maintenance duty type: '+(e.message||e), 'error'); }
+  }); }
 }
 function renderAssignmentTypesList(){
   const list = document.getElementById('assignmentTypesList'); if(!list) return;
