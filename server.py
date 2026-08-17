@@ -1426,7 +1426,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.22.10"
+APP_VERSION = "5.22.11"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -4360,6 +4360,12 @@ _ITEMS_SORTABLE = {"updated_ts", "item_key", "status", "type", "product",
 FLAG_TYPES = ("At Risk", "Blocked", "Needs Decision")
 # Terminal (resolved) activity states - mirrors the local set in the resolve-activity handler.
 FLAG_TERMINAL_STATUSES = ("Resolved", "Approved", "Rejected", "Dismissed", "Auto-Cleared")
+# FN1/FN2 notify set: the flag types that raise a watcher notification on a user INSERT. Blocked is
+# EXCLUDED because flagging Blocked routes through a status PUT that already emits a watch_status
+# notification (notifying again here would double it); Blocked still AUTO-WATCHES the flagger via
+# FLAG_TYPES. Derived from FLAG_TYPES so "notify set is the flag set minus the one that self-notifies"
+# stays greppable, not a hand-maintained parallel list.
+FLAG_NOTIFY_TYPES = frozenset(FLAG_TYPES) - {"Blocked"}
 
 def _flagged_item_ids(team: str) -> set:
     """Item ids with at least one UNRESOLVED flag activity. Uncapped (reads the full activities table,
@@ -5610,6 +5616,49 @@ def _notify_on_comment(team, item_id, author, text, parent_id=None):
         except Exception as e:
             log.warning(f"[Intake] reporter comment email failed for {item_id}: {e}")
 
+def _notify_on_flag(body, team, item_id, activity_type):
+    """FN1+FN2+FN6: a user-raised flag (only the INSERT branch of _insert_activity, never the
+    dedupe-update branch) auto-watches the flagger and notifies the item's watchers. Best-effort: a
+    notification failure must never fail or roll back the activity insert.
+
+    Gating (FN2): source == 'User' (excludes the client rules-engine's source='System' auto-generation
+    of At Risk / Needs Decision, roadmap.html:10046/10081) AND activity_type in FLAG_TYPES. Keyed on the
+    allowlist + source, NEVER on status - a fresh insert is always 'Open', and 'non-terminal' is a
+    superset (e.g. IT's 12 SLA-clock rows carry status 'Info', non-terminal but neither Open nor Read)
+    that the allowlist deliberately excludes.
+      FN6 auto-watch: ALL FLAG_TYPES, incl. Blocked - its status PUT (roadmap.html:9902) routes through
+                      _notify_item_update, which watches the new ASSIGNEE (5574), not the actor, so
+                      without this the Blocked flagger would not be watching the item they just flagged.
+      FN1 notify:     FLAG_NOTIFY_TYPES only - Blocked drops out (its status change already emits
+                      watch_status; notifying again would double it).
+
+    The flagger (body['created_by'], set by submitFlagIssue at roadmap.html:9892) is passed as the notify
+    ACTOR. _notify excludes the actor, so the flagger is NOT notified about their own flag even though FN6
+    just made them a watcher - the ordering is safe because of that exclusion, not the sequence. If the
+    actor identity is ever dropped, the flagger self-notifies; the regression guard asserts F gets none.
+
+    First-flag-only, by design: the notify fires on INSERT only, so a re-flag of an item that already has
+    a non-terminal activity of that type takes the dedupe-update branch and is silent. On teams where
+    people acknowledge (status 'Read') but never resolve - all 21 unresolved on development are Read -
+    that is the NORMAL case, not an edge. Acceptable because ACT-WINDOW-1 keeps the item visible in the
+    Open queue, dot, tiles and filter regardless. Do NOT add a threshold, rate-limit, id bump, or
+    re-insert to 'fix' this - all four were assessed and rejected; the window fix removed the cause.
+    """
+    try:
+        if item_id is None or body.get("source") != "User" or activity_type not in FLAG_TYPES:
+            return
+        actor = body.get("created_by") or ""
+        _add_watchers(team, item_id, [actor])                   # FN6: flagger auto-watches (all flag types)
+        if activity_type in FLAG_NOTIFY_TYPES:                  # FN1: notify watchers (Blocked excluded)
+            name = body.get("item_name") or _item_name(team, item_id)
+            if activity_type == "At Risk":
+                msg = f"{actor} flagged {name} as At Risk"
+            else:  # Needs Decision
+                msg = f"{actor} flagged {name}: Needs Decision"
+            _notify(team, _get_watchers(team, item_id), "flag", item_id, name, msg, actor)
+    except Exception as e:
+        log.warning(f"[Flag notify] failed for item {item_id} ({activity_type}): {e}")
+
 # ── Portal reporter emails (external, best-effort) ────────────────────────────
 # Reporter of a portal ticket (source=='portal' + reporterEmail) gets emailed on
 # key lifecycle events: created (at submit), COMPLETED (→ terminal), DEFERRED
@@ -6174,6 +6223,9 @@ def _insert_activity(body: dict, team: str) -> dict:
         )
         new_id = cur.lastrowid
         row = c.execute("SELECT * FROM activities WHERE id=?", (new_id,)).fetchone()
+    # FN1+FN2+FN6: hook fires AFTER the insert commits, on the INSERT branch ONLY (the dedupe-update
+    # branch above returns before reaching here, so a re-flag never notifies). Best-effort inside.
+    _notify_on_flag(body, team, item_id, activity_type)
     return dict(row)
 
 @app.put("/api/activities/{aid}")
