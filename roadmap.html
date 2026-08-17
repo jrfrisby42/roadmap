@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.22.8';
+const APP_VERSION = '5.22.9';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -9518,6 +9518,16 @@ function updateHamburgerMenu(){
 let activities = [];
 let _flagItemId = null; // item being flagged
 
+// ── FN5: FLAGGED predicate, single client source (top-level so the classic dot + _listQuery AND the beta
+// shell all reach it). MUST equal server.py FLAG_TYPES / FLAG_TERMINAL_STATUSES - tests/test_flag_parity.py
+// fails if they drift. "flagged" = an activity of a user-raisable FLAG_TYPE whose status is NOT terminal
+// (unresolved), defined by EXCLUSION of terminal states so a new non-terminal activity state stays in.
+// The three types are exactly what the Flag Issue modal offers (flagType select).
+var FLAG_TYPES = ['At Risk','Blocked','Needs Decision'];
+var FLAG_TERMINAL_STATUSES = ['Resolved','Approved','Rejected','Dismissed','Auto-Cleared'];
+function _isActiveFlag(a){ return !!a && FLAG_TYPES.indexOf(a.activity_type)>=0 && FLAG_TERMINAL_STATUSES.indexOf(a.status)<0; }
+var _betaFlagged = false;   // FN5 "Flagged" toggle (list + kanban), global so classic _listQuery + beta shell share it
+
 const AC_SORT_ORDER = {
   'Blocked':2, 'At Risk':3, 'Pending Approval':4,
   'Due Date Change':4, 'Delay Date Change':4, 'Needs Decision':5, 'Needs Date Check':6,
@@ -10196,7 +10206,10 @@ async function runCapacityConflictNotifications(){
 
 // ── VISUAL INDICATORS IN LEFT PANEL ─────────────────────────────────────────
 function getItemActivityIndicator(itemId){
-  const open = activities.filter(a => a.item_id===itemId && (a.status==='Open'||a.status==='Read'));
+  // FN5: "active" = not in a terminal state (shared exclusion), not the enumerated Open/Read, so a new
+  // non-terminal activity state stays lit. Type scope stays broader than FLAG_TYPES on purpose - this dot
+  // is a general activity indicator (incl. Needs Date Check / Flagged Issue), not only the 3 flag types.
+  const open = activities.filter(a => a.item_id===itemId && FLAG_TERMINAL_STATUSES.indexOf(a.status)<0);
   if(!open.length) return '';
   const types = open.map(a=>a.activity_type);
   if(types.some(t=>t==='Blocked'))          return `<span style="color:#e8394a;font-size:10px;cursor:pointer" onclick="openConflictActivityModal(${itemId});event.stopPropagation();" title="Blocked"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="10" height="10" fill="#e8394a" style="display:inline-block;vertical-align:middle"><circle cx="8" cy="8" r="6"/></svg></span>`;
@@ -10352,6 +10365,7 @@ function _listQuery(){
   setMulti('assignee', getSelectedAssignees());   // top-bar multi-select (List only)
   setMulti('priority',   getSelectedPriorities());   // opt-in Priority chip (server /api/items)
   setMulti('department', getSelectedDepartments());  // opt-in Department chip (server item_departments index)
+  if(_betaFlagged) params.set('flag','1');   // FN5: server-side flagged filter (correct across pagination)
   const q = v('itemSearch'); if(q) params.set('q', q);   // shared header search box
   if(_listState.sort) params.set('sort', _listState.sort);
   params.set('page', _listState.page);
@@ -18577,8 +18591,8 @@ if ('serviceWorker' in navigator) {
   };
   var CFG = {
     gantt:    { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['groupby','legend','capacity'] },   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
-    kanban:   { chips:['owner','assignee','type','status'], extra:['sprint','priority','dept'], opts:['hideEmpty'] },             // Stage 2: +Assignee +Status · Stage 3: +Sprint (optional, via + Filter)
-    list:     { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['columns','export'] },
+    kanban:   { chips:['owner','assignee','type','status'], extra:['sprint','priority','dept'], opts:['flagged','hideEmpty'] },   // FN5: +Flagged toggle
+    list:     { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['flagged','columns','export'] },     // FN5: +Flagged toggle
     planning: { chips:['owner','status'],                   extra:['type','assignee','priority','dept'], opts:['whatif'] },   // What-if (Phase 0)
     dashboard:{ chips:['owner','range'],                    extra:[], opts:[] },
     'my-home':{ chips:[],                                   extra:[], opts:[] },  // Stage 5: personal landing, no chips
@@ -19611,11 +19625,12 @@ if ('serviceWorker' in navigator) {
   function optHTML(o){
     var map = {
       groupby:'Group by', legend:'Legend', capacity:'Capacity', whatif:'Scenario',   // Phase 1c: renamed display "What-if" -> "Scenario" (opt id stays 'whatif')
-      hideEmpty:'Hide empty columns', columns:'Columns', export:'Export', newSession:'New session', history:'History'
+      hideEmpty:'Hide empty columns', columns:'Columns', export:'Export', newSession:'New session', history:'History',
+      flagged:'Flagged'   // FN5: show only items with an unresolved flag (At Risk / Blocked / Needs Decision). NOT the SLA at-risk state.
     };
     var label = map[o]||o;
     if (o==='groupby'){ var gb=document.getElementById('groupBy'); var cur=gb?(gb.options[gb.selectedIndex]||{}).text:'Owner'; label='Group by: '+(cur||'Owner'); }
-    var activeStyle = (o==='hideEmpty' && _betaHideEmpty) || (o==='whatif' && _val('_scenarioActive',false))
+    var activeStyle = (o==='hideEmpty' && _betaHideEmpty) || (o==='flagged' && _betaFlagged) || (o==='whatif' && _val('_scenarioActive',false))
       ? ' style="border-color:var(--frz-accent);color:var(--frz-accent);background:var(--frz-accent-soft)"' : '';
     // Phase 1c: decision-tree glyph + explanatory tooltip on the Scenario button only.
     var titleAttr = (o==='whatif') ? ' title="Model plan changes without saving - see who\'s over-committed, then commit or discard."' : '';
@@ -19744,6 +19759,7 @@ if ('serviceWorker' in navigator) {
     if (view==='team-calendar' && state.calDate) params.set('d', _ymdLocal(state.calDate));  // Stage 2c: displayed period
     if (view==='team-calendar'){ var _cf=state.calFilter||{}; Object.keys(_CAL_FILTER_PARAMS).forEach(function(k){ if(_cf[k]) params.set(_CAL_FILTER_PARAMS[k], _cf[k]); }); }  // Stage 5a: filter chips in the URL
     if (view==='reports') _rptEmitURL(params);   // RPT-DRILL-1 Stage 2: report-owned r-prefixed controls (+ D4 drill dims when Stage 3 sets them)
+    if ((view==='list' || view==='kanban') && _betaFlagged) params.set('flag','1');   // FN5: the Flagged toggle in the URL (shareable)
     var qs = params.toString();
     var base = '/'+view;
     if (view==='planning' && state.planTab && state.planTab!=='plan') base = '/planning/'+state.planTab;  // planning sub-tab is URL state
@@ -19795,6 +19811,7 @@ if ('serviceWorker' in navigator) {
       if(ff) ff.value = qp.get('from')||''; if(ft) ft.value = qp.get('to')||'';
     }
     if (view==='reports') _rptSeedURL(qp);   // RPT-DRILL-1 Stage 2: seed report-local controls (+ D4 dims) from the URL; absent -> defaults
+    if (view==='list' || view==='kanban') _betaFlagged = (qp.get('flag')==='1');   // FN5: seed the Flagged toggle from the URL (absent -> off)
   }
 
   // ════════ view switching ════════
@@ -22684,6 +22701,15 @@ if ('serviceWorker' in navigator) {
     if (o==='whatif') { _call('enterScenario'); return; }   // What-if (Phase 0); exit via the banner
     if (o==='newSession'){ _call('openMyAccount'); /* placeholder: planning entry lives in classic */ _call('showToast','Use the Planning board controls'); return; }
     if (o==='history'){ _call('openActivityCenter'); return; }
+    if (o==='flagged'){   // FN5: toggle the Flagged filter (list + kanban); URL-encoded; server-authoritative ids
+      _betaFlagged=!_betaFlagged;
+      _invalidateFlaggedIds();   // refetch fresh each toggle (activities may have changed since last fetch)
+      syncURL(true);
+      if (state.view==='list'){ if(typeof _listState!=='undefined') _listState.page=1; renderList(); }
+      else renderBetaKanban();
+      renderBar();
+      return;
+    }
     if (o==='hideEmpty'){
       if (state.board && state.board!=='__all__'){ _betaHideEmpty=!_betaHideEmpty; renderBetaKanban(); renderBar(); }
       else _call('showToast','Hide empty columns applies to custom boards');
@@ -22859,13 +22885,23 @@ if ('serviceWorker' in navigator) {
   }
 
   // ════════ board kanban rendering + drag/drop (Feature A) ════════
+  // FN5: the Kanban filters projects[] client-side, so it must NOT derive "flagged" from the client
+  // `activities` array (the latest-500 /api/activities window). It fetches the SERVER's uncapped flagged-id
+  // set instead - correct at any activity volume, and consistent with the server-side List filter.
+  var _flaggedIds=null;   // Set of flagged item ids (server); null = NOT loaded yet (loading is not "empty")
+  function _ensureFlaggedIds(cb){
+    if(_flaggedIds){ if(cb) cb(); return; }
+    API.get('/api/items/flagged-ids').then(function(d){ _flaggedIds=new Set((d&&d.ids)||[]); if(cb) cb(); })
+      .catch(function(){ _flaggedIds=new Set(); if(cb) cb(); });   // fail -> empty (visible), never silently "all"
+  }
+  function _invalidateFlaggedIds(){ _flaggedIds=null; }
   function _kanbanFilteredItems(){
     var fDev=getSelectedDevs(), fProd=getSelectedProducts(), fType=getSelectedTypes(), fSt=getSelectedStatuses(), fAsg=getSelectedAssignees();
     var fPrio=getSelectedPriorities(), fDept=getSelectedDepartments();   // opt-in Priority/Department chips
     var ownerScope=_call('getCurrentOwnerFilter');
     var searchQ=((document.getElementById('itemSearch')||{}).value||'').trim().toLowerCase();
     var sprintScope=(state.view==='kanban' && _sprintFilterValid()) ? state.sprintFilter : '';   // Stage 3: only a valid (Planned/Active) sprint narrows; closed/unknown -> notice, not empty board
-    return (_val('projects',[])||[]).filter(function(p){
+    var arr=(_val('projects',[])||[]).filter(function(p){
       if(sprintScope && (p.sprintId||'')!==sprintScope) return false;
       if(p.hidden && _isRolledUpChild(p)) return false;   // hidden children roll up; hidden top-level shows on the board
       if(fDev && fDev.indexOf(p.dev||'')<0) return false;
@@ -22879,6 +22915,10 @@ if ('serviceWorker' in navigator) {
       if(searchQ && !_call('itemMatchesSearch',p,searchQ)) return false;
       return true;
     });
+    // FN5: narrow to flagged items using the SERVER id set (loaded by _ensureFlaggedIds; renderBetaKanban
+    // gates on the loading state so this is only reached once _flaggedIds is populated).
+    if(_betaFlagged && _flaggedIds){ arr=arr.filter(function(p){ return _flaggedIds.has(p.id); }); }
+    return arr;
   }
   function _kanbanSort(a,b){
     // Priority first so the most urgent work heads each column (Urgent=1 at the top; unset sinks
@@ -22960,6 +23000,13 @@ if ('serviceWorker' in navigator) {
         '<button class="frz-newitem" id="frzSprintClearScope">Show all items</button></div>';
       var cb=document.getElementById('frzSprintClearScope');
       if(cb) cb.addEventListener('click', function(){ state.sprintFilter=''; rerender(); renderBar(); renderRail(); syncURL(true); });
+      return;
+    }
+    // FN5: while the server flagged-id set is loading, show a loading state - NOT an empty board, which
+    // would read as "no flagged items" (the silent-wrong-answer class this whole design avoids).
+    if(_betaFlagged && !_flaggedIds){
+      inner.innerHTML='<div style="padding:44px;text-align:center;color:var(--frz-text-muted);font-size:13px">Loading flagged items…</div>';
+      _ensureFlaggedIds(function(){ if(state.view==='kanban' && _betaFlagged) renderBetaKanban(); });
       return;
     }
     var items=_kanbanFilteredItems();
@@ -24632,11 +24679,11 @@ if ('serviceWorker' in navigator) {
   function fmtBytes(n){ n=+n||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(0)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
   function attExt(name){ var m=/\.([A-Za-z0-9]+)$/.exec(name||''); return m?m[1].toUpperCase().slice(0,4):'FILE'; }
   // ════════ Flag Issue - surfaces the EXISTING production flag (an activity) ════
-  // Flag = an open activity of one of these types (production model + write path).
-  var FLAG_TYPES = ['At Risk','Needs Decision','Blocked'];
+  // FN5: uses the SINGLE-SOURCE flag predicate (_isActiveFlag = FLAG_TYPES + non-terminal, top-level),
+  // so the banner, the dot, the List/Kanban filter and FN2 all agree on what "flagged" means.
   function itemFlag(id){
     var acts=_val('activities',[])||[];   // newest-first (server returns id DESC)
-    for(var i=0;i<acts.length;i++){ var a=acts[i]; if(a.item_id===id && (a.status==='Open'||a.status==='Read') && FLAG_TYPES.indexOf(a.activity_type)>=0) return a; }
+    for(var i=0;i<acts.length;i++){ var a=acts[i]; if(a.item_id===id && _isActiveFlag(a)) return a; }
     return null;
   }
   function injectFlag(p){
