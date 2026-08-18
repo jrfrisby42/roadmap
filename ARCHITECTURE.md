@@ -27,10 +27,10 @@ Browser  ──HTTPS──▶  Caddy  ──HTTP──▶  gunicorn(uvicorn) ─
 Custom HMAC-signed tokens. Not JWT.
 
 - `TOKEN_SECRET` (env var, auto-generated random hex if absent) signs each token.
-- Token shape: base64(`username|team|role|expires_at`)`.`base64(hmac_sha256(payload, secret)).
+- Token shape: `base64url(team:username:role:expiry:sig)` - a SINGLE base64 blob of the colon-delimited payload `team:username:role:expiry` with the truncated HMAC-SHA256 signature appended as the last colon field (NOT `username|team|role` and NOT two base64 parts joined by a dot; ATTACH-URL-1 corrected this).
 - `require_auth` dependency parses `Authorization: Bearer <token>`, verifies signature, checks expiry, returns `{username, team, role}`.
 - `require_role("admin")` / `require_role("admin", "editor")` wraps `require_auth` and adds the role check.
-- Token lifetime: tokens carry an expiry; the client also checks it before sending. On 401, the client clears its session and re-shows the login modal.
+- Token lifetime: 24h ABSOLUTE (`_TOKEN_EXPIRY = 86400`), stamped at mint, never extended (no idle timeout, no renewal). The client does NOT pre-check expiry (it never decodes the token) - handling is REACTIVE: a server 401 is what triggers `API._check` to clear the session and re-show the login wall. (ATTACH-URL-1 corrected an earlier claim that the client checks expiry before sending.)
 
 **Roles:**
 
@@ -188,9 +188,11 @@ These are the keys you'll find inside `projects.data`. Not all are always presen
   "releaseNumber": "v2.7.1",
   "releaseNotes":  "...",
 
-  // Activity flags
-  "atRisk": false,
-  "blocked": false,
+  // Activity flags - LEGACY/DEAD: a flag is now an `activities` row (activity_type in
+  // {At Risk, Blocked, Needs Decision}, non-terminal status), NOT these item fields. These
+  // persisted booleans are unused by the flag/notify system (FLAG-NOTIF-1); do not read them.
+  "atRisk": false,     // DEAD - see the activities table
+  "blocked": false,    // DEAD - see the activities table
   "deferred": false,                    // set when an item is deferred via planning session
   "deferReason": "Resource Unavailable",
   "deferNote": "Waiting on vendor",

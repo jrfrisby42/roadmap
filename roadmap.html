@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.0.0';
+const APP_VERSION = '6.0.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2330,7 +2330,34 @@ const API = {
   async post(path,body) { return this._check(await fetch(path,{method:'POST',  headers:this._h(), body:JSON.stringify(body)})); },
   async put(path,body)  { return this._check(await fetch(path,{method:'PUT',   headers:this._h(), body:JSON.stringify(body)})); },
   async del(path)       { return this._check(await fetch(path,{method:'DELETE',headers:this._authHeaders()})); },
+  // ATTACH-URL-1: fetch a binary body (an attachment) WITH auth and return an object URL. An <img src>
+  // or <a href> cannot carry the bearer header, so attachments are fetched here and shown via a blob URL.
+  // 401 routes to the login wall the same way _check does (so an expired session is legible, not raw XML).
+  async getBlobURL(path){
+    const r = await fetch(path, {headers:this._authHeaders()});
+    if(r.status === 401){
+      try { localStorage.removeItem('frazil_token'); } catch(e){}
+      if(typeof showLoginWall === 'function') showLoginWall();
+      throw new Error('Session expired. Please log in again.');
+    }
+    if(!r.ok) throw new Error('Attachment load failed ('+r.status+')');
+    return URL.createObjectURL(await r.blob());
+  },
 };
+// ATTACH-URL-1: resolve a proxy URL into an <img> via a blob (auth-carrying), with a LEGIBLE failure
+// (broken placeholder + title) instead of the old silent broken-image icon. Global so both the classic
+// rehydrator and the beta module can call it. Revokes the object URL once the image has decoded.
+function _frzSetImgFromProxy(im, url){
+  if(!im || !url) return;
+  API.getBlobURL(url).then(function(u){
+    im.addEventListener('load', function(){ try { URL.revokeObjectURL(u); } catch(e){} }, {once:true});
+    im.src = u;
+  }).catch(function(){
+    im.removeAttribute('src'); im.alt = '(attachment unavailable)';
+    im.title = 'This attachment could not be loaded. Reload the page, or your session may have expired.';
+    im.classList.add('frz-att-broken');
+  });
+}
 
 // ── What-if scenario mode (Phase 0: substrate + safety spine) ─────────────────
 // A scenario is a snapshot-and-mutate-in-place of the five engine inputs (projects,
@@ -15752,8 +15779,8 @@ function rehydrateInlineImages(pid){
   API.get('/api/items/'+pid+'/attachments').then(res=>{
     const map = {};
     ((res && res.attachments) || []).forEach(a=>{ if(a.key) map[a.key] = a.url; });
-    imgs.forEach(im=>{ const k = im.getAttribute('data-att-key'); if(map[k]) im.src = map[k]; });
-  }).catch(()=>{});
+    imgs.forEach(im=>{ const k = im.getAttribute('data-att-key'); if(map[k]) _frzSetImgFromProxy(im, map[k]); });
+  }).catch(()=>{ imgs.forEach(im=>{ im.alt='(attachments unavailable)'; im.classList.add('frz-att-broken'); }); });   // ATTACH-URL-1: legible, not silent
 }
 
 // ── Item-page Description: render-then-edit controller (both shells) ──────────
@@ -18054,6 +18081,8 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-att-thumb:hover .frz-att-del, .frz-beta .frz-att-file:hover .frz-att-del { opacity:1; }
   .frz-beta .frz-att-thumb .frz-att-del { position:absolute; top:3px; right:3px; background:rgba(20,40,63,.72); color:#fff; }
   .frz-beta .frz-att-empty { font-size:12px; color:var(--frz-text-muted); padding:2px 0; }
+  /* ATTACH-URL-1: a failed attachment load is visible (dashed placeholder), not a silent broken icon. */
+  .frz-beta .frz-att-broken { min-width:80px; min-height:40px; border:1px dashed var(--frz-danger); border-radius:6px; padding:8px; font-size:11px; color:var(--frz-danger); display:inline-flex; align-items:center; }
   /* Stage 2b - Sprint history (item page, beta-injected) */
   .frz-beta .frz-sh-row { display:flex; align-items:center; gap:8px; font-size:12.5px; padding:6px 0; border-top:1px solid var(--frz-border); }
   .frz-beta .frz-sh-row:first-child { border-top:0; }
@@ -25582,14 +25611,20 @@ if ('serviceWorker' in navigator) {
         var isImg=/^image\//.test(a.contentType||'');
         var del=canEdit?'<button type="button" class="frz-att-del" data-del="'+escA(a.id)+'" title="Remove">✕</button>':'';
         var onJira = primary && a.jira && a.jira[primary];
+        // ATTACH-URL-1: a.url is the auth-proxy path. <img>/<a href> cannot carry the bearer header, so
+        // the thumbnail loads via fetch-to-blob (data-proxy) and open is a click that fetches then opens.
         if(isImg && a.url){
           var pip = onJira?'<span title="On '+escA(primary)+'" style="position:absolute;top:3px;left:3px;background:var(--frz-accent);color:#fff;font-size:9px;font-weight:800;border-radius:3px;padding:0 3px;line-height:1.5">↗</span>':'';
-          return '<div class="frz-att-thumb"><a href="'+escA(a.url)+'" target="_blank" rel="noopener"><img src="'+escA(a.url)+'" alt="'+escA(a.name)+'"></a>'+pip+del+'<div class="frz-att-cap" title="'+escA(a.name)+'">'+esc(a.name)+'</div></div>';
+          return '<div class="frz-att-thumb"><a data-open="'+escA(a.url)+'" style="cursor:pointer"><img data-proxy="'+escA(a.url)+'" alt="'+escA(a.name)+'"></a>'+pip+del+'<div class="frz-att-cap" title="'+escA(a.name)+'">'+esc(a.name)+'</div></div>';
         }
-        var open=a.url?('href="'+escA(a.url)+'" target="_blank" rel="noopener"'):'';
+        var open=a.url?('data-open="'+escA(a.url)+'" style="cursor:pointer"'):'';
         var badge = onJira?'<span title="On '+escA(primary)+'" style="font-size:10px;font-weight:800;color:var(--frz-accent);margin-left:6px;white-space:nowrap">↗ Jira</span>':'';
         return '<a class="frz-att-file" '+open+'><span class="frz-att-ic">'+esc(attExt(a.name))+'</span><span class="frz-att-meta"><span class="frz-att-nm" title="'+escA(a.name)+'">'+esc(a.name)+'</span><span class="frz-att-sz">'+fmtBytes(a.size)+'</span></span>'+badge+del+'</a>';
       }).join('');
+      // ATTACH-URL-1: resolve thumbnails via blob (auth), and wire open-in-new-tab through fetch-to-blob.
+      list.querySelectorAll('img[data-proxy]').forEach(function(im){ _frzSetImgFromProxy(im, im.getAttribute('data-proxy')); });
+      list.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); var u=el.getAttribute('data-open');
+        API.getBlobURL(u).then(function(b){ window.open(b, '_blank', 'noopener'); }).catch(function(){ if(typeof showToast==='function') showToast('Could not open the attachment. Your session may have expired.','error'); }); }); });
       list.querySelectorAll('[data-del]').forEach(function(b){ b.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); var id=this.getAttribute('data-del'); var a=atts.filter(function(x){return x.id===id;})[0]; deleteAttachment(p, id, a?a.name:''); }); });
     }).catch(function(){ list.innerHTML='<div class="frz-att-empty">Could not load attachments.</div>'; });
   }
@@ -25806,12 +25841,20 @@ if ('serviceWorker' in navigator) {
     if(!need) return;
     API.get('/api/items/'+pid+'/attachments').then(function(res){
       var map={}; ((res&&res.attachments)||[]).forEach(function(a){ if(a.key) map[a.key]=a.url; });
-      var tr=ed.state.tr, changed=false;
-      ed.state.doc.descendants(function(n,pos){
-        if(n.type.name==='image'){ var k=n.attrs['data-att-key'];
-          if(k && map[k] && n.attrs.src!==map[k]){ tr.setNodeMarkup(pos, undefined, Object.assign({}, n.attrs, {src:map[k]})); changed=true; } }
-      });
-      if(changed){ tr.setMeta('addToHistory', false); ed.view.dispatch(tr); }
+      // ATTACH-URL-1: map[k] is now a proxy PATH, not a presign - resolve each to an auth-fetched blob URL
+      // FIRST (all of them), then apply node src in ONE synchronous transaction so positions stay valid.
+      var keys={}; ed.state.doc.descendants(function(n){ if(n.type.name==='image'){ var k=n.attrs['data-att-key']; if(k && map[k]) keys[k]=1; } });
+      var kl=Object.keys(keys); if(!kl.length) return;
+      Promise.all(kl.map(function(k){ return API.getBlobURL(map[k]).then(function(u){ return [k,u]; }).catch(function(){ return [k,null]; }); }))
+        .then(function(pairs){
+          var blobs={}; pairs.forEach(function(pr){ if(pr[1]) blobs[pr[0]]=pr[1]; });
+          var tr=ed.state.tr, changed=false;
+          ed.state.doc.descendants(function(n,pos){
+            if(n.type.name==='image'){ var k=n.attrs['data-att-key'];
+              if(k && blobs[k] && n.attrs.src!==blobs[k]){ tr.setNodeMarkup(pos, undefined, Object.assign({}, n.attrs, {src:blobs[k]})); changed=true; } }
+          });
+          if(changed){ tr.setMeta('addToHistory', false); ed.view.dispatch(tr); }
+        });
     }).catch(function(){});
   }
 
@@ -26431,8 +26474,8 @@ if ('serviceWorker' in navigator) {
     var imgs=el.querySelectorAll('img[data-att-key]'); if(!imgs.length) return;
     API.get('/api/items/'+pid+'/attachments').then(function(res){
       var map={}; ((res&&res.attachments)||[]).forEach(function(a){ if(a.key) map[a.key]=a.url; });
-      [].slice.call(imgs).forEach(function(im){ var k=im.getAttribute('data-att-key'); if(map[k]) im.src=map[k]; });
-    }).catch(function(){});
+      [].slice.call(imgs).forEach(function(im){ var k=im.getAttribute('data-att-key'); if(map[k]) _frzSetImgFromProxy(im, map[k]); });   // ATTACH-URL-1
+    }).catch(function(){ [].slice.call(imgs).forEach(function(im){ im.alt='(attachments unavailable)'; im.classList.add('frz-att-broken'); }); });
   }
   function _frzRehydrateCommentImages(pid){ _frzRehydrateImagesIn(document.getElementById('ipCommentsList'), pid); }
   window._frzRehydrateCommentImages=_frzRehydrateCommentImages;
