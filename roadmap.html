@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.1.4';
+const APP_VERSION = '6.1.5';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -27346,7 +27346,15 @@ if ('serviceWorker' in navigator) {
     // ── 3. The views ──
     '<div class="frz-man-sec" id="man-views"><h2>3 &nbsp;The views</h2>'+
       '<h3>'+_mi('home')+' My Home</h3>'+
-      '<p>Your personal landing page, with three tabs: <b>Assigned to me</b> (open items where you are the assignee, ordered by priority then due date), <b>Recent</b> (items you touched lately), and <b>Watching</b> (items you follow).</p>'+
+      '<p>Your personal landing page, with four tabs. The first three carry a live <b>count</b> beside the label so you can see your load at a glance:</p>'+
+      '<ul>'+
+        '<li><b>Assigned to me</b> - open items where you are the assignee, ordered by priority then due date.</li>'+
+        '<li><b>To-dos</b> - your own private checklist (see below).</li>'+
+        '<li><b>Watching</b> - items you follow.</li>'+
+        '<li><b>Recent</b> - items you opened lately. This one is an audit trail, so it has no count.</li>'+
+      '</ul>'+
+      '<h3>Private to-dos</h3>'+
+      '<p>The <b>To-dos</b> tab is a personal checklist that is <b>private to you</b> - no one else on the team can see it, and it is kept out of data exports. Type a to-do and press <b>Enter</b> to add it; you can finish the text with a natural due date such as <i>friday</i>, <i>tomorrow</i> or <i>in 3 days</i> and Flow sets the date for you. Check a to-do off to complete it - completed items move into a <b>View completed</b> log rather than being deleted, so you keep a record of what you finished. To-dos are not tied to any item or project; they are simply yours.</p>'+
       '<h3>'+_mi('gantt')+' Gantt</h3>'+
       '<p>A timeline of items as horizontal bars across weeks. Each bar shows the work phases - development, then a lighter <b>testing</b> tail, and a <b>delay</b> extension if a revised date pushes it out. Turn on <b>Show Capacity</b> to overlay a per-owner load graph (green = at capacity, yellow = under, red = over). Click a bar to open the edit modal (viewers open the read-only item page). Weekend days are skipped in all scheduling.</p>'+
       '<h3>'+_mi('kanban')+' Kanban</h3>'+
@@ -27401,6 +27409,7 @@ if ('serviceWorker' in navigator) {
       '<div class="frz-man-note"><b>Recurrence.</b> An item can repeat (weekly, biweekly, monthly). When a recurring item is completed, Flow spawns the next occurrence automatically, dated from the previous start.</div>'+
       '<h3>Notifications &amp; watching</h3>'+
       '<p>The bell '+_mi('bell')+' in the top bar is your inbox. You are notified when someone <b>@mentions</b> you, <b>assigns</b> you an item, <b>replies</b> to your comment, or changes an item you <b>watch</b>. Use <b>Watch</b> on an item page to follow it; commenting or being mentioned auto-watches. Click <b>Mark all read</b> to clear the badge. If your team has connected <b>Slack</b>, these notifications can also arrive in a Slack channel or as a direct message.</p>'+
+      '<div class="frz-man-note"><b>Your unsaved text is protected.</b> If your session times out while you are writing a description or a comment, Flow keeps what you had typed and offers it back after you sign in again, so a long write is never lost.</div>'+
     '</div>'+
 
     // ── 5. Planning, sprints & releases ──
