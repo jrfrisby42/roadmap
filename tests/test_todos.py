@@ -34,10 +34,12 @@ def test_privacy_todos_are_per_user(client, team):
     assert client.delete(f"/api/my/todos/{a}", headers=bob).status_code == 404
     # ...and Alice's row is untouched by any of it.
     assert a in _ids(client, alice)
-    # clear-completed only ever hits the caller's rows: Bob clearing does not touch Alice's Done row.
+    # TODO-2A: the completed-log filter is not a privacy hole - Bob's ?status=done never sees Alice's
+    # completed row (username stays in the WHERE regardless of the filter).
     client.put(f"/api/my/todos/{a}", json={"status": "Done"}, headers=alice)
-    assert client.post("/api/my/todos/clear-completed", headers=bob).json()["cleared"] == 0
-    assert a in _ids(client, alice)
+    bob_done = client.get("/api/my/todos?status=done", headers=bob).json()["todos"]
+    assert all(t["id"] != a for t in bob_done)
+    assert a in {t["id"] for t in client.get("/api/my/todos?status=done", headers=alice).json()["todos"]}
 
 
 def test_username_from_token_not_body(client, team):
@@ -112,18 +114,32 @@ def test_due_date_set_change_clear_and_malformed(client, team):
     assert client.put(f"/api/my/todos/{tid}", json={"due_date": "not-a-date"}, headers=h).status_code == 400
 
 
-# ── CLEAR COMPLETED ──────────────────────────────────────────────────────────────────────────────────
-def test_clear_completed_only_own_done_rows(client, team):
-    alice, bob = _hdr(team, "alice"), _hdr(team, "bob")
-    d1 = _mk(client, alice, title="a-done").json()["todo"]["id"]
-    _mk(client, alice, title="a-open")
-    client.put(f"/api/my/todos/{d1}", json={"status": "Done"}, headers=alice)
-    bd = _mk(client, bob, title="b-done").json()["todo"]["id"]
-    client.put(f"/api/my/todos/{bd}", json={"status": "Done"}, headers=bob)
-    assert client.post("/api/my/todos/clear-completed", headers=alice).json()["cleared"] == 1
-    # Alice's open row remains; Bob's Done row is untouched.
-    assert {t["title"] for t in client.get("/api/my/todos", headers=alice).json()["todos"]} == {"a-open"}
-    assert bd in _ids(client, bob)
+# ── TODO-2A: status filter + counts + no destructive clear endpoint ──────────────────────────────────
+def test_status_filter_open_done_and_counts(client, team):
+    h = _hdr(team, "alice")
+    o1 = _mk(client, h, title="open-1").json()["todo"]["id"]
+    _mk(client, h, title="open-2")
+    d1 = _mk(client, h, title="done-1").json()["todo"]["id"]
+    client.put(f"/api/my/todos/{d1}", json={"status": "Done"}, headers=h)
+    # ?status=open -> only non-Done; ?status=done -> only Done; counts always carry both.
+    open_res = client.get("/api/my/todos?status=open", headers=h).json()
+    assert {t["title"] for t in open_res["todos"]} == {"open-1", "open-2"}
+    assert open_res["counts"] == {"open": 2, "done": 1}
+    done_res = client.get("/api/my/todos?status=done", headers=h).json()
+    assert {t["title"] for t in done_res["todos"]} == {"done-1"}
+    assert done_res["counts"] == {"open": 2, "done": 1}
+    # completed log is newest-completed first
+    d2 = _mk(client, h, title="done-2").json()["todo"]["id"]
+    client.put(f"/api/my/todos/{d2}", json={"status": "Done"}, headers=h)
+    done_titles = [t["title"] for t in client.get("/api/my/todos?status=done", headers=h).json()["todos"]]
+    assert done_titles[0] == "done-2"   # most recently completed first
+    _ = o1
+
+
+def test_clear_completed_endpoint_removed(client, team):
+    # Option A: the hard-delete-all endpoint is gone (single-click hard delete no longer reachable).
+    h = _hdr(team, "alice")
+    assert client.post("/api/my/todos/clear-completed", headers=h).status_code in (404, 405)
 
 
 # ── MIGRATION IDEMPOTENCY ────────────────────────────────────────────────────────────────────────────
