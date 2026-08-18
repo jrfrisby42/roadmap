@@ -18307,17 +18307,20 @@ if ('serviceWorker' in navigator) {
      so no !important is needed. */
   body.dark-mode .frz-beta {
     /* Dark ramp - blue-navy, each step lifted for elevation separation. */
+    /* DARK-NEUTRAL-1: the neutral + accent token values below are MIRRORED in
+       body.dark-mode.frz-beta-active (the body-level modal palette). Change both
+       together or the theme splits by which shell is active. */
     --frz-bg-app:#11151D; --frz-bg-surface:#1C2230; --frz-bg-rail:#161B26;
     --frz-bg-elevated:#232A3A;   /* popovers/menus (and the modal, via token) */
     --frz-bg-sunken:#181E2A;     /* recessed lane (shared: Reports/code/RTE headers), dark */
     --frz-kanban-lane:#191C22;   /* Kanban lane ONLY, dark: neutral charcoal (not blue), a clear step off the #15314a strip band */
-    --frz-border:#3A4358; --frz-border-strong:#46536E;   /* lifted so card edges/dividers/rail edge read */
+    --frz-border:#3A3F47; --frz-border-strong:#4A5058;   /* DARK-NEUTRAL-1: desaturated off the accent hue (s21/22 -> s10/9); mirror in body.dark-mode.frz-beta-active */
     --frz-shadow-card:0 2px 10px rgba(0,0,0,.45);
     --frz-header-tint:#232A3A;   /* subtle lift off the card surface (a hair lighter), not a glowing band - flagged for the dark ticket */
-    --frz-accent:#2F86DE; --frz-accent-hover:#4DA3E8; --frz-accent-soft:#15314a;
+    --frz-accent:#4A97E5; --frz-accent-hover:#6BB1EC; --frz-accent-soft:#15314a;   /* DARK-NEUTRAL-1: accent lifted to clear 4.5:1 AA on both bg-surface + bg-app; hover kept a visible step lighter */
     --frz-accent-soft-border:#24506f; --frz-sky:#65b1e3;
-    --frz-text:#C9D6E8; --frz-text-secondary:#b8c0e0; --frz-text-muted:#8FA3C0; --frz-danger:#F28B92;  /* primary text kept soft; muted blue-shifted off purple */
-    --accent:#2F86DE;   /* de-indigo'd reused subtree, dark accent */
+    --frz-text:#D3D8DE; --frz-text-secondary:#A8AEB8; --frz-text-muted:#8A9099; --frz-danger:#F28B92;  /* DARK-NEUTRAL-1: neutrals desaturated out of the accent hue so the accent has ground to stand on; mirror in body.dark-mode.frz-beta-active */
+    --accent:#4A97E5;   /* de-indigo'd reused subtree, dark accent - DARK-NEUTRAL-1: kept in sync with --frz-accent so the reused item-page subtree does not split from the shell */
     --surface2:var(--frz-bg-surface);   /* dark: lift hijacked chrome buttons/hovers off the page (production button rule paints var(--surface2)) */
   }
   /* ── Body-level modal recolor (Flow shell active) ───────────────────────────
@@ -18334,10 +18337,12 @@ if ('serviceWorker' in navigator) {
     --frz-text:#14283F; --frz-text-secondary:#4A6178; --frz-text-muted:#8298AD; --frz-danger:#C0362C;
   }
   body.dark-mode.frz-beta-active {
+    /* DARK-NEUTRAL-1: neutral + accent values MIRROR body.dark-mode .frz-beta (the shell rule).
+       Change both together or the theme splits by which shell is active. */
     --frz-bg-app:#11151D; --frz-bg-surface:#1C2230; --frz-bg-rail:#161B26; --frz-bg-elevated:#232A3A; --frz-bg-sunken:#181E2A;
-    --frz-border:#3A4358; --frz-border-strong:#46536E; --frz-shadow-card:0 2px 10px rgba(0,0,0,.45); --frz-header-tint:#232A3A;
-    --frz-accent:#2F86DE; --frz-accent-hover:#4DA3E8; --frz-accent-soft:#15314a; --frz-accent-soft-border:#24506f;
-    --frz-text:#C9D6E8; --frz-text-secondary:#b8c0e0; --frz-text-muted:#8FA3C0; --frz-danger:#F28B92;
+    --frz-border:#3A3F47; --frz-border-strong:#4A5058; --frz-shadow-card:0 2px 10px rgba(0,0,0,.45); --frz-header-tint:#232A3A;
+    --frz-accent:#4A97E5; --frz-accent-hover:#6BB1EC; --frz-accent-soft:#15314a; --frz-accent-soft-border:#24506f;
+    --frz-text:#D3D8DE; --frz-text-secondary:#A8AEB8; --frz-text-muted:#8A9099; --frz-danger:#F28B92;
   }
   /* Remap the classic vars the body-level modals read → Flow tokens (kills the
      residual indigo accent + warm grays on every .modal-bg modal). */
