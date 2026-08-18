@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.1.6';
+const APP_VERSION = '6.1.7';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -18410,7 +18410,7 @@ if ('serviceWorker' in navigator) {
     background:#0059A9 !important; border-color:#0059A9 !important; color:#fff !important;
   }
   body.dark-mode .frz-beta .frz-newitem:hover,
-  body.dark-mode .frz-beta .frz-list-panel .frz-lp-openbtn:hover { background:#004A8F !important; }
+  body.dark-mode .frz-beta .frz-list-panel .frz-lp-openbtn:hover { background:#0A66C0 !important; }   /* DARK-NEUTRAL: brighten on hover (was #004A8F, which darkened toward the dark bg - a backwards affordance); white label stays legible at 5.71:1 */
   /* The @mention typeahead is appended to <body> (above the shell), so it is
      intentionally unscoped - restyle it directly under body.dark-mode. */
   body.dark-mode .frz-mention-menu { background:#181b26; border-color:#3d4358; }
@@ -27213,14 +27213,14 @@ if ('serviceWorker' in navigator) {
     "body.dark .frz-man-bar{background:#1b232c;border-bottom-color:#2c3742}",
     "body.dark .frz-man-bar .frz-man-tt{color:#eef3f8}",
     "body.dark .frz-man-doc h1,body.dark .frz-man-cover .frz-man-title{color:#cfe2f5}",
-    "body.dark .frz-man-doc h2{color:#2F86DE;border-bottom-color:#22303d}",
+    "body.dark .frz-man-doc h2{color:#4A97E5;border-bottom-color:#22303d}",   /* DARK-NEUTRAL: match the app's dark accent (was #2F86DE) */
     "body.dark .frz-man-doc h3{color:#eef3f8}",
     "body.dark .frz-man-doc code{background:#1b232c;border-color:#2c3742}",
     "body.dark .frz-man-doc th,body.dark .frz-man-doc td{border-color:#2c3742}",
     "body.dark .frz-man-doc th{background:#1b232c}",
-    "body.dark .frz-man-doc a,body.dark .frz-man-ic{color:#2F86DE}",
-    "body.dark .frz-man-note{background:#16212e;border-left-color:#2F86DE}",
-    "body.dark .frz-man-role{background:#16212e;color:#2F86DE}",
+    "body.dark .frz-man-doc a,body.dark .frz-man-ic{color:#4A97E5}",
+    "body.dark .frz-man-note{background:#16212e;border-left-color:#4A97E5}",
+    "body.dark .frz-man-role{background:#16212e;color:#4A97E5}",
     "body.dark .frz-man-cover .frz-man-sub{color:#9fb0c0}",
     "@media print{",
     "  .frz-man-bar{display:none}",
