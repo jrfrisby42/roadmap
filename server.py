@@ -26,7 +26,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote as _urlq
 from fastapi import FastAPI, HTTPException, Body, Request as FRequest, Header, Depends, Response, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from typing import Optional, List
 
 log = logging.getLogger("frazil")
@@ -1453,7 +1453,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.0.0"
+APP_VERSION = "6.0.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1986,7 +1986,7 @@ def intake_presign(team: str, body: dict = Body(...), request: FRequest = None):
         put_headers["x-amz-server-side-encryption"] = "aws:kms"
         put_headers["x-amz-server-side-encryption-aws-kms-key-id"] = ATTACH_KMS_KEY_ID
     try:
-        url = _s3_client().generate_presigned_url("put_object", Params=params, ExpiresIn=300)
+        url = _s3_client().generate_presigned_url("put_object", Params=params, ExpiresIn=PRESIGN_EXPIRY)
     except Exception as e:
         log.warning("[Intake] presign failed for team %s: %s", team, e)
         raise HTTPException(502, "Could not presign the upload (storage unavailable).")
@@ -5205,6 +5205,11 @@ def delete_assignment(aid: int, auth: dict = Depends(require_role("admin", "edit
 import uuid as _uuid
 
 MAX_ATTACH_BYTES = 50 * 1024 * 1024  # 50 MB, enforced server-side (refuse to sign) + client-side
+# ATTACH-URL-1: single source of truth for the presigned-UPLOAD (PUT) lifetime. 300s is correct for a
+# one-shot, click-initiated upload. VIEW/download no longer uses a render-time presign at all - it goes
+# through the authenticated streaming proxy (GET .../attachments/{id}/raw), so a URL embedded in a page
+# read for minutes never expires under the user (that was the FRZ-311 bug). Was a bare 300 at 3 sites.
+PRESIGN_EXPIRY = 300
 ATTACH_BUCKET    = os.environ.get("ATTACH_BUCKET", "frazil-flow-attachments")
 # Optional SSE-KMS key (ARN / alias / key-id). When set, presigned PUTs are
 # signed to encrypt the object with this CMK and the browser replays the
@@ -5280,7 +5285,7 @@ def presign_attachment(pid: int, body: dict = Body(...),
         put_headers["x-amz-server-side-encryption-aws-kms-key-id"] = ATTACH_KMS_KEY_ID
     try:
         url = _s3_client().generate_presigned_url(
-            "put_object", Params=params, ExpiresIn=300,
+            "put_object", Params=params, ExpiresIn=PRESIGN_EXPIRY,
         )
     except Exception as e:
         log.warning("[Attach] presign PUT failed for item %s: %s", pid, e)
@@ -5329,26 +5334,45 @@ def list_attachments(pid: int, auth: dict = Depends(require_auth)):
     with db(team) as c:
         p = _get_item_blob(c, pid)
     atts = p.get("attachments") or []
-    out = []
-    cli = None
-    for a in atts:
-        url = None
-        try:
-            if cli is None:
-                cli = _s3_client()
-            url = cli.generate_presigned_url(
-                "get_object",
-                Params={
-                    "Bucket": ATTACH_BUCKET, "Key": a["key"],
-                    "ResponseContentDisposition": f'inline; filename="{a.get("name", "file")}"',
-                    "ResponseContentType": a.get("contentType", "application/octet-stream"),
-                },
-                ExpiresIn=300,
-            )
-        except Exception as e:
-            log.warning("[Attach] presign GET failed for %s: %s", a.get("key"), e)
-        out.append({**a, "url": url})
+    # ATTACH-URL-1: the download/view URL is now the authenticated streaming-proxy PATH, not a render-time
+    # presigned S3 URL. It carries no S3 credentials, never expires under the reader (it lives as long as
+    # the session + read scope), and a failure surfaces through the app (401 -> login wall) instead of
+    # raw S3 XML - which was the FRZ-311 bug (a 300s presign minted at render, clicked minutes later). The
+    # one-shot upload PUT still uses a short presign (see PRESIGN_EXPIRY). Serves both in-app and intake
+    # key shapes, since the stored key is used verbatim by the raw endpoint below.
+    out = [{**a, "url": f"/api/items/{pid}/attachments/{a.get('id') or a.get('attId')}/raw"} for a in atts]
     return {"attachments": out}
+
+@app.get("/api/items/{pid}/attachments/{att_id}/raw")
+def stream_attachment(pid: int, att_id: str, auth: dict = Depends(require_auth)):
+    """ATTACH-URL-1: stream an attachment's bytes from S3 behind the SAME read gate as list_attachments
+    (require_item_read) - no presign, no S3 credential in any URL. Entitlement is unchanged: the caller
+    must have item read scope AND the att_id must belong to THIS item's recorded attachments (the stored
+    key was prefix-pinned at record time, for both the in-app items/{pid}/... and intake intake/{team}/...
+    shapes). Streamed (never buffered), so a 50 MB file cannot exhaust the two workers."""
+    team = auth["team"]
+    require_item_read(auth, team, pid)   # identical gate to list_attachments - do NOT weaken
+    with db(team) as c:
+        p = _get_item_blob(c, pid)
+    att = next((a for a in (p.get("attachments") or [])
+                if str(a.get("id") or a.get("attId")) == str(att_id)), None)
+    if not att or not att.get("key"):
+        raise HTTPException(404, "Attachment not found")
+    try:
+        obj = _s3_client().get_object(Bucket=ATTACH_BUCKET, Key=att["key"])
+    except Exception as e:
+        log.warning("[Attach] stream failed for item %s att %s: %s", pid, att_id, e)
+        raise HTTPException(502, "Could not load the attachment (storage unavailable).")
+    ctype = att.get("contentType") or obj.get("ContentType") or "application/octet-stream"
+    fname = (att.get("name") or "file").replace('"', "")
+    headers = {
+        "Content-Disposition": f'inline; filename="{fname}"',
+        "Cache-Control": "private, max-age=3600",   # per-user cache; the URL is stable so re-renders are free
+    }
+    cl = obj.get("ContentLength")
+    if cl is not None:
+        headers["Content-Length"] = str(cl)
+    return StreamingResponse(obj["Body"].iter_chunks(chunk_size=65536), media_type=ctype, headers=headers)
 
 @app.delete("/api/items/{pid}/attachments/{att_id}")
 def delete_attachment(pid: int, att_id: str,
