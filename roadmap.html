@@ -27384,7 +27384,7 @@ if ('serviceWorker' in navigator) {
         '<tr><td><b>Type</b></td><td>Feature, Bug Fix, Task, and so on (configurable).</td></tr>'+
         '<tr><td><b>Owner (Pod)</b></td><td>The capacity pool responsible. Required before an item can move to an active status.</td></tr>'+
         '<tr><td><b>Assignee</b></td><td>The person doing the work. Setting an assignee can fill the owner automatically from that person’s pod.</td></tr>'+
-        '<tr><td><b>Status</b></td><td>Where it is in the workflow. Meaning (active, done, and so on) is configured per team, never hard-coded.</td></tr>'+
+        '<tr><td><b>Status</b></td><td>Where it is in the workflow. Its meaning (active, done, and so on) comes from the status <b>modes</b> an admin configures, never from the name - see <b>Status modes</b> under Admin &amp; setup.</td></tr>'+
         '<tr><td><b>Priority</b></td><td>Urgent / High / Medium / Low.</td></tr>'+
         '<tr><td><b>Start date</b> &amp; <b>Time Estimate</b></td><td>Drive the scheduled due date. Test period must be shorter than the estimate.</td></tr>'+
         '<tr><td><b>Story Points</b></td><td>Relative size, used in sprint planning.</td></tr>'+
@@ -27451,10 +27451,26 @@ if ('serviceWorker' in navigator) {
       '<p>Add users with a role (viewer / editor / admin) and an email. Choose <b>Set password now</b> or <b>Email a setup link</b> (a 7-day invite; reset links last 1 hour). A <b>pending</b> badge marks accounts with no password yet. Set a user’s first/last name (used everywhere their name is shown) and their <b>owner pod</b>. Only the original built-in admin can change another admin’s password.</p>'+
       '<h3>Workflow configuration</h3>'+
       '<ul>'+
-        '<li><b>Statuses</b> - the workflow. Each status carries flags (which one is the <b>default</b> for new items, which count as <b>active</b>, which is <b>terminal</b>/done, which is <b>released</b>, and so on). Behavior is driven by these flags, so you can name statuses however you like.</li>'+
+        '<li><b>Statuses</b> - the workflow. Each status carries <b>modes</b> that drive behavior (which one is the <b>default</b> for new items, which count as <b>active</b>, which is <b>terminal</b>/done, and so on), so you can name statuses however you like. See <b>Status modes</b> below.</li>'+
         '<li><b>Types</b> - item types; a type can be flagged as <b>maintenance</b> (used by duty reporting).</li>'+
         '<li><b>Projects</b>, <b>Owners</b>, <b>Departments</b>, and the reason lists (delay/change/defer).</li>'+
       '</ul>'+
+      '<h3>Status modes</h3>'+
+      '<p>A status is just a <b>name you choose</b> - Flow never hard-codes a particular status like <i>In Progress</i> or <i>Done</i>. What drives behavior is the set of <b>modes</b> (flags) attached to each status, so you can name your workflow however you like and Flow still knows which status is active, which is finished, and so on. Set these in the status editor.</p>'+
+      '<table><thead><tr><th>Mode</th><th>A status with it means</th><th>What it drives</th></tr></thead><tbody>'+
+        '<tr><td><b>Default</b> <i>(one)</i></td><td>Where new items start.</td><td>The status new items are created in.</td></tr>'+
+        '<tr><td><b>Active</b></td><td>Work is underway.</td><td>Counts against the owner’s capacity; the item’s time and date fields <b>lock</b> (editors move dates through <b>Delay</b>).</td></tr>'+
+        '<tr><td><b>Testing</b> <i>(one)</i></td><td>In the testing phase.</td><td>The lighter <b>testing tail</b> on the Gantt bar.</td></tr>'+
+        '<tr><td><b>Approved</b> <i>(one)</i></td><td>Reviewed and cleared to proceed.</td><td>Set automatically by a <b>Review</b> planning session.</td></tr>'+
+        '<tr><td><b>Blocked</b></td><td>Work cannot proceed.</td><td>Marks the item blocked.</td></tr>'+
+        '<tr><td><b>Deferred</b> <i>(one)</i></td><td>Pushed out during planning.</td><td>Assigned when an item is <b>deferred</b> in a planning session.</td></tr>'+
+        '<tr><td><b>Terminal</b></td><td>Done or closed.</td><td>Drops out of active and capacity counts; completes sprint and release progress; <b>spawns the next occurrence</b> of a recurring item.</td></tr>'+
+        '<tr><td><b>Released</b> <i>(one)</i></td><td>Shipped.</td><td>Requires a <b>release date</b>; pulls Jira <b>feature flags</b> across the linked hierarchy.</td></tr>'+
+        '<tr><td><b>Waiting</b></td><td>Waiting on someone (for example the reporter).</td><td><b>Pauses</b> the SLA clock while the item sits here.</td></tr>'+
+        '<tr><td><b>Parked</b></td><td>Set aside (for example Inactive or Backlogged).</td><td><b>Stops</b> the SLA clock entirely; it restarts when the item leaves. Distinct from Deferred.</td></tr>'+
+        '<tr><td><b>Off-flow</b></td><td>Off the linear progression (for example Blocked).</td><td>Exempt from the ordered-status progression rule - a parking or flag state is not a step in the linear flow.</td></tr>'+
+      '</tbody></table>'+
+      '<div class="frz-man-note"><b>A single status</b> carries each mode marked <i>(one)</i> - Default, Testing, Approved, Deferred and Released. The others can apply to several statuses at once.</div>'+
       '<h3>Capacity, boards, sprints &amp; releases</h3>'+
       '<p>Set per-owner base capacity and per-day <b>overrides</b> (a contractor can push a day above base). Create Kanban <b>boards</b>, and manage <b>sprints</b> and <b>releases</b>.</p>'+
       '<h3>Jira integration</h3>'+
