@@ -841,6 +841,33 @@ def init_team_db(team: str):
             data        TEXT NOT NULL DEFAULT '[]',
             updated_ts  TEXT NOT NULL DEFAULT ''
         );
+        -- TODO-1: private per-user personal to-dos (the My Home "To-dos" tab). A SEPARATE object, not an
+        -- item type - it touches NOTHING in projects/capacity/sprints/releases/reports/SLA/watchers/
+        -- notifications/scenario engine. Per team per user (like saved_filters). KNOWN LIMITATION:
+        -- `username` is a plain string key, NOT a foreign key to the users config array - there is no
+        -- cascade anywhere in the app (notifications, saved filters, /api/my/recent, watchers, item
+        -- assignee/reporter are all username-keyed strings too). So a RENAME hides the rows (they survive
+        -- under the old name; renaming back restores them) and a DELETE orphans them permanently and
+        -- invisibly (no one, not even an admin, can read them - privacy-correct, governance-imperfect; a
+        -- purge belongs to a future user-lifecycle pass that would also handle the other five stores).
+        -- `notes` and `sort_order` ship now with schema + API but NO Stage 1 UI: `notes` needs an expand
+        -- modal deferred to Stage 2; `sort_order` is for Stage 2's board columns. Known gaps, not dead
+        -- fields. THE 'WHEN' RULE: status is WHERE it sits on your board, due_date is WHEN it must be done.
+        -- 'Today' means "I intend to do this today"; due_date means "this is the deadline". They are
+        -- independent, and neither derives from the other.
+        CREATE TABLE IF NOT EXISTS todos (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            username     TEXT NOT NULL,
+            title        TEXT NOT NULL,
+            notes        TEXT NOT NULL DEFAULT '',
+            status       TEXT NOT NULL DEFAULT 'Today',
+            due_date     TEXT,                  -- YYYY-MM-DD or NULL
+            sort_order   REAL NOT NULL DEFAULT 0,
+            created_ts   TEXT NOT NULL,
+            updated_ts   TEXT NOT NULL,
+            completed_ts TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_todos_user ON todos(username);
         """)
         # ── Live migrations: add new columns if they don't exist yet ─────────────
         for _col, _defn in [
@@ -1426,7 +1453,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "5.22.14"
+APP_VERSION = "6.0.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -5828,6 +5855,107 @@ def my_watching(auth: dict = Depends(require_auth)):
             readable = _contributor_readable_ids(c, auth)
             ids = [i for i in ids if i in readable]
     return {"items": ids}
+
+# ── TODO-1: private per-user to-dos (My Home "To-dos" tab) ───────────────────────────────────────────
+# Privacy is the REQUIREMENT, not a display detail (see the todos table comment in init_team_db):
+#  1. username ALWAYS from the token - never from the body or a query param (a client-supplied one is
+#     ignored, not validated).
+#  2. every write filters by username in the WHERE clause (not a post-fetch check); another user's row
+#     returns 404, NOT 403 - existence is never confirmed.
+#  3. NO admin read path, NO admin surface, NO role branch anywhere - the one deliberate exception to
+#     admin-sees-everything in Flow.
+#  4. NO audit_log rows (audit is admin-only + server-rendered, so a row would leak content sideways).
+#  5. EXCLUDED from /api/export - that builder enumerates tables explicitly (never sweeps sqlite_master),
+#     so todos is out by construction; do not add it.
+# Status is fixed in CODE, never sourced from the `statuses` config (which carries 13 statuses + flag
+# maps on dev and must stay entirely uninvolved). Only Today/Done are reachable in Stage 1; Backlog/
+# Waiting exist so Stage 2's board columns need no migration.
+TODO_STATUSES = ['Backlog', 'Today', 'Waiting', 'Done']
+_TODO_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+
+def _todo_due(v):
+    """Normalize due_date: None to CLEAR (None or empty string), a YYYY-MM-DD string to set. Anything
+    else is 400. The clear path is the easiest to omit and the most annoying to lack - explicit here."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, str) and _TODO_DATE_RE.match(v):
+        return v
+    raise HTTPException(400, "due_date must be YYYY-MM-DD, or empty to clear")
+
+@app.get("/api/my/todos")
+def list_todos(auth: dict = Depends(require_auth)):
+    with db(auth["team"]) as c:
+        rows = c.execute("SELECT * FROM todos WHERE username=? ORDER BY sort_order, created_ts",
+                         (auth["username"],)).fetchall()
+    return {"todos": [dict(r) for r in rows]}
+
+@app.post("/api/my/todos")
+def create_todo(body: dict = Body(...), auth: dict = Depends(require_auth)):
+    title = (body.get("title") or "").strip()
+    if not title:
+        raise HTTPException(400, "A to-do needs a title")
+    status = body.get("status") or "Today"
+    if status not in TODO_STATUSES:
+        raise HTTPException(400, "Invalid status")
+    due = _todo_due(body.get("due_date"))
+    now = datetime.now(timezone.utc).isoformat()
+    completed = now if status == "Done" else None
+    with db(auth["team"]) as c:
+        cur = c.execute(
+            "INSERT INTO todos(username,title,notes,status,due_date,sort_order,created_ts,updated_ts,completed_ts)"
+            " VALUES(?,?,?,?,?,?,?,?,?)",
+            (auth["username"], title, (body.get("notes") or ""), status, due, 0, now, now, completed))
+        row = c.execute("SELECT * FROM todos WHERE id=?", (cur.lastrowid,)).fetchone()
+    return {"todo": dict(row)}
+
+@app.put("/api/my/todos/{tid}")
+def update_todo(tid: int, body: dict = Body(...), auth: dict = Depends(require_auth)):
+    with db(auth["team"]) as c:
+        row = c.execute("SELECT * FROM todos WHERE id=? AND username=?", (tid, auth["username"])).fetchone()
+        if not row:
+            raise HTTPException(404, "To-do not found")   # 404 not 403: never confirm another user's row exists
+        cur = dict(row)
+        title = cur["title"]
+        if "title" in body:
+            title = (body.get("title") or "").strip()
+            if not title:
+                raise HTTPException(400, "A to-do needs a title")
+        status = cur["status"]
+        if "status" in body:
+            status = body.get("status")
+            if status not in TODO_STATUSES:
+                raise HTTPException(400, "Invalid status")
+        due = cur["due_date"]
+        if "due_date" in body:
+            due = _todo_due(body.get("due_date"))
+        notes = (body.get("notes") if "notes" in body else cur["notes"]) or ""
+        now = datetime.now(timezone.utc).isoformat()
+        # completed_ts: stamped on ENTERING Done, cleared on LEAVING it (independent of due_date)
+        completed = cur["completed_ts"]
+        if status == "Done" and cur["status"] != "Done":
+            completed = now
+        elif status != "Done":
+            completed = None
+        c.execute("UPDATE todos SET title=?, notes=?, status=?, due_date=?, updated_ts=?, completed_ts=? "
+                  "WHERE id=? AND username=?", (title, notes, status, due, now, completed, tid, auth["username"]))
+        row2 = c.execute("SELECT * FROM todos WHERE id=?", (tid,)).fetchone()
+    return {"todo": dict(row2)}
+
+@app.delete("/api/my/todos/{tid}")
+def delete_todo(tid: int, auth: dict = Depends(require_auth)):
+    # HARD delete - a personal scratchpad should destroy (unlike an item, a system of record). WHERE
+    # username, so another user's row is a no-op reporting 404 (existence not confirmed).
+    with db(auth["team"]) as c:
+        cur = c.execute("DELETE FROM todos WHERE id=? AND username=?", (tid, auth["username"]))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "To-do not found")
+    return {"ok": True}
+
+@app.post("/api/my/todos/clear-completed")
+def clear_completed_todos(auth: dict = Depends(require_auth)):
+    with db(auth["team"]) as c:
+        n = c.execute("DELETE FROM todos WHERE username=? AND status='Done'", (auth["username"],)).rowcount
+    return {"cleared": n}
 
 @app.get("/api/my/recent")
 def my_recent(auth: dict = Depends(require_auth)):

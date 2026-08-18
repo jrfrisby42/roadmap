@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '5.22.14';
+const APP_VERSION = '6.0.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -14515,7 +14515,10 @@ async function handleRecurrenceOnSave(savedProject){
   } catch(e){ console.warn('Recurrence spawn failed:', e); }
 }
 
-function showToast(msg, type='info', duration=3500){
+function showToast(msg, type='info', duration=3500, action=null){
+  // TODO-1: optional `action` = {label, fn} adds a clickable affordance (e.g. Undo). ADDITIVE and
+  // backward-compatible - every existing 2/3-arg call is unchanged and stays a passive text popup.
+  // Extended (rather than authoring a second toast) so there is one toast component, not two.
   let toast = document.getElementById('appToast');
   if(!toast){
     toast = document.createElement('div');
@@ -14525,7 +14528,20 @@ function showToast(msg, type='info', duration=3500){
   }
   toast.style.background = type === 'error' ? '#e8394a' : '#1a1a2e';
   toast.style.color = '#fff';
-  toast.textContent = msg;
+  if(action && action.label && typeof action.fn === 'function'){
+    toast.textContent = msg + '  ';
+    toast.style.pointerEvents = 'auto';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = action.label;
+    // On the toast's fixed dark background in both themes, so a fixed accessible light accent is correct.
+    btn.style.cssText = 'margin-left:8px;background:transparent;border:none;color:#7fc4ff;font-weight:800;cursor:pointer;font-size:13px;text-decoration:underline;pointer-events:auto';
+    btn.addEventListener('click', () => { toast.style.opacity='0'; clearTimeout(toast._timer); try { action.fn(); } catch(e){} });
+    toast.appendChild(btn);
+  } else {
+    toast.textContent = msg;
+    toast.style.pointerEvents = 'none';
+  }
   toast.style.opacity = '1';
   clearTimeout(toast._timer);
   toast._timer = setTimeout(()=>{ toast.style.opacity='0'; }, duration);
@@ -17341,7 +17357,7 @@ if ('serviceWorker' in navigator) {
     --frz-border:#E1E8F0; --frz-border-strong:#C9D6E3;
     --frz-accent:#0059A9; --frz-accent-hover:#004A8F; --frz-accent-soft:#E7F1FA;
     --frz-accent-soft-border:#C3DCF1; --frz-sky:#65B1E3;
-    --frz-text:#14283F; --frz-text-secondary:#4A6178; --frz-text-muted:#8298AD;
+    --frz-text:#14283F; --frz-text-secondary:#4A6178; --frz-text-muted:#8298AD; --frz-danger:#C0362C;
     --frz-radius-chip:999px; --frz-radius-control:8px;
     --frz-topbar-h:52px; --frz-rail-w:232px; --frz-rail-w-collapsed:56px;
     --frz-anim:.18s ease;
@@ -18058,6 +18074,35 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-mw-table tr.list-row { cursor:pointer; }
   .frz-beta .frz-mw-table tr.list-row:hover { background:var(--frz-bg-app); }
   .frz-beta .frz-mw-empty { padding:24px; text-align:center; color:var(--frz-text-muted); }
+  /* TODO-1: the To-dos tab pane. Reuses .frz-mw-count/.frz-mw-empty for count + empty; new classes only
+     for the genuinely-new bits (quick-add, checkbox row, struck Done, overdue date). Tokens only. */
+  .frz-beta #frzTodoPane { padding-top:2px; }
+  .frz-beta .frz-todo-top { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .frz-beta .frz-todo-add { flex:1; padding:9px 12px; border:1px solid var(--frz-border-strong); border-radius:8px; background:var(--frz-bg-surface); color:var(--frz-text); font-size:13px; }
+  .frz-beta .frz-todo-add:focus { outline:none; border-color:var(--frz-accent); }
+  .frz-beta .frz-todo-add::placeholder { color:var(--frz-text-muted); }
+  .frz-beta .frz-todo-link { background:none; border:0; color:var(--frz-text-muted); font-size:12px; font-weight:700; cursor:pointer; padding:4px 6px; border-radius:6px; white-space:nowrap; }
+  .frz-beta .frz-todo-link:hover { color:var(--frz-accent); }
+  .frz-beta .frz-todo-row { display:flex; align-items:center; gap:10px; padding:8px 6px; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-todo-row:hover { background:var(--frz-bg-app); }
+  .frz-beta .frz-todo-cb { width:16px; height:16px; flex-shrink:0; cursor:pointer; accent-color:var(--frz-accent); }
+  .frz-beta .frz-todo-title { flex:1; font-size:13px; color:var(--frz-text); line-height:1.4; padding:2px 4px; border-radius:5px; outline:none; word-break:break-word; }
+  .frz-beta .frz-todo-title:focus { background:var(--frz-bg-surface); box-shadow:0 0 0 1px var(--frz-accent); }
+  .frz-beta .frz-todo-is-done .frz-todo-title { text-decoration:line-through; color:var(--frz-text-muted); }
+  .frz-beta .frz-todo-datewrap { flex-shrink:0; }
+  /* Due date DISPLAYS as a button we fully control (overdue = a real muted-red date in both themes); a
+     native input[type=date] cannot be reliably colored (classic body.dark-mode input rule + UA text). */
+  .frz-beta .frz-todo-datebtn { display:inline-block; border:1px solid var(--frz-border); border-radius:6px; color:var(--frz-text-secondary); font-size:12px; padding:3px 9px; cursor:pointer; white-space:nowrap; font-weight:600; }
+  .frz-beta .frz-todo-datebtn:hover { border-color:var(--frz-accent); color:var(--frz-accent); }
+  .frz-beta .frz-todo-datebtn.frz-todo-over { color:var(--frz-danger); border-color:var(--frz-danger); }
+  .frz-beta .frz-todo-dateedit { font-size:12px; padding:2px 5px; border:1px solid var(--frz-accent); border-radius:6px; background:var(--frz-bg-surface); color-scheme:light dark; }
+  .frz-beta .frz-todo-adddate { display:inline-block; border:1px dashed var(--frz-border-strong); color:var(--frz-text-muted); font-size:11px; padding:3px 8px; border-radius:6px; cursor:pointer; }
+  .frz-beta .frz-todo-adddate:hover { color:var(--frz-accent); border-color:var(--frz-accent); }
+  .frz-beta .frz-todo-del { background:none; border:0; color:var(--frz-text-muted); font-size:18px; line-height:1; cursor:pointer; padding:0 6px; border-radius:6px; opacity:0; flex-shrink:0; }
+  .frz-beta .frz-todo-row:hover .frz-todo-del { opacity:1; }
+  .frz-beta .frz-todo-del:hover { color:var(--frz-danger); }
+  .frz-beta .frz-todo-foot { margin-top:14px; }
+  .frz-beta .frz-todo-empty2 { margin-top:6px; font-size:11.5px; color:var(--frz-text-muted); }
   /* Stage 3b - notifications bell + inbox */
   .frz-beta .frz-bell-wrap { position:relative; }
   .frz-beta .frz-bell { position:relative; width:34px; height:34px; border:0; background:transparent; border-radius:8px; cursor:pointer; color:var(--frz-text-secondary); display:inline-flex; align-items:center; justify-content:center; }
@@ -18137,7 +18182,7 @@ if ('serviceWorker' in navigator) {
     --frz-header-tint:#232A3A;   /* subtle lift off the card surface (a hair lighter), not a glowing band - flagged for the dark ticket */
     --frz-accent:#2F86DE; --frz-accent-hover:#4DA3E8; --frz-accent-soft:#15314a;
     --frz-accent-soft-border:#24506f; --frz-sky:#65b1e3;
-    --frz-text:#C9D6E8; --frz-text-secondary:#b8c0e0; --frz-text-muted:#8FA3C0;  /* primary text kept soft; muted blue-shifted off purple */
+    --frz-text:#C9D6E8; --frz-text-secondary:#b8c0e0; --frz-text-muted:#8FA3C0; --frz-danger:#F28B92;  /* primary text kept soft; muted blue-shifted off purple */
     --accent:#2F86DE;   /* de-indigo'd reused subtree, dark accent */
     --surface2:var(--frz-bg-surface);   /* dark: lift hijacked chrome buttons/hovers off the page (production button rule paints var(--surface2)) */
   }
@@ -18152,13 +18197,13 @@ if ('serviceWorker' in navigator) {
     --frz-bg-app:#F5F8FB; --frz-bg-surface:#FFFFFF; --frz-bg-rail:#FAFCFE; --frz-bg-elevated:#FFFFFF; --frz-bg-sunken:#E6EEF6; --frz-shadow-card:0 2px 8px rgba(20,40,63,.06); --frz-header-tint:#ECF3FB;
     --frz-border:#E1E8F0; --frz-border-strong:#C9D6E3;
     --frz-accent:#0059A9; --frz-accent-hover:#004A8F; --frz-accent-soft:#E7F1FA; --frz-accent-soft-border:#C3DCF1;
-    --frz-text:#14283F; --frz-text-secondary:#4A6178; --frz-text-muted:#8298AD;
+    --frz-text:#14283F; --frz-text-secondary:#4A6178; --frz-text-muted:#8298AD; --frz-danger:#C0362C;
   }
   body.dark-mode.frz-beta-active {
     --frz-bg-app:#11151D; --frz-bg-surface:#1C2230; --frz-bg-rail:#161B26; --frz-bg-elevated:#232A3A; --frz-bg-sunken:#181E2A;
     --frz-border:#3A4358; --frz-border-strong:#46536E; --frz-shadow-card:0 2px 10px rgba(0,0,0,.45); --frz-header-tint:#232A3A;
     --frz-accent:#2F86DE; --frz-accent-hover:#4DA3E8; --frz-accent-soft:#15314a; --frz-accent-soft-border:#24506f;
-    --frz-text:#C9D6E8; --frz-text-secondary:#b8c0e0; --frz-text-muted:#8FA3C0;
+    --frz-text:#C9D6E8; --frz-text-secondary:#b8c0e0; --frz-text-muted:#8FA3C0; --frz-danger:#F28B92;
   }
   /* Remap the classic vars the body-level modals read → Flow tokens (kills the
      residual indigo accent + warm grays on every .modal-bg modal). */
@@ -19169,6 +19214,7 @@ if ('serviceWorker' in navigator) {
         '<button class="frz-plan-tab" type="button" role="tab" data-hometab="assigned">Assigned to me</button>'+
         '<button class="frz-plan-tab" type="button" role="tab" data-hometab="recent">Recent</button>'+
         '<button class="frz-plan-tab" type="button" role="tab" data-hometab="watching">Watching</button>'+
+        '<button class="frz-plan-tab" type="button" role="tab" data-hometab="todos">To-dos</button>'+   // TODO-1: 4th tab, last, after Watching
       '</div>'+
       '<div class="frz-home-body-wrap">'+
         '<div id="frzHomeCount" class="frz-mw-count"></div>'+
@@ -19176,6 +19222,20 @@ if ('serviceWorker' in navigator) {
           '<th class="frz-mw-cb"></th><th>Key</th><th>Type</th><th>Name</th><th>Status</th>'+
           '<th>Priority</th><th>Owner</th><th>Assignee</th><th style="text-align:center">Pts</th><th>Sprint</th>'+
         '</tr></thead><tbody id="frzHomeBody"></tbody></table>'+
+        // TODO-1: the To-dos tab is a THIRD sibling in the wrap (never innerHTML-replaces it, never writes
+        // #frzHomeCount). It has its OWN count/empty nodes reusing the .frz-mw-count/.frz-mw-empty classes.
+        // Tab switching toggles display between (#frzHomeCount + table) and this pane. The pane does NOT
+        // use _paintHome or _listRowHtml (those build 10-column item rows; a to-do is not an item).
+        '<div id="frzTodoPane" style="display:none">'+
+          '<div class="frz-todo-top">'+
+            '<input id="frzTodoAdd" class="frz-todo-add" type="text" placeholder="Add a to-do" autocomplete="off" aria-label="Add a to-do">'+
+            '<button id="frzTodoCopy" class="frz-todo-link" type="button" title="Copy all to-dos to the clipboard">Copy all</button>'+
+          '</div>'+
+          '<div id="frzTodoCount" class="frz-mw-count"></div>'+
+          '<div id="frzTodoList"></div>'+
+          '<div id="frzTodoEmpty" class="frz-mw-empty" style="display:none"></div>'+
+          '<div class="frz-todo-foot"><button id="frzTodoClear" class="frz-todo-link" type="button">Clear completed</button></div>'+
+        '</div>'+
       '</div>';
     content.appendChild(home);
     // Phase 0: Admin as a routed full page. Relocate the classic admin-modal box into
@@ -19941,6 +20001,165 @@ if ('serviceWorker' in navigator) {
       ? items.map(function(it){ return _call('_listRowHtml', it, 0); }).join('')
       : '<tr><td colspan="10" class="frz-mw-empty">'+esc(emptyText)+'</td></tr>';
   }
+
+  // ── TODO-1: private per-user to-dos (the My Home "To-dos" tab) ────────────────────────────────────
+  // Its own small save path - NEVER ipEditField/putItemGuarded/item-history (those carry optimistic
+  // concurrency + history logging a to-do has neither of). Writes go only to /api/my/todos via the API
+  // wrapper (note: delete is API.del, not API.delete). Nothing here touches projects/activities/
+  // notifications. The pane does not use _paintHome or _listRowHtml.
+  var _frzTodos = [], _frzTodoWired = false;
+  function _frzTodoPaneShow(on){
+    var count=document.getElementById('frzHomeCount'), table=document.querySelector('#frzHome .frz-mw-table'), pane=document.getElementById('frzTodoPane');
+    if(count) count.style.display = on ? 'none' : '';
+    if(table) table.style.display = on ? 'none' : '';
+    if(pane) pane.style.display = on ? '' : 'none';
+  }
+  function _frzTodayMTKey(){
+    // The MT day-key as YYYY-MM-DD, derived from todayMT() (the canonical MT today), never a raw Date -
+    // this codebase carries a UTC-vs-MT off-by-one on the capacity calendar and a due compare is that
+    // exact shape. todayMT() returns a Date built with the LOCAL constructor from MT y/m/d, so its
+    // local getters give back the MT calendar date.
+    var d=todayMT(); var m=d.getMonth()+1, day=d.getDate();
+    return d.getFullYear()+'-'+(m<10?'0':'')+m+'-'+(day<10?'0':'')+day;
+  }
+  function _frzTodoOverdue(t){ return !!(t.due_date && t.status!=='Done' && t.due_date < _frzTodayMTKey()); }
+  function _frzFmtDue(iso){   // "2026-08-16" -> "Aug 16" (compact, locale-free)
+    var mo=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var p=(iso||'').split('-'); if(p.length!==3) return iso;
+    return mo[(+p[1])-1]+' '+(+p[2]);
+  }
+  function _frzTodoById(id){ return _frzTodos.filter(function(t){ return t.id===id; })[0]; }
+  function _frzRenderTodos(){
+    _frzWireTodoOnce();
+    API.get('/api/my/todos').then(function(d){
+      if(state.view!=='my-home' || state.homeTab!=='todos') return;   // tab changed mid-flight
+      _frzTodos = (d && d.todos) || [];
+      _frzPaintTodos();
+    }).catch(function(){
+      if(state.view==='my-home' && state.homeTab==='todos'){ _frzTodos=[]; _frzPaintTodos();
+        var e=document.getElementById('frzTodoEmpty'); if(e){ e.style.display=''; e.textContent='Could not load your to-dos.'; } }
+    });
+  }
+  function _frzPaintTodos(){
+    var list=document.getElementById('frzTodoList'), count=document.getElementById('frzTodoCount'), empty=document.getElementById('frzTodoEmpty');
+    if(!list) return;
+    var open=_frzTodos.filter(function(t){ return t.status!=='Done'; });
+    var done=_frzTodos.filter(function(t){ return t.status==='Done'; });
+    var ordered=open.concat(done);   // open first then Done (display grouping; server order kept within each)
+    if(count) count.textContent = open.length+' open to-do'+(open.length!==1?'s':'');
+    if(!ordered.length){
+      list.innerHTML='';
+      if(empty){ empty.style.display='';
+        empty.innerHTML = esc('Nothing here yet - add a to-do above.')+
+          '<div class="frz-todo-empty2">'+esc('To-dos are private to you on this team.')+'</div>'; }
+      return;
+    }
+    if(empty) empty.style.display='none';
+    list.innerHTML = ordered.map(function(t){
+      var over=_frzTodoOverdue(t);
+      // The due date DISPLAYS as a styled button we fully control (so overdue can be a real muted-red
+      // date in both themes) - a native input[type=date] cannot be color-controlled here, as the classic
+      // `body.dark-mode input[type=date]` rule forces its color with !important, which the beta shell may
+      // not use. It swaps to a native input on click (one interaction) for editing.
+      // A SPAN (not a button): the classic `body.dark-mode button { color:var(--text) !important }` rule
+      // would otherwise force the color and defeat the overdue red (the beta shell may not use !important).
+      var dateHtml = t.due_date
+        ? '<span class="frz-todo-datebtn'+(over?' frz-todo-over':'')+'" role="button" tabindex="0" data-tid="'+t.id+'" data-cur="'+escA(t.due_date)+'" title="Change due date">'+esc(_frzFmtDue(t.due_date))+'</span>'
+        : '<span class="frz-todo-adddate" role="button" tabindex="0" data-tid="'+t.id+'">Add date</span>';
+      return '<div class="frz-todo-row'+(t.status==='Done'?' frz-todo-is-done':'')+'" data-tid="'+t.id+'">'+
+        '<input type="checkbox" class="frz-todo-cb" '+(t.status==='Done'?'checked':'')+' data-tid="'+t.id+'" aria-label="Mark done">'+
+        '<span class="frz-todo-title" contenteditable="true" spellcheck="false" data-tid="'+t.id+'">'+esc(t.title)+'</span>'+
+        '<span class="frz-todo-datewrap">'+dateHtml+'</span>'+
+        '<button type="button" class="frz-todo-del" data-tid="'+t.id+'" title="Delete" aria-label="Delete">&times;</button>'+
+      '</div>';
+    }).join('');
+  }
+  function _frzTodoPut(id, patch){
+    API.put('/api/my/todos/'+id, patch).then(function(d){
+      if(d && d.todo){ var i=_frzTodos.findIndex(function(t){ return t.id===id; }); if(i>=0) _frzTodos[i]=d.todo; _frzPaintTodos(); }
+    }).catch(function(){ if(typeof showToast==='function') showToast('Could not save the change','error'); _frzRenderTodos(); });
+  }
+  function _frzTodoDelete(id){
+    var t=_frzTodoById(id); if(!t) return;
+    var snap={ title:t.title, notes:t.notes, status:t.status, due_date:t.due_date };   // full snapshot to re-POST on undo
+    API.del('/api/my/todos/'+id).then(function(){
+      _frzTodos=_frzTodos.filter(function(x){ return x.id!==id; }); _frzPaintTodos();
+      if(typeof showToast==='function') showToast('To-do deleted','info',5000,{ label:'Undo', fn:function(){
+        // Undo re-creates through POST; a new id is acceptable (per spec).
+        API.post('/api/my/todos', snap).then(function(d){ if(d && d.todo){ _frzTodos.push(d.todo); if(state.homeTab==='todos') _frzPaintTodos(); } }).catch(function(){ if(typeof showToast==='function') showToast('Could not undo','error'); });
+      }});
+    }).catch(function(){ if(typeof showToast==='function') showToast('Could not delete','error'); });
+  }
+  function _frzTodoCopyAll(){
+    var open=_frzTodos.filter(function(t){ return t.status!=='Done'; });
+    var done=_frzTodos.filter(function(t){ return t.status==='Done'; });
+    var lines=open.concat(done).map(function(t){
+      return '- ['+(t.status==='Done'?'x':' ')+'] '+t.title+(t.due_date?(' (due '+t.due_date+')'):'');
+    });
+    var text=lines.join('\n');
+    var done2=function(){ if(typeof showToast==='function') showToast('Copied '+(open.length+done.length)+' to-do'+((open.length+done.length)!==1?'s':'')+' to the clipboard'); };
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(done2).catch(function(){ _frzTodoCopyFallback(text); done2(); }); }
+    else { _frzTodoCopyFallback(text); done2(); }
+  }
+  function _frzTodoCopyFallback(text){
+    try { var ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } catch(e){}
+  }
+  function _frzTodoClearCompleted(){
+    var n=_frzTodos.filter(function(t){ return t.status==='Done'; }).length;
+    if(!n){ if(typeof showToast==='function') showToast('No completed to-dos to clear'); return; }
+    // Deliberate asymmetry vs per-row delete (undo toast): bulk delete is rare + expensive to undo, so it
+    // gets a confirm; single delete is frequent + cheap to undo, so it gets undo. Do not make both the same.
+    if(!confirm('Clear '+n+' completed to-do'+(n!==1?'s':'')+'? This cannot be undone.')) return;
+    API.post('/api/my/todos/clear-completed', {}).then(function(){
+      _frzTodos=_frzTodos.filter(function(t){ return t.status!=='Done'; }); _frzPaintTodos();
+    }).catch(function(){ if(typeof showToast==='function') showToast('Could not clear completed','error'); });
+  }
+  function _frzWireTodoOnce(){
+    if(_frzTodoWired) return; _frzTodoWired=true;
+    var add=document.getElementById('frzTodoAdd');
+    if(add) add.addEventListener('keydown', function(e){
+      if(e.key!=='Enter') return; e.preventDefault();
+      var v=add.value.trim(); if(!v) return;   // empty / whitespace does nothing
+      API.post('/api/my/todos', { title:v }).then(function(d){   // new to-dos default to Today (server)
+        if(d && d.todo){ _frzTodos.push(d.todo); _frzPaintTodos(); }
+        add.value=''; add.focus();   // keep focus so a second to-do can be typed immediately
+      }).catch(function(){ if(typeof showToast==='function') showToast('Could not add the to-do','error'); });
+    });
+    var list=document.getElementById('frzTodoList');
+    if(list){
+      list.addEventListener('change', function(e){
+        var cb=e.target.closest('.frz-todo-cb'); if(cb){ _frzTodoPut(+cb.getAttribute('data-tid'), { status: cb.checked?'Done':'Today' }); }
+      });
+      list.addEventListener('click', function(e){
+        // Date display button (or "Add date") swaps to a native input for editing - one click.
+        var db=e.target.closest('.frz-todo-datebtn, .frz-todo-adddate');
+        if(db){ var tid=+db.getAttribute('data-tid'), cur=db.getAttribute('data-cur')||'';
+          var inp=document.createElement('input'); inp.type='date'; inp.className='frz-todo-dateedit'; inp.setAttribute('aria-label','Due date'); if(cur) inp.value=cur;
+          db.replaceWith(inp); inp.focus(); if(inp.showPicker){ try { inp.showPicker(); } catch(_){} }
+          inp.addEventListener('change', function(){ _frzTodoPut(tid, { due_date: inp.value||'' }); });   // clearing the input clears the date
+          inp.addEventListener('blur', function(){ if(state.homeTab==='todos') _frzPaintTodos(); });      // committed via change; blur with no change restores the display button
+          return; }
+        var del=e.target.closest('.frz-todo-del'); if(del){ _frzTodoDelete(+del.getAttribute('data-tid')); return; }
+      });
+      // Inline title edit: commit on Enter/blur, revert on Escape or empty.
+      list.addEventListener('keydown', function(e){
+        var ti=e.target.closest('.frz-todo-title'); if(!ti) return;
+        if(e.key==='Enter'){ e.preventDefault(); ti.blur(); }
+        else if(e.key==='Escape'){ e.preventDefault(); var t=_frzTodoById(+ti.getAttribute('data-tid')); ti.textContent=t?t.title:''; ti.blur(); }
+      });
+      list.addEventListener('blur', function(e){
+        var ti=e.target.closest('.frz-todo-title'); if(!ti) return;
+        var tid=+ti.getAttribute('data-tid'), t=_frzTodoById(tid), old=t?t.title:'';
+        var v=(ti.textContent||'').trim();
+        if(v===old) return;
+        if(!v){ ti.textContent=old; return; }   // empty reverts, never saves a blank title
+        _frzTodoPut(tid, { title:v });
+      }, true);   // capture: blur does not bubble
+    }
+    var copy=document.getElementById('frzTodoCopy'); if(copy) copy.addEventListener('click', _frzTodoCopyAll);
+    var clr=document.getElementById('frzTodoClear'); if(clr) clr.addEventListener('click', _frzTodoClearCompleted);
+  }
+
   function renderHome(){
     var tab=state.homeTab||'assigned';
     var tabs=document.getElementById('frzHomeTabs');
@@ -19948,6 +20167,8 @@ if ('serviceWorker' in navigator) {
       var on=b.getAttribute('data-hometab')===tab;
       b.classList.toggle('is-active', on); b.setAttribute('aria-selected', on?'true':'false');
     });
+    _frzTodoPaneShow(tab==='todos');   // TODO-1: toggle display between (#frzHomeCount + table) and #frzTodoPane
+    if(tab==='todos'){ _frzRenderTodos(); return; }   // the To-dos tab never uses _paintHome/_listRowHtml
     if(tab==='assigned'){
       var items=myWorkItems().slice().sort(myWorkSort);
       _paintHome(items, items.length+' open item'+(items.length!==1?'s':'')+' assigned to you',
@@ -22200,7 +22421,7 @@ if ('serviceWorker' in navigator) {
     // commercial entitlement boundary.
     if (!_viewEnabled(view)){ navigate('/'+_firstEnabledView(), replace); return; }
     if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
-    if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
+    if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching|todos)/); state.homeTab = hm ? hm[1] : 'assigned'; }
     if (view==='admin'){ var _adt=_adminTargetFromPath(path); state.adminTab=_adt.top; state.adminSubTab=_adt.sub; }   // ADMIN-URL-1: sub-path -> tab (regex above unchanged)
     if (view==='team-calendar'){ state.calTab = _calTabFromURL(path, u.searchParams); _calSeedDateFromURL(u.searchParams); _calSeedFiltersFromURL(u.searchParams); }   // Stage 2c/5a: tab + period + filters before render/syncURL
     applyURLToFilters(view, u.searchParams);
@@ -22247,7 +22468,7 @@ if ('serviceWorker' in navigator) {
       // emit - otherwise syncURL writes a release-less URL (stripping the param) before the restore
       // reads it. With it set, syncURL preserves ?release= and renderReleasesTab auto-expands the row.
       state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }
-    if (vm[1]==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
+    if (vm[1]==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching|todos)/); state.homeTab = hm ? hm[1] : 'assigned'; }
     if (vm[1]==='admin'){ var _adt2=_adminTargetFromPath(path); state.adminTab=_adt2.top; state.adminSubTab=_adt2.sub; }   // ADMIN-URL-1: cold-load sub-path -> tab (regex above unchanged)
     if (vm[1]==='team-calendar'){ var _csp=new URLSearchParams(location.search); state.calTab = _calTabFromURL(path, _csp); _calSeedDateFromURL(_csp); _calSeedFiltersFromURL(_csp); }   // Stage 2c/5a: seed tab + period + filters BEFORE the syncURL below (or the params get stripped on cold load)
     applyDefaultCollapse(vm[1]);
@@ -22271,7 +22492,7 @@ if ('serviceWorker' in navigator) {
       var view = vm? vm[1] : (st.frzView || state.view);
       if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
         state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }   // Stage 1b: seed before rerender (popstate doesn't syncURL, but keep symmetric + avoids a stale-expand flash)
-      if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching)/); state.homeTab = hm ? hm[1] : 'assigned'; }
+      if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching|todos)/); state.homeTab = hm ? hm[1] : 'assigned'; }
       if (view==='admin'){ var _adt3=_adminTargetFromPath(path); state.adminTab=_adt3.top; state.adminSubTab=_adt3.sub; }   // ADMIN-URL-1: back/forward sub-path -> tab (regex above unchanged)
     if (view==='team-calendar'){ var _psp=new URLSearchParams(location.search); state.calTab = _calTabFromURL(path, _psp); _calSeedDateFromURL(_psp); _calSeedFiltersFromURL(_psp); }   // Stage 2c/5a: tab + period + filters on back/forward
       applyURLToFilters(view, new URLSearchParams(location.search));
