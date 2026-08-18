@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.1.1';
+const APP_VERSION = '6.1.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2310,9 +2310,12 @@ const API = {
   _h(extra={}){ return { 'Content-Type':'application/json', ...this._authHeaders(), ...extra }; },
   async _check(r){
     if(r.status === 401){
+      let _detail=null; try { _detail = (await r.json()).detail; } catch(_){}
+      try { if(typeof _frzCaptureDrafts==='function') _frzCaptureDrafts(); } catch(e){}   // SESS-1 Part 2: save unsaved text before the wall/reload
       try { localStorage.removeItem('frazil_token'); } catch(e){}
-      if(typeof showLoginWall === 'function') showLoginWall();
-      throw new Error('Session expired. Please log in again.');
+      // SESS-1 Part 3.2: preserve the server's reason (revoked vs expired) instead of flattening to generic.
+      if(typeof showLoginWall === 'function') showLoginWall(_detail && /revoked/i.test(_detail) ? _detail : null);
+      throw new Error(_detail || 'Session expired. Please log in again.');
     }
     if(r.status === 403){
       throw new Error('Permission denied. This action requires a higher role.');
@@ -2335,13 +2338,25 @@ const API = {
   // 401 routes to the login wall the same way _check does (so an expired session is legible, not raw XML).
   async getBlobURL(path){
     const r = await fetch(path, {headers:this._authHeaders()});
-    if(r.status === 401){
-      try { localStorage.removeItem('frazil_token'); } catch(e){}
-      if(typeof showLoginWall === 'function') showLoginWall();
-      throw new Error('Session expired. Please log in again.');
-    }
+    if(r.status === 401){ this._on401(); throw new Error('Session expired. Please log in again.'); }
     if(!r.ok) throw new Error('Attachment load failed ('+r.status+')');
     return URL.createObjectURL(await r.blob());
+  },
+  // SESS-1 Part 3.1: fetch a non-JSON authed response (the export file) THROUGH the wrapper's 401
+  // handling, so an expired session shows the login wall instead of an alert with a raw status code.
+  // Caller reads .blob()/.headers off the returned Response.
+  async getRaw(path){
+    const r = await fetch(path, {headers:this._authHeaders()});
+    if(r.status === 401){ this._on401(); throw new Error('Session expired. Please log in again.'); }
+    if(r.status === 403) throw new Error('Permission denied. This action requires a higher role.');
+    if(!r.ok) throw new Error(await r.text());
+    return r;
+  },
+  // Shared 401 side-effects: snapshot unsaved text (SESS-1 Part 2), drop the token, raise the wall.
+  _on401(){
+    try { if(typeof _frzCaptureDrafts==='function') _frzCaptureDrafts(); } catch(e){}
+    try { localStorage.removeItem('frazil_token'); } catch(e){}
+    if(typeof showLoginWall === 'function') showLoginWall();
   },
 };
 // ATTACH-URL-1: resolve a proxy URL into an <img> via a blob (auth-carrying), with a LEGIBLE failure
@@ -7494,8 +7509,7 @@ document.getElementById('fullBackupBtn')?.addEventListener('click', async (e)=>{
   const btn = e.currentTarget, orig = btn.textContent;
   btn.disabled = true; btn.textContent = 'Preparing…';
   try {
-    const r = await fetch('/api/export', { headers: API._authHeaders() });
-    if(!r.ok) throw new Error('Export failed ('+r.status+')');
+    const r = await API.getRaw('/api/export');   // SESS-1 Part 3.1: 401 now raises the login wall, not an alert
     const blob = await r.blob();
     const m = (r.headers.get('Content-Disposition')||'').match(/filename="([^"]+)"/);
     const fname = m ? m[1] : ('backup-'+new Date().toISOString().slice(0,10)+'.json');
@@ -9138,8 +9152,78 @@ function renderTeamSwitch(){
   if(add) add.addEventListener('click', function(){ addTeam(); });
 }
 
-async function showLoginWall(){
+// ── SESS-1 Part 2: unsaved-work draft recovery ────────────────────────────────
+// A 401 raises the login wall and a successful re-login calls location.reload(), which destroys
+// any in-DOM editor state. Option A (dismiss-without-reload) was rejected: boot() assigns ~50
+// interleaved globals with no reusable re-init path, so an in-place re-render is exactly the
+// partial-registration half-refresh the spec warns against. Option B instead: snapshot the
+// unsaved TEXT before the wall/reload (editor-agnostic - innerText reads Tiptap and classic
+// contenteditable alike), then offer it back after reload. Text, not rich HTML, so recovery is
+// robust across both editor stacks. Cleared on save, on comment post, and on logout.
+function _frzDraftKey(){ var u=''; try{ u=localStorage.getItem('frazil_rm_user')||''; }catch(e){} return 'frazil_beta_draft_'+u; }
+function _frzCaptureDrafts(){
+  try{
+    var draft={ itemId:null };
+    // Description: only while actively editing, and skip the read-view placeholders.
+    if(typeof _ipDescEditing!=='undefined' && _ipDescEditing){
+      var n=document.getElementById('ipNotes');
+      var d=n?String(n.innerText||'').trim():'';
+      if(d && d!=='Add a description' && d!=='No description'){
+        draft.description=d;
+        draft.itemId=(typeof _itemPageId!=='undefined')?_itemPageId:null;
+      }
+    }
+    // Comment composer: classic input, else the beta comment editor's rendered text.
+    var cEl=document.getElementById('ipCommentText');
+    var cv=cEl?String((cEl.value!=null?cEl.value:cEl.innerText)||'').trim():'';
+    if(!cv){ var bc=document.querySelector('#ipCommentComposer .ProseMirror, .frz-comment-composer .ProseMirror'); if(bc) cv=String(bc.innerText||'').trim(); }
+    if(cv){ draft.comment=cv; if(draft.itemId==null) draft.itemId=(typeof _itemPageId!=='undefined')?_itemPageId:null; }
+    if(draft.description || draft.comment){
+      draft.ts=new Date().toISOString();
+      localStorage.setItem(_frzDraftKey(), JSON.stringify(draft));
+    }
+  }catch(e){}
+}
+function _frzClearDrafts(){
+  try{ localStorage.removeItem(_frzDraftKey()); }catch(e){}
+  var b=document.getElementById('frzDraftRecover'); if(b) b.remove();
+}
+function _frzShowDraftRecovery(){
+  var raw=''; try{ raw=localStorage.getItem(_frzDraftKey())||''; }catch(e){} if(!raw) return;
+  var d; try{ d=JSON.parse(raw); }catch(e){ _frzClearDrafts(); return; }
+  if(!d || (!d.description && !d.comment)){ _frzClearDrafts(); return; }
+  if(document.getElementById('frzDraftRecover')) return;
+  var parts=[];
+  if(d.description) parts.push('Description:\n'+d.description);
+  if(d.comment) parts.push('Comment:\n'+d.comment);
+  var text=parts.join('\n\n');
+  var bar=document.createElement('div'); bar.id='frzDraftRecover';
+  bar.style.cssText='position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:640px;width:calc(100% - 40px);background:#14243a;color:#fff;border:1px solid #2f4a6b;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.4);z-index:100000;padding:14px 16px;font-family:"Lato",sans-serif;font-size:13px;line-height:1.45';
+  bar.innerHTML='<div style="font-weight:800;margin-bottom:6px">Recovered unsaved text</div>'+
+    '<div style="color:#b9cbe4;margin-bottom:8px;font-size:12px">Your session expired before this was saved. Copy it back into the item.</div>'+
+    '<div style="white-space:pre-wrap;max-height:170px;overflow:auto;margin-bottom:10px;background:rgba(255,255,255,.05);border-radius:6px;padding:8px 10px">'+esc(text)+'</div>'+
+    '<div style="display:flex;gap:8px;justify-content:flex-end">'+
+      '<button id="frzDraftCopy" type="button" style="background:transparent;border:1px solid #3f5a80;color:#8fc7ff;font-weight:800;padding:5px 12px;border-radius:6px;cursor:pointer;font-family:inherit">Copy</button>'+
+      '<button id="frzDraftDismiss" type="button" style="background:transparent;border:1px solid #3f5a80;color:#b9cbe4;font-weight:700;padding:5px 12px;border-radius:6px;cursor:pointer;font-family:inherit">Dismiss</button>'+
+    '</div>';
+  document.body.appendChild(bar);
+  document.getElementById('frzDraftCopy').addEventListener('click', function(){
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).catch(function(){}); }
+    else { try{ var ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }catch(e){} }
+    if(typeof showToast==='function') showToast('Copied to the clipboard');
+  });
+  document.getElementById('frzDraftDismiss').addEventListener('click', _frzClearDrafts);
+}
+
+async function showLoginWall(reason){
   document.getElementById('loginWall').style.display = 'flex';
+  // SESS-1 Part 3.2: a revoked session carries a distinct server reason - show it on the wall instead
+  // of the generic "incorrect password" copy, so the user knows re-entering credentials will not help.
+  const _le = document.getElementById('loginError');
+  if(_le){
+    if(reason){ _le.textContent = reason; _le.style.display = ''; }
+    else { _le.style.display = 'none'; }
+  }
 
   // Fetch available teams and populate dropdown
   const savedTeam = (() => { try { return localStorage.getItem(SK.team) || ''; } catch(e){ return ''; } })();
@@ -9240,6 +9324,7 @@ document.getElementById('authBadge')?.addEventListener('click', ()=>{
 // Logout button
 document.getElementById('logoutBtn')?.addEventListener('click', ()=>{
   try { localStorage.removeItem('frazil_token'); } catch(e){}
+  _frzClearDrafts();   // SESS-1 Part 2: never leak a recovery draft across a logout (shared machine)
   setAdminMode(false);
   showLoginWall();
 });
@@ -15746,13 +15831,14 @@ async function renderItemPageComments(itemId){
 async function postItemPageComment(){
   // /beta rich comment composer owns posting when mounted (sanitized rich body).
   // Null on classic / flag-off / fallback, so this path is then unchanged.
-  if(window._frzPostComment) return window._frzPostComment();
+  if(window._frzPostComment){ return Promise.resolve(window._frzPostComment()).then(function(v){ _frzClearDrafts(); return v; }); }   // SESS-1: clear recovery draft on a posted comment
   const inp = document.getElementById('ipCommentText');
   const body = inp?.value.trim();
   if(!body || !_itemPageId) return;
   try {
     await API.post('/api/comments', { item_id:_itemPageId, author:getUsername(), body });
     inp.value = '';
+    _frzClearDrafts();   // SESS-1 Part 2: a posted comment clears any recovery draft
     renderItemPageComments(_itemPageId);
   } catch(e){ showToast('Failed to post comment'); }
 }
@@ -15852,7 +15938,7 @@ function cancelItemPageNotes(){ if(_ipDescEditing) _ipDescExitEdit(); }
 async function saveItemPageNotes(){
   // /beta rich-text editor (Tiptap) owns save when mounted: getHTML→sanitize→PUT→Jira
   // basic-subset. Null in classic / flag-off / fallback, so this path is then unchanged.
-  if(window._frzRichSave){ try{ await window._frzRichSave(); }catch(e){} _ipDescExitEdit(); return; }
+  if(window._frzRichSave){ try{ await window._frzRichSave(); }catch(e){} _frzClearDrafts(); _ipDescExitEdit(); return; }   // SESS-1: recovered on save
   if(!_itemPageId) return;
   const p = projects.find(x=>x.id===_itemPageId);
   if(!p) return;
@@ -15886,6 +15972,7 @@ async function saveItemPageNotes(){
       }).catch(()=>{});
     }
     showToast('Description saved');
+    _frzClearDrafts();   // SESS-1 Part 2: a real save clears any recovery draft
     _ipDescExitEdit();   // success → tear down the classic editor + re-render the READ view
   } catch(e){ showToast('Failed to save description'); }   // failure → stay in edit so the user can retry
 }
@@ -16997,6 +17084,10 @@ async function boot(){
     applyDefaultViewIfSet(); // apply default view if one is set
     checkItemPageParam(); // open item page if ?item= in URL
   }
+
+  // SESS-1 Part 2: offer back any unsaved text a 401 forced a reload over. Runs on BOTH the
+  // beta shell and classic paths (the recovery banner is a body-level overlay, shell-independent).
+  _frzShowDraftRecovery();
 
   // Load activities and run auto-notifications (non-blocking)
   loadActivities().then(()=>{
