@@ -20151,7 +20151,7 @@ if ('serviceWorker' in navigator) {
   // TODO-2A: _frzTodos holds the OPEN list only (fetched ?status=open). Done rows leave the open list and
   // live in the completed LOG (fetched on demand). _frzCounts carries both counts for the "N open, M done"
   // line without a second fetch. _frzTodoView toggles the main open list vs the read-only log.
-  var _frzTodos = [], _frzCounts = {open:0, done:0}, _frzTodoView = 'open', _frzTodoWired = false;
+  var _frzTodos = [], _frzCounts = {open:0, done:0}, _frzTodoView = 'open', _frzTodoWired = false, _frzWatchCount = null;   // MYHOME-COUNT: cached watched-item count (null = not loaded)
   function _frzTodoPaneShow(on){
     var count=document.getElementById('frzHomeCount'), table=document.querySelector('#frzHome .frz-mw-table'), pane=document.getElementById('frzTodoPane');
     if(count) count.style.display = on ? 'none' : '';
@@ -20238,6 +20238,7 @@ if ('serviceWorker' in navigator) {
     if(isLog) _frzRenderTodoLog(); else _frzPaintTodos();
   }
   function _frzPaintTodos(){
+    _frzPaintHomeCounts();   // MYHOME-COUNT: keep the To-dos tab badge live on add / delete / undo / complete-open
     var list=document.getElementById('frzTodoList'), count=document.getElementById('frzTodoCount'),
         empty=document.getElementById('frzTodoEmpty'), toggle=document.getElementById('frzTodoLogToggle');
     if(!list) return;
@@ -20306,6 +20307,7 @@ if ('serviceWorker' in navigator) {
       setTimeout(function(){
         _frzTodos=_frzTodos.filter(function(t){ return t.id!==id; });
         _frzCounts.open=Math.max(0,_frzCounts.open-1); _frzCounts.done++;
+        _frzPaintHomeCounts();   // MYHOME-COUNT: badge tracks completes even while viewing the log
         if(_frzTodoView==='open') _frzPaintTodos();
       }, 350);
     }).catch(function(){ if(row){ row.classList.remove('frz-todo-is-done'); var cb=row.querySelector('.frz-todo-cb'); if(cb) cb.checked=false; }
@@ -20391,6 +20393,7 @@ if ('serviceWorker' in navigator) {
       var on=b.getAttribute('data-hometab')===tab;
       b.classList.toggle('is-active', on); b.setAttribute('aria-selected', on?'true':'false');
     });
+    _frzPaintHomeCounts();   // MYHOME-COUNT: refresh the tab badges from cache (Assigned is recomputed live)
     _frzTodoPaneShow(tab==='todos');   // TODO-1: toggle display between (#frzHomeCount + table) and #frzTodoPane
     if(tab==='todos'){ _frzRenderTodos(); return; }   // the To-dos tab never uses _paintHome/_listRowHtml
     if(tab==='assigned'){
@@ -20403,6 +20406,7 @@ if ('serviceWorker' in navigator) {
       _paintHome(null, 'Loading…', '');
       API.get('/api/my/watching').then(function(d){
         if(state.view!=='my-home' || state.homeTab!=='watching') return;   // tab changed mid-flight
+        _frzWatchCount=((d&&d.items)||[]).length; _frzPaintHomeCounts();   // MYHOME-COUNT: sync the Watching badge to the raw watched count
         var items=((d&&d.items)||[]).map(_itemById).filter(Boolean).sort(myWorkSort);
         _paintHome(items, items.length+' item'+(items.length!==1?'s':'')+" you're watching",
           "You're not watching any items yet.");
@@ -20418,18 +20422,38 @@ if ('serviceWorker' in navigator) {
         'Nothing here yet - items you work on will show up.');
     }).catch(function(){ if(state.view==='my-home'&&state.homeTab==='recent') _paintHome([], '', 'Could not load recent items.'); });
   }
-  // TODO-2A: Part 2 order - Assigned and To-dos are both "things I need to act on"; Recent and Watching
-  // are both "things I am keeping an eye on". Assigned stays the DEFAULT landing tab (what the team needs
-  // from you, for every user), so To-dos is second, not first.
+  // MYHOME-COUNT: order is a gradient - the three counted, actionable tabs first (Assigned = what the
+  // team needs from you and the DEFAULT landing tab; To-dos = your own list; Watching = items you track),
+  // then Recent (a pure audit trail, no count) last. Each counted tab carries an inline (N) span that
+  // _frzPaintHomeCounts fills; Recent has none.
   function _frzHomeTabsHTML(){
     return '<div class="frz-plan-tabs" id="frzHomeTabs" role="tablist" aria-label="My Home">'+
-      '<button class="frz-plan-tab" type="button" role="tab" data-hometab="assigned">Assigned to me</button>'+
-      '<button class="frz-plan-tab" type="button" role="tab" data-hometab="todos">To-dos</button>'+
+      '<button class="frz-plan-tab" type="button" role="tab" data-hometab="assigned">Assigned to me<span class="frz-tab-count" data-count-for="assigned" style="opacity:.6"></span></button>'+
+      '<button class="frz-plan-tab" type="button" role="tab" data-hometab="todos">To-dos<span class="frz-tab-count" data-count-for="todos" style="opacity:.6"></span></button>'+
+      '<button class="frz-plan-tab" type="button" role="tab" data-hometab="watching">Watching<span class="frz-tab-count" data-count-for="watching" style="opacity:.6"></span></button>'+
       '<button class="frz-plan-tab" type="button" role="tab" data-hometab="recent">Recent</button>'+
-      '<button class="frz-plan-tab" type="button" role="tab" data-hometab="watching">Watching</button>'+
     '</div>';
   }
+  // MYHOME-COUNT: paint the inline tab badges from cached counts. Assigned is derived from projects[]
+  // (free, always fresh); To-dos reads the live _frzCounts.open; Watching reads _frzWatchCount (fetched
+  // on entry). Zero is hidden for To-dos + Watching (noise on unused tabs); Assigned shows (0).
+  function _frzPaintHomeCounts(){
+    var tabs=document.getElementById('frzHomeTabs'); if(!tabs) return;
+    function set(tab, n, showZero){
+      var el=tabs.querySelector('.frz-tab-count[data-count-for="'+tab+'"]'); if(!el) return;
+      el.textContent = (n!=null && (n>0 || showZero)) ? ' ('+n+')' : '';
+    }
+    set('assigned', myWorkItems().length, true);
+    set('todos', (_frzCounts && _frzCounts.open) || 0, false);
+    set('watching', _frzWatchCount, false);
+  }
+  // Fired on My Home ENTRY only (not intra-tab switches) - two small GETs, then repaint the badges.
+  function _frzLoadHomeCounts(){
+    API.get('/api/my/todos?status=open').then(function(d){ if(d && d.counts) _frzCounts=d.counts; _frzPaintHomeCounts(); }).catch(function(){});
+    API.get('/api/my/watching').then(function(d){ _frzWatchCount=((d&&d.items)||[]).length; _frzPaintHomeCounts(); }).catch(function(){});
+  }
   function setHome(tab){
+    var _wasHome=(state.view==='my-home');   // MYHOME-COUNT: refresh counts on ENTRY only, not tab switches
     state.onItem=false; state.itemId=null; state.view='my-home'; state.homeTab=tab||state.homeTab||'assigned';
     root.classList.remove('on-item'); root.classList.remove('frz-cal-active');
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
@@ -20448,6 +20472,7 @@ if ('serviceWorker' in navigator) {
     renderRail();
     _frzSyncSearchMode();   // top-bar search = global "Search items" (jump), like the item page
     renderHome();
+    if(!_wasHome) _frzLoadHomeCounts();   // MYHOME-COUNT: two small GETs on entry populate the To-dos + Watching badges
   }
   // ── ADMIN-URL-1: per-admin-tab URL addressability (routing only) ─────────────────────────────────
   // Flat slug space - the sub-tab names are already unique, so a nested /admin/configuration/statuses
