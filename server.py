@@ -1453,7 +1453,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.0.1"
+APP_VERSION = "6.1.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -5907,11 +5907,25 @@ def _todo_due(v):
     raise HTTPException(400, "due_date must be YYYY-MM-DD, or empty to clear")
 
 @app.get("/api/my/todos")
-def list_todos(auth: dict = Depends(require_auth)):
+def list_todos(status: Optional[str] = None, auth: dict = Depends(require_auth)):
+    # TODO-2A: optional server-side filter so the client fetches OPEN or COMPLETED, not everything and
+    # split client-side. `counts` is always returned (two cheap COUNT(*)) so the pane shows "N open, M
+    # done" without a second round-trip. Privacy is UNCHANGED from TODO-1: `username` is always from the
+    # token and always in the WHERE - the filter only NARROWS the caller's own rows, it can never widen
+    # to another user, so the completed log is not a new privacy hole.
+    who = auth["username"]
+    s = (status or "").lower()
+    if s in ("done", "completed"):
+        where, order = "username=? AND status='Done'", "completed_ts DESC, created_ts DESC"   # log: newest completed first
+    elif s == "open":
+        where, order = "username=? AND status!='Done'", "sort_order, created_ts"
+    else:
+        where, order = "username=?", "sort_order, created_ts"
     with db(auth["team"]) as c:
-        rows = c.execute("SELECT * FROM todos WHERE username=? ORDER BY sort_order, created_ts",
-                         (auth["username"],)).fetchall()
-    return {"todos": [dict(r) for r in rows]}
+        rows = c.execute(f"SELECT * FROM todos WHERE {where} ORDER BY {order}", (who,)).fetchall()
+        openN = c.execute("SELECT COUNT(*) n FROM todos WHERE username=? AND status!='Done'", (who,)).fetchone()["n"]
+        doneN = c.execute("SELECT COUNT(*) n FROM todos WHERE username=? AND status='Done'", (who,)).fetchone()["n"]
+    return {"todos": [dict(r) for r in rows], "counts": {"open": openN, "done": doneN}}
 
 @app.post("/api/my/todos")
 def create_todo(body: dict = Body(...), auth: dict = Depends(require_auth)):
@@ -5975,11 +5989,11 @@ def delete_todo(tid: int, auth: dict = Depends(require_auth)):
             raise HTTPException(404, "To-do not found")
     return {"ok": True}
 
-@app.post("/api/my/todos/clear-completed")
-def clear_completed_todos(auth: dict = Depends(require_auth)):
-    with db(auth["team"]) as c:
-        n = c.execute("DELETE FROM todos WHERE username=? AND status='Done'", (auth["username"],)).rowcount
-    return {"cleared": n}
+# TODO-2A: the POST /api/my/todos/clear-completed endpoint was REMOVED. It hard-deleted the caller's
+# Done rows - the "only way to tidy the open list was to erase your record of what you did". Now Done
+# rows simply leave the open list (the client requests ?status=open) and remain readable in the
+# completed log (?status=done). Single-click hard-delete of a completed to-do is no longer reachable;
+# per-row delete with undo stays for the deliberate one-off case.
 
 @app.get("/api/my/recent")
 def my_recent(auth: dict = Depends(require_auth)):

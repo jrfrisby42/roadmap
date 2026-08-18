@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.0.1';
+const APP_VERSION = '6.1.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -18112,7 +18112,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-todo-add::placeholder { color:var(--frz-text-muted); }
   .frz-beta .frz-todo-link { background:none; border:0; color:var(--frz-text-muted); font-size:12px; font-weight:700; cursor:pointer; padding:4px 6px; border-radius:6px; white-space:nowrap; }
   .frz-beta .frz-todo-link:hover { color:var(--frz-accent); }
-  .frz-beta .frz-todo-row { display:flex; align-items:center; gap:10px; padding:8px 6px; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-todo-row { display:flex; align-items:center; gap:8px; padding:5px 6px; border-bottom:1px solid var(--frz-border); }
   .frz-beta .frz-todo-row:hover { background:var(--frz-bg-app); }
   .frz-beta .frz-todo-cb { width:16px; height:16px; flex-shrink:0; cursor:pointer; accent-color:var(--frz-accent); }
   .frz-beta .frz-todo-title { flex:1; font-size:13px; color:var(--frz-text); line-height:1.4; padding:2px 4px; border-radius:5px; outline:none; word-break:break-word; }
@@ -18130,7 +18130,13 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-todo-del { background:none; border:0; color:var(--frz-text-muted); font-size:18px; line-height:1; cursor:pointer; padding:0 6px; border-radius:6px; opacity:0; flex-shrink:0; }
   .frz-beta .frz-todo-row:hover .frz-todo-del { opacity:1; }
   .frz-beta .frz-todo-del:hover { color:var(--frz-danger); }
-  .frz-beta .frz-todo-foot { margin-top:14px; }
+  .frz-beta .frz-todo-foot { margin-top:14px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  /* TODO-2A: read-only completed log */
+  .frz-beta .frz-todo-logday { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:var(--frz-text-muted); margin:14px 0 4px; }
+  .frz-beta .frz-todo-logday:first-child { margin-top:2px; }
+  .frz-beta .frz-todo-logrow { display:flex; align-items:center; gap:10px; padding:4px 6px; border-bottom:1px solid var(--frz-border); font-size:13px; color:var(--frz-text-secondary); }
+  .frz-beta .frz-todo-logttl { flex:1; text-decoration:line-through; }
+  .frz-beta .frz-todo-logdue { flex-shrink:0; font-size:11px; color:var(--frz-text-muted); }
   .frz-beta .frz-todo-empty2 { margin-top:6px; font-size:11.5px; color:var(--frz-text-muted); }
   /* Stage 3b - notifications bell + inbox */
   .frz-beta .frz-bell-wrap { position:relative; }
@@ -19239,12 +19245,9 @@ if ('serviceWorker' in navigator) {
     var home = document.createElement('div');
     home.id = 'frzHome'; home.style.display = 'none';
     home.innerHTML =
-      '<div class="frz-plan-tabs" id="frzHomeTabs" role="tablist" aria-label="My Home">'+
-        '<button class="frz-plan-tab" type="button" role="tab" data-hometab="assigned">Assigned to me</button>'+
-        '<button class="frz-plan-tab" type="button" role="tab" data-hometab="recent">Recent</button>'+
-        '<button class="frz-plan-tab" type="button" role="tab" data-hometab="watching">Watching</button>'+
-        '<button class="frz-plan-tab" type="button" role="tab" data-hometab="todos">To-dos</button>'+   // TODO-1: 4th tab, last, after Watching
-      '</div>'+
+      // TODO-2A: the My Home tab bar now lives IN the filter row (rendered by setHome into #frzFilterBar,
+      // which was otherwise dead empty space for my-home), reclaiming a band of chrome for content. See
+      // _frzHomeTabsHTML(). The body wrap is the whole home content below it.
       '<div class="frz-home-body-wrap">'+
         '<div id="frzHomeCount" class="frz-mw-count"></div>'+
         '<table class="frz-mw-table"><thead><tr>'+
@@ -19256,14 +19259,21 @@ if ('serviceWorker' in navigator) {
         // Tab switching toggles display between (#frzHomeCount + table) and this pane. The pane does NOT
         // use _paintHome or _listRowHtml (those build 10-column item rows; a to-do is not an item).
         '<div id="frzTodoPane" style="display:none">'+
+          // TODO-2A: quick-add stands alone at the top now (Copy all moved to the footer utility row -
+          // it is an escape hatch, not the primary action).
           '<div class="frz-todo-top">'+
             '<input id="frzTodoAdd" class="frz-todo-add" type="text" placeholder="Add a to-do" autocomplete="off" aria-label="Add a to-do">'+
-            '<button id="frzTodoCopy" class="frz-todo-link" type="button" title="Copy all to-dos to the clipboard">Copy all</button>'+
           '</div>'+
           '<div id="frzTodoCount" class="frz-mw-count"></div>'+
-          '<div id="frzTodoList"></div>'+
+          '<div id="frzTodoList"></div>'+                 // OPEN list (main view)
+          '<div id="frzTodoLog" style="display:none"></div>'+   // completed log (toggled, read-only)
           '<div id="frzTodoEmpty" class="frz-mw-empty" style="display:none"></div>'+
-          '<div class="frz-todo-foot"><button id="frzTodoClear" class="frz-todo-link" type="button">Clear completed</button></div>'+
+          // Footer utility row: the done-log toggle + Copy all. No "Clear completed" - Done rows now go to
+          // the log (readable), never a single-click hard delete.
+          '<div class="frz-todo-foot">'+
+            '<button id="frzTodoLogToggle" class="frz-todo-link" type="button"></button>'+
+            '<button id="frzTodoCopy" class="frz-todo-link" type="button" title="Copy all your to-dos to the clipboard">Copy all</button>'+
+          '</div>'+
         '</div>'+
       '</div>';
     content.appendChild(home);
@@ -19322,7 +19332,10 @@ if ('serviceWorker' in navigator) {
       var tr = e.target.closest('tr.list-row'); if(!tr) return;
       var id = parseInt(tr.getAttribute('data-id'),10); if(id) openItem(id);
     });
-    document.getElementById('frzHomeTabs').addEventListener('click', function(e){
+    // TODO-2A: delegate on #frzFilterBar (the persistent filter-row element) rather than #frzHomeTabs,
+    // since setHome now rebuilds the bar's innerHTML each render. Chip clicks in other views carry no
+    // [data-hometab], so this no-ops there - safe on the shared element.
+    document.getElementById('frzFilterBar').addEventListener('click', function(e){
       var b = e.target.closest('[data-hometab]'); if(!b) return;
       var t = b.getAttribute('data-hometab');
       navigate('/my-home'+(t==='assigned'?'':'/'+t), false);
@@ -20036,7 +20049,10 @@ if ('serviceWorker' in navigator) {
   // concurrency + history logging a to-do has neither of). Writes go only to /api/my/todos via the API
   // wrapper (note: delete is API.del, not API.delete). Nothing here touches projects/activities/
   // notifications. The pane does not use _paintHome or _listRowHtml.
-  var _frzTodos = [], _frzTodoWired = false;
+  // TODO-2A: _frzTodos holds the OPEN list only (fetched ?status=open). Done rows leave the open list and
+  // live in the completed LOG (fetched on demand). _frzCounts carries both counts for the "N open, M done"
+  // line without a second fetch. _frzTodoView toggles the main open list vs the read-only log.
+  var _frzTodos = [], _frzCounts = {open:0, done:0}, _frzTodoView = 'open', _frzTodoWired = false;
   function _frzTodoPaneShow(on){
     var count=document.getElementById('frzHomeCount'), table=document.querySelector('#frzHome .frz-mw-table'), pane=document.getElementById('frzTodoPane');
     if(count) count.style.display = on ? 'none' : '';
@@ -20058,90 +20074,170 @@ if ('serviceWorker' in navigator) {
     return mo[(+p[1])-1]+' '+(+p[2]);
   }
   function _frzTodoById(id){ return _frzTodos.filter(function(t){ return t.id===id; })[0]; }
+  // ── TODO-2A: natural-language due date (trailing token only, tight vocabulary, no dependency) ──────
+  function _frzDateFromMT(offset){   // YYYY-MM-DD, offset days from MT today (never a raw Date)
+    var d=todayMT(); d.setDate(d.getDate()+offset);
+    var m=d.getMonth()+1, day=d.getDate(); return d.getFullYear()+'-'+(m<10?'0':'')+m+'-'+(day<10?'0':'')+day;
+  }
+  function _frzWeekdayDate(targetDow, isNext){
+    // Plain "<weekday>" = the soonest upcoming that weekday (today if today matches). "next <weekday>" =
+    // the following week's (plain + 7). Stated so a future reader knows "friday" vs "next friday" differ.
+    var d=todayMT(); var delta=(targetDow - d.getDay() + 7) % 7; if(isNext) delta+=7;
+    d.setDate(d.getDate()+delta); var m=d.getMonth()+1, day=d.getDate();
+    return d.getFullYear()+'-'+(m<10?'0':'')+m+'-'+(day<10?'0':'')+day;
+  }
+  var _FRZ_WD=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+  function _frzParseTrailingDate(title){
+    // Only the TRAILING token(s) are matched, so "Friday deployment checklist" keeps its title intact.
+    // Vocabulary: today | tomorrow | <weekday> | next <weekday> | in N days. Returns {title, due_date} or
+    // null. The parse is VISIBLE + reversible: the new row shows the date like any other; clear it to undo.
+    var words=(title||'').trim().split(/\s+/), n=words.length; if(!n) return null;
+    var low=words.map(function(w){ return w.toLowerCase(); });
+    function strip(k){ return words.slice(0, n-k).join(' ').trim(); }
+    if(n>=3 && low[n-3]==='in' && /^\d{1,3}$/.test(low[n-2]) && (low[n-1]==='days'||low[n-1]==='day')){
+      var t=strip(3); if(t) return {title:t, due_date:_frzDateFromMT(parseInt(low[n-2],10))};
+    }
+    if(n>=2 && low[n-2]==='next' && _FRZ_WD.indexOf(low[n-1])>=0){
+      var t2=strip(2); if(t2) return {title:t2, due_date:_frzWeekdayDate(_FRZ_WD.indexOf(low[n-1]), true)};
+    }
+    var last=low[n-1], t3=strip(1);
+    if(!t3) return null;   // a lone date word is a real title, not a date
+    if(last==='today')    return {title:t3, due_date:_frzDateFromMT(0)};
+    if(last==='tomorrow') return {title:t3, due_date:_frzDateFromMT(1)};
+    if(_FRZ_WD.indexOf(last)>=0) return {title:t3, due_date:_frzWeekdayDate(_FRZ_WD.indexOf(last), false)};
+    return null;
+  }
+  function _frzMTDay(iso){   // full completion timestamp -> its MT calendar day (YYYY-MM-DD), for log grouping
+    try { var parts=new Intl.DateTimeFormat('en-CA',{timeZone:MT_TZ,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(iso));
+      var g=function(t){ return (parts.find(function(x){return x.type===t;})||{}).value; };
+      return g('year')+'-'+g('month')+'-'+g('day');
+    } catch(e){ return (iso||'').slice(0,10); }
+  }
+  function _frzFmtDayLong(day){ var mo=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; var p=(day||'').split('-'); if(p.length!==3) return day; return mo[(+p[1])-1]+' '+(+p[2])+', '+p[0]; }
+
   function _frzRenderTodos(){
     _frzWireTodoOnce();
-    API.get('/api/my/todos').then(function(d){
+    API.get('/api/my/todos?status=open').then(function(d){   // main view = OPEN only; Done rows go to the log
       if(state.view!=='my-home' || state.homeTab!=='todos') return;   // tab changed mid-flight
-      _frzTodos = (d && d.todos) || [];
-      _frzPaintTodos();
+      _frzTodos=(d && d.todos) || [];
+      _frzCounts=(d && d.counts) || {open:_frzTodos.length, done:0};
+      _frzTodoShowView('open');
     }).catch(function(){
-      if(state.view==='my-home' && state.homeTab==='todos'){ _frzTodos=[]; _frzPaintTodos();
+      if(state.view==='my-home' && state.homeTab==='todos'){ _frzTodos=[]; _frzCounts={open:0,done:0}; _frzTodoShowView('open');
         var e=document.getElementById('frzTodoEmpty'); if(e){ e.style.display=''; e.textContent='Could not load your to-dos.'; } }
     });
   }
+  function _frzTodoShowView(view){
+    _frzTodoView=view; var isLog=(view==='log');
+    var top=document.querySelector('#frzTodoPane .frz-todo-top'), count=document.getElementById('frzTodoCount'),
+        list=document.getElementById('frzTodoList'), log=document.getElementById('frzTodoLog'), empty=document.getElementById('frzTodoEmpty');
+    if(top) top.style.display=isLog?'none':'';       // quick-add hidden in the read-only log
+    if(count) count.style.display=isLog?'none':'';
+    if(list) list.style.display=isLog?'none':'';
+    if(log) log.style.display=isLog?'':'none';
+    if(empty) empty.style.display='none';
+    if(isLog) _frzRenderTodoLog(); else _frzPaintTodos();
+  }
   function _frzPaintTodos(){
-    var list=document.getElementById('frzTodoList'), count=document.getElementById('frzTodoCount'), empty=document.getElementById('frzTodoEmpty');
+    var list=document.getElementById('frzTodoList'), count=document.getElementById('frzTodoCount'),
+        empty=document.getElementById('frzTodoEmpty'), toggle=document.getElementById('frzTodoLogToggle');
     if(!list) return;
-    var open=_frzTodos.filter(function(t){ return t.status!=='Done'; });
-    var done=_frzTodos.filter(function(t){ return t.status==='Done'; });
-    var ordered=open.concat(done);   // open first then Done (display grouping; server order kept within each)
-    if(count) count.textContent = open.length+' open to-do'+(open.length!==1?'s':'');
-    if(!ordered.length){
+    if(toggle) toggle.textContent='View completed ('+_frzCounts.done+')';
+    if(count) count.textContent=_frzCounts.open+' open, '+_frzCounts.done+' done';   // both numbers (4.2)
+    if(!_frzTodos.length){
       list.innerHTML='';
       if(empty){ empty.style.display='';
-        empty.innerHTML = esc('Nothing here yet - add a to-do above.')+
+        empty.innerHTML=esc('Nothing here yet - add a to-do above.')+
           '<div class="frz-todo-empty2">'+esc('To-dos are private to you on this team.')+'</div>'; }
       return;
     }
     if(empty) empty.style.display='none';
-    list.innerHTML = ordered.map(function(t){
+    list.innerHTML=_frzTodos.map(function(t){   // _frzTodos is OPEN only now
       var over=_frzTodoOverdue(t);
-      // The due date DISPLAYS as a styled button we fully control (so overdue can be a real muted-red
-      // date in both themes) - a native input[type=date] cannot be color-controlled here, as the classic
-      // `body.dark-mode input[type=date]` rule forces its color with !important, which the beta shell may
-      // not use. It swaps to a native input on click (one interaction) for editing.
-      // A SPAN (not a button): the classic `body.dark-mode button { color:var(--text) !important }` rule
-      // would otherwise force the color and defeat the overdue red (the beta shell may not use !important).
+      // The due date DISPLAYS as a controllable span (overdue = a real muted-red date in both themes; a
+      // native input cannot be reliably colored). It swaps to a native input on click for editing.
       var dateHtml = t.due_date
         ? '<span class="frz-todo-datebtn'+(over?' frz-todo-over':'')+'" role="button" tabindex="0" data-tid="'+t.id+'" data-cur="'+escA(t.due_date)+'" title="Change due date">'+esc(_frzFmtDue(t.due_date))+'</span>'
         : '<span class="frz-todo-adddate" role="button" tabindex="0" data-tid="'+t.id+'">Add date</span>';
-      return '<div class="frz-todo-row'+(t.status==='Done'?' frz-todo-is-done':'')+'" data-tid="'+t.id+'">'+
-        '<input type="checkbox" class="frz-todo-cb" '+(t.status==='Done'?'checked':'')+' data-tid="'+t.id+'" aria-label="Mark done">'+
+      return '<div class="frz-todo-row" data-tid="'+t.id+'">'+
+        '<input type="checkbox" class="frz-todo-cb" data-tid="'+t.id+'" aria-label="Mark done">'+
         '<span class="frz-todo-title" contenteditable="true" spellcheck="false" data-tid="'+t.id+'">'+esc(t.title)+'</span>'+
         '<span class="frz-todo-datewrap">'+dateHtml+'</span>'+
         '<button type="button" class="frz-todo-del" data-tid="'+t.id+'" title="Delete" aria-label="Delete">&times;</button>'+
       '</div>';
     }).join('');
   }
-  function _frzTodoPut(id, patch){
+  function _frzRenderTodoLog(){
+    var log=document.getElementById('frzTodoLog'), toggle=document.getElementById('frzTodoLogToggle');
+    if(toggle) toggle.textContent='Back to open';
+    if(!log) return;
+    log.innerHTML='<div class="frz-mw-count">Loading…</div>';
+    API.get('/api/my/todos?status=done').then(function(d){
+      if(state.homeTab!=='todos' || _frzTodoView!=='log') return;
+      var done=(d && d.todos) || [];
+      if(!done.length){
+        log.innerHTML='<div class="frz-mw-empty">Nothing completed yet.'+
+          '<div class="frz-todo-empty2">Completed to-dos appear here, newest first. To bring one back, retype it.</div></div>';
+        return;
+      }
+      // Group by MT completion day, newest first (server already returns completed_ts DESC). Read-only.
+      var groups=[], byDay={};
+      done.forEach(function(t){ var day=_frzMTDay(t.completed_ts); if(!byDay[day]){ byDay[day]=[]; groups.push(day); } byDay[day].push(t); });
+      var todayK=_frzTodayMTKey(), yK=_frzDateFromMT(-1);
+      log.innerHTML=groups.map(function(day){
+        var label = day===todayK?'Today':(day===yK?'Yesterday':_frzFmtDayLong(day));
+        return '<div class="frz-todo-logday">'+esc(label)+'</div>'+byDay[day].map(function(t){
+          return '<div class="frz-todo-logrow"><span class="frz-todo-logttl">'+esc(t.title)+'</span>'+
+            (t.due_date?'<span class="frz-todo-logdue" title="Was due '+escA(t.due_date)+'">due '+esc(_frzFmtDue(t.due_date))+'</span>':'')+
+          '</div>';
+        }).join('');
+      }).join('');
+    }).catch(function(){ if(_frzTodoView==='log' && log) log.innerHTML='<div class="frz-mw-empty">Could not load the completed log.</div>'; });
+  }
+  function _frzTodoPut(id, patch){   // title / due edits (status changes go through the checkbox path)
     API.put('/api/my/todos/'+id, patch).then(function(d){
       if(d && d.todo){ var i=_frzTodos.findIndex(function(t){ return t.id===id; }); if(i>=0) _frzTodos[i]=d.todo; _frzPaintTodos(); }
     }).catch(function(){ if(typeof showToast==='function') showToast('Could not save the change','error'); _frzRenderTodos(); });
+  }
+  function _frzTodoComplete(id, row){
+    // Check = complete. Brief strike-through confirmation (Part 0: the convention stays), then the row
+    // leaves the open list into the log. Un-completing from the log is out of scope (retype).
+    if(row) row.classList.add('frz-todo-is-done');
+    API.put('/api/my/todos/'+id, {status:'Done'}).then(function(){
+      setTimeout(function(){
+        _frzTodos=_frzTodos.filter(function(t){ return t.id!==id; });
+        _frzCounts.open=Math.max(0,_frzCounts.open-1); _frzCounts.done++;
+        if(_frzTodoView==='open') _frzPaintTodos();
+      }, 350);
+    }).catch(function(){ if(row){ row.classList.remove('frz-todo-is-done'); var cb=row.querySelector('.frz-todo-cb'); if(cb) cb.checked=false; }
+      if(typeof showToast==='function') showToast('Could not complete the to-do','error'); });
   }
   function _frzTodoDelete(id){
     var t=_frzTodoById(id); if(!t) return;
     var snap={ title:t.title, notes:t.notes, status:t.status, due_date:t.due_date };   // full snapshot to re-POST on undo
     API.del('/api/my/todos/'+id).then(function(){
-      _frzTodos=_frzTodos.filter(function(x){ return x.id!==id; }); _frzPaintTodos();
+      _frzTodos=_frzTodos.filter(function(x){ return x.id!==id; }); _frzCounts.open=Math.max(0,_frzCounts.open-1); _frzPaintTodos();
       if(typeof showToast==='function') showToast('To-do deleted','info',5000,{ label:'Undo', fn:function(){
-        // Undo re-creates through POST; a new id is acceptable (per spec).
-        API.post('/api/my/todos', snap).then(function(d){ if(d && d.todo){ _frzTodos.push(d.todo); if(state.homeTab==='todos') _frzPaintTodos(); } }).catch(function(){ if(typeof showToast==='function') showToast('Could not undo','error'); });
+        API.post('/api/my/todos', snap).then(function(d){ if(d && d.todo){ _frzTodos.push(d.todo); _frzCounts.open++; if(state.homeTab==='todos'&&_frzTodoView==='open') _frzPaintTodos(); } }).catch(function(){ if(typeof showToast==='function') showToast('Could not undo','error'); });
       }});
     }).catch(function(){ if(typeof showToast==='function') showToast('Could not delete','error'); });
   }
   function _frzTodoCopyAll(){
-    var open=_frzTodos.filter(function(t){ return t.status!=='Done'; });
-    var done=_frzTodos.filter(function(t){ return t.status==='Done'; });
-    var lines=open.concat(done).map(function(t){
-      return '- ['+(t.status==='Done'?'x':' ')+'] '+t.title+(t.due_date?(' (due '+t.due_date+')'):'');
-    });
-    var text=lines.join('\n');
-    var done2=function(){ if(typeof showToast==='function') showToast('Copied '+(open.length+done.length)+' to-do'+((open.length+done.length)!==1?'s':'')+' to the clipboard'); };
-    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(done2).catch(function(){ _frzTodoCopyFallback(text); done2(); }); }
-    else { _frzTodoCopyFallback(text); done2(); }
+    // The escape hatch (to-dos are export-excluded for privacy): copy the WHOLE record, open then done.
+    API.get('/api/my/todos').then(function(d){
+      var all=(d && d.todos) || [];
+      var open=all.filter(function(t){ return t.status!=='Done'; }), done=all.filter(function(t){ return t.status==='Done'; });
+      var lines=open.concat(done).map(function(t){ return '- ['+(t.status==='Done'?'x':' ')+'] '+t.title+(t.due_date?(' (due '+t.due_date+')'):''); });
+      _frzTodoCopyText(lines.join('\n'), all.length);
+    }).catch(function(){ if(typeof showToast==='function') showToast('Could not copy','error'); });
+  }
+  function _frzTodoCopyText(text, n){
+    var ok=function(){ if(typeof showToast==='function') showToast('Copied '+n+' to-do'+(n!==1?'s':'')+' to the clipboard'); };
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(ok).catch(function(){ _frzTodoCopyFallback(text); ok(); }); }
+    else { _frzTodoCopyFallback(text); ok(); }
   }
   function _frzTodoCopyFallback(text){
     try { var ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } catch(e){}
-  }
-  function _frzTodoClearCompleted(){
-    var n=_frzTodos.filter(function(t){ return t.status==='Done'; }).length;
-    if(!n){ if(typeof showToast==='function') showToast('No completed to-dos to clear'); return; }
-    // Deliberate asymmetry vs per-row delete (undo toast): bulk delete is rare + expensive to undo, so it
-    // gets a confirm; single delete is frequent + cheap to undo, so it gets undo. Do not make both the same.
-    if(!confirm('Clear '+n+' completed to-do'+(n!==1?'s':'')+'? This cannot be undone.')) return;
-    API.post('/api/my/todos/clear-completed', {}).then(function(){
-      _frzTodos=_frzTodos.filter(function(t){ return t.status!=='Done'; }); _frzPaintTodos();
-    }).catch(function(){ if(typeof showToast==='function') showToast('Could not clear completed','error'); });
   }
   function _frzWireTodoOnce(){
     if(_frzTodoWired) return; _frzTodoWired=true;
@@ -20149,28 +20245,28 @@ if ('serviceWorker' in navigator) {
     if(add) add.addEventListener('keydown', function(e){
       if(e.key!=='Enter') return; e.preventDefault();
       var v=add.value.trim(); if(!v) return;   // empty / whitespace does nothing
-      API.post('/api/my/todos', { title:v }).then(function(d){   // new to-dos default to Today (server)
-        if(d && d.todo){ _frzTodos.push(d.todo); _frzPaintTodos(); }
+      var parsed=_frzParseTrailingDate(v);      // TODO-2A: trailing "friday"/"tomorrow"/"in 3 days" -> a due date
+      var body = parsed ? { title:parsed.title, due_date:parsed.due_date } : { title:v };
+      API.post('/api/my/todos', body).then(function(d){   // new to-dos default to Today (server)
+        if(d && d.todo){ _frzTodos.push(d.todo); _frzCounts.open++; _frzPaintTodos(); }
         add.value=''; add.focus();   // keep focus so a second to-do can be typed immediately
       }).catch(function(){ if(typeof showToast==='function') showToast('Could not add the to-do','error'); });
     });
     var list=document.getElementById('frzTodoList');
     if(list){
       list.addEventListener('change', function(e){
-        var cb=e.target.closest('.frz-todo-cb'); if(cb){ _frzTodoPut(+cb.getAttribute('data-tid'), { status: cb.checked?'Done':'Today' }); }
+        var cb=e.target.closest('.frz-todo-cb'); if(cb && cb.checked){ _frzTodoComplete(+cb.getAttribute('data-tid'), cb.closest('.frz-todo-row')); }
       });
       list.addEventListener('click', function(e){
-        // Date display button (or "Add date") swaps to a native input for editing - one click.
         var db=e.target.closest('.frz-todo-datebtn, .frz-todo-adddate');
         if(db){ var tid=+db.getAttribute('data-tid'), cur=db.getAttribute('data-cur')||'';
           var inp=document.createElement('input'); inp.type='date'; inp.className='frz-todo-dateedit'; inp.setAttribute('aria-label','Due date'); if(cur) inp.value=cur;
           db.replaceWith(inp); inp.focus(); if(inp.showPicker){ try { inp.showPicker(); } catch(_){} }
           inp.addEventListener('change', function(){ _frzTodoPut(tid, { due_date: inp.value||'' }); });   // clearing the input clears the date
-          inp.addEventListener('blur', function(){ if(state.homeTab==='todos') _frzPaintTodos(); });      // committed via change; blur with no change restores the display button
+          inp.addEventListener('blur', function(){ if(state.homeTab==='todos'&&_frzTodoView==='open') _frzPaintTodos(); });
           return; }
         var del=e.target.closest('.frz-todo-del'); if(del){ _frzTodoDelete(+del.getAttribute('data-tid')); return; }
       });
-      // Inline title edit: commit on Enter/blur, revert on Escape or empty.
       list.addEventListener('keydown', function(e){
         var ti=e.target.closest('.frz-todo-title'); if(!ti) return;
         if(e.key==='Enter'){ e.preventDefault(); ti.blur(); }
@@ -20186,7 +20282,7 @@ if ('serviceWorker' in navigator) {
       }, true);   // capture: blur does not bubble
     }
     var copy=document.getElementById('frzTodoCopy'); if(copy) copy.addEventListener('click', _frzTodoCopyAll);
-    var clr=document.getElementById('frzTodoClear'); if(clr) clr.addEventListener('click', _frzTodoClearCompleted);
+    var toggle=document.getElementById('frzTodoLogToggle'); if(toggle) toggle.addEventListener('click', function(){ _frzTodoShowView(_frzTodoView==='log'?'open':'log'); });
   }
 
   function renderHome(){
@@ -20223,6 +20319,17 @@ if ('serviceWorker' in navigator) {
         'Nothing here yet - items you work on will show up.');
     }).catch(function(){ if(state.view==='my-home'&&state.homeTab==='recent') _paintHome([], '', 'Could not load recent items.'); });
   }
+  // TODO-2A: Part 2 order - Assigned and To-dos are both "things I need to act on"; Recent and Watching
+  // are both "things I am keeping an eye on". Assigned stays the DEFAULT landing tab (what the team needs
+  // from you, for every user), so To-dos is second, not first.
+  function _frzHomeTabsHTML(){
+    return '<div class="frz-plan-tabs" id="frzHomeTabs" role="tablist" aria-label="My Home">'+
+      '<button class="frz-plan-tab" type="button" role="tab" data-hometab="assigned">Assigned to me</button>'+
+      '<button class="frz-plan-tab" type="button" role="tab" data-hometab="todos">To-dos</button>'+
+      '<button class="frz-plan-tab" type="button" role="tab" data-hometab="recent">Recent</button>'+
+      '<button class="frz-plan-tab" type="button" role="tab" data-hometab="watching">Watching</button>'+
+    '</div>';
+  }
   function setHome(tab){
     state.onItem=false; state.itemId=null; state.view='my-home'; state.homeTab=tab||state.homeTab||'assigned';
     root.classList.remove('on-item'); root.classList.remove('frz-cal-active');
@@ -20235,7 +20342,10 @@ if ('serviceWorker' in navigator) {
     applyChromeHiding();
     document.getElementById('frzLeft').innerHTML=_titleHtml('home','My Home');
     document.getElementById('frzBadges').innerHTML='';
-    document.getElementById('frzFilterBar').innerHTML='';   // fixed filter - no chip bar
+    // TODO-2A: the filter row was empty dead space for my-home (CFG['my-home'].chips is []); occupy it
+    // with the tab bar instead of clearing it. If filters are ever added to Assigned/Recent/Watching,
+    // this row becomes contested and that collision must be deliberate.
+    document.getElementById('frzFilterBar').innerHTML=_frzHomeTabsHTML();
     renderRail();
     _frzSyncSearchMode();   // top-bar search = global "Search items" (jump), like the item page
     renderHome();
