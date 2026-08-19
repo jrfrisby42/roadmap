@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.1.7';
+const APP_VERSION = '6.2.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -10024,6 +10024,7 @@ async function submitFlagIssue(){
   // Blocked binding: flagging Blocked moves the item to the designated Blocked status
   // (if one is defined), stashing the prior status for one-click un-block. No Blocked
   // status defined → flag stays a note (unchanged behavior).
+  let _statusChanged = false;   // REM-1 A2.3: true ONLY when the Blocked move succeeded server-side (never from the type)
   const blockedStatus = getBlockedStatus();
   if(document.getElementById('flagType').value === 'Blocked' && blockedStatus && p.status !== blockedStatus){
     const prev = p.status;
@@ -10032,10 +10033,17 @@ async function submitFlagIssue(){
     try {
       const updated = await API.put('/api/projects/'+p.id, {...p, _username:getUsername()});
       const idx = projects.findIndex(x=>x.id===p.id); if(idx>=0) projects[idx]=updated;
+      _statusChanged = true;   // server accepted the move; the panel/row may need a targeted status resync
       logActionOnItem(p.id, p.name, p.dev||'', p.product||'', `Status: ${prev||'(none)'} → ${blockedStatus} (flagged Blocked)`, {status:prev}, {status:blockedStatus});
     } catch(e){ if(typeof showToast==='function') showToast('Flagged, but moving to Blocked failed: '+(e.message||e),'error'); }
   }
   await loadActivities();
+  // REM-1 refresh contract: hand the Flow shell (block C) the change so the List detail-panel flag banner,
+  // the List row activity dot, and - on a successful Blocked move - the panel status pill + row status cell
+  // repaint targeted, WITHOUT a full re-render (which would tear down the open panel + its scroll position).
+  // This block cannot see into the shell IIFE; block C owns what to repaint. Guarded on typeof so this stays
+  // correct if the shell never registered the hook. See window._frzOnFlagChanged in the beta module.
+  if(typeof window._frzOnFlagChanged === 'function') window._frzOnFlagChanged({ itemId: p.id, statusChanged: _statusChanged });
   render(); // refresh warning icons
 }
 
@@ -25321,6 +25329,13 @@ if ('serviceWorker' in navigator) {
     for(var i=0;i<acts.length;i++){ var a=acts[i]; if(a.item_id===id && _isActiveFlag(a)) return a; }
     return null;
   }
+  // REM-1: single source for flag-type -> semantic colour, shared by injectFlag (item page banner) and the
+  // List detail-panel flag banner (_frzPaintPanelFlag). Blocked/At Risk red, Needs Decision blue, else amber.
+  // These are existing semantic values, NOT theme tokens: they render as coloured text + border over a
+  // same-hue translucent fill (col+'1a' / col+'66'), which reads correctly in both light and dark - which is
+  // why REM-1 carries them across verbatim rather than re-tinting to --frz-* tokens.
+  var _FRZ_FLAG_COLORS={'Blocked':'#e8394a','At Risk':'#e8394a','Needs Decision':'#3b8fd4'};
+  function _frzFlagColor(type){ return _FRZ_FLAG_COLORS[type]||'#e8a000'; }
   function injectFlag(p){
     if(!p) return;
     var notes=document.getElementById('ipNotes');
@@ -25329,8 +25344,7 @@ if ('serviceWorker' in navigator) {
     var container=anchor.parentNode;
     var f=itemFlag(p.id), banner=document.getElementById('frzFlagBanner');
     if(!f){ if(banner) banner.remove(); return; }
-    var COL={'Blocked':'#e8394a','At Risk':'#e8394a','Needs Decision':'#3b8fd4'};
-    var col=COL[f.activity_type]||'#e8a000';
+    var col=_frzFlagColor(f.activity_type);   // REM-1: shared with the List panel banner
     if(!banner){
       banner=document.createElement('div'); banner.id='frzFlagBanner';
       banner.style.cssText='margin:0 0 12px;padding:9px 14px;border-radius:8px;font-size:13px;cursor:pointer;line-height:1.4';
@@ -26782,6 +26796,16 @@ if ('serviceWorker' in navigator) {
       ? '<select id="frzLpStatus" class="frz-lp-status '+sCls+'">'+ ((_call('_ipFieldOptions','status')||[]).map(function(o){ return '<option value="'+escA(o.value)+'"'+(String(p.status||'')===String(o.value)?' selected':'')+'>'+esc(o.label)+'</option>'; }).join('')) +'</select>'
       : '<span class="'+sCls+'" style="padding:1px 9px;border-radius:9px;font-size:11px;font-weight:700">'+esc(p.status||'-')+'</span>';
     var prio=(p.priority&&PRIO_LBL[p.priority]) ? '<span class="frz-lp-prio" style="color:'+PRIO_CLR[p.priority]+'">'+esc(PRIO_LBL[p.priority])+'</span>' : '';
+    // REM-1: the panel's ONE new affordance - a flag entry point in the badges row. Home is the badges row,
+    // NOT .frz-lp-actions: the item page places its #frzFlagBtn beside status/priority (an item action),
+    // while .frz-lp-actions holds the ⤢/✕ panel-WINDOW controls. Reuses the item page's .frz-watch class +
+    // flag icon (no new button style). Gate: canEdit (isAdmin||isEditor), matching the edit-modal flag gate
+    // and the panel's own status-edit gate. (Note: the item page's #frzFlagBtn is actually UNGATED - viewers
+    // see it there - so this does not literally mirror it; it follows REM-1 Part 2.2: viewers get the banner
+    // for awareness but not the action.)
+    var flagBtn = canEdit
+      ? '<button type="button" class="frz-watch" id="frzLpFlagBtn" title="Flag an issue"><svg class="frz-ic" viewBox="0 0 16 16" style="width:13px;height:13px"><path d="M4 14V3M4 3.5C5.5 2.5 7 2.5 8.5 3.5S11.5 4.5 13 3.5V9c-1.5 1-3 1-4.5 0S5.5 8 4 9"/></svg><span>Flag</span></button>'
+      : '';
     var sprint=p.sprintId ? ((sprintById(p.sprintId)||{}).name || p.sprintId) : '';
     var rel=p.releaseId ? ((releaseById(p.releaseId)||{}).name || '') : '';
     var dept=Array.isArray(p.departments)?p.departments.join(', '):(p.department||'');
@@ -26797,7 +26821,7 @@ if ('serviceWorker' in navigator) {
       + '<div class="frz-lp-actions"><button type="button" class="frz-lp-full" title="Open full page" aria-label="Open full page">⤢</button>'
       + '<button type="button" class="frz-lp-close" title="Close" aria-label="Close">✕</button></div></div>'
       + '<div class="frz-lp-name">'+esc(p.name||'')+'</div>'
-      + '<div class="frz-lp-badges">'+statusCtl+prio+'</div></div>'
+      + '<div class="frz-lp-badges">'+statusCtl+prio+flagBtn+'</div></div>'
       + (details?'<div class="frz-lp-details">'+details+'</div>':'')
       + '<div class="frz-lp-sec"><div class="frz-lp-sec-hd">Description</div><div id="frzLpDesc"></div></div>'
       + '<div class="frz-lp-sec"><div class="frz-lp-sec-hd">Comments</div><div id="frzLpComposer"></div><div id="frzLpThread"></div></div>';
@@ -26838,8 +26862,13 @@ if ('serviceWorker' in navigator) {
       _call('saveItemPageField', 'status', this.value, { id: state.panelId,
         refresh: function(sp){ _frzRepaintStatusPill(sp); _frzUpdateRowStatus(sp&&sp.id, sp&&sp.status); } });
     }); }
+    // REM-1: flag button (editor/admin only; absent for viewers). Uses state.panelId so it always flags
+    // the CURRENTLY open item, and the flag modal (z-index 900) opens above the panel (z-index 80).
+    var _fb=_frzPanelEl.querySelector('#frzLpFlagBtn');
+    if(_fb) _fb.addEventListener('click', function(){ _call('openFlagIssue', state.panelId); });
     _frzRenderPanelThread(id);                          // read-only thread (sanitizer-ensured, state.panelId-guarded)
     _frzWirePanelComposer(p, canEdit);                  // lazy composer (viewer/flag-off → none)
+    _frzPaintPanelFlag(id);                             // REM-1: flag banner (all roles; state.panelId-guarded)
     _frzApplyPanelHighlight();
     if(!opts.fromURL) syncURL(!first);                 // push on first open, replace on swap (panel param via syncURL)
     if(!opts.fromURL) try{ _frzPanelEl.focus(); }catch(e){}
@@ -26868,6 +26897,76 @@ if ('serviceWorker' in navigator) {
     var cls=_call('statusCls', status)||'';
     td.innerHTML = status ? '<span class="'+cls+'" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">'+esc(status)+'</span>' : '-';
   }
+  // REM-1: paint (or clear) the panel's flag banner for the CURRENTLY open item. Inserted between .frz-lp-hd
+  // and .frz-lp-details, dynamically so "no flag" leaves NO empty container (mirrors injectFlag). Reuses the
+  // shared colour + the "⚑ {type} {message} - {note}" shape, but is deliberately NARROWER than injectFlag:
+  // NO unblock button. Unblock carries its own picker popover + history logging; the panel already exposes a
+  // status select that reaches the same outcome, so duplicating it here would be redundant surface.
+  // DIVERGENCE (REM-1 A1.3): this banner shows the MOST-RECENT active flag via itemFlag(); the List row's
+  // activity dot (_frzUpdateRowFlagDot -> getItemActivityIndicator) covers a broader type set and picks by
+  // precedence, so the two can legitimately disagree on an item with multiple active flags. This is NOT a
+  // bug: it mirrors the item page exactly (same two functions). Do not reconcile them here.
+  function _frzPaintPanelFlag(id){
+    if(!_frzPanelEl || state.panelId!==id) return;      // swap guard: only ever paint the open item
+    var scroll=_frzPanelEl.querySelector('.frz-lp-scroll'); if(!scroll) return;
+    var banner=_frzPanelEl.querySelector('#frzLpFlagBanner');
+    var f=itemFlag(id);
+    if(!f){ if(banner) banner.remove(); return; }        // no active flag -> render nothing, no empty box
+    var col=_frzFlagColor(f.activity_type);
+    if(!banner){
+      banner=document.createElement('div'); banner.id='frzLpFlagBanner';
+      banner.style.cssText='margin:0 0 12px;padding:9px 14px;border-radius:8px;font-size:13px;cursor:pointer;line-height:1.4';
+      banner.title='Open in Activity Center';
+      var hd=scroll.querySelector('.frz-lp-hd');
+      if(hd && hd.nextSibling) scroll.insertBefore(banner, hd.nextSibling); else scroll.appendChild(banner);
+      banner.addEventListener('click', function(){ _call('openConflictActivityModal', id); });
+    }
+    banner.style.background=col+'1a'; banner.style.border='1px solid '+col+'66'; banner.style.color=col;
+    banner.innerHTML='<span style="font-weight:800">⚑ '+esc(f.activity_type)+'</span> '+esc(f.message||'')+(f.note?' <span style="opacity:.75">- '+esc(f.note)+'</span>':'');
+  }
+  // REM-1 (A1): repaint the List row's activity dot for one item, targeted (mirrors _frzUpdateRowStatus).
+  // DIVERGENCE (A1.3): the row indicator is the SHARED activity dot from getItemActivityIndicator - it covers
+  // a broader type set than FLAG_TYPES (Needs Date Check, Flagged Issue) and picks by PRECEDENCE, whereas the
+  // panel banner (_frzPaintPanelFlag) shows the MOST-RECENT flag via itemFlag(). So they can legitimately
+  // disagree on an item with multiple active flags. This is intended, not a bug: it mirrors the item page
+  // exactly (same two functions), and reconciling here would make the panel the inconsistent surface.
+  // A1.2: resolve the Name cell by data-col="name" (LIST-CELL-1,
+  // never a positional index) - and the Name column can be HIDDEN per-user, so the cell may be absent:
+  // no-op silently, never create it, never fall back to a positional lookup. The dot's wrapper markup here
+  // matches _listRowHtml's Name cell exactly (inline-flex + the -1.2px optical nudge).
+  function _frzUpdateRowFlagDot(id){
+    if(id==null) return;
+    var row=document.querySelector('#listBody tr.list-row[data-id="'+id+'"]'); if(!row) return;
+    var nameTd=row.querySelector('td[data-col="name"]'); if(!nameTd) return;   // A1.2: Name hidden -> absent -> no-op
+    var wrap=nameTd.querySelector('span'); if(!wrap) return;                    // the flex wrapper (name span [+ dot span])
+    while(wrap.children.length>1) wrap.removeChild(wrap.lastChild);             // drop any existing trailing dot (classed or not)
+    var dot=_call('getItemActivityIndicator', id)||'';
+    if(dot){
+      var span=document.createElement('span');
+      span.style.cssText='display:inline-flex;flex-shrink:0;transform:translateY(-1.2px)';
+      span.innerHTML=dot;
+      wrap.appendChild(span);
+    }
+  }
+  // REM-1 refresh contract. Registered on window so block B's submitFlagIssue can call it across the block
+  // boundary (block B cannot see into this IIFE). Block B passes only {itemId, statusChanged} and stays
+  // ignorant of the panel; THIS side decides what to repaint. All repaints are targeted (a full re-render
+  // would tear down the open panel + lose scroll position). Safe to be absent: block B guards on typeof.
+  // See the single call site in submitFlagIssue (block B), which fires it after loadActivities() so both
+  // `activities` (banner) and `_openActs` (row dot) are already fresh. statusChanged is TRUE only when a
+  // Blocked flag actually moved the item's status on the server success path (A2) - never from the type.
+  window._frzOnFlagChanged=function(info){
+    info=info||{};
+    var id=info.itemId; if(id==null) return;
+    _invalidateFlaggedIds();                                   // FN5 flagged-id cache may now be stale
+    var p=(_val('projects',[])||[]).filter(function(x){return x.id===id;})[0];
+    _frzUpdateRowFlagDot(id);                                  // List row activity dot (no-op if row/cell absent)
+    if(info.statusChanged && p) _frzUpdateRowStatus(id, p.status);   // A2: row status cell reflects the Blocked move
+    if(state.panelId===id){                                    // repaint the panel only if THIS item is open
+      _frzPaintPanelFlag(id);
+      if(info.statusChanged && p) _frzRepaintStatusPill(p);
+    }
+  };
   // Render the panel's comment thread (read-only): ensure the sanitizer (List view hasn't
   // loaded it), fetch, render newest-first via _renderCommentBody, rehydrate inline images.
   // state.panelId-guarded at every async hop so a rapid swap discards a late result.
