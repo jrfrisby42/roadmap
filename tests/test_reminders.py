@@ -268,6 +268,31 @@ def test_todo_id_is_not_an_auth_path(client, team):
     assert client.put(f"/api/my/todos/{tid}", json={"due_date": "2030-01-01"}, headers=bob).status_code == 404
 
 
+# ── REM-3a HOTFIX: concurrency-safe migration marker ──────────────────────────────────────────────────
+def test_migration_marker_tolerates_duplicate(client, team):
+    # Two gunicorn workers can both pass the check-then-act gate and both reach the marker insert with the
+    # SAME key. The losing racer must NOT raise "UNIQUE constraint failed: schema_meta.key" - at import time
+    # that is unhandled and kills the worker (the 6.4.0 first-boot status=3 crash). Reverting
+    # _mark_migration_done to a plain INSERT (no OR IGNORE) makes this test go RED.
+    with server.db(team) as c:
+        server._mark_migration_done(c, "dup_probe")
+        server._mark_migration_done(c, "dup_probe")   # duplicate: must be a silent no-op, not a raise
+        n = c.execute("SELECT COUNT(*) n FROM schema_meta WHERE key='dup_probe'").fetchone()["n"]
+    assert n == 1   # exactly one marker row, no exception
+
+
+def test_migration_marker_cross_connection_duplicate(client, team):
+    # Closer to the real two-WORKER shape, and still DETERMINISTIC (sequential, two connections - not two
+    # threads, which would be flaky). Connection A commits the marker; connection B (which read it absent
+    # before A committed) then inserts the same key against the now-present row. B must not raise.
+    with server.db(team) as c1:
+        server._mark_migration_done(c1, "xconn_probe")     # worker A: commits at block exit
+    with server.db(team) as c2:
+        server._mark_migration_done(c2, "xconn_probe")     # worker B: duplicate across a separate connection
+        n = c2.execute("SELECT COUNT(*) n FROM schema_meta WHERE key='xconn_probe'").fetchone()["n"]
+    assert n == 1
+
+
 # ── EXPORT PRIVACY (B3 / B7.16) ───────────────────────────────────────────────────────────────────────
 def test_reminder_title_not_in_export(client, team, admin_headers):
     h = _hdr(team, "alice")
