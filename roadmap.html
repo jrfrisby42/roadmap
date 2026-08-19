@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.2.0';
+const APP_VERSION = '6.2.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -18556,8 +18556,12 @@ if ('serviceWorker' in navigator) {
                     box-shadow:-8px 0 24px rgba(20,40,63,.10); display:flex; flex-direction:column; z-index:80; outline:none; }
   .frz-list-panel .frz-lp-scroll { flex:1 1 auto; overflow-y:auto; padding:16px 18px; }
   body.frz-panel-open #frzContent { padding-right:420px; }   /* keep the list clear of the panel in split mode */
-  .frz-list-panel .frz-lp-hd-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-  .frz-list-panel .frz-lp-actions { display:flex; align-items:center; gap:4px; }
+  /* REM-1b: 3-zone header top row. Both SIDE zones are flex:1 1 0 so they are ALWAYS equal width regardless
+     of key/actions content, which pins the middle group to the row's true centre (no wobble as the key varies). */
+  .frz-list-panel .frz-lp-hd-top { display:flex; align-items:center; gap:8px; }
+  .frz-list-panel .frz-lp-hdside { flex:1 1 0; min-width:0; display:flex; align-items:center; }
+  .frz-list-panel .frz-lp-hdmid { flex:0 1 auto; min-width:0; display:flex; align-items:center; justify-content:center; gap:8px; }
+  .frz-list-panel .frz-lp-actions { flex:1 1 0; min-width:0; display:flex; align-items:center; justify-content:flex-end; gap:4px; }
   .frz-list-panel .frz-lp-close, .frz-list-panel .frz-lp-full { background:none; border:0; cursor:pointer; color:var(--frz-text-secondary); font-size:16px; line-height:1; padding:4px 6px; border-radius:6px; }
   .frz-list-panel .frz-lp-close:hover, .frz-list-panel .frz-lp-full:hover { background:var(--frz-bg-app); color:var(--frz-accent); }
   .frz-list-panel .frz-lp-name { font-size:17px; font-weight:800; color:var(--frz-text); margin:8px 0 8px; line-height:1.3; }
@@ -18565,8 +18569,6 @@ if ('serviceWorker' in navigator) {
   .frz-list-panel .frz-lp-openbtn:hover { background:var(--frz-accent-hover); }
   /* Sticky bottom action bar (full-bleed): keeps the primary action pinned + out of the header. */
   .frz-list-panel .frz-lp-footer { flex:0 0 auto; padding:11px 18px; border-top:1px solid var(--frz-border); background:var(--frz-bg-surface); display:flex; justify-content:flex-end; }
-  .frz-list-panel .frz-lp-badges { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  .frz-list-panel .frz-lp-prio { font-size:11px; font-weight:700; }
   .frz-list-panel .frz-lp-details { margin:16px 0; border:1px solid var(--frz-border); border-radius:8px; overflow:hidden; }
   .frz-list-panel .frz-lp-row { display:flex; gap:10px; padding:6px 12px; font-size:12px; border-top:1px solid var(--frz-border); }
   .frz-list-panel .frz-lp-row:first-child { border-top:0; }
@@ -18584,7 +18586,7 @@ if ('serviceWorker' in navigator) {
   }
   body.dark-mode .frz-list-panel { box-shadow:-8px 0 24px rgba(0,0,0,.4); }
   /* Stage B: panel status control + comment thread + composer */
-  .frz-list-panel .frz-lp-status { font-size:11px; font-weight:700; border:1px solid var(--frz-border-strong); border-radius:9px; padding:2px 8px; cursor:pointer; font-family:'Lato',sans-serif; max-width:180px; }
+  .frz-list-panel .frz-lp-status { font-size:11px; font-weight:700; border:1px solid var(--frz-border-strong); border-radius:9px; padding:2px 8px; cursor:pointer; font-family:'Lato',sans-serif; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }   /* REM-1b: cap + ellipsis so a long status name cannot push the ⤢/✕ cluster out or wrap the header */
   .frz-list-panel .frz-lp-sec + .frz-lp-sec { margin-top:18px; }
   .frz-list-panel #frzLpThread { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
   .frz-list-panel .frz-lp-cmt { background:var(--frz-bg-app); border:1px solid var(--frz-border); border-radius:8px; padding:9px 11px; }
@@ -26795,10 +26797,9 @@ if ('serviceWorker' in navigator) {
     var statusCtl = canEdit
       ? '<select id="frzLpStatus" class="frz-lp-status '+sCls+'">'+ ((_call('_ipFieldOptions','status')||[]).map(function(o){ return '<option value="'+escA(o.value)+'"'+(String(p.status||'')===String(o.value)?' selected':'')+'>'+esc(o.label)+'</option>'; }).join('')) +'</select>'
       : '<span class="'+sCls+'" style="padding:1px 9px;border-radius:9px;font-size:11px;font-weight:700">'+esc(p.status||'-')+'</span>';
-    var prio=(p.priority&&PRIO_LBL[p.priority]) ? '<span class="frz-lp-prio" style="color:'+PRIO_CLR[p.priority]+'">'+esc(PRIO_LBL[p.priority])+'</span>' : '';
-    // REM-1: the panel's ONE new affordance - a flag entry point in the badges row. Home is the badges row,
-    // NOT .frz-lp-actions: the item page places its #frzFlagBtn beside status/priority (an item action),
-    // while .frz-lp-actions holds the ⤢/✕ panel-WINDOW controls. Reuses the item page's .frz-watch class +
+    // REM-1: the panel's flag entry point (REM-1b moved it from the now-removed .frz-lp-badges row into the
+    // header top row's middle zone, beside the status control - it is an item action, and .frz-lp-actions
+    // holds the ⤢/✕ panel-WINDOW controls, never an item action). Reuses the item page's .frz-watch class +
     // flag icon (no new button style). Gate: canEdit (isAdmin||isEditor), matching the edit-modal flag gate
     // and the panel's own status-edit gate. (Note: the item page's #frzFlagBtn is actually UNGATED - viewers
     // see it there - so this does not literally mirror it; it follows REM-1 Part 2.2: viewers get the banner
@@ -26809,19 +26810,38 @@ if ('serviceWorker' in navigator) {
     var sprint=p.sprintId ? ((sprintById(p.sprintId)||{}).name || p.sprintId) : '';
     var rel=p.releaseId ? ((releaseById(p.releaseId)||{}).name || '') : '';
     var dept=Array.isArray(p.departments)?p.departments.join(', '):(p.department||'');
-    // Read-only details - the right-rail set (display-only v1; blanks auto-skip).
+    // REM-1b: the PRIORITY details row renders UNCONDITIONALLY (unlike every other details row, which
+    // auto-skips when blank via _frzPanelRow). Deliberate inconsistency: priority is a triage field whose
+    // ABSENCE is itself information (unassigned = not yet triaged), whereas a blank Sprint/Release just means
+    // "not in one". Set -> the PRIO_CLR colour (the same cue the removed .frz-lp-prio chip carried); unset ->
+    // a muted --frz-* placeholder that must never read as a real priority. _frzPanelRow is NOT changed here
+    // (other rows keep auto-skipping); this row is built inline because _frzPanelRow cannot colour a value.
+    var prioRow = (p.priority&&PRIO_LBL[p.priority])
+      ? '<div class="frz-lp-row"><span class="frz-lp-k">Priority</span><span class="frz-lp-v" style="color:'+PRIO_CLR[p.priority]+';font-weight:700">'+esc(PRIO_LBL[p.priority])+'</span></div>'
+      : '<div class="frz-lp-row"><span class="frz-lp-k">Priority</span><span class="frz-lp-v" style="color:var(--frz-text-muted)">-</span></div>';
+    // Read-only details - the right-rail set (display-only v1; blanks auto-skip, EXCEPT the forced prioRow).
     var details=[ _frzPanelRow('Key',p.itemKey), _frzPanelRow('Project',p.product), _frzPanelRow('Type',p.type),
       _frzPanelRow('Owner',p.dev), _frzPanelRow('Assignee',p.assignee ? displayName(p.assignee) : p.assignee), _frzPanelRow('Reporter',p.reporter),
       (p.reporterEmail ? '<div class="frz-lp-row"><span class="frz-lp-k">Reporter Email</span><span class="frz-lp-v"><a href="mailto:'+escA(p.reporterEmail)+'" style="color:var(--frz-accent)">'+esc(p.reporterEmail)+'</a></span></div>' : ''),
-      _frzPanelRow('Priority',(p.priority&&PRIO_LBL[p.priority])?PRIO_LBL[p.priority]:null), _frzPanelRow('Department',dept),
+      prioRow, _frzPanelRow('Department',dept),
       _frzPanelRow('Points',(p.storyPoints!=null&&p.storyPoints!=='')?p.storyPoints:null), _frzPanelRow('Sprint',sprint),
       _frzPanelRow('Release',rel), _frzPanelRow('Start',p.start), _frzPanelRow('Due',p.due), _frzPanelRow('Expected',p.revised) ].join('');
+    // REM-1b: header top row is a 3-zone flex - [ key ] [ Flag + status ] [ ⤢ ✕ ]. The two SIDE zones are
+    // flex:1 1 0 (always equal width regardless of their content), so the middle group is centred on the
+    // row's TRUE midpoint and does not wobble as the item key varies in width (IT-43 vs FRZ-792). Middle
+    // order is Flag first, status second, so the write action never sits adjacent to .frz-lp-close. Status
+    // now sits ABOVE the item name by design: identity + state share one strip, the body below is pure data
+    // (recorded so it is not "corrected" later). The old .frz-lp-badges row is removed - its ~21px went to
+    // content, with no compensating margin - and priority is no longer a chip here (it is the unconditional
+    // PRIORITY details row above).
     return '<div class="frz-lp-hd">'
-      + '<div class="frz-lp-hd-top">'+(p.itemKey?'<span class="frz-bcard-key" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></span>':'<span></span>')
-      + '<div class="frz-lp-actions"><button type="button" class="frz-lp-full" title="Open full page" aria-label="Open full page">⤢</button>'
-      + '<button type="button" class="frz-lp-close" title="Close" aria-label="Close">✕</button></div></div>'
-      + '<div class="frz-lp-name">'+esc(p.name||'')+'</div>'
-      + '<div class="frz-lp-badges">'+statusCtl+prio+flagBtn+'</div></div>'
+      + '<div class="frz-lp-hd-top">'
+        + '<div class="frz-lp-hdside">'+(p.itemKey?'<span class="frz-bcard-key" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></span>':'')+'</div>'
+        + '<div class="frz-lp-hdmid">'+flagBtn+statusCtl+'</div>'
+        + '<div class="frz-lp-actions"><button type="button" class="frz-lp-full" title="Open full page" aria-label="Open full page">⤢</button>'
+        + '<button type="button" class="frz-lp-close" title="Close" aria-label="Close">✕</button></div>'
+      + '</div>'
+      + '<div class="frz-lp-name">'+esc(p.name||'')+'</div></div>'
       + (details?'<div class="frz-lp-details">'+details+'</div>':'')
       + '<div class="frz-lp-sec"><div class="frz-lp-sec-hd">Description</div><div id="frzLpDesc"></div></div>'
       + '<div class="frz-lp-sec"><div class="frz-lp-sec-hd">Comments</div><div id="frzLpComposer"></div><div id="frzLpThread"></div></div>';
