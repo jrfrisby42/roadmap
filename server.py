@@ -895,6 +895,16 @@ def init_team_db(team: str):
             c.execute("ALTER TABLE comments ADD COLUMN source TEXT")
         except Exception:
             pass  # column already exists
+        # REM-2: optional item link on a to-do (a Reminder created from the Flag modal). Both NULL for every
+        # existing row and every quick-add to-do; only reminders populate them. item_id is authoritative;
+        # item_key is a denormalised DISPLAY cache derived server-side from the item's blob (mirrors the
+        # jiraTickets/jiraCache pattern) - never trusted from the client, so it cannot go stale-by-forgery.
+        # No index: to-dos are tiny per user and always read by (username), so a scan is free.
+        for _col, _defn in [("item_id", "INTEGER"), ("item_key", "TEXT")]:
+            try:
+                c.execute(f"ALTER TABLE todos ADD COLUMN {_col} {_defn}")
+            except Exception:
+                pass  # column already exists
         # ── Phase 1 (JIRA-REPLACEMENT.md): indexed columns mirrored from item JSON ──
         for _col, _defn in [
             ("item_key", "TEXT"), ("type", "TEXT"), ("status", "TEXT"),
@@ -1453,7 +1463,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.2.1"
+APP_VERSION = "6.3.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -5938,11 +5948,29 @@ def create_todo(body: dict = Body(...), auth: dict = Depends(require_auth)):
     due = _todo_due(body.get("due_date"))
     now = datetime.now(timezone.utc).isoformat()
     completed = now if status == "Done" else None
+    # REM-2: optional item link (a Reminder from the Flag modal). item_id is validated against THIS team's
+    # items - the per-team DB means an id from another team is simply not found here, so a cross-team link
+    # is rejected by construction. item_key is DERIVED from the item's blob, never trusted from the client
+    # (a denormalised display cache). Absent/None -> a plain quick-add to-do, both columns NULL. The link is
+    # only a reference; the to-do row itself stays private per the five TODO-1 rules (username in the WHERE).
+    raw_item = body.get("item_id")
+    item_id = None
+    item_key = None
+    if raw_item is not None and raw_item != "":
+        try:
+            item_id = int(raw_item)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Invalid item_id")
     with db(auth["team"]) as c:
+        if item_id is not None:
+            irow = c.execute("SELECT data FROM projects WHERE id=?", (item_id,)).fetchone()
+            if not irow:
+                raise HTTPException(400, "Linked item not found on this team")
+            item_key = (json.loads(irow["data"]).get("itemKey") or None)   # derived server-side, not trusted
         cur = c.execute(
-            "INSERT INTO todos(username,title,notes,status,due_date,sort_order,created_ts,updated_ts,completed_ts)"
-            " VALUES(?,?,?,?,?,?,?,?,?)",
-            (auth["username"], title, (body.get("notes") or ""), status, due, 0, now, now, completed))
+            "INSERT INTO todos(username,title,notes,status,due_date,sort_order,created_ts,updated_ts,completed_ts,item_id,item_key)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (auth["username"], title, (body.get("notes") or ""), status, due, 0, now, now, completed, item_id, item_key))
         row = c.execute("SELECT * FROM todos WHERE id=?", (cur.lastrowid,)).fetchone()
     return {"todo": dict(row)}
 
