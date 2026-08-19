@@ -3,3 +3,8 @@
 # Run tests with: pytest
 pytest>=8.0.0
 httpx>=0.27.0
+# REM-3: the reminder fire-check uses zoneinfo.ZoneInfo("America/Denver") to match the client's MT day
+# boundary. Linux/macOS ship the IANA tz database system-wide; Windows does NOT, so `zoneinfo` needs this
+# fallback package to resolve zones locally. Dev/test-only - production (Linux EC2) has system tzdata, so
+# the app stays stdlib + boto3 with no new RUNTIME dependency.
+tzdata>=2024.1

@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.3.0';
+const APP_VERSION = '6.4.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -10001,7 +10001,15 @@ function openFlagIssue(itemId){
   document.getElementById('flagNote').value = '';
   var _fd=document.getElementById('flagDate'); if(_fd) _fd.value = '';   // REM-2: clear the reminder date
   document.getElementById('flagMessage').style.borderColor = '';         // clear a prior required-field flag
-  document.getElementById('flagType').value = 'At Risk';
+  // REM-3 (7.1): the three flag types POST /api/activities, which is admin/editor-only, so a viewer (or
+  // contributor) selecting one would 403 invisibly. Hide the flag-type optgroup for anyone who can't flag
+  // and default them to Reminder - one dropdown where 3 of 4 options silently fail is worse than showing
+  // only the one that works. Gate on the SAME permission the server enforces (isAdmin||isEditor); the
+  // button gates themselves are unchanged (#frzFlagBtn ungated, #frzLpFlagBtn canEdit). Editors/admins see
+  // all four exactly as before.
+  var _canFlag = (typeof isAdmin!=='undefined' && isAdmin) || (typeof isEditor!=='undefined' && isEditor);
+  var _fg=document.getElementById('flagTypeFlagGroup'); if(_fg) _fg.hidden = !_canFlag;
+  document.getElementById('flagType').value = _canFlag ? 'At Risk' : 'Reminder';
   _flagTypeChanged();   // REM-2: sync modal shape (Note vs Date, heading, save label, message copy) to the type
   document.getElementById('flagIssueBg').classList.add('open');
 }
@@ -17223,7 +17231,7 @@ if ('serviceWorker' in navigator) {
       <!-- REM-2: Reminder is a fourth type, LAST, in its own optgroup - it creates a private to-do, not an
            activity/flag (see submitFlagIssue). The three flag types are unchanged and un-reordered. -->
       <select id="flagType" onchange="_flagTypeChanged()">
-        <optgroup label="Flag an issue">
+        <optgroup label="Flag an issue" id="flagTypeFlagGroup">
           <option value="At Risk">At Risk</option>
           <option value="Blocked">Blocked</option>
           <option value="Needs Decision">Needs Decision</option>
@@ -18322,6 +18330,11 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-notif-msg { font-size:13px; color:var(--frz-text); }
   .frz-beta .frz-notif-meta { font-size:11px; color:var(--frz-text-muted); }
   .frz-beta .frz-notif-empty { padding:22px 14px; text-align:center; font-size:12.5px; color:var(--frz-text-muted); }
+  /* REM-3: snooze row under a reminder notification (sibling of the row button; buttons can't nest). */
+  .frz-beta .frz-notif-snooze { display:flex; align-items:center; gap:6px; padding:0 14px 10px; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-notif-snooze-lbl { font-size:11px; font-weight:700; color:var(--frz-text-muted); }
+  .frz-beta .frz-notif-snooze-btn { font-size:11px; font-weight:700; color:var(--frz-accent); background:none; border:1px solid var(--frz-border-strong); border-radius:6px; padding:2px 9px; cursor:pointer; font-family:'Lato',sans-serif; }
+  .frz-beta .frz-notif-snooze-btn:hover { border-color:var(--frz-accent); background:var(--frz-accent-soft); }
   /* Flow User Manual: styles moved into the _FRZ_MANUAL_CSS JS constant and inlined
      into the standalone new-tab document (see openManual). Nothing here in the shell. */
   /* Stage 3b - watch toggle + @mention chips */
@@ -19631,7 +19644,10 @@ if ('serviceWorker' in navigator) {
     renderRail();
     onResize();
     // Stage 3b: notifications - initial load + lightweight 60s poll (no websockets, by design)
-    loadNotifs();
+    // REM-3: fire any of THIS user's due reminders once per page load (no scheduler; the session is the
+    // trigger, Part 4), THEN load the bell so freshly-fired reminders show immediately. Guarded to run at
+    // most once per load; failure is silent and never blocks the bell or boot.
+    _frzCheckReminders(function(){ loadNotifs(); });
     _notifTimer = setInterval(loadNotifs, 60000);
     // Load shared boards + sprints + releases first so deep links mount correctly, then route.
     loadBoards(function(){ loadSprints(function(){ loadReleases(function(){ routeFromLocation(true); _call('showLoading', false); document.documentElement.classList.remove('frz-boot'); /* FOUC guard: reveal now the rail is mounted + first route rendered */ }); }); });
@@ -27356,6 +27372,31 @@ if ('serviceWorker' in navigator) {
 
   // ════════ Stage 3b - Notifications (bell + inbox) ════════
   var _notifs=[], _notifUnread=0, _notifTimer=null;
+  // REM-3: fire this user's due reminders once per page load (Part 4.3). The flag guarantees once-per-load
+  // even if the shell re-inits; a failure is swallowed so it never blocks the bell or boot. Not on a timer
+  // or view change - only here, after the shell mounts.
+  var _frzRemindersChecked=false;
+  function _frzCheckReminders(done){
+    if(_frzRemindersChecked){ if(done) done(); return; }
+    _frzRemindersChecked=true;
+    API.post('/api/my/reminders/check', {}).then(function(){ if(done) done(); }).catch(function(){ if(done) done(); });
+  }
+  // REM-3: snooze a reminder from its notification (Tomorrow / Next week). Pushes the to-do's due_date
+  // forward via PUT /api/my/todos/{todo_id} (which re-checks ownership by the token, so a forged todo_id
+  // can't reach another user's row) - the server clears reminded_ts on the due-date change, re-arming it.
+  // Also marks the notification read (the user has acted on it). Dates come from _frzDateFromMT so they
+  // match the MT day boundary, never a raw Date. LIMIT: /api/notifications is capped at 100 rows (60 are
+  // intake today), so a reminder can be pushed out of the panel and its snooze buttons go with it - the
+  // to-do row's date control is the durable reschedule path. Do not raise the cap here (out of scope).
+  function _frzSnoozeReminder(todoId, days, nid){
+    if(!todoId) return;
+    API.put('/api/my/todos/'+todoId, { due_date: _frzDateFromMT(days) }).then(function(){
+      if(nid) markRead(nid);
+      _closeNotif();
+      if(typeof showToast==='function') showToast('Reminder snoozed to '+(days===1?'tomorrow':'next week'));
+    }).catch(function(){ if(typeof showToast==='function') showToast('Could not snooze the reminder','error'); });
+  }
+  function _closeNotif(){ var p=document.getElementById('frzNotif'); if(p) p.hidden=true; }
   function loadNotifs(){
     API.get('/api/notifications').then(function(d){
       _notifs=(d&&d.notifications)||[]; _notifUnread=(d&&d.unread)||0; renderBellBadge();
@@ -27713,17 +27754,36 @@ if ('serviceWorker' in navigator) {
     var p=document.getElementById('frzNotif'); if(!p) return;
     var hd='<div class="frz-notif-hd"><span>Notifications</span>'+(_notifUnread?'<button class="frz-notif-all" id="frzNotifAll">Mark all read</button>':'')+'</div>';
     var body = _notifs.length ? _notifs.map(function(n){
-      return '<button class="frz-notif-row'+(n.read?'':' is-unread')+'" data-nid="'+n.id+'" data-nitem="'+(n.item_id||'')+'">'+
+      // REM-3: a reminder gets a sibling snooze block (Tomorrow / Next week). It is a SIBLING, not nested,
+      // because the row itself is a <button> and buttons cannot nest. Snooze needs n.todo_id (added to the
+      // notifications row); it is absent on non-reminder types, so the block only renders for reminders.
+      var snooze = (n.type==='reminder' && n.todo_id) ? '<div class="frz-notif-snooze" data-tdid="'+n.todo_id+'" data-nid="'+n.id+'">'+
+          '<span class="frz-notif-snooze-lbl">Snooze</span>'+
+          '<button type="button" class="frz-notif-snooze-btn" data-days="1">Tomorrow</button>'+
+          '<button type="button" class="frz-notif-snooze-btn" data-days="7">Next week</button>'+
+        '</div>' : '';
+      return '<button class="frz-notif-row'+(n.read?'':' is-unread')+'" data-nid="'+n.id+'" data-nitem="'+(n.item_id||'')+'" data-ntype="'+escA(n.type||'')+'">'+
         '<span class="frz-notif-msg">'+esc(_notifMsg(n))+'</span>'+
         '<span class="frz-notif-meta">'+esc(n.item_name||'')+(n.created_ts?(' · '+esc(fmtTSDate(n.created_ts))):'')+'</span>'+
-      '</button>';
+      '</button>'+snooze;
     }).join('') : '<div class="frz-notif-empty">You’re all caught up.</div>';
     p.innerHTML=hd+'<div class="frz-notif-list">'+body+'</div>';
     var all=document.getElementById('frzNotifAll'); if(all) all.addEventListener('click', function(e){ e.stopPropagation(); markAllRead(); });
-    p.querySelectorAll('[data-nid]').forEach(function(b){
+    p.querySelectorAll('.frz-notif-row').forEach(function(b){
       b.addEventListener('click', function(){
         var nid=+b.getAttribute('data-nid'), it=+b.getAttribute('data-nitem');
-        markRead(nid); p.hidden=true; if(it) navigate('/item/'+it, false);
+        markRead(nid); p.hidden=true;
+        // REM-3: a linked notification reaches the item; a reminder with no item still goes somewhere useful
+        // (My Home To-dos) instead of doing nothing. Other null-item types keep their prior no-op behaviour.
+        if(it) navigate('/item/'+it, false);
+        else if(b.getAttribute('data-ntype')==='reminder') navigate('/my-home/todos', false);
+      });
+    });
+    p.querySelectorAll('.frz-notif-snooze-btn').forEach(function(sb){
+      sb.addEventListener('click', function(e){
+        e.stopPropagation();
+        var box=sb.closest('.frz-notif-snooze'); if(!box) return;
+        _frzSnoozeReminder(+box.getAttribute('data-tdid'), +sb.getAttribute('data-days'), +box.getAttribute('data-nid'));
       });
     });
   }
