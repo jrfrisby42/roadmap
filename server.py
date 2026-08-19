@@ -688,6 +688,22 @@ _DEFAULT_ASSIGNMENT_TYPES = [
     _at("qa-lead",           "QA Lead",           "Operational",      "#1a9a59", 12, impact=0.20),
 ]
 
+def _mark_migration_done(c, key: str):
+    """Record a one-shot data-migration marker in schema_meta, on the caller's connection `c` (so it stays
+    in the same transaction as the migration work it gates).
+
+    OR IGNORE - NOT a plain INSERT - because two gunicorn workers run init_team_db concurrently at import.
+    For a given team both can read the marker absent (a check-then-act gate), both run the idempotent
+    backfill (its UPDATE is `WHERE reminded_ts IS NULL`, so the loser stamps nothing extra), and both reach
+    this INSERT. A plain INSERT makes the loser raise `UNIQUE constraint failed: schema_meta.key`, which -
+    being at IMPORT time - is unhandled and kills the worker (the 6.4.0 first-boot status=3 crash). OR
+    IGNORE lets the losing racer no-op so neither dies. The tolerance is scoped to THIS marker insert for
+    THIS reason - a duplicate marker is provably benign because the migration it gates is idempotent. Do
+    NOT generalise it into a broad try/except around the migration block: that would convert the next real,
+    diagnosable migration failure into a silent half-migrated database."""
+    c.execute("INSERT OR IGNORE INTO schema_meta(key, applied_ts) VALUES(?, ?)",
+              (key, datetime.now(timezone.utc).isoformat()))
+
 def init_team_db(team: str):
     if team in _initialized_teams:
         return
@@ -962,8 +978,7 @@ def init_team_db(team: str):
                 "UPDATE todos SET reminded_ts=? WHERE reminded_ts IS NULL "
                 "AND (status='Done' OR (due_date IS NOT NULL AND due_date < ?))",
                 (_now_iso, _today_mt_key()))                                        # DML: opens the transaction
-            c.execute("INSERT INTO schema_meta(key, applied_ts) VALUES(?, ?)",
-                      ("rem3_reminded_backfill", _now_iso))                         # DML: same transaction, no DDL between
+            _mark_migration_done(c, "rem3_reminded_backfill")                       # DML: adjacent, same transaction, no DDL between
             log.info(f"[REM-3] backfilled reminded_ts on {_bf.rowcount} existing to-dos for team '{team}'")
         # REM-3: notifications.todo_id lets a reminder notification reference its to-do so SNOOZE can act
         # from the notification (the row otherwise carries only item_id, the linked item). This column is a
@@ -1534,7 +1549,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.4.0"
+APP_VERSION = "6.4.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
