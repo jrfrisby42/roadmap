@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.2.1';
+const APP_VERSION = '6.3.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -9999,8 +9999,26 @@ function openFlagIssue(itemId){
   _flagItemId = itemId;
   document.getElementById('flagMessage').value = '';
   document.getElementById('flagNote').value = '';
+  var _fd=document.getElementById('flagDate'); if(_fd) _fd.value = '';   // REM-2: clear the reminder date
+  document.getElementById('flagMessage').style.borderColor = '';         // clear a prior required-field flag
   document.getElementById('flagType').value = 'At Risk';
+  _flagTypeChanged();   // REM-2: sync modal shape (Note vs Date, heading, save label, message copy) to the type
   document.getElementById('flagIssueBg').classList.add('open');
+}
+// REM-2: reshape the Flag modal by selected type. A flag type shows Type / Message / Note and reads "Flag
+// Issue". Reminder swaps the Note row for a Date row (SAME row count), relabels the heading + save button +
+// the message label/placeholder, and creates a private to-do rather than an activity (see submitFlagIssue).
+// Toggling display never strands a value: submitFlagIssue reads flagNote only on the flag path and flagDate
+// only on the Reminder path, so a hidden field is never submitted.
+function _flagTypeChanged(){
+  var isRem = document.getElementById('flagType').value === 'Reminder';
+  var noteRow = document.getElementById('flagNoteRow'), dateRow = document.getElementById('flagDateRow');
+  if(noteRow) noteRow.style.display = isRem ? 'none' : '';
+  if(dateRow) dateRow.style.display = isRem ? '' : 'none';
+  var title = document.getElementById('flagModalTitle'); if(title) title.textContent = isRem ? 'Remind me' : 'Flag Issue';
+  var save = document.getElementById('flagIssueSaveBtn'); if(save) save.textContent = isRem ? 'Add reminder' : 'Flag Issue';
+  var lbl = document.getElementById('flagMessageLabel'); if(lbl) lbl.innerHTML = (isRem ? 'What to remember' : 'Message') + ' <span style="color:var(--accent2)">*</span>';
+  var msg = document.getElementById('flagMessage'); if(msg) msg.placeholder = isRem ? 'e.g. Follow up with Carson' : 'Describe the issue…';
 }
 
 async function submitFlagIssue(){
@@ -10008,6 +10026,29 @@ async function submitFlagIssue(){
   if(!msg){ document.getElementById('flagMessage').style.borderColor='var(--accent2)'; return; }
   const p = projects.find(x=>x.id===_flagItemId);
   if(!p) return;
+  // REM-2: the Reminder branch creates a PRIVATE to-do and NOTHING else - no activity, no flag, no banner,
+  // no row dot, not in the Flagged filter, no notify, no dedupe, no _frzOnFlagChanged, no render(). It
+  // returns BEFORE the flag path below, which is left byte-identical for the three flag types. Any authed
+  // user (viewers included) may create one because it writes only their own private data: POST /api/my/todos
+  // is require_auth, unlike POST /api/activities (admin/editor). A failed create surfaces AND keeps the
+  // modal open so the typed text is not lost (no silent catch).
+  if(document.getElementById('flagType').value === 'Reminder'){
+    const _rbtn = document.getElementById('flagIssueSaveBtn');
+    const _dueEl = document.getElementById('flagDate');
+    const _due = (_dueEl && _dueEl.value) ? _dueEl.value : null;
+    if(_rbtn) _rbtn.disabled = true;
+    try {
+      await API.post('/api/my/todos', { title: msg, due_date: _due, item_id: p.id, item_key: p.itemKey || null });
+      document.getElementById('flagIssueBg').classList.remove('open');
+      if(typeof showToast==='function') showToast('Reminder added to your private to-do list');
+      // The To-dos pane cannot be visible while this modal is open (it is reached only from the item page /
+      // List panel), so nothing to refresh here; the next To-dos pane open fetches the new reminder.
+    } catch(e){
+      if(typeof showToast==='function') showToast('Could not add the reminder: '+((e && e.message) || e), 'error');
+      // leave the modal open with the text intact
+    } finally { if(_rbtn) _rbtn.disabled = false; }
+    return;
+  }
   await API.post('/api/activities', {
     activity_type: document.getElementById('flagType').value,
     source: 'User',
@@ -17176,22 +17217,35 @@ if ('serviceWorker' in navigator) {
 <!-- FLAG ISSUE MODAL -->
 <div class="modal-bg" id="flagIssueBg" style="z-index:900">
   <div class="modal" style="width:420px">
-    <h2><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg> Flag Issue</h2>
+    <h2><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg> <span id="flagModalTitle">Flag Issue</span></h2>
     <div class="form-row">
       <label>Type</label>
-      <select id="flagType">
-        <option value="At Risk">At Risk</option>
-        <option value="Blocked">Blocked</option>
-        <option value="Needs Decision">Needs Decision</option>
+      <!-- REM-2: Reminder is a fourth type, LAST, in its own optgroup - it creates a private to-do, not an
+           activity/flag (see submitFlagIssue). The three flag types are unchanged and un-reordered. -->
+      <select id="flagType" onchange="_flagTypeChanged()">
+        <optgroup label="Flag an issue">
+          <option value="At Risk">At Risk</option>
+          <option value="Blocked">Blocked</option>
+          <option value="Needs Decision">Needs Decision</option>
+        </optgroup>
+        <optgroup label="Personal">
+          <option value="Reminder">Reminder</option>
+        </optgroup>
       </select>
     </div>
     <div class="form-row">
-      <label>Message <span style="color:var(--accent2)">*</span></label>
+      <label id="flagMessageLabel">Message <span style="color:var(--accent2)">*</span></label>
       <input type="text" id="flagMessage" placeholder="Describe the issue…">
     </div>
-    <div class="form-row">
+    <div class="form-row" id="flagNoteRow">
       <label>Note (optional)</label>
       <textarea id="flagNote" rows="2" style="width:100%;padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none;resize:vertical"></textarea>
+    </div>
+    <!-- REM-2: swaps IN place of the Note row when Reminder is selected (same row count). Native date input,
+         optional. No natural-language parsing here - that is for the quick-add box, which has no date control. -->
+    <div class="form-row" id="flagDateRow" style="display:none">
+      <label>Date (optional)</label>
+      <input type="date" id="flagDate" style="width:100%;padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none">
     </div>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="document.getElementById('flagIssueBg').classList.remove('open')">Cancel</button>
@@ -18225,6 +18279,13 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-todo-title { flex:1; font-size:13px; color:var(--frz-text); line-height:1.4; padding:2px 4px; border-radius:5px; outline:none; word-break:break-word; }
   .frz-beta .frz-todo-title:focus { background:var(--frz-bg-surface); box-shadow:0 0 0 1px var(--frz-accent); }
   .frz-beta .frz-todo-is-done .frz-todo-title { text-decoration:line-through; color:var(--frz-text-muted); }
+  /* REM-2: reminder item-key prefix - reads as a reference, not part of the sentence. Muted by default; the
+     reachable (linkable) variant takes the accent. Tokens only (dark mode is live). Never line-through, even
+     in the completed log, so the key stays legible as a reference. */
+  .frz-beta .frz-todo-key { flex-shrink:0; font-size:11px; font-weight:800; letter-spacing:.2px; color:var(--frz-text-muted); font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; white-space:nowrap; }
+  .frz-beta .frz-todo-key-link { cursor:pointer; color:var(--frz-accent); }
+  .frz-beta .frz-todo-key-link:hover { text-decoration:underline; }
+  .frz-beta .frz-todo-is-done .frz-todo-key, .frz-beta .frz-todo-logttl + .frz-todo-key { text-decoration:none; }
   .frz-beta .frz-todo-datewrap { flex-shrink:0; }
   /* Due date DISPLAYS as a button we fully control (overdue = a real muted-red date in both themes); a
      native input[type=date] cannot be reliably colored (classic body.dark-mode input rule + UA text). */
@@ -20182,6 +20243,21 @@ if ('serviceWorker' in navigator) {
     return d.getFullYear()+'-'+(m<10?'0':'')+m+'-'+(day<10?'0':'')+day;
   }
   function _frzTodoOverdue(t){ return !!(t.due_date && t.status!=='Done' && t.due_date < _frzTodayMTKey()); }
+  // REM-2: is a linked item in the CURRENT user's reachable set? projects[] (from /api/all) IS that set -
+  // scoped for Contributors (assignee/pod + grants), full for admin/editor/viewer. A deleted/hidden/
+  // out-of-scope item is simply absent, so we never link to something that would 404/401 the user.
+  function _frzItemReachable(id){ return id!=null && (_val('projects',[])||[]).some(function(p){ return p.id===id; }); }
+  // REM-2: the item-key prefix for a reminder to-do, a SEPARATE sibling span BEFORE the contenteditable
+  // title (so inline title editing can never absorb or destroy it - Part 6.1). Reachable -> a link that
+  // opens the item; unreachable -> plain text, no click (Part 6.2). No key -> empty string (renders exactly
+  // as a pre-REM-2 to-do, no placeholder). Used by both the open list and the read-only completed log.
+  function _frzTodoKeyHtml(t){
+    if(!t || !t.item_key) return '';
+    return _frzItemReachable(t.item_id)
+      ? '<span class="frz-todo-key frz-todo-key-link" role="button" tabindex="0" data-itemid="'+t.item_id+'" title="Open '+escA(t.item_key)+'">'+esc(t.item_key)+'</span>'
+      : '<span class="frz-todo-key" title="'+escA(t.item_key)+' (item not available)">'+esc(t.item_key)+'</span>';
+  }
+  function _frzTodoKeyClick(el){ var id=parseInt(el.getAttribute('data-itemid'),10); if(!isNaN(id)) openItem(id); }
   function _frzFmtDue(iso){   // "2026-08-16" -> "Aug 16" (compact, locale-free)
     var mo=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     var p=(iso||'').split('-'); if(p.length!==3) return iso;
@@ -20276,6 +20352,7 @@ if ('serviceWorker' in navigator) {
         : '<span class="frz-todo-adddate" role="button" tabindex="0" data-tid="'+t.id+'">Add date</span>';
       return '<div class="frz-todo-row" data-tid="'+t.id+'">'+
         '<input type="checkbox" class="frz-todo-cb" data-tid="'+t.id+'" aria-label="Mark done">'+
+        _frzTodoKeyHtml(t)+
         '<span class="frz-todo-title" contenteditable="true" spellcheck="false" data-tid="'+t.id+'">'+esc(t.title)+'</span>'+
         '<span class="frz-todo-datewrap">'+dateHtml+'</span>'+
         '<button type="button" class="frz-todo-del" data-tid="'+t.id+'" title="Delete" aria-label="Delete">&times;</button>'+
@@ -20302,7 +20379,7 @@ if ('serviceWorker' in navigator) {
       log.innerHTML=groups.map(function(day){
         var label = day===todayK?'Today':(day===yK?'Yesterday':_frzFmtDayLong(day));
         return '<div class="frz-todo-logday">'+esc(label)+'</div>'+byDay[day].map(function(t){
-          return '<div class="frz-todo-logrow"><span class="frz-todo-logttl">'+esc(t.title)+'</span>'+
+          return '<div class="frz-todo-logrow">'+_frzTodoKeyHtml(t)+'<span class="frz-todo-logttl">'+esc(t.title)+'</span>'+   // REM-2: key prefix (read-only row; key still links if reachable)
             (t.due_date?'<span class="frz-todo-logdue" title="Was due '+escA(t.due_date)+'">due '+esc(_frzFmtDue(t.due_date))+'</span>':'')+
           '</div>';
         }).join('');
@@ -20330,7 +20407,7 @@ if ('serviceWorker' in navigator) {
   }
   function _frzTodoDelete(id){
     var t=_frzTodoById(id); if(!t) return;
-    var snap={ title:t.title, notes:t.notes, status:t.status, due_date:t.due_date };   // full snapshot to re-POST on undo
+    var snap={ title:t.title, notes:t.notes, status:t.status, due_date:t.due_date, item_id:t.item_id, item_key:t.item_key };   // full snapshot to re-POST on undo (REM-2: carry the item link; server re-derives item_key)
     API.del('/api/my/todos/'+id).then(function(){
       _frzTodos=_frzTodos.filter(function(x){ return x.id!==id; }); _frzCounts.open=Math.max(0,_frzCounts.open-1); _frzPaintTodos();
       if(typeof showToast==='function') showToast('To-do deleted','info',5000,{ label:'Undo', fn:function(){
@@ -20343,7 +20420,7 @@ if ('serviceWorker' in navigator) {
     API.get('/api/my/todos').then(function(d){
       var all=(d && d.todos) || [];
       var open=all.filter(function(t){ return t.status!=='Done'; }), done=all.filter(function(t){ return t.status==='Done'; });
-      var lines=open.concat(done).map(function(t){ return '- ['+(t.status==='Done'?'x':' ')+'] '+t.title+(t.due_date?(' (due '+t.due_date+')'):''); });
+      var lines=open.concat(done).map(function(t){ return '- ['+(t.status==='Done'?'x':' ')+'] '+(t.item_key?(t.item_key+' - '):'')+t.title+(t.due_date?(' (due '+t.due_date+')'):''); });   // REM-2: key prefix when present
       _frzTodoCopyText(lines.join('\n'), all.length);
     }).catch(function(){ if(typeof showToast==='function') showToast('Could not copy','error'); });
   }
@@ -20374,6 +20451,7 @@ if ('serviceWorker' in navigator) {
         var cb=e.target.closest('.frz-todo-cb'); if(cb && cb.checked){ _frzTodoComplete(+cb.getAttribute('data-tid'), cb.closest('.frz-todo-row')); }
       });
       list.addEventListener('click', function(e){
+        var key=e.target.closest('.frz-todo-key-link'); if(key){ e.stopPropagation(); _frzTodoKeyClick(key); return; }   // REM-2: open the linked item (reachable keys only carry this class)
         var db=e.target.closest('.frz-todo-datebtn, .frz-todo-adddate');
         if(db){ var tid=+db.getAttribute('data-tid'), cur=db.getAttribute('data-cur')||'';
           var inp=document.createElement('input'); inp.type='date'; inp.className='frz-todo-dateedit'; inp.setAttribute('aria-label','Due date'); if(cur) inp.value=cur;
@@ -20397,6 +20475,10 @@ if ('serviceWorker' in navigator) {
         _frzTodoPut(tid, { title:v });
       }, true);   // capture: blur does not bubble
     }
+    // REM-2: the read-only completed log also carries key links; give it its own click delegate (it never
+    // gets the open-list edit/complete/date/delete handlers, so a key click is the only interaction here).
+    var tlog=document.getElementById('frzTodoLog');
+    if(tlog) tlog.addEventListener('click', function(e){ var key=e.target.closest('.frz-todo-key-link'); if(key){ e.stopPropagation(); _frzTodoKeyClick(key); } });
     var copy=document.getElementById('frzTodoCopy'); if(copy) copy.addEventListener('click', _frzTodoCopyAll);
     var toggle=document.getElementById('frzTodoLogToggle'); if(toggle) toggle.addEventListener('click', function(){ _frzTodoShowView(_frzTodoView==='log'?'open':'log'); });
   }
@@ -26795,7 +26877,7 @@ if ('serviceWorker' in navigator) {
     // Editable status pill for admin/editor; read-only badge for viewers. Wiring + the
     // targeted refresh are in frzOpenPanel; persistence reuses saveItemPageField.
     var statusCtl = canEdit
-      ? '<select id="frzLpStatus" class="frz-lp-status '+sCls+'">'+ ((_call('_ipFieldOptions','status')||[]).map(function(o){ return '<option value="'+escA(o.value)+'"'+(String(p.status||'')===String(o.value)?' selected':'')+'>'+esc(o.label)+'</option>'; }).join('')) +'</select>'
+      ? '<select id="frzLpStatus" class="frz-lp-status '+sCls+'" title="'+escA(p.status||'')+'">'+ ((_call('_ipFieldOptions','status')||[]).map(function(o){ return '<option value="'+escA(o.value)+'"'+(String(p.status||'')===String(o.value)?' selected':'')+'>'+esc(o.label)+'</option>'; }).join('')) +'</select>'   // REM-2 (7.2): title = full status name, hover fallback when a long name ellipsizes at max-width:150px
       : '<span class="'+sCls+'" style="padding:1px 9px;border-radius:9px;font-size:11px;font-weight:700">'+esc(p.status||'-')+'</span>';
     // REM-1: the panel's flag entry point (REM-1b moved it from the now-removed .frz-lp-badges row into the
     // header top row's middle zone, beside the status control - it is an item action, and .frz-lp-actions
@@ -26837,7 +26919,7 @@ if ('serviceWorker' in navigator) {
     return '<div class="frz-lp-hd">'
       + '<div class="frz-lp-hd-top">'
         + '<div class="frz-lp-hdside">'+(p.itemKey?'<span class="frz-bcard-key" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></span>':'')+'</div>'
-        + '<div class="frz-lp-hdmid">'+flagBtn+statusCtl+'</div>'
+        + '<div class="frz-lp-hdmid">'+statusCtl+flagBtn+'</div>'   // REM-2 (7.1): status then Flag, Flag RIGHTMOST - matches the item page (#frzBadges builds Watch then Flag, Flag rightmost) and the modal (primary Flag button bottom-right). If a Watch button is ever added here it belongs LEFT of Flag, so the relative order still matches the item page. Flag's right edge sits ~8px from ⤢ and ~61px from ✕, so no mis-click concern.
         + '<div class="frz-lp-actions"><button type="button" class="frz-lp-full" title="Open full page" aria-label="Open full page">⤢</button>'
         + '<button type="button" class="frz-lp-close" title="Close" aria-label="Close">✕</button></div>'
       + '</div>'
@@ -26903,7 +26985,7 @@ if ('serviceWorker' in navigator) {
   function _frzRepaintStatusPill(p){
     if(!p || !_frzPanelEl) return;
     var sel=_frzPanelEl.querySelector('#frzLpStatus'); if(!sel) return;
-    sel.value=p.status||''; sel.className='frz-lp-status '+(_call('statusCls', p.status)||'');
+    sel.value=p.status||''; sel.className='frz-lp-status '+(_call('statusCls', p.status)||''); sel.title=p.status||'';   // REM-2 (7.2): keep the hover title in sync on a live status change
   }
   // Update the open list row's status cell live. Resolve the cell by data-col, NOT by a positional
   // index: column visibility is per-user (frazil_beta_listcols_*) and the renderer OMITS hidden

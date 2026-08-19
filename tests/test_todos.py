@@ -6,6 +6,8 @@ and a cross-user PUT/DELETE/clear-completed is 404 (existence not confirmed), ne
 demonstrably falsifiable - drop the `username` from a write's WHERE clause and the 404 assertions fail
 (see the deliverable's revert demo).
 """
+import os
+
 import server
 
 
@@ -161,3 +163,70 @@ def test_export_excludes_todos(client, team, admin_headers):
 
 def test_todos_require_auth(client, team):
     assert client.get("/api/my/todos").status_code == 401
+
+
+# ── REM-2: item link (Reminder to-dos) ────────────────────────────────────────────────────────────────
+def _mk_item(client, admin_hdr, name="Linkable"):
+    r = client.post("/api/projects", json={"name": name}, headers=admin_hdr)
+    assert r.status_code in (200, 201), r.text
+    it = r.json()
+    return it["id"], it.get("itemKey")
+
+
+def _set_item_key(team, iid, key):
+    with server.db(team) as c:
+        r = c.execute("SELECT data FROM projects WHERE id=?", (iid,)).fetchone()
+        d = server.json.loads(r["data"]); d["itemKey"] = key
+        c.execute("UPDATE projects SET data=? WHERE id=?", (server.json.dumps(d), iid))
+
+
+def test_reminder_link_stores_id_and_derives_key(client, team, admin_headers):
+    # item_key is DERIVED server-side from the item, NEVER trusted from the client.
+    iid, _ = _mk_item(client, admin_headers, name="Support ticket")
+    _set_item_key(team, iid, "TEST-42")
+    h = _hdr(team, "alice")
+    t = client.post("/api/my/todos",
+                    json={"title": "Follow up", "item_id": iid, "item_key": "BOGUS-999"},
+                    headers=h).json()["todo"]
+    assert t["item_id"] == iid
+    assert t["item_key"] == "TEST-42"          # derived from the item
+    assert t["item_key"] != "BOGUS-999"        # client value ignored
+    # returned on read in every filter mode
+    assert client.get("/api/my/todos", headers=h).json()["todos"][0]["item_key"] == "TEST-42"
+    assert client.get("/api/my/todos?status=open", headers=h).json()["todos"][0]["item_key"] == "TEST-42"
+
+
+def test_reminder_null_link_is_plain_todo(client, team):
+    h = _hdr(team, "alice")
+    t = client.post("/api/my/todos", json={"title": "just a todo"}, headers=h).json()["todo"]
+    assert t["item_id"] is None and t["item_key"] is None
+    t2 = client.post("/api/my/todos", json={"title": "x", "item_id": None}, headers=h).json()["todo"]
+    assert t2["item_id"] is None and t2["item_key"] is None
+    t3 = client.post("/api/my/todos", json={"title": "y", "item_id": ""}, headers=h).json()["todo"]
+    assert t3["item_id"] is None and t3["item_key"] is None
+
+
+def test_reminder_cross_team_item_id_rejected(client, team, admin_headers):
+    # An item that exists in ANOTHER team must not be linkable from this team (per-team DB: not found here).
+    other = "remxteam"
+    os.makedirs(os.path.join(server.TENANTS_DIR, other), exist_ok=True)
+    server.init_team_db(other)
+    other_admin = {"Authorization": f"Bearer {server.create_token(other, 'admin', 'admin')}", "X-Team": other}
+    oid, _ = _mk_item(client, other_admin, name="Other team item")
+    h = _hdr(team, "alice")
+    assert client.post("/api/my/todos", json={"title": "hax", "item_id": oid}, headers=h).status_code == 400
+    # non-numeric id is rejected too
+    assert client.post("/api/my/todos", json={"title": "x", "item_id": "abc"}, headers=h).status_code == 400
+
+
+def test_reminder_writes_zero_activities(client, team, admin_headers):
+    iid, _ = _mk_item(client, admin_headers, name="No activity please")
+    h = _hdr(team, "alice")
+    def _acts():
+        r = client.get("/api/activities", headers=admin_headers).json()
+        return r if isinstance(r, list) else r.get("activities", [])
+    before = _acts()
+    client.post("/api/my/todos", json={"title": "Follow up", "item_id": iid}, headers=h)
+    after = _acts()
+    assert len(after) == len(before)                                   # the reminder created NO activity
+    assert all((a.get("activity_type") != "Reminder") for a in after)  # and certainly not a "Reminder" one
