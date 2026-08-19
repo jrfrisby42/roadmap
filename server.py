@@ -28,9 +28,30 @@ from fastapi import FastAPI, HTTPException, Body, Request as FRequest, Header, D
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from typing import Optional, List
+from zoneinfo import ZoneInfo
 
 log = logging.getLogger("frazil")
 logging.basicConfig(level=logging.INFO)
+
+# ── REM-3: Mountain Time date logic ───────────────────────────────────────────
+# This is the FIRST MT-aware date logic on the SERVER. Everything else here compares UTC dates
+# (datetime.now(timezone.utc).date()); the admin capacity calendar's UTC-vs-MT day-key off-by-one on the
+# open ledger is the same class of bug - the server is now MIXED, so a future reader should not assume all
+# server dates are UTC. Reminder firing must match the client's America/Denver day boundary
+# (roadmap.html todayMT / _frzTodayMTKey), or a to-do due "today" in MT would fire a day early or late.
+# Resolve the zone ONCE here so a missing IANA tz database fails LOUD at import (the server won't boot)
+# rather than raising ZoneInfoNotFoundError per-request inside the reminder path - which is silent by
+# design (REM-3 Part 4.3), so it would mean reminders never fire for anyone and nothing would surface it.
+# (Date-ONLY comparison is forgiving of the Python-zoneinfo vs JS-Intl DST-edge divergence; do not build a
+# precomputed offset table here - that concern is hour-level arithmetic, not day keys.)
+_MT_ZONE = ZoneInfo("America/Denver")
+def _today_mt_key(now_utc=None):
+    """Today's date in Mountain Time as 'YYYY-MM-DD' (DST-aware). Matches the client's MT day-key.
+    now_utc is injectable for tests (the UTC-vs-MT off-by-one); defaults to the real now."""
+    dt = now_utc or datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_MT_ZONE).date().isoformat()
 
 # ── Litestream backup config (multi-tenant SQLite -> S3) ──────────────────────
 # Flow stores one SQLite DB per team (/data/tenants/{team}/roadmap.db) and teams are
@@ -868,6 +889,17 @@ def init_team_db(team: str):
             completed_ts TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_todos_user ON todos(username);
+        -- REM-3: one-shot data-migration markers, per team. This is NOT a general migration framework -
+        -- it holds exactly one row (the reminder backfill marker) so a one-time backfill can be paired
+        -- with its marker in a single implicit transaction and stay crash-safe. A real migration-tracking
+        -- system is a genuine want for a codebase that has none, but it deserves its own design decision,
+        -- not to arrive as a side effect of a to-do reminder. Created here with the other DDL (in the
+        -- executescript, which auto-commits) so it can never sit BETWEEN the backfill UPDATE and the marker
+        -- INSERT and split that DML pair.
+        CREATE TABLE IF NOT EXISTS schema_meta (
+            key        TEXT PRIMARY KEY,
+            applied_ts TEXT NOT NULL
+        );
         """)
         # ── Live migrations: add new columns if they don't exist yet ─────────────
         for _col, _defn in [
@@ -905,6 +937,45 @@ def init_team_db(team: str):
                 c.execute(f"ALTER TABLE todos ADD COLUMN {_col} {_defn}")
             except Exception:
                 pass  # column already exists
+        # REM-3: reminded_ts is the fire-once guard - NULL = never fired, a timestamp = fired. Without a
+        # one-time BACKFILL, the first page load after deploy would find every existing past-due to-do
+        # "never reminded" and flood the bell. We stamp rows that are Done OR already PAST in MT (due_date
+        # strictly < today), so a to-do due today still fires today and a future-dated to-do stays NULL and
+        # fires on its date. CRASH-SAFETY: the ADD COLUMN is DDL and AUTO-COMMITS on its own (SQLite/Python
+        # legacy isolation), so it is NOT in a transaction with the backfill. Gating the backfill on the
+        # ALTER's "newness" would leave a window - ALTER commits, crash before the backfill commits, next
+        # boot's ALTER fails, backfill skipped -> the flood. So the backfill is instead gated on a per-team
+        # schema_meta marker, and the backfill UPDATE and the marker INSERT are ADJACENT DML with no DDL
+        # between them, so they share ONE implicit transaction: crash before commit -> both roll back ->
+        # retried next boot; commit -> marker present -> never re-runs. A build-time date CONSTANT was
+        # considered instead (no schema) and rejected: it is fixed at build, not deploy, so a slipped deploy
+        # would let to-dos created in the gap fire - and the per-user, no-admin-read privacy design means the
+        # affected population is structurally unmeasurable, so its safety can't be sized. The marker uses the
+        # actual migration moment and has no gap.
+        try:
+            c.execute("ALTER TABLE todos ADD COLUMN reminded_ts TEXT")
+        except Exception:
+            pass  # column already exists (idempotent); backfill gating is the marker below, NOT this ALTER
+        if not c.execute("SELECT 1 FROM schema_meta WHERE key=?", ("rem3_reminded_backfill",)).fetchone():
+            _now_iso = datetime.now(timezone.utc).isoformat()
+            _bf = c.execute(
+                "UPDATE todos SET reminded_ts=? WHERE reminded_ts IS NULL "
+                "AND (status='Done' OR (due_date IS NOT NULL AND due_date < ?))",
+                (_now_iso, _today_mt_key()))                                        # DML: opens the transaction
+            c.execute("INSERT INTO schema_meta(key, applied_ts) VALUES(?, ?)",
+                      ("rem3_reminded_backfill", _now_iso))                         # DML: same transaction, no DDL between
+            log.info(f"[REM-3] backfilled reminded_ts on {_bf.rowcount} existing to-dos for team '{team}'")
+        # REM-3: notifications.todo_id lets a reminder notification reference its to-do so SNOOZE can act
+        # from the notification (the row otherwise carries only item_id, the linked item). This column is a
+        # deliberate TRADE, not a necessity: snooze could have been dropped and left to the to-do row's date
+        # control (+ the re-arm in update_todo), needing no schema - rejected because the notification is the
+        # moment of attention and bouncing the user to My Home to edit a date is materially worse. It is NOT
+        # an authorisation path: snooze writes go through PUT /api/my/todos/{id}, which re-checks ownership by
+        # the token's username regardless of any todo_id the client presents.
+        try:
+            c.execute("ALTER TABLE notifications ADD COLUMN todo_id INTEGER")
+        except Exception:
+            pass  # column already exists
         # ── Phase 1 (JIRA-REPLACEMENT.md): indexed columns mirrored from item JSON ──
         for _col, _defn in [
             ("item_key", "TEXT"), ("type", "TEXT"), ("status", "TEXT"),
@@ -1463,7 +1534,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.3.0"
+APP_VERSION = "6.4.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3185,7 +3256,12 @@ def export_team(auth: dict = Depends(require_role("admin"))):
             "audit_log":          _rows(c, "SELECT * FROM audit_log"),
             "capacity_overrides": _rows(c, "SELECT * FROM capacity_overrides"),
             "planning_sessions":  _rows(c, "SELECT * FROM planning_sessions"),
-            "notifications":      _rows(c, "SELECT * FROM notifications"),
+            # REM-3: notifications is deliberately NOT a complete dump - type='reminder' rows are OMITTED.
+            # A reminder notification carries the to-do title, and to-dos are excluded from this export for
+            # privacy (no admin read path); a row DERIVED from to-do content must not re-open that path.
+            # Consequence: a restore-from-export will NOT recreate reminder notifications (transient per-user
+            # rows; acceptable). All other notification types are exported normally.
+            "notifications":      _rows(c, "SELECT * FROM notifications WHERE type!='reminder'"),
             "watchers":           _rows(c, "SELECT * FROM watchers"),
             "key_counters":       _rows(c, "SELECT * FROM key_counters"),
             "recent_views":       _rows(c, "SELECT * FROM recent_views"),
@@ -5992,8 +6068,16 @@ def update_todo(tid: int, body: dict = Body(...), auth: dict = Depends(require_a
             if status not in TODO_STATUSES:
                 raise HTTPException(400, "Invalid status")
         due = cur["due_date"]
+        # REM-3 (B4): re-arm the reminder when the due date's VALUE changes (snooze OR the row's date
+        # control), so a rescheduled to-do fires again on its new date. Detect a VALUE change, not mere
+        # presence in the payload - a PUT that echoes the same due_date must NOT clear reminded_ts. Clearing
+        # the date (-> null) also clears it (the to-do then has no date and never fires). Setting a date
+        # backwards into the past re-arms and fires on the next check (the user set an already-due date).
+        reminded = cur["reminded_ts"]
         if "due_date" in body:
             due = _todo_due(body.get("due_date"))
+            if due != cur["due_date"]:
+                reminded = None   # value changed -> fire again on the new date
         notes = (body.get("notes") if "notes" in body else cur["notes"]) or ""
         now = datetime.now(timezone.utc).isoformat()
         # completed_ts: stamped on ENTERING Done, cleared on LEAVING it (independent of due_date)
@@ -6002,8 +6086,8 @@ def update_todo(tid: int, body: dict = Body(...), auth: dict = Depends(require_a
             completed = now
         elif status != "Done":
             completed = None
-        c.execute("UPDATE todos SET title=?, notes=?, status=?, due_date=?, updated_ts=?, completed_ts=? "
-                  "WHERE id=? AND username=?", (title, notes, status, due, now, completed, tid, auth["username"]))
+        c.execute("UPDATE todos SET title=?, notes=?, status=?, due_date=?, updated_ts=?, completed_ts=?, reminded_ts=? "
+                  "WHERE id=? AND username=?", (title, notes, status, due, now, completed, reminded, tid, auth["username"]))
         row2 = c.execute("SELECT * FROM todos WHERE id=?", (tid,)).fetchone()
     return {"todo": dict(row2)}
 
@@ -6022,6 +6106,41 @@ def delete_todo(tid: int, auth: dict = Depends(require_auth)):
 # rows simply leave the open list (the client requests ?status=open) and remain readable in the
 # completed log (?status=done). Single-click hard-delete of a completed to-do is no longer reachable;
 # per-row delete with undo stays for the deliberate one-off case.
+
+# ── REM-3: due-date reminders ─────────────────────────────────────────────────────────────────────────
+def _fire_due_reminders(team, username, today_key):
+    """Fire due reminders for ONE user (token-scoped). A to-do fires exactly once when its due_date is on
+    or before `today_key` (MT), it is not Done, and reminded_ts is still NULL. The notification INSERT and
+    the reminded_ts stamp share one transaction, so a crash between them cannot double-fire or silently
+    miss. Only Done suppresses - Waiting/Backlog with an arrived date still fire (REM-3 Part 3.3). Returns
+    the count created. Idempotent: reminded_ts guarantees a second call creates nothing. PRIVACY: username
+    is the caller's own (from the token in the endpoint) and is in every WHERE, so this only ever creates
+    notifications for the to-do's owner - a reminder title never reaches another user."""
+    created = 0
+    with db(team) as c:
+        rows = c.execute(
+            "SELECT id, title, item_id, item_key FROM todos "
+            "WHERE username=? AND status!='Done' AND reminded_ts IS NULL "
+            "AND due_date IS NOT NULL AND due_date<=? ORDER BY id", (username, today_key)).fetchall()
+        ts = datetime.now(timezone.utc).isoformat()
+        for r in rows:
+            # actor='' so _notifMsg does NOT prefix a display name (a reminder is self-created; "J.R.
+            # reminded you" would read as you notifying yourself - REM-3 Part 5.3). Inserted directly (not
+            # via _notify) to carry todo_id AND to stay off the Slack path entirely (in-app only, Part 5.1).
+            c.execute(
+                "INSERT INTO notifications(username,type,item_id,item_name,message,actor,created_ts,read,todo_id)"
+                " VALUES(?,?,?,?,?,?,?,0,?)",
+                (username, "reminder", r["item_id"], r["item_key"] or "", f"Reminder: {r['title']}", "", ts, r["id"]))
+            c.execute("UPDATE todos SET reminded_ts=? WHERE id=? AND username=?", (ts, r["id"], username))
+            created += 1
+    return created
+
+@app.post("/api/my/reminders/check")
+def check_reminders(auth: dict = Depends(require_auth)):
+    """Fire any due reminders for the CALLING user (Part 4: the session is the trigger, no scheduler).
+    Token-scoped + team-scoped; safe to call repeatedly (reminded_ts makes it idempotent). require_auth,
+    not admin/editor - a reminder is the caller's own private data, so viewers get theirs too."""
+    return {"created": _fire_due_reminders(auth["team"], auth["username"], _today_mt_key())}
 
 @app.get("/api/my/recent")
 def my_recent(auth: dict = Depends(require_auth)):
