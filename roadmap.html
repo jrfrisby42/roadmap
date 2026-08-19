@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.4.1';
+const APP_VERSION = '6.5.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2792,12 +2792,31 @@ const PRIORITY_RANK = { 1:0, 2:1, 3:2, 4:3 };
 function priorityRank(pr){ const n = parseInt(pr, 10); return PRIORITY_RANK[n] !== undefined ? PRIORITY_RANK[n] : 99; }
 
 // Project (product) color - single source. Picked from PROJECT_PALETTE in
-// Admin → Projects; unset projects get a stable per-name fallback so they still
-// differ. EVERY place that shows a project color must read projectColor().
-const PROJECT_PALETTE = ['#0059A9','#65B1E3','#0E7C86','#2E8B6F','#C0700B','#C0392B','#8E4FB0','#4A6178'];
+// Admin → Projects; unset projects get a stable fallback so they still differ.
+// EVERY place that shows a project color must read projectColor().
+// PALETTE-1: 16 colours. The first 8 are the original set, UNCHANGED and in order (they are in use); the
+// next 8 fill the empty yellow-through-green (60-146) and magenta-pink (300-345) bands. Every pair among
+// the 16 is >=20 deg apart in hue OR >=25 apart in lightness, EXCEPT the original #0059A9/#4A6178 pair
+// (2 deg / 5 L) which is distinguishable by saturation (vivid blue vs muted slate) - a pre-existing pair we
+// keep unchanged. New colours sit at L45-62 so each reads as a dot on both the light and dark surfaces.
+const PROJECT_PALETTE = ['#0059A9','#65B1E3','#0E7C86','#2E8B6F','#C0700B','#C0392B','#8E4FB0','#4A6178',
+                         '#CECE3B','#91BE37','#5FAE3D','#3FA646','#70CD98','#BF4ABF','#CA499B','#CE3B60'];
 function projectColor(name){
-  const prod = (products||[]).find(p => (p.name||p) === name);
-  if(prod && prod.color) return prod.color;
+  // PALETTE-1: DETERMINISTIC DISTINCT assignment. The old hash-modulo fallback COLLIDED (13 projects got
+  // ~6.6 distinct colours at 8, ~9.1 at 16, never all distinct). Instead, a known project's fallback colour
+  // is PROJECT_PALETTE[its position in the shared `products` config], so the first 16 projects each get a
+  // UNIQUE colour; beyond 16 it wraps (collisions unavoidable, but only after every colour is used once).
+  // Determinism: the index is the project's position in `products`, identical for every user and device.
+  // Reordering products in Admin shifts colours WITH position (accepted). prod.color still wins when set.
+  const list = products||[];
+  const idx = list.findIndex(p => (p.name||p) === name);
+  if(idx >= 0){
+    const prod = list[idx];
+    if(prod && prod.color) return prod.color;                 // explicit admin choice wins (precedence unchanged)
+    return PROJECT_PALETTE[idx % PROJECT_PALETTE.length];      // distinct by position
+  }
+  // Name NOT in products (a deleted or unknown project): keep the stable per-name hash for THIS case only,
+  // so a stray reference still gets a consistent colour without a position to key on.
   let h = 0; const s = String(name||''); for(let i=0;i<s.length;i++) h = (h*31 + s.charCodeAt(i)) >>> 0;
   return PROJECT_PALETTE[h % PROJECT_PALETTE.length];
 }
@@ -10049,8 +10068,12 @@ async function submitFlagIssue(){
       await API.post('/api/my/todos', { title: msg, due_date: _due, item_id: p.id, item_key: p.itemKey || null });
       document.getElementById('flagIssueBg').classList.remove('open');
       if(typeof showToast==='function') showToast('Reminder added to your private to-do list');
+      // REM-4 (5.5): surface the new reminder's indicator on the currently open item WITHOUT a reload.
+      // This is NOT _frzOnFlagChanged - a reminder is not a flag, and REM-2 deliberately returns before that
+      // hook. Block B cannot see the shell IIFE; guarded on typeof so it is inert if the shell never wired it.
+      if(typeof window._frzOnReminderCreated === 'function') window._frzOnReminderCreated(p.id);
       // The To-dos pane cannot be visible while this modal is open (it is reached only from the item page /
-      // List panel), so nothing to refresh here; the next To-dos pane open fetches the new reminder.
+      // List panel), so nothing to refresh there; the next To-dos pane open fetches the new reminder.
     } catch(e){
       if(typeof showToast==='function') showToast('Could not add the reminder: '+((e && e.message) || e), 'error');
       // leave the modal open with the text intact
@@ -18335,6 +18358,13 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-notif-snooze-lbl { font-size:11px; font-weight:700; color:var(--frz-text-muted); }
   .frz-beta .frz-notif-snooze-btn { font-size:11px; font-weight:700; color:var(--frz-accent); background:none; border:1px solid var(--frz-border-strong); border-radius:6px; padding:2px 9px; cursor:pointer; font-family:'Lato',sans-serif; }
   .frz-beta .frz-notif-snooze-btn:hover { border-color:var(--frz-accent); background:var(--frz-accent-soft); }
+  /* REM-4 item 1: a reminder row + its snooze block are ONE visual unit - the row drops its own bottom
+     border so only the snooze block's border closes the pair. CSS cannot reach backwards to a preceding
+     sibling, so the class is set on the row itself when snooze renders. Non-reminder rows are unaffected. */
+  .frz-beta .frz-notif-row.frz-notif-has-snooze { border-bottom:0; }
+  /* REM-4: the owner-only reminder indicator. Base look is inline (--frz-* tokens, dark-safe) on the element;
+     only the hover affordance needs a rule. Quiet by design - accent appears only on hover, never at rest. */
+  .frz-beta .frz-reminder-ind:hover { border-color:var(--frz-accent); color:var(--frz-text); }
   /* Flow User Manual: styles moved into the _FRZ_MANUAL_CSS JS constant and inlined
      into the standalone new-tab document (see openManual). Nothing here in the shell. */
   /* Stage 3b - watch toggle + @mention chips */
@@ -18959,7 +18989,9 @@ if ('serviceWorker' in navigator) {
     'team-calendar':{ chips:['owner'],                      extra:[], opts:[] },  // owner is applied+serialized so the SHARED Devs filter persists onto the calendar (the calendar renders its OWN filter row, not renderBar, so this adds no visual chip); _calData honors getSelectedDevs
     'reports':{ chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:[] }   // Phase 1: Reports uses the SHARED chip bar (so Saved Views scope it); its date-basis/range/group-by are report-local controls in the page body
   };
-  var PROJ_COLORS = ['#0059A9','#65B1E3','#2E8B6F','#C0700B','#8E4FB0','#C0392B','#0E7C86'];
+  // PALETTE-1: the stale 7-entry PROJ_COLORS duplicate was removed. It contradicted the single-source rule
+  // (projectColor() is the one source) and, at 13 projects, its fallback branch had become reachable and
+  // could disagree with the real palette. Its one call site now relies on projectColor() alone.
   // Feature B: items eligible for sprint planning (single editable list).
   var PLANNABLE_TYPES = ['Feature','Enhancement','Bug Fix','Task'];
   // Sprint-state badge tints - deliberately NOT the item-status palette.
@@ -19766,7 +19798,7 @@ if ('serviceWorker' in navigator) {
       var b = document.createElement('button');
       b.className='frz-item'; b.setAttribute('data-proj', name);
       b.setAttribute('aria-current', String(state.project===name));
-      b.innerHTML = '<span class="frz-dot" style="background:'+(_call('projectColor',name)||PROJ_COLORS[(i+1)%PROJ_COLORS.length])+'"></span><span>'+esc(name)+'</span><span class="frz-count">'+_frzScopeCount(name)+'</span>';
+      b.innerHTML = '<span class="frz-dot" style="background:'+(_call('projectColor',name)||'var(--frz-accent)')+'"></span><span>'+esc(name)+'</span><span class="frz-count">'+_frzScopeCount(name)+'</span>';   // PALETTE-1: projectColor() is the single source; the accent is only a defensive fallback if the cross-block _call returns undefined (matches the other dot sites)
       pn.appendChild(b);
     });
     // boards + saved filters
@@ -20403,6 +20435,7 @@ if ('serviceWorker' in navigator) {
     }).catch(function(){ if(_frzTodoView==='log' && log) log.innerHTML='<div class="frz-mw-empty">Could not load the completed log.</div>'; });
   }
   function _frzTodoPut(id, patch){   // title / due edits (status changes go through the checkbox path)
+    _frzInvalidateMyTodos();   // REM-4: a to-do edit can change an item's reminder indicator; refetch next paint
     API.put('/api/my/todos/'+id, patch).then(function(d){
       if(d && d.todo){ var i=_frzTodos.findIndex(function(t){ return t.id===id; }); if(i>=0) _frzTodos[i]=d.todo; _frzPaintTodos(); }
     }).catch(function(){ if(typeof showToast==='function') showToast('Could not save the change','error'); _frzRenderTodos(); });
@@ -20411,6 +20444,7 @@ if ('serviceWorker' in navigator) {
     // Check = complete. Brief strike-through confirmation (Part 0: the convention stays), then the row
     // leaves the open list into the log. Un-completing from the log is out of scope (retype).
     if(row) row.classList.add('frz-todo-is-done');
+    _frzInvalidateMyTodos();   // REM-4: completing a reminder drops it from the item's open-reminder indicator
     API.put('/api/my/todos/'+id, {status:'Done'}).then(function(){
       setTimeout(function(){
         _frzTodos=_frzTodos.filter(function(t){ return t.id!==id; });
@@ -20423,6 +20457,7 @@ if ('serviceWorker' in navigator) {
   }
   function _frzTodoDelete(id){
     var t=_frzTodoById(id); if(!t) return;
+    _frzInvalidateMyTodos();   // REM-4: deleting a reminder removes it (and its notification's snooze) from the indicator
     var snap={ title:t.title, notes:t.notes, status:t.status, due_date:t.due_date, item_id:t.item_id, item_key:t.item_key };   // full snapshot to re-POST on undo (REM-2: carry the item link; server re-derives item_key)
     API.del('/api/my/todos/'+id).then(function(){
       _frzTodos=_frzTodos.filter(function(x){ return x.id!==id; }); _frzCounts.open=Math.max(0,_frzCounts.open-1); _frzPaintTodos();
@@ -22718,9 +22753,9 @@ if ('serviceWorker' in navigator) {
     // Stage 2: inject Attachments + Sprint-history sections (beta-only; idempotent).
     // Release is now (re)placed by _frzItemLayout, which also consolidates the rail
     // and reorders the main column.
-    injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); injectAssetLinks(p); injectFlag(p);
+    injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); injectAssetLinks(p); injectFlag(p); injectReminderIndicator(p);   // REM-4: after injectFlag so the indicator sits below the flag banner
     _frzOrderMain();   // rail is consolidated by the renderItemPage wrapper; here we only (re)order the main column for the just-injected cards
-    setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); injectAssetLinks(p); injectFlag(p); _frzOrderMain(); }, 500);
+    setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); injectAssetLinks(p); injectFlag(p); injectReminderIndicator(p); _frzOrderMain(); }, 500);
     // Render-then-edit: set the description's beta read-styling + edit bridge NOW (no mount on
     // load → no flash); the comment composer still mounts its editor deferred (out of scope here).
     frzInitDescription(p);
@@ -26987,6 +27022,7 @@ if ('serviceWorker' in navigator) {
     _frzRenderPanelThread(id);                          // read-only thread (sanitizer-ensured, state.panelId-guarded)
     _frzWirePanelComposer(p, canEdit);                  // lazy composer (viewer/flag-off → none)
     _frzPaintPanelFlag(id);                             // REM-1: flag banner (all roles; state.panelId-guarded)
+    _frzPaintPanelReminder(id);                         // REM-4: owner-only reminder indicator, below the flag banner
     _frzApplyPanelHighlight();
     if(!opts.fromURL) syncURL(!first);                 // push on first open, replace on swap (panel param via syncURL)
     if(!opts.fromURL) try{ _frzPanelEl.focus(); }catch(e){}
@@ -27370,6 +27406,93 @@ if ('serviceWorker' in navigator) {
       +'<div style="padding:10px 16px">'+rows+'</div>';
   }
 
+  // ════════ REM-4: owner-only reminder indicator + the shared to-do cache ════════
+  // A page-load cache of the CALLER'S OWN to-dos (from /api/my/todos, token-scoped). PRIVACY (Part 5.6):
+  // this is the ONLY source, there is no endpoint or admin path to another user's to-dos, so the indicator
+  // can only ever reflect the current user's own reminders - which is exactly why it is safe to show on a
+  // shared surface (two users on the same item see different indicators; a user with none sees nothing).
+  // NOT reused from _frzTodos: that holds OPEN rows only and is populated only when the To-dos pane opens,
+  // so it cannot answer "does this to-do still exist" (Done rows) or "reminders on item X" reliably.
+  // null = not loaded yet. One fetch per page load (guarded); invalidated on any to-do mutation.
+  var _frzMyTodos=null;
+  function _frzLoadMyTodos(cb){
+    API.get('/api/my/todos').then(function(d){ _frzMyTodos=(d&&d.todos)||[]; if(cb) cb(); })
+      .catch(function(){ _frzMyTodos=_frzMyTodos||[]; if(cb) cb(); });   // never block; a failure leaves an empty (not null) set
+  }
+  function _frzMyTodosReady(cb){ if(_frzMyTodos!==null){ if(cb) cb(); return; } _frzLoadMyTodos(cb); }
+  function _frzInvalidateMyTodos(){ _frzMyTodos=null; }
+  function _frzTodoExists(id){ return _frzMyTodos!==null && _frzMyTodos.some(function(t){ return t.id===id; }); }   // Done rows still exist
+  // Open (non-Done) reminders on one item, soonest first. null when the cache is not loaded (caller waits).
+  function _frzItemReminders(itemId){
+    if(_frzMyTodos===null) return null;
+    return _frzMyTodos.filter(function(t){ return t.item_id===itemId && t.status!=='Done'; })
+                      .sort(function(a,b){ return (a.due_date||'zzzz')<(b.due_date||'zzzz')?-1:1; });
+  }
+  // The indicator's inner text - quiet and personal ("you"). One reminder: title + due; more: count + soonest.
+  function _frzReminderIndHTML(rems){
+    if(rems.length===1){
+      var t=rems[0];
+      return 'You have a reminder here: '+esc(t.title)+(t.due_date?(' · due '+esc(_frzFmtDue(t.due_date))):'');
+    }
+    var soon=rems.filter(function(t){return t.due_date;})[0];
+    return 'You have '+rems.length+' reminders here'+(soon?(' · soonest '+esc(_frzFmtDue(soon.due_date))):'');
+  }
+  // Build (or refresh) the muted indicator element. Inline --frz-* tokens (dark-mode safe), single line +
+  // ellipsis, clickable through to My Home To-dos. Deliberately NOT flag-banner weight: a reminder is not a
+  // shared problem, so no accent fill and no coloured border (Part 5.3).
+  function _frzMakeReminderInd(id){
+    var ind=document.createElement('div'); ind.id=id; ind.className='frz-reminder-ind';
+    ind.style.cssText='margin:0 0 12px;padding:7px 12px;border-radius:8px;background:var(--frz-bg-app);border:1px solid var(--frz-border);color:var(--frz-text-secondary);font-size:12.5px;line-height:1.4;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    ind.title='Open My Home To-dos';
+    ind.addEventListener('click', function(){ navigate('/my-home/todos', false); });
+    return ind;
+  }
+  // Item page: place the indicator BELOW the flag banner (shared signal reads first) in injectFlag's own
+  // container. state.itemId-guarded across the async cache fetch so an indicator built for item A never
+  // lands on item B (Part 5.4). Renders nothing when there are no open reminders.
+  function injectReminderIndicator(p){
+    if(!p) return;
+    var notes=document.getElementById('ipNotes');
+    var anchor = notes ? notes.parentElement.parentElement : document.getElementById('ipFieldsCard');
+    if(!anchor || !anchor.parentNode) return;
+    var container=anchor.parentNode, _for=p.id;
+    _frzMyTodosReady(function(){
+      if(!(state.onItem && state.itemId===_for)) return;                     // swapped away -> abandon this paint
+      var existing=document.getElementById('frzReminderIndicator'); if(existing) existing.remove();
+      var rems=_frzItemReminders(_for); if(!rems || !rems.length) return;      // none -> render nothing, no empty box
+      var ind=_frzMakeReminderInd('frzReminderIndicator'); ind.innerHTML=_frzReminderIndHTML(rems);
+      var banner=document.getElementById('frzFlagBanner');
+      if(banner && banner.parentNode===container) container.insertBefore(ind, banner.nextSibling);  // below the flag banner
+      else container.insertBefore(ind, container.firstChild);
+    });
+  }
+  // List panel: same rule, inserted below #frzLpFlagBanner (or after .frz-lp-hd). state.panelId-guarded.
+  function _frzPaintPanelReminder(id){
+    if(!_frzPanelEl || state.panelId!==id) return;
+    var scroll=_frzPanelEl.querySelector('.frz-lp-scroll'); if(!scroll) return;
+    var _for=id;
+    _frzMyTodosReady(function(){
+      if(state.panelId!==_for) return;
+      var existing=_frzPanelEl.querySelector('#frzLpReminderInd'); if(existing) existing.remove();
+      var rems=_frzItemReminders(_for); if(!rems || !rems.length) return;
+      var ind=_frzMakeReminderInd('frzLpReminderInd'); ind.innerHTML=_frzReminderIndHTML(rems);
+      var banner=_frzPanelEl.querySelector('#frzLpFlagBanner'), hd=scroll.querySelector('.frz-lp-hd');
+      if(banner) scroll.insertBefore(ind, banner.nextSibling);
+      else if(hd && hd.nextSibling) scroll.insertBefore(ind, hd.nextSibling);
+      else scroll.appendChild(ind);
+    });
+  }
+  // Called from block B's REMINDER branch after a successful create (a reminder is NOT a flag, so this is
+  // separate from _frzOnFlagChanged and never fires it). Invalidates the cache and repaints the indicator
+  // for the currently open item only.
+  window._frzOnReminderCreated=function(itemId){
+    _frzInvalidateMyTodos();
+    _frzMyTodosReady(function(){
+      if(state.onItem && state.itemId===itemId){ var p=(_val('projects',[])||[]).filter(function(x){return x.id===itemId;})[0]; if(p) injectReminderIndicator(p); }
+      if(state.panelId===itemId) _frzPaintPanelReminder(itemId);
+    });
+  };
+
   // ════════ Stage 3b - Notifications (bell + inbox) ════════
   var _notifs=[], _notifUnread=0, _notifTimer=null;
   // REM-3: fire this user's due reminders once per page load (Part 4.3). The flag guarantees once-per-load
@@ -27409,7 +27532,9 @@ if ('serviceWorker' in navigator) {
   }
   function toggleNotif(){
     var p=document.getElementById('frzNotif'); if(!p) return;
-    if(p.hidden){ renderNotifPanel(); p.hidden=false; loadNotifs(); } else p.hidden=true;
+    // REM-4: ensure the caller's to-dos are cached so the orphan check (snooze visibility) is accurate, then
+    // re-render once loaded. _frzMyTodosReady fetches only if not already cached, so this is one fetch/load.
+    if(p.hidden){ renderNotifPanel(); p.hidden=false; loadNotifs(); _frzMyTodosReady(function(){ if(p && !p.hidden) renderNotifPanel(); }); } else p.hidden=true;
   }
   // ── Flow User Manual (print-to-PDF) ──────────────────────────────────────────
   // A themed, print-optimized document opened from the account menu. "Download PDF"
@@ -27754,17 +27879,28 @@ if ('serviceWorker' in navigator) {
     var p=document.getElementById('frzNotif'); if(!p) return;
     var hd='<div class="frz-notif-hd"><span>Notifications</span>'+(_notifUnread?'<button class="frz-notif-all" id="frzNotifAll">Mark all read</button>':'')+'</div>';
     var body = _notifs.length ? _notifs.map(function(n){
-      // REM-3: a reminder gets a sibling snooze block (Tomorrow / Next week). It is a SIBLING, not nested,
-      // because the row itself is a <button> and buttons cannot nest. Snooze needs n.todo_id (added to the
-      // notifications row); it is absent on non-reminder types, so the block only renders for reminders.
-      var snooze = (n.type==='reminder' && n.todo_id) ? '<div class="frz-notif-snooze" data-tdid="'+n.todo_id+'" data-nid="'+n.id+'">'+
+      // REM-3: a reminder gets a sibling snooze block (Tomorrow / Next week), a SIBLING not nested (the row
+      // is a <button>). REM-4 item 2 (orphans): only offer snooze while the to-do still EXISTS in the
+      // caller's own list. A reminder notification outlives its to-do; a deleted to-do (todo_id present but
+      // not found) would give buttons that PUT to nothing. A DONE to-do still EXISTS, so it keeps snooze -
+      // only a MISSING one loses it. If the cache is not loaded yet (_frzTodoExists false because
+      // _frzMyTodos===null), omit snooze rather than show a button that may fail; toggleNotif reloads the
+      // cache and re-renders, so it appears once the data is in.
+      var hasSnooze = (n.type==='reminder' && n.todo_id && _frzTodoExists(n.todo_id));
+      var snooze = hasSnooze ? '<div class="frz-notif-snooze" data-tdid="'+n.todo_id+'" data-nid="'+n.id+'">'+
           '<span class="frz-notif-snooze-lbl">Snooze</span>'+
           '<button type="button" class="frz-notif-snooze-btn" data-days="1">Tomorrow</button>'+
           '<button type="button" class="frz-notif-snooze-btn" data-days="7">Next week</button>'+
         '</div>' : '';
-      return '<button class="frz-notif-row'+(n.read?'':' is-unread')+'" data-nid="'+n.id+'" data-nitem="'+(n.item_id||'')+'" data-ntype="'+escA(n.type||'')+'">'+
+      // REM-4 item 1 (border): when a snooze block follows, the row drops its own bottom border via
+      // frz-notif-has-snooze, so the row + snooze read as ONE card with a single border after the pair.
+      // Non-reminder rows (no snooze) are pixel-identical to before. REM-4 item 3 (separator): the meta
+      // ' · ' is emitted only BETWEEN present parts, so an unlinked reminder (empty item_name) shows just
+      // the date - no dangling leading separator. General + behaviour-neutral for types that always fill it.
+      var meta=[esc(n.item_name||''), (n.created_ts?esc(fmtTSDate(n.created_ts)):'')].filter(Boolean).join(' · ');
+      return '<button class="frz-notif-row'+(n.read?'':' is-unread')+(hasSnooze?' frz-notif-has-snooze':'')+'" data-nid="'+n.id+'" data-nitem="'+(n.item_id||'')+'" data-ntype="'+escA(n.type||'')+'">'+
         '<span class="frz-notif-msg">'+esc(_notifMsg(n))+'</span>'+
-        '<span class="frz-notif-meta">'+esc(n.item_name||'')+(n.created_ts?(' · '+esc(fmtTSDate(n.created_ts))):'')+'</span>'+
+        '<span class="frz-notif-meta">'+meta+'</span>'+
       '</button>'+snooze;
     }).join('') : '<div class="frz-notif-empty">You’re all caught up.</div>';
     p.innerHTML=hd+'<div class="frz-notif-list">'+body+'</div>';
