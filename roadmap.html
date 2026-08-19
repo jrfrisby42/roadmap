@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.5.0';
+const APP_VERSION = '6.5.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -12022,6 +12022,10 @@ function updateActivityBadge(){
     const openN = openActivities().filter(a => !projScope || a.project === projScope).length;
     openEl.textContent = openN > 0 ? String(openN) : '';
   }
+  // ACTIVITY-MERGE: the Flow shell now surfaces unread Activity Center items in the bell, so let it refresh
+  // its badge + panel whenever the activity set changes (this hook runs after every loadActivities). Block C
+  // owns what to repaint; guarded so this block stays correct if the shell never registered it.
+  if(typeof window._frzActivityChanged === 'function') window._frzActivityChanged();
 }
 
 // Mark all open items as Read when AC is opened
@@ -18365,6 +18369,10 @@ if ('serviceWorker' in navigator) {
   /* REM-4: the owner-only reminder indicator. Base look is inline (--frz-* tokens, dark-safe) on the element;
      only the hover affordance needs a rule. Quiet by design - accent appears only on hover, never at rest. */
   .frz-beta .frz-reminder-ind:hover { border-color:var(--frz-accent); color:var(--frz-text); }
+  /* ACTIVITY-MERGE: labelled section header inside the bell dropdown, + the flag-coloured dot on an
+     Activity Center row. Muted --frz-* tokens only. */
+  .frz-beta .frz-notif-seclbl { padding:8px 14px 4px; font-size:10.5px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; color:var(--frz-text-muted); background:var(--frz-bg-app); border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-notif-actdot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; vertical-align:middle; flex-shrink:0; }
   /* Flow User Manual: styles moved into the _FRZ_MANUAL_CSS JS constant and inlined
      into the standalone new-tab document (see openManual). Nothing here in the shell. */
   /* Stage 3b - watch toggle + @mention chips */
@@ -27526,10 +27534,24 @@ if ('serviceWorker' in navigator) {
       var p=document.getElementById('frzNotif'); if(p && !p.hidden) renderNotifPanel();
     }).catch(function(){});
   }
+  // ACTIVITY-MERGE: the caller's UNREAD (status Open) Activity Center items, scoped exactly like the old
+  // hamburger badge (unreadActivities() applies the editor owner-filter; admins see all). Read via _call
+  // because it is a block-B global. Visiting the Activity Center marks them Read, which clears this section
+  // and the badge - same lifecycle the classic badge had.
+  function _frzOpenActs(){ try { return _call('unreadActivities') || []; } catch(e){ return []; } }
   function renderBellBadge(){
     var b=document.getElementById('frzBellBadge'); if(!b) return;
-    if(_notifUnread>0){ b.hidden=false; b.textContent=_notifUnread>99?'99+':String(_notifUnread); } else b.hidden=true;
+    // ACTIVITY-MERGE: the bell now covers BOTH personal notifications AND unread Activity Center items, so
+    // the badge combines the two counts (this also restores the Activity Center count the Flow shell lost).
+    var total=(_notifUnread||0)+_frzOpenActs().length;
+    if(total>0){ b.hidden=false; b.textContent=total>99?'99+':String(total); } else b.hidden=true;
   }
+  // ACTIVITY-MERGE: block B calls this after every loadActivities so the bell reflects activity changes
+  // (new flags, or activities marked Read when the Activity Center opens) without waiting for the next poll.
+  window._frzActivityChanged=function(){
+    renderBellBadge();
+    var p=document.getElementById('frzNotif'); if(p && !p.hidden) renderNotifPanel();
+  };
   function toggleNotif(){
     var p=document.getElementById('frzNotif'); if(!p) return;
     // REM-4: ensure the caller's to-dos are cached so the orphan check (snooze visibility) is accurate, then
@@ -27878,7 +27900,20 @@ if ('serviceWorker' in navigator) {
   function renderNotifPanel(){
     var p=document.getElementById('frzNotif'); if(!p) return;
     var hd='<div class="frz-notif-hd"><span>Notifications</span>'+(_notifUnread?'<button class="frz-notif-all" id="frzNotifAll">Mark all read</button>':'')+'</div>';
-    var body = _notifs.length ? _notifs.map(function(n){
+    // ACTIVITY-MERGE: unread Activity Center items get a LABELLED section at the TOP of the dropdown (team
+    // work signals first), each row opening the Activity Center focused on that item. They are NOT
+    // notification rows (different table, different click target), so they carry .frz-notif-act and their
+    // own handler, and the notification-row handler explicitly excludes them.
+    var acts=_frzOpenActs();
+    var actSection = acts.length ? ('<div class="frz-notif-seclbl">Activity Center ('+acts.length+')</div>'+acts.map(function(a){
+        var col=_frzFlagColor(a.activity_type);
+        var who=[esc(a.owner||a.project||''), (a.created_ts?esc(fmtTSDate(a.created_ts)):'')].filter(Boolean).join(' · ');
+        return '<button class="frz-notif-row frz-notif-act" data-actitem="'+(a.item_id||'')+'">'+
+          '<span class="frz-notif-msg"><span class="frz-notif-actdot" style="background:'+col+'"></span>'+esc(a.item_name||('Item #'+(a.item_id||'')))+' - '+esc(a.activity_type||'Activity')+'</span>'+
+          '<span class="frz-notif-meta">'+who+'</span>'+
+        '</button>';
+      }).join('')) : '';
+    var notifBody = _notifs.length ? _notifs.map(function(n){
       // REM-3: a reminder gets a sibling snooze block (Tomorrow / Next week), a SIBLING not nested (the row
       // is a <button>). REM-4 item 2 (orphans): only offer snooze while the to-do still EXISTS in the
       // caller's own list. A reminder notification outlives its to-do; a deleted to-do (todo_id present but
@@ -27902,10 +27937,15 @@ if ('serviceWorker' in navigator) {
         '<span class="frz-notif-msg">'+esc(_notifMsg(n))+'</span>'+
         '<span class="frz-notif-meta">'+meta+'</span>'+
       '</button>'+snooze;
-    }).join('') : '<div class="frz-notif-empty">You’re all caught up.</div>';
-    p.innerHTML=hd+'<div class="frz-notif-list">'+body+'</div>';
+    }).join('') : '';
+    // Label the personal notifications only when the Activity Center section sits above them (so the two are
+    // distinguishable); with no activities the list is unlabelled exactly as before. Empty only when BOTH are.
+    var notifLbl = (acts.length && _notifs.length) ? '<div class="frz-notif-seclbl">Notifications</div>' : '';
+    var listInner = actSection + notifLbl + notifBody;
+    if(!listInner) listInner = '<div class="frz-notif-empty">You’re all caught up.</div>';
+    p.innerHTML=hd+'<div class="frz-notif-list">'+listInner+'</div>';
     var all=document.getElementById('frzNotifAll'); if(all) all.addEventListener('click', function(e){ e.stopPropagation(); markAllRead(); });
-    p.querySelectorAll('.frz-notif-row').forEach(function(b){
+    p.querySelectorAll('.frz-notif-row:not(.frz-notif-act)').forEach(function(b){   // ACTIVITY-MERGE: notif rows only, not activity rows
       b.addEventListener('click', function(){
         var nid=+b.getAttribute('data-nid'), it=+b.getAttribute('data-nitem');
         markRead(nid); p.hidden=true;
@@ -27913,6 +27953,15 @@ if ('serviceWorker' in navigator) {
         // (My Home To-dos) instead of doing nothing. Other null-item types keep their prior no-op behaviour.
         if(it) navigate('/item/'+it, false);
         else if(b.getAttribute('data-ntype')==='reminder') navigate('/my-home/todos', false);
+      });
+    });
+    // ACTIVITY-MERGE: an activity row opens the Activity Center focused on its item (openConflictActivityModal
+    // - the same target the flag banners use), then closes the panel. Opening the AC marks the open activities
+    // Read, which clears this section + decrements the badge on the next refresh.
+    p.querySelectorAll('.frz-notif-act').forEach(function(b){
+      b.addEventListener('click', function(){
+        var it=+b.getAttribute('data-actitem'); p.hidden=true;
+        if(it) _call('openConflictActivityModal', it);
       });
     });
     p.querySelectorAll('.frz-notif-snooze-btn').forEach(function(sb){
