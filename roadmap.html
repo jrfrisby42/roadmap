@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.7.0';
+const APP_VERSION = '6.7.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -18375,21 +18375,28 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-bell:hover { background:var(--frz-bg-app); color:var(--frz-accent); }
   .frz-beta .frz-bell .frz-ic { width:24px; height:24px; min-width:24px; flex:0 0 auto; stroke-width:1.33; display:block; }   /* enlarge the notification bell; flex:0 0 auto stops the flex item from shrinking */
   /* BELL-1: the badge NUMBER means "things wanting your attention" (unread notifications + unresolved
-     activities); the COLOUR/FILL means "is any of it new". .is-alert = SOLID --frz-alert red (something
-     unread). .is-warn = OUTLINED --frz-warn amber (only outstanding activities, nothing new). Solid-vs-
-     outlined (fill), not just hue, so the two read apart under deuteranopia; a `title` states the exact
-     composition so meaning never depends on colour. box-sizing:border-box so the outlined border does not
-     change the badge's size vs the solid state. */
+     activities); the COLOUR/FILL means "is any of it new". .is-alert = SOLID --frz-alert red disc, white text
+     (something unread). .is-warn = SOLID --frz-warn amber disc, dark navy text (only outstanding activities,
+     nothing new). The two states invert their lightness polarity - red is a DARK disc carrying LIGHT text,
+     amber is a LIGHT disc carrying DARK text - so they stay obviously different objects under deuteranopia
+     (desaturate both and the dark-vs-light disc still separates them); a `title` states the exact composition
+     so meaning never depends on colour. box-sizing:border-box keeps sizing stable across states. */
   .frz-beta .frz-bell-badge { position:absolute; top:1px; right:1px; box-sizing:border-box; min-width:16px; height:16px; padding:0 4px; border-radius:999px; font-size:10px; font-weight:800; line-height:16px; text-align:center; }
   .frz-beta .frz-bell-badge.is-alert { background:var(--frz-alert); color:#fff; border:0; }
-  /* BELL-1 Addendum B: the outlined amber splits into BORDER (--frz-warn #e8a000) and TEXT (--frz-warn-text).
-     #e8a000 as text is only 2.22:1 on the light surface (fine on dark at 7.16:1), and amber is the PERSISTENT
-     state (0 new, N outstanding sits there indefinitely once read), so the number must be legible. Light text
-     is #c06000 = 4.27:1, matching the existing #flagIssueBtn precedent (no new colour). Deliberately NOT
-     pushed to 4.5:1: the SOLID red badge is itself 4.11:1, so #c06000 already makes the secondary amber state
-     a touch MORE legible than the primary red - going stronger (e.g. #9A6000 = 5.19:1) would make the
-     secondary louder than the primary. Do not raise one without the other. */
-  .frz-beta .frz-bell-badge.is-warn { background:transparent; color:var(--frz-warn-text); border:1.5px solid var(--frz-warn); line-height:13px; }
+  /* BADGE-1: .is-warn is a SOLID amber disc (--frz-warn #e8a000) with dark navy text, NOT an outlined ring.
+     The differentiator from the red state is inverted lightness polarity, not solid-vs-outline: red disc
+     luminance 0.206 (light text), amber disc 0.423 (dark text) - a >2x split that survives desaturation, so
+     the colourblind guarantee holds while the badge keeps the presence of a filled disc. Navy on amber is
+     6.73:1, deliberately MORE legible than the red state's 4.11:1 white-on-red: the red compensates with mass
+     and colour weight and remains the more urgent-reading state, so do NOT weaken the amber or strengthen the
+     red to "balance" them. An earlier outlined-ring version (BELL-1 Addendum B, --frz-warn-text border+text)
+     was tried and rejected: a 1.5px hollow ring is a weaker object than a solid disc and was hard to see. */
+  .frz-beta .frz-bell-badge.is-warn { background:var(--frz-warn); color:var(--frz-text); border:0; }
+  /* --frz-text is navy #14283F in light (6.73:1 on the amber disc) but a light neutral #D3D8DE in dark
+     (1.55:1 on amber, fails). The amber disc is theme-independent, so pin the dark badge text to the same
+     navy for 6.73:1 in both themes - this is the dark-theme text value the solid-amber design requires. */
+  body.dark-mode .frz-beta .frz-bell-badge.is-warn,
+  body.dark-mode.frz-beta-active .frz-bell-badge.is-warn { color:#14283F; }
   .frz-beta .frz-notif { position:absolute; top:calc(100% + 8px); right:0; width:340px; max-height:70vh; overflow:auto; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:12px; box-shadow:0 12px 30px rgba(20,40,63,.18); z-index:90; }
   .frz-beta .frz-notif-hd { display:flex; align-items:center; justify-content:space-between; padding:11px 14px; border-bottom:1px solid var(--frz-border); font-weight:800; font-size:13px; color:var(--frz-text); position:sticky; top:0; background:var(--frz-bg-surface); }
   .frz-beta .frz-notif-all { border:0; background:none; color:var(--frz-accent); font-weight:700; font-size:11px; cursor:pointer; }
@@ -19834,8 +19841,12 @@ if ('serviceWorker' in navigator) {
   function _frzRailSecCount(sec, nav){
     var n=0;
     nav.querySelectorAll('.frz-item').forEach(function(r){
+      // PROJECTS excludes the "All projects" row: it is a scope aggregator, not a project, and projects are
+      // the real countable units (13 projects -> "(13)"). BOARDS counts EVERY row (Open work + Active Sprint
+      // + custom boards): unlike "All projects", "Open work" is itself a real, selectable board, so the
+      // collapsed count should match the number of board rows shown when the section is expanded. SAVED
+      // FILTERS has no sentinel row, so all its rows count too.
       if(sec==='projects' && r.getAttribute('data-proj')==='__all__') return;
-      if(sec==='boards' && r.getAttribute('data-board')==='__all__') return;
       n++;
     });
     return n;
@@ -27678,10 +27689,11 @@ if ('serviceWorker' in navigator) {
   function renderBellBadge(){
     var b=document.getElementById('frzBellBadge'); if(!b) return;
     // BELL-1: NUMBER = unread notifications + UNRESOLVED activities (things wanting attention). COLOUR = is
-    // any of it NEW: solid --frz-alert red whenever a notification is unread; outlined --frz-warn amber when
-    // only activities are outstanding (amber is where you land AFTER reading, so it must not be the alarming
-    // colour or the badge would be red forever on a team that never resolves). Solid vs outlined = fill, so
-    // the states read apart under deuteranopia; the title spells out the split for colour-independent meaning.
+    // any of it NEW: solid --frz-alert red disc whenever a notification is unread; solid --frz-warn amber
+    // disc when only activities are outstanding (amber is where you land AFTER reading, so it must not be the
+    // alarming colour or the badge would be red forever on a team that never resolves). BADGE-1: the two
+    // discs invert lightness polarity (dark red/light text vs light amber/dark text), not just hue, so they
+    // read apart under deuteranopia; the title spells out the split for colour-independent meaning.
     var unread=(_notifUnread||0), actN=_frzBacklogCount(), total=unread+actN;
     b.classList.remove('is-alert','is-warn');
     if(total<=0){ b.hidden=true; b.removeAttribute('title'); return; }
