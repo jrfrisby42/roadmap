@@ -1549,7 +1549,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.7.2"
+APP_VERSION = "6.8.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2124,6 +2124,25 @@ def _depts_for_email(team: str, email: str) -> list:
     return sorted(out)
 
 _PRIO_LABEL = {"1": "Urgent", "2": "High", "3": "Medium", "4": "Low"}
+
+# TRANSFER-1: the status a source item takes once it has been transferred to another team.
+# This is a HARDCODED SYSTEM STATUS - a deliberate exception to the never-hardcode-a-status
+# rule (CLAUDE.md rule 3) - and the reasoning is the point:
+#   - Configurable statuses are WORKFLOW STATES a team owns ("Approved"/"Done" mean different
+#     things per team). "Transferred" is a SYSTEM FACT ABOUT THE RECORD, like `hidden`: it
+#     says "this item was rerouted", not "this team did work". No team redefines it and nobody
+#     moves an item into it as part of doing work.
+#   - It is written by exactly ONE code path (transfer_item) and by NO human.
+#   - Being outside every team's `statuses` config means it CANNOT be selected by hand in any
+#     picker (which are all built from `statuses`), with no per-picker exclusion list to get
+#     wrong. It needs no config on any team, so transfer works everywhere on deploy.
+#   - Accepted cost: a team cannot rename it to its own vocabulary.
+# The trap: terminality is normally read from the statusIsTerminal CONFIG map, which will NOT
+# contain this. So `_is_terminal` (and the two client helpers) special-case it to TRUE, or a
+# transferred item would count as ACTIVE (capacity, open queues) - the opposite of the intent.
+# It is deliberately NOT treated as "completed": the tombstone does not stamp completedAt, so
+# a misroute never inflates the target team's resolution-time / throughput metrics.
+TRANSFERRED_STATUS = "Transferred"
 
 # Status badge swatches - the EXACT (bg, fg, border) of roadmap.html's .s-* classes
 # so portal pills match the logged-in badges 1:1.
@@ -5496,6 +5515,285 @@ def delete_attachment(pid: int, att_id: str,
     write_audit(team, "attachment:delete", username, pid, p.get("name", ""), changes={"file": target.get("name")})
     return {"deleted": att_id, "name": target.get("name")}
 
+# ── Cross-team transfer (TRANSFER-1) ─────────────────────────────────────────
+# Move a misrouted item to the correct team + project. The two teams are separate SQLite
+# files, so this CANNOT be one transaction; it is made IDEMPOTENT instead, via a server-owned
+# `externalRefs` entry (system 'flow-transfer') carrying an operationRef, reusing the same
+# (source_system, source_reference) thinking as the AssetHub integration. Ordering guarantees:
+#   1. Arm a 'pending' marker on the SOURCE first (before anything on the target).
+#   2. Create on the target, guarded by the operationRef so a retry finds the existing item
+#      instead of making a second one.
+#   3. COPY attachments (keys embed the item id, so a repoint is impossible) and CONFIRM them
+#      on the target BEFORE the source is tombstoned - a transfer that stranded the screenshot
+#      would be worse than none, because the source is now closed.
+#   4. Tombstone the source LAST (status -> TRANSFERRED_STATUS), via a DIRECT write that skips
+#      update_project's terminal hooks (so no completedAt: transferred != completed).
+# A transfer that dies after step 1 leaves the source live with a 'pending' marker - surfaced
+# by a WARNING log and the item's own Admin Controls (Retry), so it is findable and retryable (a
+# retry completes, never duplicates). ADDENDUM A: the team-wide pending-list endpoint is deferred.
+_TRANSFER_SYSTEM = "flow-transfer"
+
+def _find_transfer_ref(item: dict, kind: str = None):
+    """The item's flow-transfer externalRef (or None). `kind` filters transferred-to / -from."""
+    for r in (item.get("externalRefs") or []):
+        if isinstance(r, dict) and r.get("system") == _TRANSFER_SYSTEM and (kind is None or r.get("kind") == kind):
+            return r
+    return None
+
+def _transfer_blockers(c, pid: int, item: dict) -> list:
+    """ADDENDUM A1: reasons this item may NOT be transferred. Transfer DROPS team-specific state
+    (Part 2.2), so moving an item that HAS accumulated any of it would silently destroy it and
+    tombstone the source - success-shaped data loss. Refuse instead (server is authoritative).
+    Guard on STATE, not origin (A1.2): an internal item with none of this is as safe to move as a
+    portal ticket. Owner/assignee are deliberately NOT here (A1.1): items may be auto-assigned on
+    arrival, so their presence is no evidence of work - they are on the DROP list (not carried) but
+    never BLOCK. Do not "tidy" them into this guard."""
+    b = []
+    if item.get("sprintId") or (item.get("sprintHistory") or []):
+        b.append("it is in a sprint")
+    if item.get("release") or item.get("releaseNumber"):
+        b.append("it is linked to a release")
+    sp = item.get("storyPoints")
+    try:
+        if sp is not None and str(sp).strip() != "" and float(sp) > 0:
+            b.append("it has story points")
+    except (TypeError, ValueError):
+        pass
+    n = c.execute("SELECT COUNT(*) AS n FROM comments WHERE item_id=?", (pid,)).fetchone()["n"]
+    if n:
+        b.append(f"it has {n} comment" + ("s" if n != 1 else ""))
+    if item.get("jiraTickets") or []:
+        b.append("it has Jira links")
+    if item.get("assetLinks") or []:
+        b.append("it has asset links")
+    return b
+
+def _fmt_blockers(b: list) -> str:
+    if len(b) <= 1:
+        return b[0] if b else ""
+    return ", ".join(b[:-1]) + " and " + b[-1]
+
+def _s3_copy(src_key: str, dst_key: str):
+    """Server-side S3 object copy for a cross-team attachment move. A transferred item gets a
+    new id, and attachment keys embed the item id (items/{pid}/...), so the object must be
+    copied to a new key - it cannot be repointed. Re-applies SSE-KMS when configured (a copy
+    does not inherit it). Idempotent: copying to the same dst_key again just overwrites."""
+    extra = {}
+    if ATTACH_KMS_KEY_ID:
+        extra["ServerSideEncryption"] = "aws:kms"
+        extra["SSEKMSKeyId"] = ATTACH_KMS_KEY_ID
+    _s3_client().copy_object(Bucket=ATTACH_BUCKET,
+                             CopySource={"Bucket": ATTACH_BUCKET, "Key": src_key},
+                             Key=dst_key, MetadataDirective="COPY", **extra)
+
+def _transfer_activity(c, pid: int, item: dict, actor: str, message: str, prev: str, new: str, ts: str):
+    """Write ONE attributed item-history row for a transfer. status='Resolved' (+ resolved_by/ts)
+    so it lands in History, not the Open work queue (get_activities' open path excludes
+    FLAG_TERMINAL_STATUSES). The tombstone bypasses update_project, so history is written here
+    explicitly rather than inherited."""
+    c.execute(
+        "INSERT INTO activities(activity_type,source,item_id,item_name,owner,project,"
+        "created_by,created_ts,note,status,message,previous_value,new_value,resolved_by,resolved_ts)"
+        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("Transfer", "System", pid, item.get("name", ""), item.get("dev", ""),
+         item.get("product", ""), actor, ts, "", "Resolved", message, prev, new, actor, ts))
+
+def _transfer_send_email(team: str, item: dict, pid: int, key: str, status: str):
+    """One best-effort message to the reporter: the ticket was routed to the right team, here is
+    the new reference + status link, and a gentle note on filing next time. Never blocks or
+    reverses the transfer (the caller wraps this)."""
+    if not mail_configured():
+        return
+    reporter_email = (item.get("reporterEmail") or "").strip()
+    if not reporter_email:
+        return
+    url  = f"{APP_BASE_URL}/ticket?team={team}&id={pid}&t={_ticket_token(team, pid)}"
+    prio = _PRIO_LABEL.get(str(item.get("priority") or ""), "")
+    rows = [("Ticket", key or f"#{pid}"), ("Status", status or ""),
+            ("Type", item.get("type") or ""), ("Priority", prio),
+            ("Project", item.get("product") or "")]
+    intro = ("Thanks for your report. We've moved your ticket to the team that handles this kind "
+             "of request, so it reaches the right people faster - there's nothing you need to do. "
+             "Your new reference is below; you can check its status any time with the button. For "
+             "next time: choosing the team whose portal lists this kind of request helps us route "
+             "it correctly the first time.")
+    body = _intake_email_html(item, rows, "Your ticket is now with the right team", intro,
+                              "View ticket status", url,
+                              secondary=("View all your tickets", _my_tickets_url(reporter_email)))
+    text = (f"Your ticket has been routed to the right team. New reference: {key or ('#'+str(pid))}\n"
+            f"Status: {status}\n\nTrack it: {url}\nAll your tickets: {_my_tickets_url(reporter_email)}\n")
+    send_email(reporter_email, f"[{key or ('#'+str(pid))}] Your ticket has been routed to the right team", text, body)
+
+@app.post("/api/items/{pid}/transfer")
+def transfer_item(pid: int, body: dict = Body(...), auth: dict = Depends(require_role("admin"))):
+    """TRANSFER-1: transfer an item to another team + project. Admin only (ipAdminCard gate).
+    Idempotent across the two-DB boundary (see the section comment). Cross-team authorization:
+    targets are restricted to portal-open teams/projects, which are ALREADY publicly writable
+    via /report, so this grants no capability beyond what the portal exposes - the acting admin
+    need not be a member of the target team."""
+    src_team = auth["team"]; actor = auth.get("username", "")
+    tgt_team = re.sub(r"[^a-z0-9]", "", (body.get("targetTeam") or "").lower())
+    tgt_project = (body.get("targetProject") or "").strip()
+    if not tgt_team or not valid_team(tgt_team) or not _intake_open(tgt_team):
+        raise HTTPException(422, "That team is not accepting transfers.")
+    if tgt_team == src_team:
+        raise HTTPException(422, "Pick a different team - moving between projects on one team is an ordinary field edit.")
+    if tgt_project and tgt_project not in _intake_projects(tgt_team):
+        raise HTTPException(422, "Unknown project for the target team.")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    # ── Step 0: read the source; short-circuit if already linked, else (re)arm the pending
+    # marker under an IMMEDIATE write lock so two rapid clicks converge on ONE operationRef. ──
+    with db(src_team) as c:
+        c.execute("BEGIN IMMEDIATE")   # serialize concurrent clicks on the source DB
+        src = _get_item_blob(c, pid)
+        ref = _find_transfer_ref(src, "transferred-to")
+        if ref and ref.get("status") == "linked":
+            return {"ok": True, "already": True, "operationRef": ref.get("operationRef"),
+                    "targetTeam": ref.get("targetTeam"), "targetId": ref.get("targetId"),
+                    "targetKey": ref.get("number"), "url": ref.get("url")}
+        if ref and ref.get("status") == "pending":
+            op = ref.get("operationRef")
+            tgt_team = ref.get("targetTeam") or tgt_team               # resume the recorded target
+            tgt_project = ref.get("targetProject") if ref.get("targetProject") is not None else tgt_project
+        else:
+            # ADDENDUM A1: eligibility guard on a FRESH transfer (a resume/short-circuit above has
+            # already passed it). Refuse - never warn-and-proceed - and NAME what is in the way, so
+            # the admin knows why. Runs before any mutation; raising here rolls back this txn.
+            blockers = _transfer_blockers(c, pid, src)
+            if blockers:
+                raise HTTPException(422, "This item cannot be transferred: " + _fmt_blockers(blockers) + ".")
+            op = _uuid.uuid4().hex
+            _append_external_ref(src, {"system": _TRANSFER_SYSTEM, "kind": "transferred-to",
+                "status": "pending", "operationRef": op, "targetTeam": tgt_team,
+                "targetLabel": _intake_label(tgt_team), "targetProject": tgt_project, "at": now_iso})
+            _save_project(c, pid, src)
+
+    src_label = _intake_label(src_team); tgt_label = _intake_label(tgt_team)
+    try:
+        # Resolve target config OUTSIDE the write transaction (these open db(tgt_team), which
+        # would nest a second connection to the same DB if called inside the IMMEDIATE txn).
+        def_map = _cfg_val(tgt_team, "statusIsDefault", {}) or {}
+        tgt_statuses = _cfg_val(tgt_team, "statuses", []) or []
+        status = next((s for s, v in def_map.items() if v), "") or (tgt_statuses[0] if tgt_statuses else "New")
+        proj_status = (_cfg_val(tgt_team, "intakeProjectStatus", {}) or {}).get(tgt_project) or ""
+        if proj_status and proj_status in tgt_statuses:
+            status = proj_status                                       # land where a fresh portal ticket would
+        src_type = (src.get("type") or "").strip()
+        tgt_type = next((t for t in (_cfg_val(tgt_team, "types", []) or [])
+                         if str(t).lower() == src_type.lower()), "") if src_type else ""   # equivalent name, else dropped
+        tgt_depts_cfg = _cfg_val(tgt_team, "departments", []) or []
+        carried_depts = [d for d in (src.get("departments") or []) if d in tgt_depts_cfg]  # exact match only, else dropped
+
+        # ── Step 1: create on the target (or find the existing one), under an IMMEDIATE lock so
+        # a concurrent request with the same op re-scans after commit and skips the insert. ──
+        tgt_item = {
+            "name": src.get("name") or "", "description": src.get("description") or "",
+            "type": tgt_type, "priority": src.get("priority") or "",
+            "product": tgt_project, "departments": carried_depts, "status": status,
+            "reporter": src.get("reporter") or "", "reporterEmail": src.get("reporterEmail") or "",
+            # ADDENDUM A2: carry the source's `source` through unchanged (do NOT hardcode "portal").
+            # An internally created item must not arrive claiming portal origin; the transfer's own
+            # provenance lives in externalRefs, which is the right place for it.
+            "source": src.get("source") or "", "createdAt": src.get("createdAt") or now_iso, "attachments": [],
+        }
+        _append_external_ref(tgt_item, {"system": _TRANSFER_SYSTEM, "kind": "transferred-from",
+            "status": "linked", "operationRef": op, "sourceTeam": src_team, "sourceLabel": src_label,
+            "sourceId": pid, "number": src.get("itemKey") or "",
+            "url": f"{APP_BASE_URL}/item/{pid}?team={src_team}", "at": now_iso})
+        created = False
+        with db(tgt_team) as c:
+            c.execute("BEGIN IMMEDIATE")
+            new_id = None
+            for row in c.execute("SELECT id, data FROM projects").fetchall():
+                d = json.loads(row["data"]); r = _find_transfer_ref(d, "transferred-from")
+                if r and r.get("operationRef") == op:
+                    new_id = row["id"]; tgt_item = d; break
+            if new_id is None:
+                _assign_item_key(c, tgt_item)
+                new_id = _insert_project(c, tgt_item)
+                created = True
+        tgt_key = tgt_item.get("itemKey") or ""
+        if created:
+            ts_h = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            with db(tgt_team) as c:
+                _transfer_activity(c, new_id, tgt_item, actor,
+                    f"Transferred from {src_label} ({src.get('itemKey') or '#'+str(pid)})", "", status, ts_h)
+            write_audit(tgt_team, "transfer:in", actor, new_id, tgt_item.get("name", ""),
+                        changes={"from": src_team, "sourceKey": src.get("itemKey") or "", "operationRef": op})
+
+        # ── Step 2: copy attachments to the new item's key space; confirm before tombstoning. ──
+        src_atts = [a for a in (src.get("attachments") or []) if a.get("key") and a.get("id")]
+        if src_atts:
+            with db(tgt_team) as c:
+                tb = _get_item_blob(c, new_id)
+            have = {a.get("srcId") for a in (tb.get("attachments") or [])}
+            for a in src_atts:
+                if a["id"] in have:
+                    continue
+                new_u = _uuid.uuid4().hex
+                dst = _attachment_key(new_id, new_u, a.get("name") or "file")
+                try:
+                    _s3_copy(a["key"], dst)
+                except HTTPException:
+                    raise
+                except Exception as ce:   # copy failed -> source stays live (not yet tombstoned), retry resumes
+                    log.warning("[Transfer] attachment copy failed (%s -> %s): %s", a["key"], dst, ce)
+                    raise HTTPException(502, "Attachment copy failed; source left intact - retry the transfer.")
+                rec = {"id": new_u, "key": dst, "name": a.get("name") or "file",
+                       "contentType": a.get("contentType") or "application/octet-stream",
+                       "size": int(a.get("size") or 0), "by": actor,
+                       "at": datetime.now(timezone.utc).isoformat(), "srcId": a["id"]}
+                with db(tgt_team) as c:      # persist each copy so a mid-loop failure resumes cleanly
+                    tb = _get_item_blob(c, new_id)
+                    tb.setdefault("attachments", []).append(rec)
+                    _save_project(c, new_id, tb)
+                have.add(a["id"])
+            with db(tgt_team) as c:
+                tb = _get_item_blob(c, new_id)
+            copied = {a.get("srcId") for a in (tb.get("attachments") or [])}
+            if [a["id"] for a in src_atts if a["id"] not in copied]:
+                raise HTTPException(502, "Attachment copy incomplete; source left intact - retry the transfer.")
+
+        # ── Step 3: tombstone the source LAST. Direct write (not update_project), so NO
+        # completedAt is stamped: transferred is not completion. History + audit written here. ──
+        tgt_url = f"{APP_BASE_URL}/item/{new_id}?team={tgt_team}"
+        ts_h = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        with db(src_team) as c:
+            s2 = _get_item_blob(c, pid)
+            prev_status = s2.get("status") or ""
+            r2 = _find_transfer_ref(s2, "transferred-to")
+            if r2 is not None:
+                r2["status"] = "linked"; r2["targetId"] = new_id
+                r2["number"] = tgt_key; r2["url"] = tgt_url; r2["targetLabel"] = tgt_label
+            s2["status"] = TRANSFERRED_STATUS
+            _save_project(c, pid, s2)
+            _transfer_activity(c, pid, s2, actor, f"Transferred to {tgt_label} ({tgt_key})",
+                               prev_status, TRANSFERRED_STATUS, ts_h)
+        write_audit(src_team, "transfer:out", actor, pid, s2.get("name", ""),
+                    changes={"to": tgt_team, "targetKey": tgt_key, "operationRef": op})
+
+        # ── Step 4: reporter email - best-effort, never blocks or reverses. ──
+        try:
+            _transfer_send_email(tgt_team, tgt_item, new_id, tgt_key, status)
+        except Exception as e:
+            log.warning("[Transfer] reporter email failed for %s->%s item %s: %s", src_team, tgt_team, new_id, e)
+        return {"ok": True, "operationRef": op, "targetTeam": tgt_team, "targetId": new_id,
+                "targetKey": tgt_key, "url": tgt_url}
+    except Exception as e:
+        # Anything after step 0 failing leaves the source live with a 'pending' marker. Log it
+        # loudly (greppable) so an undetected-and-rare double-live never happens; it is also
+        # surfaced on the item's Admin Controls (Retry), and a retry completes it.
+        log.warning("[Transfer] PENDING: item %s on %s -> %s (op %s) did not complete (%s); source "
+                    "left live. Retry from the item's Admin Controls.",
+                    pid, src_team, tgt_team, op, e)
+        raise
+
+# ADDENDUM A: the team-wide GET /api/transfers/pending endpoint + its Admin list are DEFERRED.
+# The two pending-transfer surfaces that ship are the WARNING log line (above, in transfer_item's
+# except) and the on-item Retry (roadmap.html _ipTransferSection, keyed off the item's own pending
+# externalRef - no endpoint needed).
+
 # ── Notifications & watchers (Stage 3b) ──────────────────────────────────────
 # Server-side generation hooked into the real write paths (item update/assign,
 # comment, planning commit, jira sync). Every hook runs AFTER the primary write
@@ -8193,7 +8491,13 @@ def sync_jira_to_roadmap(pid: int, body: dict = Body({}), x_team: Optional[str] 
     return jira_pull_sync(pid, body, x_team, auth)
 
 def _is_terminal(status: str, team: str) -> bool:
-    """Check if a status is terminal using the team's statusIsTerminal config."""
+    """Check if a status is terminal using the team's statusIsTerminal config.
+    TRANSFER-1: the reserved TRANSFERRED_STATUS is terminal by construction - it is never in
+    any team's statusIsTerminal config (it is not team config at all), so it must be forced
+    true here or a transferred (tombstoned) source would read as active in every open/terminal
+    count. Checked FIRST so it holds even on a team with an empty terminal map."""
+    if status == TRANSFERRED_STATUS:
+        return True
     with db(team) as c:
         row = c.execute("SELECT value FROM config WHERE key='statusIsTerminal'").fetchone()
     terminal_map = json.loads(row["value"]) if row else {}
