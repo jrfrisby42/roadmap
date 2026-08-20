@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.7.1';
+const APP_VERSION = '6.7.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -27644,19 +27644,53 @@ if ('serviceWorker' in navigator) {
     _frzRemindersChecked=true;
     API.post('/api/my/reminders/check', {}).then(function(){ if(done) done(); }).catch(function(){ if(done) done(); });
   }
-  // REM-3: snooze a reminder from its notification (Tomorrow / Next week). Pushes the to-do's due_date
-  // forward via PUT /api/my/todos/{todo_id} (which re-checks ownership by the token, so a forged todo_id
-  // can't reach another user's row) - the server clears reminded_ts on the due-date change, re-arming it.
-  // Also marks the notification read (the user has acted on it). Dates come from _frzDateFromMT so they
-  // match the MT day boundary, never a raw Date. LIMIT: /api/notifications is capped at 100 rows (60 are
-  // intake today), so a reminder can be pushed out of the panel and its snooze buttons go with it - the
-  // to-do row's date control is the durable reschedule path. Do not raise the cap here (out of scope).
+  // REM-3 / SNOOZE-1: snooze a reminder from its notification (Tomorrow / Next week). Pushes the to-do's
+  // due_date forward via PUT /api/my/todos/{todo_id} (which re-checks ownership by the token, so a forged
+  // todo_id can't reach another user's row) - the server clears reminded_ts on the due-date change, so the
+  // reminder RE-ARMS and fires again on the new date. Dates come from _frzDateFromMT so they match the MT
+  // day boundary, never a raw Date.
+  //
+  // SNOOZE-1: on success we DELETE the notification (DELETE /api/notifications/{nid}), not merely mark it
+  // read. Delete (not hide) is correct here: notifications are transient and already lost silently to the
+  // 100-row cap, the to-do is the durable record, and the reminder is only rescheduled (not cancelled) - so
+  // nothing is lost. Leaving the row would DUPLICATE it (the re-armed reminder creates a NEW row when the
+  // new date arrives - snooze three times, four rows) and MISLEAD (the stale row still shows the OLD date +
+  // snooze buttons that would push a to-do whose visible date is already wrong).
+  //
+  // ORDER: move the date FIRST; only delete the notification after that PUT resolves. If the PUT fails the
+  // notification stays and the error surfaces - we never delete the row and then fail to move the date,
+  // which would lose the reminder entirely. prevDue is read from the cached to-do BEFORE the write (not
+  // recomputed) so Undo can restore BOTH halves: /restore the deleted row and PUT the old due_date back
+  // (which re-clears reminded_ts via the same value-change rule, returning the to-do to due-and-unfired).
   function _frzSnoozeReminder(todoId, days, nid){
     if(!todoId) return;
+    var lbl=(days===1?'tomorrow':'next week');
+    var td=(_frzMyTodos||[]).filter(function(t){ return t.id===todoId; })[0];
+    var prevDue=td?(td.due_date||null):null;   // capture BEFORE the write, from the to-do itself (not recomputed)
     API.put('/api/my/todos/'+todoId, { due_date: _frzDateFromMT(days) }).then(function(){
-      if(nid) markRead(nid);
-      _closeNotif();
-      if(typeof showToast==='function') showToast('Reminder snoozed to '+(days===1?'tomorrow':'next week'));
+      // Date write succeeded -> the reminder is safely rescheduled. Now remove the stale notification.
+      if(!nid){ _closeNotif(); if(typeof showToast==='function') showToast('Reminder snoozed to '+lbl); return; }
+      API.del('/api/notifications/'+nid).then(function(d){
+        var snap=(d&&d.deleted)||null;   // the deleted row, so Undo can re-insert it via /restore
+        _notifs=_notifs.filter(function(x){ return x.id!==nid; });
+        if(d && typeof d.unread==='number') _notifUnread=d.unread;
+        _frzRepaintNotif();   // row + its snooze block leave the panel; badge refreshes; panel stays open for Undo
+        if(typeof showToast!=='function') return;
+        showToast('Reminder snoozed to '+lbl, 'info', 5000, { label:'Undo', fn:function(){
+          // Undo both halves, each guarded so a partial failure is reported, not silent. They target
+          // different resources (notifications vs to-dos) with no ordering dependency, so run independently.
+          if(snap) API.post('/api/notifications/restore', snap).then(function(r){
+            if(r && r.notification){ _notifs.unshift(r.notification); if(typeof r.unread==='number') _notifUnread=r.unread; _frzRepaintNotif(); }
+          }).catch(function(){ showToast('Snooze undone, but the notification could not be restored','error'); });
+          if(prevDue!=null) API.put('/api/my/todos/'+todoId, { due_date: prevDue })
+            .catch(function(){ showToast('Notification restored, but the reminder date could not be moved back','error'); });
+        }});
+      }).catch(function(){
+        // The reschedule succeeded (the reminder is safe); only the row cleanup failed. Fall back to marking
+        // it read so the badge stays correct; the stale row reconciles on the next reload. No Undo offered.
+        markRead(nid); _frzRepaintNotif();
+        if(typeof showToast==='function') showToast('Reminder snoozed to '+lbl);
+      });
     }).catch(function(){ if(typeof showToast==='function') showToast('Could not snooze the reminder','error'); });
   }
   function _closeNotif(){ var p=document.getElementById('frzNotif'); if(p) p.hidden=true; }
