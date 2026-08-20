@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.6.0';
+const APP_VERSION = '6.7.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -17659,6 +17659,26 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-item-cdot { display:none; }
   .frz-beta.is-collapsed-ui.frz-filter-on .frz-item[aria-current="true"] .frz-item-cdot { display:block; position:absolute; top:6px; right:9px; width:7px; height:7px; border-radius:50%; background:var(--frz-accent); box-shadow:0 0 0 2px var(--frz-bg-rail); }
 
+  /* RAIL-1: per-section collapse for PROJECTS / BOARDS / SAVED FILTERS (never VIEWS). The heading is the
+     toggle; the chevron rotates and a count appears while collapsed. Independent from the whole-rail
+     collapse above: in the icon-only rail these sections are display:none (17653), so these rules never
+     fight it. */
+  .frz-beta .frz-heading--toggle { cursor:pointer; user-select:none; border-radius:6px; }
+  .frz-beta .frz-sec-head-l { display:inline-flex; align-items:center; gap:5px; min-width:0; overflow:hidden; }
+  .frz-beta .frz-sec-lbl { overflow:hidden; text-overflow:ellipsis; }
+  .frz-beta .frz-sec-chev { display:inline-flex; align-items:center; color:var(--frz-text-muted); flex-shrink:0; transition:transform .15s ease; }
+  .frz-beta .frz-section.frz-sec-collapsed .frz-sec-chev { transform:rotate(-90deg); }
+  .frz-beta .frz-sec-count { color:var(--frz-text-muted); font-weight:600; }   /* JS fills "(N)" only while collapsed */
+  /* Collapsed: hide the rows, but keep the ACTIVE (aria-current) row so current scope/board/filter stays
+     legible - EXCEPT the all/default sentinels (All projects / Open work), which collapse fully. Reuses
+     aria-current (and the existing .frz-item-fdot on the active saved filter) - no second cue authored. The
+     sentinel force-hide sits AFTER the keep rule so it wins at equal specificity. */
+  .frz-beta .frz-section.frz-sec-collapsed .frz-item { display:none; }
+  .frz-beta .frz-section.frz-sec-collapsed .frz-item[aria-current="true"] { display:flex; }
+  .frz-beta .frz-section--projects.frz-sec-collapsed .frz-item[data-proj="__all__"],
+  .frz-beta .frz-section--boards.frz-sec-collapsed .frz-item[data-board="__all__"] { display:none; }
+  @media (prefers-reduced-motion: reduce) { .frz-beta .frz-sec-chev { transition:none; } }
+
   /* Main column */
   .frz-beta .frz-main { display:flex; flex-direction:column; min-width:0; min-height:0; }
   .frz-beta .frz-topbar { height:var(--frz-topbar-h); display:flex; align-items:center; gap:10px; padding:0 14px; border-bottom:1px solid var(--frz-border); background:var(--frz-bg-surface); flex-shrink:0; }
@@ -19441,9 +19461,9 @@ if ('serviceWorker' in navigator) {
         '</div>'+
         '<div class="frz-scroll">'+
           '<nav class="frz-section" id="frzViewNav" aria-label="Views"><div class="frz-heading">VIEWS</div></nav>'+
-          '<nav class="frz-section frz-section--projects" id="frzProjNav" aria-label="Projects"><div class="frz-heading">PROJECTS <button class="frz-add" id="frzAddProj" title="Add project (coming soon)">＋</button></div></nav>'+
-          '<nav class="frz-section frz-section--boards" id="frzBoardNav" aria-label="Boards"><div class="frz-heading">BOARDS <button class="frz-add" id="frzAddBoard" title="Create board">＋</button></div></nav>'+
-          '<nav class="frz-section frz-section--saved" id="frzSavedNav" aria-label="Saved filters"><div class="frz-heading">SAVED FILTERS <button class="frz-add" id="frzSaveBtn" title="Save current filters">＋</button></div></nav>'+
+          '<nav class="frz-section frz-section--projects" id="frzProjNav" aria-label="Projects"><div class="frz-heading frz-heading--toggle" role="button" tabindex="0" aria-expanded="true" data-railsec="projects"><span class="frz-sec-head-l"><span class="frz-sec-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span><span class="frz-sec-lbl">PROJECTS</span><span class="frz-sec-count" aria-hidden="true"></span></span><button class="frz-add" id="frzAddProj" title="Add project (coming soon)">＋</button></div></nav>'+
+          '<nav class="frz-section frz-section--boards" id="frzBoardNav" aria-label="Boards"><div class="frz-heading frz-heading--toggle" role="button" tabindex="0" aria-expanded="true" data-railsec="boards"><span class="frz-sec-head-l"><span class="frz-sec-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span><span class="frz-sec-lbl">BOARDS</span><span class="frz-sec-count" aria-hidden="true"></span></span><button class="frz-add" id="frzAddBoard" title="Create board">＋</button></div></nav>'+
+          '<nav class="frz-section frz-section--saved" id="frzSavedNav" aria-label="Saved filters"><div class="frz-heading frz-heading--toggle" role="button" tabindex="0" aria-expanded="true" data-railsec="saved"><span class="frz-sec-head-l"><span class="frz-sec-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span><span class="frz-sec-lbl">SAVED FILTERS</span><span class="frz-sec-count" aria-hidden="true"></span></span><button class="frz-add" id="frzSaveBtn" title="Save current filters">＋</button></div></nav>'+
         '</div>'+
         '<div class="frz-footer">'+
           '<button class="frz-item" id="frzSettings" title="Settings">'+IC.settings+'<span>Settings</span></button>'+
@@ -19640,6 +19660,7 @@ if ('serviceWorker' in navigator) {
       openItem(id, { push: !(opts && opts.push===false) });
     };
     _frzWireListPanel();   // List detail panel: create the panel el + the #listBody capture interceptor (before any click)
+    _frzWireRailSections();   // RAIL-1: one-time delegated heading toggles for the collapsible sections
     // Wrap openProjectModal so the modal's Notes (#fDesc) becomes the rich editor on /beta
     // (additive; original runs first and sets #fDesc, then we mount). Classic / (no root) → original only.
     if(window.openProjectModal && !window.openProjectModal._frzWrapped){
@@ -19798,6 +19819,57 @@ if ('serviceWorker' in navigator) {
     if (v==='planning'){ var sp=currentSprint(); return sp ? sprintItems(sp.id).length : null; }   // current sprint size; hidden if none
     return null;
   }
+  // ════════ RAIL-1: collapsible rail sections (PROJECTS / BOARDS / SAVED FILTERS; never VIEWS) ════════
+  var _FRZ_RAIL_SECS=['projects','boards','saved'];
+  var _FRZ_RAIL_SEC_NAV={projects:'frzProjNav', boards:'frzBoardNav', saved:'frzSavedNav'};
+  // Per-USER key, deliberately NOT <team>_<user> like savedKey(). savedKey() is team-scoped because keying
+  // saved FILTERS by user alone LEAKED one team's filters into another - a data bug. This is only a UI
+  // PREFERENCE: nothing crosses teams; the sole effect is that a user on two teams shares one collapsed
+  // state. J.R. accepted that (few are multi-team). Promoting to <team>_<user> later is a one-line change.
+  function _frzRailSecKey(){ return 'frazil_beta_railsec_' + uname(); }
+  function _frzRailSecState(){ try { var o=JSON.parse(localStorage.getItem(_frzRailSecKey())||'{}'); return (o&&typeof o==='object')?o:{}; } catch(e){ return {}; } }
+  function _frzRailSecSet(st){ try { localStorage.setItem(_frzRailSecKey(), JSON.stringify(st)); } catch(e){} }
+  // Count a section's meaningful rows EXCLUDING the all/default sentinel (All projects / Open work), so
+  // PROJECTS reads its project count (13, not 14) and BOARDS excludes "Open work". SAVED has no sentinel.
+  function _frzRailSecCount(sec, nav){
+    var n=0;
+    nav.querySelectorAll('.frz-item').forEach(function(r){
+      if(sec==='projects' && r.getAttribute('data-proj')==='__all__') return;
+      if(sec==='boards' && r.getAttribute('data-board')==='__all__') return;
+      n++;
+    });
+    return n;
+  }
+  // Apply stored state to all three sections: the collapse class (drives row hiding + chevron via CSS),
+  // aria-expanded, and the heading count (shown only while collapsed). Re-run after each section render so
+  // the count stays live as projects/boards/filters change.
+  function _frzApplyRailSections(){
+    var st=_frzRailSecState();
+    _FRZ_RAIL_SECS.forEach(function(sec){
+      var nav=document.getElementById(_FRZ_RAIL_SEC_NAV[sec]); if(!nav) return;
+      var hd=nav.querySelector('.frz-heading--toggle'), cnt=nav.querySelector('.frz-sec-count');
+      var collapsed=!!st[sec];
+      nav.classList.toggle('frz-sec-collapsed', collapsed);
+      if(hd) hd.setAttribute('aria-expanded', String(!collapsed));
+      if(cnt) cnt.textContent = collapsed ? (' ('+_frzRailSecCount(sec, nav)+')') : '';
+    });
+  }
+  function _frzToggleRailSec(sec){ var st=_frzRailSecState(); st[sec]=!st[sec]; _frzRailSecSet(st); _frzApplyRailSections(); }
+  // One-time delegated wiring on the rail: click / Enter / Space on a .frz-heading--toggle flips its section,
+  // EXCEPT when the target is the section's + button (.frz-add), which keeps its own action and never toggles.
+  var _frzRailSecWired=false;
+  function _frzWireRailSections(){
+    if(_frzRailSecWired) return; _frzRailSecWired=true;
+    var rail=document.querySelector('.frz-rail'); if(!rail) return;
+    var handle=function(e){
+      if(e.target.closest('.frz-add')) return;                 // + button: never toggles the section
+      var hd=e.target.closest('.frz-heading--toggle'); if(!hd) return;
+      var sec=hd.getAttribute('data-railsec'); if(!sec) return;
+      e.preventDefault(); _frzToggleRailSec(sec);
+    };
+    rail.addEventListener('click', handle);
+    rail.addEventListener('keydown', function(e){ if(e.key==='Enter'||e.key===' '||e.key==='Spacebar') handle(e); });
+  }
   function renderRail(){
     var nav = document.getElementById('frzViewNav');
     nav.querySelectorAll('.frz-item').forEach(function(b){ b.remove(); });
@@ -19862,6 +19934,7 @@ if ('serviceWorker' in navigator) {
     _adminBtn.setAttribute('aria-current', String(state.view==='admin' && !state.onItem));
     var ni = document.getElementById('frzNewItem');
     ni.style.display = (_val('isAdmin',false) || _val('isEditor',false)) ? '' : 'none';
+    _frzApplyRailSections();   // RAIL-1: (re)apply collapse state + counts after the sections repaint
   }
   function scopeAllCount(){ var ps=_val('projects',[])||[]; return ps.filter(function(p){return !p.archived;}).length; }
 
@@ -19967,6 +20040,7 @@ if ('serviceWorker' in navigator) {
       btn.innerHTML = KANBAN_IC + '<span>'+esc(b.name)+(b.id===_defaultBoard()?' <span style="color:var(--frz-accent)" title="Default board">★</span>':'')+'</span><button class="frz-rowmenu" data-boardmenu="'+esc(b.id)+'" title="Edit / Duplicate / Delete">…</button>';
       bn.appendChild(btn);
     });
+    _frzApplyRailSections();   // RAIL-1: refresh collapse/count after boards repaint (independent re-render)
   }
 
   function renderSavedNav(){
@@ -19982,6 +20056,7 @@ if ('serviceWorker' in navigator) {
       b.innerHTML = IC.flag + '<span>'+esc(s.name)+'</span>' + (_on ? '<span class="frz-item-fdot" title="Active filter (applied to all views)"></span>' : '') + '<button class="frz-rowmenu" data-savedmenu="'+s.id+'" title="Rename or delete">…</button>';
       sn.appendChild(b);
     });
+    _frzApplyRailSections();   // RAIL-1: refresh collapse/count after saved filters repaint
   }
 
   // ════════ filter bar ════════
