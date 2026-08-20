@@ -2213,7 +2213,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.8.0';
+const APP_VERSION = '6.8.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -10691,7 +10691,7 @@ function _frzSprintLabel(id){
 // Single source of truth for the main #listView table. Each column is a self-contained
 // unit (label + sort key + cell renderer) so its behavior travels when reordered. The
 // multi-select checkbox column is pinned at position 0 and is NOT part of this model.
-const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','points','sprint','project'];
+const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','reporter','points','sprint','project','created'];   // UI-POLISH-1: +reporter, +created (both default hidden via _optin2)
 const _LIST_COL_DEF = {
   key:        { label:'Key',         sort:'item_key',
                 td:(it,ctx)=>`<td style="${ctx.firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${ctx.chevron}${_listCell(it.itemKey)}</td>` },
@@ -10738,6 +10738,13 @@ const _LIST_COL_DEF = {
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.product)}</td>` },
   sla:        { label:'SLA',         sort:null,   // IT/Ops SLA (Stage A); absent unless slaTargets.enabled (gated in _listColOrderAll)
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${slaBadgeHtml(it, true) || '-'}</td>` },
+  // UI-POLISH-1: optional, default-hidden. data-col (LIST-CELL-1), _listCell for the '-' placeholder.
+  // created sorts server-side via json_extract($.createdAt); createdAt renders through fmtTSDate
+  // (the app's date helper, MT-consistent) - never a raw Date. reporter is an indexed sort column.
+  created:    { label:'Created',     sort:'created_at',
+                td:(it)=>`<td data-col="created" style="padding:7px 10px;white-space:nowrap">${_listCell(it.createdAt ? fmtTSDate(it.createdAt) : '')}</td>` },
+  reporter:   { label:'Reporter',    sort:'reporter',
+                td:(it)=>`<td data-col="reporter" style="padding:7px 10px;white-space:nowrap">${_listCell(it.reporter)}</td>` },
 };
 function _listColUser(){ try { return (typeof uname==='function'?uname():'') || localStorage.getItem('frazil_rm_user') || ''; } catch(e){ return ''; } }
 function _listOrderKey(){ return 'frazil_beta_listorder_' + _listColUser(); }   // NEW key, separate from the visibility key
@@ -15792,8 +15799,12 @@ function renderItemPage(p){
         <div style="font-size:12px;color:var(--text)">${esc(stripHtml(p.deferReason||''))}${p.deferNote?' - '+esc(stripHtml(p.deferNote)):''}</div>
         ${p.deferRevisit?`<div style="font-size:11px;color:var(--muted);margin-top:3px">Revisit: ${p.deferRevisit}</div>`:''}
       </div>` : '',
-      `<div style="display:flex;align-items:center;gap:10px;padding:2px 0">
-        <button onclick="ipToggleHidden(${p.id})" title="Gantt visibility. 'Hidden' removes this item from the Gantt only - it still shows in Kanban, List, Planning and Dashboard. Click to toggle."
+      // UI-POLISH-1: label-above-control, matching Recurrence + Item ID, so the card has one
+      // rhythm. The button is the toggle and shows current state; the label says what it controls
+      // ("Gantt visibility") so "Visible" is unambiguous. Behaviour (ipToggleHidden) unchanged.
+      `<div>
+        <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">Gantt visibility</div>
+        <button onclick="ipToggleHidden(${p.id})" title="'Hidden' removes this item from the Gantt only - it still shows in Kanban, List, Planning and Dashboard. Click to toggle."
           style="padding:5px 12px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:12px;font-weight:700;background:${p.hidden?'var(--accent)':'var(--surface)'};color:${p.hidden?'#fff':'var(--text)'}">
           ${p.hidden?'Hidden':'Visible'}
         </button>
@@ -15840,9 +15851,13 @@ function _ipTransferSection(p){
       <button onclick="retryTransfer(${p.id})" style="margin-top:6px;padding:6px 12px;border-radius:6px;border:1px solid #c06000;background:#c06000;color:#fff;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Retry transfer</button>
     </div>`;
   }
+  // UI-POLISH-1: label-above-control (one card rhythm); the button is auto-width + secondary, so
+  // Transfer reads as an available action, not the card's headline (it is the least-used, only
+  // destructive control). Caption kept - it is genuinely useful. Behaviour unchanged.
   return `<div>
-    <button onclick="openTransferModal(${p.id})" style="width:100%;padding:8px 14px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:7px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Transfer to another team</button>
-    <div style="font-size:10px;color:var(--muted);margin-top:4px;text-align:center">Move a misrouted ticket to the correct team + project</div>
+    <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">Transfer</div>
+    <button onclick="openTransferModal(${p.id})" style="padding:5px 12px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Transfer to another team</button>
+    <div style="font-size:10px;color:var(--muted);margin-top:4px">Move a misrouted ticket to the correct team + project</div>
   </div>`;
 }
 function retryTransfer(id){
@@ -18103,7 +18118,12 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-bcard { position:relative; background:#fff; border:1px solid var(--frz-border); border-radius:8px; padding:9px 11px; cursor:pointer; user-select:none; margin-bottom:8px; }
   .frz-beta .frz-bcard:hover { border-color:var(--frz-accent-soft-border); }
   .frz-beta .frz-bcard-key { font-size:10px; font-family:monospace; color:var(--frz-text-muted); }
-  .frz-beta .frz-bcard-name { font-size:12px; font-weight:700; color:var(--frz-text); line-height:1.3; }
+  /* UI-POLISH-1: the name element holds the type ICON + name text + activity indicator. It is a
+     flex row so the icon and the indicator sit outside the clamp (flex-shrink:0), and ONLY the
+     name text (.frz-bcard-nametext) is line-clamped to 2 lines with an ellipsis - the full name
+     stays in the DOM and is revealed by the title (mirrors the Reports free-text clamp). */
+  .frz-beta .frz-bcard-name { font-size:12px; font-weight:700; color:var(--frz-text); line-height:1.3; display:flex; align-items:flex-start; }
+  .frz-beta .frz-bcard-nametext { flex:1 1 auto; min-width:0; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; overflow:hidden; }
   .frz-beta .frz-bcard-meta { font-size:11px; color:var(--frz-text-muted); margin-top:3px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
   /* Board-card key strip + priority edge bar. ALL layout lives on .frz-bcard-inner, a class ONLY
      the board card emits - NEVER on the shared .frz-bcard (list rows, mini rows, and the list-panel
@@ -18524,7 +18544,10 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-notif-hd { display:flex; align-items:center; justify-content:space-between; padding:11px 14px; border-bottom:1px solid var(--frz-border); font-weight:800; font-size:13px; color:var(--frz-text); position:sticky; top:0; background:var(--frz-bg-surface); }
   .frz-beta .frz-notif-all { border:0; background:none; color:var(--frz-accent); font-weight:700; font-size:11px; cursor:pointer; }
   .frz-beta .frz-notif-list { display:flex; flex-direction:column; }
-  .frz-beta .frz-notif-row { text-align:left; border:0; border-bottom:1px solid var(--frz-border); background:none; cursor:pointer; padding:10px 14px; display:flex; flex-direction:column; gap:3px; }
+  /* UI-POLISH-1: a <button> does not stretch on the flex cross-axis the way a <div> does, so
+     short rows sized to their content and left a ragged right edge (visible on unread rows, but
+     EVERY row was wrong). align-self:stretch fills the list's width for all rows. */
+  .frz-beta .frz-notif-row { text-align:left; border:0; border-bottom:1px solid var(--frz-border); background:none; cursor:pointer; padding:10px 14px; display:flex; flex-direction:column; gap:3px; align-self:stretch; }
   .frz-beta .frz-notif-row:hover { background:var(--frz-bg-app); }
   .frz-beta .frz-notif-row.is-unread { background:var(--frz-accent-soft); }
   .frz-beta .frz-notif-msg { font-size:13px; color:var(--frz-text); }
@@ -23779,11 +23802,14 @@ if ('serviceWorker' in navigator) {
   // users), guarded by a per-user marker so a later un-hide isn't re-hidden.
   function _migrateListColsDefaults(){
     try {
-      var key=_listColsKey(), seenKey=key+'_optin1';
-      if(ls(seenKey)) return;
+      var key=_listColsKey();
       var set; try { set=new Set(JSON.parse(ls(key)||'[]')); } catch(e){ set=new Set(); }
-      set.add('project'); set.add('description');
-      lset(key, JSON.stringify(Array.from(set))); lset(seenKey, '1');
+      var changed=false;
+      // Each opt-in step runs at most once (its own seen-key), so a NEW optional column defaults
+      // hidden for existing users too, without disturbing anyone's saved layout or the prior step.
+      if(!ls(key+'_optin1')){ set.add('project'); set.add('description'); lset(key+'_optin1','1'); changed=true; }
+      if(!ls(key+'_optin2')){ set.add('created');  set.add('reporter');    lset(key+'_optin2','1'); changed=true; }   // UI-POLISH-1
+      if(changed) lset(key, JSON.stringify(Array.from(set)));
     } catch(e){}
   }
   // Expose to the first script (this module is an IIFE, so its functions aren't global).
@@ -23849,14 +23875,16 @@ if ('serviceWorker' in navigator) {
       points:     {label:'Points',      get:function(it){ return (it.storyPoints!=null&&it.storyPoints!=='')?String(it.storyPoints):''; }},
       sprint:     {label:'Sprint',      get:function(it){ var s=sprintById(it.sprintId); return s?(s.name||''):(it.sprintId||''); }},
       project:    {label:'Project',     get:function(it){ return it.product||''; }},
-      description:{label:'Description', get:function(it){ return _call('descToPlainText', it.description)||''; }}
+      description:{label:'Description', get:function(it){ return _call('descToPlainText', it.description)||''; }},
+      created:    {label:'Created',     get:function(it){ return it.createdAt ? fmtTSDate(it.createdAt) : ''; }},   // UI-POLISH-1
+      reporter:   {label:'Reporter',    get:function(it){ return it.reporter||''; }}
     };
   }
   // mode 'all' → full set in the prompt's order; 'visible' → only shown cols, in table display order.
   function _exportCols(mode){
     var D=_exportColDefs();
     if(mode==='all'){
-      return ['key','name','type','status','priority','owner','assignee','points','sprint','project','description'].map(function(k){ return D[k]; });
+      return ['key','name','type','status','priority','owner','assignee','reporter','points','sprint','project','created','description'].map(function(k){ return D[k]; });   // UI-POLISH-1: +reporter, +created
     }
     var hidden=hiddenListCols();
     // Follow the user's live display order (same source as the table). Fallback to default order.
@@ -24025,7 +24053,13 @@ if ('serviceWorker' in navigator) {
         + '<div class="frz-bcard-main">'
           + keyStrip
           + '<div class="frz-bcard-body">'
-            + '<div class="frz-bcard-name" style="padding-right:16px">'+nameIcon+esc(p.name||'')+' '+(_call('getItemActivityIndicator', p.id)||'')+'</div>'
+            + (function(){ var _ind=_call('getItemActivityIndicator', p.id)||'';
+                // UI-POLISH-1: clamp ONLY the name text; keep the type icon + activity indicator
+                // outside the clamp; title carries the full name so nothing is lost.
+                return '<div class="frz-bcard-name" style="padding-right:16px">'+nameIcon
+                  + '<span class="frz-bcard-nametext"'+(p.name?(' title="'+escA(p.name)+'"'):'')+'>'+esc(p.name||'')+'</span>'
+                  + (_ind?'<span style="flex:0 0 auto;margin-left:4px;display:inline-flex;align-items:center">'+_ind+'</span>':'')
+                  + '</div>'; })()
             + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+(function(){ var s=_call('slaBadgeHtml',p,true); return s?' '+s:''; })()+'</div>'
           + '</div>'
         + '</div>'
