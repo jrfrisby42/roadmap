@@ -170,3 +170,29 @@ def test_sort_whitelist_ignores_garbage(client, team, admin_headers):
     # A non-whitelisted sort column must not error or inject — falls back to default.
     r = client.get("/api/items?sort=data;DROP", headers=admin_headers)
     assert r.status_code == 200 and r.json()["total"] == 3
+
+
+def test_sort_by_created_at_and_reporter(client, team, admin_headers):
+    """UI-POLISH-1: the new List Created + Reporter columns sort server-side. createdAt is not an
+    indexed column (sorted via json_extract from the blob); reporter is indexed. Both are
+    server-owned, so set them directly rather than through a client POST."""
+    import json
+    a = _mk(client, admin_headers, name="A")
+    b = _mk(client, admin_headers, name="B")
+    d = _mk(client, admin_headers, name="D")
+    vals = {a: ("2025-03-01T00:00:00+00:00", "zoe"),
+            b: ("2025-01-01T00:00:00+00:00", "amy"),
+            d: ("2025-02-01T00:00:00+00:00", "mia")}
+    with server.db(team) as conn:
+        for pid, (ts, rep) in vals.items():
+            row = conn.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+            blob = json.loads(row["data"]); blob["createdAt"] = ts; blob["reporter"] = rep
+            server._save_project(conn, pid, blob)
+
+    def ids(q):
+        return [i["id"] for i in client.get("/api/items?" + q, headers=admin_headers).json()["items"]]
+
+    assert ids("sort=created_at:asc") == [b, d, a]     # Jan, Feb, Mar
+    assert ids("sort=created_at:desc") == [a, d, b]
+    assert ids("sort=reporter:asc") == [b, d, a]       # amy, mia, zoe
+    assert ids("sort=reporter:desc") == [a, d, b]

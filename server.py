@@ -1549,7 +1549,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.8.0"
+APP_VERSION = "6.8.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -4495,7 +4495,8 @@ def delete_project(pid: int, username: str = "",
 
 # Sortable columns for /api/items (whitelist - never interpolate raw user input).
 _ITEMS_SORTABLE = {"updated_ts", "item_key", "status", "type", "product",
-                   "owner", "assignee", "priority", "story_points", "sprint_id", "id"}
+                   "owner", "assignee", "priority", "story_points", "sprint_id", "id",
+                   "reporter"}   # UI-POLISH-1: reporter is an indexed column; add it so the List Reporter column sorts
 
 # ── FN5: the FLAGGED predicate, single source ──────────────────────────────────────────────────────
 # An item is "flagged" iff it has an activity of a user-raisable FLAG_TYPE whose status is NOT terminal
@@ -4663,6 +4664,11 @@ def list_items(
     # case-insensitively. All other sorts must be whitelisted indexed columns.
     if sort_col == "name":
         sort_expr = "json_extract(projects.data,'$.name') COLLATE NOCASE"
+    elif sort_col == "created_at":
+        # UI-POLISH-1: createdAt is NOT an indexed column, so sort it from the blob the same way
+        # `name` does. Values are ISO-8601 strings, so a lexical sort is chronological; a missing
+        # value is NULL and sorts first ASC (blanks first, consistent with the column's "-" cell).
+        sort_expr = "json_extract(projects.data,'$.createdAt')"
     else:
         if sort_col not in _ITEMS_SORTABLE:
             sort_col = "updated_ts"
