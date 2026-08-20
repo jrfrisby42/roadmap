@@ -145,3 +145,62 @@ def test_notifications_are_private_per_user(client, team, admin_headers):
     client.post("/api/comments", json={"item_id": pid, "body": "@bob only"}, headers=admin_headers)
     assert _notifs(client, team, "bob")["unread"] == 1
     assert _notifs(client, team, "carol")["unread"] == 0
+
+
+# ── BELL-1: notification deletion (per-row delete, clear-read, restore) ──────────────────────────────────
+def _make_notif(team, user, msg="hello", read=0):
+    # Notifications are server-generated in prod; inserted directly here so the delete/clear tests have rows.
+    with server.db(team) as c:
+        cur = c.execute(
+            "INSERT INTO notifications(username,type,item_id,item_name,message,actor,created_ts,read)"
+            " VALUES(?,?,?,?,?,?,?,?)",
+            (user, "mention", None, "", msg, "", "2020-01-01T00:00:00+00:00", read))
+        return cur.lastrowid
+
+
+def test_delete_own_notification(client, team):
+    nid = _make_notif(team, "alice")
+    a = _hdr(team, "alice")
+    assert client.delete(f"/api/notifications/{nid}", headers=a).status_code == 200
+    assert all(n["id"] != nid for n in client.get("/api/notifications", headers=a).json()["notifications"])
+
+
+def test_delete_notification_cross_user_rejected(client, team):
+    # THE GUARD: bob must not be able to delete alice's notification. Remove `AND username=?` from the DELETE
+    # (and the ownership SELECT) and this goes red - bob's delete would 200 and remove alice's row.
+    nid = _make_notif(team, "alice")
+    assert client.delete(f"/api/notifications/{nid}", headers=_hdr(team, "bob")).status_code == 404
+    assert any(n["id"] == nid for n in client.get("/api/notifications", headers=_hdr(team, "alice")).json()["notifications"])
+
+
+def test_clear_read_deletes_only_read(client, team):
+    r1 = _make_notif(team, "alice", read=1); r2 = _make_notif(team, "alice", read=1); u1 = _make_notif(team, "alice", read=0)
+    a = _hdr(team, "alice")
+    res = client.post("/api/notifications/clear-read", headers=a).json()
+    assert res["cleared"] == 2
+    ids = {n["id"] for n in client.get("/api/notifications", headers=a).json()["notifications"]}
+    assert u1 in ids and r1 not in ids and r2 not in ids   # unread survives, read gone
+
+
+def test_clear_read_is_per_user(client, team):
+    _make_notif(team, "alice", read=1); bobr = _make_notif(team, "bob", read=1)
+    client.post("/api/notifications/clear-read", headers=_hdr(team, "alice"))
+    assert any(n["id"] == bobr for n in client.get("/api/notifications", headers=_hdr(team, "bob")).json()["notifications"])
+
+
+def test_delete_returns_row_and_restore_reinserts(client, team):
+    nid = _make_notif(team, "alice", msg="restore me")
+    a = _hdr(team, "alice")
+    deleted = client.delete(f"/api/notifications/{nid}", headers=a).json()["deleted"]
+    assert deleted["message"] == "restore me"
+    r = client.post("/api/notifications/restore", json=deleted, headers=a).json()
+    assert r["notification"]["message"] == "restore me"
+    assert any(n["message"] == "restore me" for n in client.get("/api/notifications", headers=a).json()["notifications"])
+
+
+def test_restore_forces_caller_username(client, team):
+    # A body username is ignored: a restore only ever lands in the caller's own inbox.
+    r = client.post("/api/notifications/restore",
+                    json={"type": "mention", "message": "x", "username": "bob"},
+                    headers=_hdr(team, "alice")).json()
+    assert r["notification"]["username"] == "alice"

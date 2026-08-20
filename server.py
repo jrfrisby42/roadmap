@@ -1549,7 +1549,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.5.1"
+APP_VERSION = "6.6.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -5892,6 +5892,49 @@ def mark_notifications_read(body: dict = Body({}), auth: dict = Depends(require_
             c.execute("UPDATE notifications SET read=1 WHERE id=? AND username=?", (body.get("id"), me))
         unread = c.execute("SELECT COUNT(*) FROM notifications WHERE username=? AND read=0", (me,)).fetchone()[0]
     return {"unread": unread}
+
+# BELL-1: notification DELETION. Hard delete is correct HERE (and only here) because notifications are
+# transient - they are ALREADY lost silently to the 100-row cap, so deleting one destroys no record of work.
+# This is NOT a reversal of TODO-2A's move away from hard-delete: that was about TO-DOS, which ARE the record
+# of work. `username` is always from the token and always in the WHERE, so a caller can only ever delete
+# their OWN rows (another user's id is a 404, existence not confirmed). No audit_log rows for notifications.
+@app.delete("/api/notifications/{nid}")
+def delete_notification(nid: int, auth: dict = Depends(require_auth)):
+    team = auth["team"]; me = auth["username"]
+    with db(team) as c:
+        row = c.execute("SELECT * FROM notifications WHERE id=? AND username=?", (nid, me)).fetchone()
+        if not row:
+            raise HTTPException(404, "Notification not found")   # 404 not 403: never confirm another user's row exists
+        c.execute("DELETE FROM notifications WHERE id=? AND username=?", (nid, me))
+        unread = c.execute("SELECT COUNT(*) FROM notifications WHERE username=? AND read=0", (me,)).fetchone()[0]
+    return {"deleted": dict(row), "unread": unread}   # return the row so the client can offer Undo (re-insert via /restore)
+
+@app.post("/api/notifications/clear-read")
+def clear_read_notifications(auth: dict = Depends(require_auth)):
+    """Bulk-delete the caller's READ notifications. Unread rows are NEVER touched (read=1 in the WHERE)."""
+    team = auth["team"]; me = auth["username"]
+    with db(team) as c:
+        cur = c.execute("DELETE FROM notifications WHERE username=? AND read=1", (me,))
+        unread = c.execute("SELECT COUNT(*) FROM notifications WHERE username=? AND read=0", (me,)).fetchone()[0]
+    return {"cleared": cur.rowcount, "unread": unread}
+
+@app.post("/api/notifications/restore")
+def restore_notification(body: dict = Body(...), auth: dict = Depends(require_auth)):
+    """Re-insert a notification for the CALLER only (the Undo path for a per-row delete - notifications have
+    no create endpoint, so Undo restores the deleted row's content here). username is forced from the token,
+    so a caller can only ever restore into their own inbox."""
+    team = auth["team"]; me = auth["username"]
+    now = datetime.now(timezone.utc).isoformat()
+    with db(team) as c:
+        cur = c.execute(
+            "INSERT INTO notifications(username,type,item_id,item_name,message,actor,created_ts,read,todo_id)"
+            " VALUES(?,?,?,?,?,?,?,?,?)",
+            (me, body.get("type") or "", body.get("item_id"), body.get("item_name") or "",
+             body.get("message") or "", body.get("actor") or "", body.get("created_ts") or now,
+             1 if body.get("read") else 0, body.get("todo_id")))
+        row = c.execute("SELECT * FROM notifications WHERE id=?", (cur.lastrowid,)).fetchone()
+        unread = c.execute("SELECT COUNT(*) FROM notifications WHERE username=? AND read=0", (me,)).fetchone()[0]
+    return {"notification": dict(row), "unread": unread}
 
 @app.post("/api/slack/test")
 def slack_test(auth: dict = Depends(require_role("admin"))):

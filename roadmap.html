@@ -2209,7 +2209,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.5.1';
+const APP_VERSION = '6.6.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -17573,6 +17573,14 @@ if ('serviceWorker' in navigator) {
     --frz-accent:#0059A9; --frz-accent-hover:#004A8F; --frz-accent-soft:#E7F1FA;
     --frz-accent-soft-border:#C3DCF1; --frz-sky:#65B1E3;
     --frz-text:#14283F; --frz-text-secondary:#4A6178; --frz-text-muted:#8298AD; --frz-danger:#C0362C;
+    /* BELL-1: --frz-alert (solid "something new") duplicates #e8394a, also in JS as _FRZ_FLAG_COLORS Blocked/
+       At Risk; --frz-warn (outlined "outstanding") duplicates #e8a000, _frzFlagColor()'s fallback + conflict/
+       unsaved-Save amber. Both values are also literals in _FRZ_FLAG_COLORS - a future unification of the
+       CSS tokens and that JS map has an obvious home here; do NOT unify now. Same value both themes: amber on
+       dark is 7.76:1 (fine); on light it is 2.22:1 (subtle), but per 2.6 the SOLID-vs-OUTLINED fill and the
+       badge `title` carry the state, not the hue - so #e8a000 is kept per A1.1 rather than re-toned. */
+    --frz-alert:#e8394a; --frz-warn:#e8a000;
+    --frz-warn-text:#c06000;
     --frz-radius-chip:999px; --frz-radius-control:8px;
     --frz-topbar-h:52px; --frz-rail-w:232px; --frz-rail-w-collapsed:56px;
     --frz-anim:.18s ease;
@@ -18346,7 +18354,22 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-bell { position:relative; width:34px; height:34px; border:0; background:transparent; border-radius:8px; cursor:pointer; color:var(--frz-text-secondary); display:inline-flex; align-items:center; justify-content:center; }
   .frz-beta .frz-bell:hover { background:var(--frz-bg-app); color:var(--frz-accent); }
   .frz-beta .frz-bell .frz-ic { width:24px; height:24px; min-width:24px; flex:0 0 auto; stroke-width:1.33; display:block; }   /* enlarge the notification bell; flex:0 0 auto stops the flex item from shrinking */
-  .frz-beta .frz-bell-badge { position:absolute; top:1px; right:1px; min-width:16px; height:16px; padding:0 4px; border-radius:999px; background:#e8394a; color:#fff; font-size:10px; font-weight:800; line-height:16px; text-align:center; }
+  /* BELL-1: the badge NUMBER means "things wanting your attention" (unread notifications + unresolved
+     activities); the COLOUR/FILL means "is any of it new". .is-alert = SOLID --frz-alert red (something
+     unread). .is-warn = OUTLINED --frz-warn amber (only outstanding activities, nothing new). Solid-vs-
+     outlined (fill), not just hue, so the two read apart under deuteranopia; a `title` states the exact
+     composition so meaning never depends on colour. box-sizing:border-box so the outlined border does not
+     change the badge's size vs the solid state. */
+  .frz-beta .frz-bell-badge { position:absolute; top:1px; right:1px; box-sizing:border-box; min-width:16px; height:16px; padding:0 4px; border-radius:999px; font-size:10px; font-weight:800; line-height:16px; text-align:center; }
+  .frz-beta .frz-bell-badge.is-alert { background:var(--frz-alert); color:#fff; border:0; }
+  /* BELL-1 Addendum B: the outlined amber splits into BORDER (--frz-warn #e8a000) and TEXT (--frz-warn-text).
+     #e8a000 as text is only 2.22:1 on the light surface (fine on dark at 7.16:1), and amber is the PERSISTENT
+     state (0 new, N outstanding sits there indefinitely once read), so the number must be legible. Light text
+     is #c06000 = 4.27:1, matching the existing #flagIssueBtn precedent (no new colour). Deliberately NOT
+     pushed to 4.5:1: the SOLID red badge is itself 4.11:1, so #c06000 already makes the secondary amber state
+     a touch MORE legible than the primary red - going stronger (e.g. #9A6000 = 5.19:1) would make the
+     secondary louder than the primary. Do not raise one without the other. */
+  .frz-beta .frz-bell-badge.is-warn { background:transparent; color:var(--frz-warn-text); border:1.5px solid var(--frz-warn); line-height:13px; }
   .frz-beta .frz-notif { position:absolute; top:calc(100% + 8px); right:0; width:340px; max-height:70vh; overflow:auto; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:12px; box-shadow:0 12px 30px rgba(20,40,63,.18); z-index:90; }
   .frz-beta .frz-notif-hd { display:flex; align-items:center; justify-content:space-between; padding:11px 14px; border-bottom:1px solid var(--frz-border); font-weight:800; font-size:13px; color:var(--frz-text); position:sticky; top:0; background:var(--frz-bg-surface); }
   .frz-beta .frz-notif-all { border:0; background:none; color:var(--frz-accent); font-weight:700; font-size:11px; cursor:pointer; }
@@ -18373,6 +18396,18 @@ if ('serviceWorker' in navigator) {
      Activity Center row. Muted --frz-* tokens only. */
   .frz-beta .frz-notif-seclbl { padding:8px 14px 4px; font-size:10.5px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; color:var(--frz-text-muted); background:var(--frz-bg-app); border-bottom:1px solid var(--frz-border); }
   .frz-beta .frz-notif-actdot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; vertical-align:middle; flex-shrink:0; }
+  /* BELL-1: header can hold two actions (Mark all read + Clear read) */
+  .frz-beta .frz-notif-hdactions { display:inline-flex; gap:10px; align-items:center; }
+  /* BELL-1: per-row × (clear one notification). The row is a <button>, so the × is a sibling span inside a
+     position:relative wrap; it appears on hover, top-right, with a surface backing so it stays legible over
+     the message text. Notification rows only - activity rows have no wrap and no ×. */
+  .frz-beta .frz-notif-rowwrap { position:relative; }
+  .frz-beta .frz-notif-del { position:absolute; top:7px; right:8px; width:18px; height:18px; border-radius:5px; display:none; align-items:center; justify-content:center; font-size:15px; line-height:1; color:var(--frz-text-muted); background:var(--frz-bg-surface); cursor:pointer; }
+  .frz-beta .frz-notif-rowwrap:hover .frz-notif-del { display:inline-flex; }
+  .frz-beta .frz-notif-del:hover { color:var(--frz-danger); background:var(--frz-bg-app); }
+  /* BELL-1: "View all (N)" row - reads as a quiet link, not a notification. (Defined after .frz-notif-row so
+     it wins on source order at equal specificity; no !important, per the shell's CSS rule.) */
+  .frz-beta .frz-notif-viewall { align-items:center; color:var(--frz-accent); font-size:12px; font-weight:700; }
   /* Flow User Manual: styles moved into the _FRZ_MANUAL_CSS JS constant and inlined
      into the standalone new-tab document (see openManual). Nothing here in the shell. */
   /* Stage 3b - watch toggle + @mention chips */
@@ -18440,6 +18475,8 @@ if ('serviceWorker' in navigator) {
     --frz-accent:#4A97E5; --frz-accent-hover:#6BB1EC; --frz-accent-soft:#15314a;   /* DARK-NEUTRAL-1: accent lifted to clear 4.5:1 AA on both bg-surface + bg-app; hover kept a visible step lighter */
     --frz-accent-soft-border:#24506f; --frz-sky:#65b1e3;
     --frz-text:#D3D8DE; --frz-text-secondary:#A8AEB8; --frz-text-muted:#8A9099; --frz-danger:#F28B92;  /* DARK-NEUTRAL-1: neutrals desaturated out of the accent hue so the accent has ground to stand on; mirror in body.dark-mode.frz-beta-active */
+    --frz-alert:#e8394a; --frz-warn:#e8a000;
+    --frz-warn-text:#e8a000;
     --accent:#4A97E5;   /* de-indigo'd reused subtree, dark accent - DARK-NEUTRAL-1: kept in sync with --frz-accent so the reused item-page subtree does not split from the shell */
     --surface2:var(--frz-bg-surface);   /* dark: lift hijacked chrome buttons/hovers off the page (production button rule paints var(--surface2)) */
   }
@@ -18455,6 +18492,8 @@ if ('serviceWorker' in navigator) {
     --frz-border:#E1E8F0; --frz-border-strong:#C9D6E3;
     --frz-accent:#0059A9; --frz-accent-hover:#004A8F; --frz-accent-soft:#E7F1FA; --frz-accent-soft-border:#C3DCF1;
     --frz-text:#14283F; --frz-text-secondary:#4A6178; --frz-text-muted:#8298AD; --frz-danger:#C0362C;
+    --frz-alert:#e8394a; --frz-warn:#e8a000;
+    --frz-warn-text:#c06000;
   }
   body.dark-mode.frz-beta-active {
     /* DARK-NEUTRAL-1: neutral + accent values MIRROR body.dark-mode .frz-beta (the shell rule).
@@ -18463,6 +18502,8 @@ if ('serviceWorker' in navigator) {
     --frz-border:#3A3F47; --frz-border-strong:#4A5058; --frz-shadow-card:0 2px 10px rgba(0,0,0,.45); --frz-header-tint:#232A3A;
     --frz-accent:#4A97E5; --frz-accent-hover:#6BB1EC; --frz-accent-soft:#15314a; --frz-accent-soft-border:#24506f;
     --frz-text:#D3D8DE; --frz-text-secondary:#A8AEB8; --frz-text-muted:#8A9099; --frz-danger:#F28B92;
+    --frz-alert:#e8394a; --frz-warn:#e8a000;
+    --frz-warn-text:#e8a000;
   }
   /* Remap the classic vars the body-level modals read → Flow tokens (kills the
      residual indigo accent + warm grays on every .modal-bg modal). */
@@ -22713,6 +22754,11 @@ if ('serviceWorker' in navigator) {
     opts = opts||{};
     var ps = _val('projects',[])||[];
     if (!ps.some(function(p){return p.id===id;})){ _call('showToast','Item not found: #'+id); return; }
+    // PANEL-FIX: the item page is a full-screen overlay, but the List detail panel is position:fixed and
+    // would float over it (e.g. open the panel in List, then click a notification that jumps to an item).
+    // Close it here so it tears down however the item page is reached (notification, deep link, crumb, etc.).
+    // fromURL: openItem owns the URL (it navigates to /item/id); noFocus: focus belongs to the item page now.
+    if(state.panelId!=null) frzClosePanel({fromURL:true, noFocus:true});
     // Stage 6: record the view server-side (feeds My Home → Recent). Fire-and-forget;
     // beta-shell only, so classic opens are intentionally not recorded.
     try { API.post('/api/items/'+id+'/view', {}).catch(function(){}); } catch(e){}
@@ -27534,17 +27580,40 @@ if ('serviceWorker' in navigator) {
       var p=document.getElementById('frzNotif'); if(p && !p.hidden) renderNotifPanel();
     }).catch(function(){});
   }
-  // ACTIVITY-MERGE: the caller's UNREAD (status Open) Activity Center items, scoped exactly like the old
-  // hamburger badge (unreadActivities() applies the editor owner-filter; admins see all). Read via _call
-  // because it is a block-B global. Visiting the Activity Center marks them Read, which clears this section
-  // and the badge - same lifecycle the classic badge had.
-  function _frzOpenActs(){ try { return _call('unreadActivities') || []; } catch(e){ return []; } }
+  // BELL-1: the UNRESOLVED activity backlog (6.5.1 used UNREAD, which reads zero forever on a team that reads
+  // but never resolves - the ACT-WINDOW-1 reality). _openActs is the uncapped non-terminal set (Open + Read)
+  // so the section is now a WORKLIST that clears only on RESOLVE, not on visit. TRI-STATE preserved: _openActs
+  // null = not loaded (or a cold-failed fetch) -> return null so callers render NOTHING (never an empty
+  // section or "(0)"). A2.1: scope for owner-scoped editors EXACTLY as unreadActivities does, so the badge
+  // count and the section list agree (owner-filter is a focus aid, not a security boundary - consistency wins).
+  function _frzBacklogActs(){
+    var raw=_val('_openActs', null);
+    if(raw==null) return null;                                   // tri-state: loading / cold-error -> nothing
+    var scope = _val('isEditor',false) ? _call('getCurrentOwnerFilter') : null;
+    return (raw||[]).filter(function(a){ return !scope || a.owner===scope; });
+  }
+  function _frzBacklogCount(){ var a=_frzBacklogActs(); return a?a.length:0; }
+  // BELL-1 title: the composition, so the meaning never depends on colour. Singulars kept; a zero half omitted.
+  function _frzBadgeTitle(unread, actN){
+    var parts=[];
+    if(unread>0) parts.push(unread+' new');
+    if(actN>0) parts.push(actN+' outstanding');
+    return parts.join(', ');
+  }
   function renderBellBadge(){
     var b=document.getElementById('frzBellBadge'); if(!b) return;
-    // ACTIVITY-MERGE: the bell now covers BOTH personal notifications AND unread Activity Center items, so
-    // the badge combines the two counts (this also restores the Activity Center count the Flow shell lost).
-    var total=(_notifUnread||0)+_frzOpenActs().length;
-    if(total>0){ b.hidden=false; b.textContent=total>99?'99+':String(total); } else b.hidden=true;
+    // BELL-1: NUMBER = unread notifications + UNRESOLVED activities (things wanting attention). COLOUR = is
+    // any of it NEW: solid --frz-alert red whenever a notification is unread; outlined --frz-warn amber when
+    // only activities are outstanding (amber is where you land AFTER reading, so it must not be the alarming
+    // colour or the badge would be red forever on a team that never resolves). Solid vs outlined = fill, so
+    // the states read apart under deuteranopia; the title spells out the split for colour-independent meaning.
+    var unread=(_notifUnread||0), actN=_frzBacklogCount(), total=unread+actN;
+    b.classList.remove('is-alert','is-warn');
+    if(total<=0){ b.hidden=true; b.removeAttribute('title'); return; }
+    b.hidden=false;
+    b.textContent = total>99 ? '99+' : String(total);
+    b.classList.add(unread>0 ? 'is-alert' : 'is-warn');
+    b.title = _frzBadgeTitle(unread, actN);
   }
   // ACTIVITY-MERGE: block B calls this after every loadActivities so the bell reflects activity changes
   // (new flags, or activities marked Read when the Activity Center opens) without waiting for the next poll.
@@ -27899,20 +27968,35 @@ if ('serviceWorker' in navigator) {
   }
   function renderNotifPanel(){
     var p=document.getElementById('frzNotif'); if(!p) return;
-    var hd='<div class="frz-notif-hd"><span>Notifications</span>'+(_notifUnread?'<button class="frz-notif-all" id="frzNotifAll">Mark all read</button>':'')+'</div>';
-    // ACTIVITY-MERGE: unread Activity Center items get a LABELLED section at the TOP of the dropdown (team
-    // work signals first), each row opening the Activity Center focused on that item. They are NOT
-    // notification rows (different table, different click target), so they carry .frz-notif-act and their
-    // own handler, and the notification-row handler explicitly excludes them.
-    var acts=_frzOpenActs();
-    var actSection = acts.length ? ('<div class="frz-notif-seclbl">Activity Center ('+acts.length+')</div>'+acts.map(function(a){
+    // BELL-1: "Clear read (N)" beside "Mark all read". N is the read rows in the loaded window (what the user
+    // sees); the server clears ALL the caller's read rows uncapped. It NAMES its count (a destructive action
+    // with no number is the easiest way to lose data by accident) and confirms before running.
+    var _readN=_notifs.filter(function(n){return n.read;}).length;
+    var hd='<div class="frz-notif-hd"><span>Notifications</span><span class="frz-notif-hdactions">'+
+      (_notifUnread?'<button class="frz-notif-all" id="frzNotifAll">Mark all read</button>':'')+
+      (_readN?'<button class="frz-notif-all" id="frzNotifClearRead">Clear read ('+_readN+')</button>':'')+
+    '</span></div>';
+    // BELL-1: the UNRESOLVED activity backlog, a LABELLED section at the TOP (team work signals first), each
+    // row opening the Activity Center focused on that item. Tri-state: null (loading / cold-error) -> NO
+    // section, never "Activity Center (0)". Display-capped at 5 rows (newest first - _openActs is id DESC),
+    // but the header count AND the "View all (N)" row report the TRUE uncapped total (a capped count would
+    // restore the under-reporting BELL-1 exists to fix). It no longer clears on visit (source is unresolved,
+    // not unread) - only RESOLVING an item removes it. Activity rows are NOT deletable and carry .frz-notif-act
+    // (the notification-row handler and the per-row × are both excluded from them).
+    var acts=_frzBacklogActs();
+    var actSection='';
+    if(acts && acts.length){
+      var _ACT_CAP=5, _shown=acts.slice(0,_ACT_CAP);
+      actSection='<div class="frz-notif-seclbl">Activity Center ('+acts.length+')</div>'+_shown.map(function(a){
         var col=_frzFlagColor(a.activity_type);
         var who=[esc(a.owner||a.project||''), (a.created_ts?esc(fmtTSDate(a.created_ts)):'')].filter(Boolean).join(' · ');
         return '<button class="frz-notif-row frz-notif-act" data-actitem="'+(a.item_id||'')+'">'+
           '<span class="frz-notif-msg"><span class="frz-notif-actdot" style="background:'+col+'"></span>'+esc(a.item_name||('Item #'+(a.item_id||'')))+' - '+esc(a.activity_type||'Activity')+'</span>'+
           '<span class="frz-notif-meta">'+who+'</span>'+
         '</button>';
-      }).join('')) : '';
+      }).join('');
+      if(acts.length>_ACT_CAP) actSection+='<button class="frz-notif-row frz-notif-act frz-notif-viewall" data-actall="1">View all ('+acts.length+')</button>';
+    }
     var notifBody = _notifs.length ? _notifs.map(function(n){
       // REM-3: a reminder gets a sibling snooze block (Tomorrow / Next week), a SIBLING not nested (the row
       // is a <button>). REM-4 item 2 (orphans): only offer snooze while the to-do still EXISTS in the
@@ -27933,18 +28017,25 @@ if ('serviceWorker' in navigator) {
       // ' · ' is emitted only BETWEEN present parts, so an unlinked reminder (empty item_name) shows just
       // the date - no dangling leading separator. General + behaviour-neutral for types that always fill it.
       var meta=[esc(n.item_name||''), (n.created_ts?esc(fmtTSDate(n.created_ts)):'')].filter(Boolean).join(' · ');
-      return '<button class="frz-notif-row'+(n.read?'':' is-unread')+(hasSnooze?' frz-notif-has-snooze':'')+'" data-nid="'+n.id+'" data-nitem="'+(n.item_id||'')+'" data-ntype="'+escA(n.type||'')+'">'+
-        '<span class="frz-notif-msg">'+esc(_notifMsg(n))+'</span>'+
-        '<span class="frz-notif-meta">'+meta+'</span>'+
-      '</button>'+snooze;
+      // BELL-1: per-row × to clear THIS notification (with Undo). The row is a <button>, so the × is a SIBLING
+      // span (role=button) inside a position:relative wrap - a nested <button> is invalid HTML. The × is on
+      // NOTIFICATION rows only, never activity rows (a work signal is not the caller's to delete from a bell).
+      return '<div class="frz-notif-rowwrap">'+
+        '<button class="frz-notif-row'+(n.read?'':' is-unread')+(hasSnooze?' frz-notif-has-snooze':'')+'" data-nid="'+n.id+'" data-nitem="'+(n.item_id||'')+'" data-ntype="'+escA(n.type||'')+'">'+
+          '<span class="frz-notif-msg">'+esc(_notifMsg(n))+'</span>'+
+          '<span class="frz-notif-meta">'+meta+'</span>'+
+        '</button>'+
+        '<span class="frz-notif-del" data-delid="'+n.id+'" role="button" tabindex="0" title="Clear this notification" aria-label="Clear notification">&times;</span>'+
+      '</div>'+snooze;
     }).join('') : '';
     // Label the personal notifications only when the Activity Center section sits above them (so the two are
     // distinguishable); with no activities the list is unlabelled exactly as before. Empty only when BOTH are.
-    var notifLbl = (acts.length && _notifs.length) ? '<div class="frz-notif-seclbl">Notifications</div>' : '';
+    var notifLbl = (acts && acts.length && _notifs.length) ? '<div class="frz-notif-seclbl">Notifications</div>' : '';   // acts may be null (loading) - guard
     var listInner = actSection + notifLbl + notifBody;
     if(!listInner) listInner = '<div class="frz-notif-empty">You’re all caught up.</div>';
     p.innerHTML=hd+'<div class="frz-notif-list">'+listInner+'</div>';
     var all=document.getElementById('frzNotifAll'); if(all) all.addEventListener('click', function(e){ e.stopPropagation(); markAllRead(); });
+    var clr=document.getElementById('frzNotifClearRead'); if(clr) clr.addEventListener('click', function(e){ e.stopPropagation(); _frzClearRead(); });   // BELL-1
     p.querySelectorAll('.frz-notif-row:not(.frz-notif-act)').forEach(function(b){   // ACTIVITY-MERGE: notif rows only, not activity rows
       b.addEventListener('click', function(){
         var nid=+b.getAttribute('data-nid'), it=+b.getAttribute('data-nitem');
@@ -27955,14 +28046,21 @@ if ('serviceWorker' in navigator) {
         else if(b.getAttribute('data-ntype')==='reminder') navigate('/my-home/todos', false);
       });
     });
-    // ACTIVITY-MERGE: an activity row opens the Activity Center focused on its item (openConflictActivityModal
-    // - the same target the flag banners use), then closes the panel. Opening the AC marks the open activities
-    // Read, which clears this section + decrements the badge on the next refresh.
-    p.querySelectorAll('.frz-notif-act').forEach(function(b){
+    // ACTIVITY-MERGE: an activity ITEM row opens the Activity Center focused on its item (openConflictActivityModal
+    // - the same target the flag banners use), then closes the panel. [data-actitem] excludes the View all row.
+    p.querySelectorAll('.frz-notif-act[data-actitem]').forEach(function(b){
       b.addEventListener('click', function(){
         var it=+b.getAttribute('data-actitem'); p.hidden=true;
         if(it) _call('openConflictActivityModal', it);
       });
+    });
+    // BELL-1: "View all (N)" just opens the Activity Center (no specific item to focus).
+    p.querySelectorAll('.frz-notif-viewall').forEach(function(b){
+      b.addEventListener('click', function(){ p.hidden=true; _call('openActivityCenter'); });
+    });
+    // BELL-1: per-row × clears one notification (with Undo). stopPropagation so it doesn't trigger the row.
+    p.querySelectorAll('.frz-notif-del').forEach(function(x){
+      x.addEventListener('click', function(e){ e.stopPropagation(); _frzDeleteNotif(+x.getAttribute('data-delid')); });
     });
     p.querySelectorAll('.frz-notif-snooze-btn').forEach(function(sb){
       sb.addEventListener('click', function(e){
@@ -27981,6 +28079,40 @@ if ('serviceWorker' in navigator) {
     API.post('/api/notifications/read',{all:true}).then(function(){
       _notifUnread=0; _notifs.forEach(function(n){ n.read=1; }); renderBellBadge(); renderNotifPanel();
     }).catch(function(){});
+  }
+  function _frzRepaintNotif(){ renderBellBadge(); var p=document.getElementById('frzNotif'); if(p && !p.hidden) renderNotifPanel(); }
+  // BELL-1: clear ONE notification, with Undo. The DELETE returns the deleted row so Undo can re-insert it via
+  // /restore (notifications have no create endpoint - the to-do undo re-POSTs a snapshot the same way; showToast's
+  // {label,fn} action is the shared undo-toast, not a second one). Hard delete is correct for notifications:
+  // they are transient and already lost silently to the 100-row cap, so this destroys no record of work (unlike
+  // to-dos - TODO-2A's move away from hard-delete was about to-dos, which ARE the record).
+  function _frzDeleteNotif(id){
+    API.del('/api/notifications/'+id).then(function(d){
+      var snap=(d&&d.deleted)||null;
+      _notifs=_notifs.filter(function(x){ return x.id!==id; });
+      if(d && typeof d.unread==='number') _notifUnread=d.unread;
+      _frzRepaintNotif();
+      if(snap && typeof showToast==='function') showToast('Notification cleared','info',5000,{ label:'Undo', fn:function(){
+        API.post('/api/notifications/restore', snap).then(function(r){
+          if(r && r.notification){ _notifs.unshift(r.notification); if(typeof r.unread==='number') _notifUnread=r.unread; _frzRepaintNotif(); }
+        }).catch(function(){ if(typeof showToast==='function') showToast('Could not undo','error'); });
+      }});
+    }).catch(function(){ if(typeof showToast==='function') showToast('Could not clear the notification','error'); });
+  }
+  // BELL-1: bulk-clear the caller's READ notifications. Names its count and confirms (destructive, no undo).
+  // Unread rows are never touched (server WHERE read=1). Reminders are cleared like any other row - the to-do
+  // is the durable record, so nothing is lost, though a cleared reminder loses its snooze buttons.
+  function _frzClearRead(){
+    var n=_notifs.filter(function(x){ return x.read; }).length;
+    if(!n) return;
+    if(!confirm('Clear '+n+' read notification'+(n!==1?'s':'')+'? This cannot be undone.')) return;
+    API.post('/api/notifications/clear-read', {}).then(function(d){
+      _notifs=_notifs.filter(function(x){ return !x.read; });
+      if(d && typeof d.unread==='number') _notifUnread=d.unread;
+      _frzRepaintNotif();
+      var cleared=(d && typeof d.cleared==='number')?d.cleared:n;
+      if(typeof showToast==='function') showToast('Cleared '+cleared+' read notification'+(cleared!==1?'s':''));
+    }).catch(function(){ if(typeof showToast==='function') showToast('Could not clear read notifications','error'); });
   }
 
   // ════════ Stage 3b - Watch toggle (item page) ════════
