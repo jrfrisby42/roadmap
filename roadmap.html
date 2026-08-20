@@ -22713,6 +22713,11 @@ if ('serviceWorker' in navigator) {
     opts = opts||{};
     var ps = _val('projects',[])||[];
     if (!ps.some(function(p){return p.id===id;})){ _call('showToast','Item not found: #'+id); return; }
+    // PANEL-FIX: the item page is a full-screen overlay, but the List detail panel is position:fixed and
+    // would float over it (e.g. open the panel in List, then click a notification that jumps to an item).
+    // Close it here so it tears down however the item page is reached (notification, deep link, crumb, etc.).
+    // fromURL: openItem owns the URL (it navigates to /item/id); noFocus: focus belongs to the item page now.
+    if(state.panelId!=null) frzClosePanel({fromURL:true, noFocus:true});
     // Stage 6: record the view server-side (feeds My Home → Recent). Fire-and-forget;
     // beta-shell only, so classic opens are intentionally not recorded.
     try { API.post('/api/items/'+id+'/view', {}).catch(function(){}); } catch(e){}
