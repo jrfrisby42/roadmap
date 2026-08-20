@@ -206,6 +206,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   body.dark-mode .s-deferred   { background: rgba(232,160,0,0.18)  !important; border-color: rgba(232,160,0,0.3)   !important; color: #e8a040 !important; }
   body.dark-mode .s-approved   { background: rgba(34,185,110,0.18) !important; border-color: rgba(34,185,110,0.3)  !important; color: #3dd68a !important; }
   body.dark-mode .s-terminal   { background: rgba(29,184,106,0.18) !important; border-color: rgba(29,184,106,0.3)  !important; color: #3dd68a !important; }
+  body.dark-mode .s-transferred{ background: rgba(140,160,185,0.18)!important; border-color: rgba(140,160,185,0.3) !important; color: #a7b6c9 !important; }
   body.dark-mode .s-tbd        { background: rgba(120,120,160,0.18)!important; border-color: rgba(120,120,160,0.28)!important; color: #9090b8 !important; }
 
   /* ── Dark mode: action buttons ── */
@@ -478,6 +479,9 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .s-deferred   { background: rgba(232,160,0,0.12);   color: #c06000; border: 1px solid rgba(232,160,0,0.3); }
   .s-approved   { background: rgba(34,185,110,0.10);  color: #1a8a52; border: 1px solid rgba(34,185,110,0.25); }
   .s-terminal   { background: rgba(29,184,106,0.12);  color: #1a9a59; border: 1px solid rgba(29,184,106,0.3); }
+  /* TRANSFER-1: transferred = a rerouted record, not completed work - a neutral slate, deliberately
+     NOT the green of terminal/done, so it never reads as "this team finished it". */
+  .s-transferred { background: rgba(90,110,130,0.12); color: #52627a; border: 1px solid rgba(90,110,130,0.3); }
 
   /* IT/Ops SLA badge (Stage A) - reuses the overdue/status color language; global (classic + Flow) */
   .sla-badge { display:inline-block; padding:1px 8px; border-radius:9px; font-size:11px; font-weight:700; white-space:nowrap; border:1px solid transparent; vertical-align:middle; }
@@ -2209,7 +2213,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.7.2';
+const APP_VERSION = '6.8.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2998,6 +3002,7 @@ function fmtTSDate(iso){
 const STATUS_BADGE_COLORS = ['s-inprogress','s-planned','s-testing','s-released','s-tbd'];
 function statusCls(s){
   if(!s) return 's-tbd';
+  if(s === TRANSFERRED_STATUS) return 's-transferred';   // TRANSFER-1: deliberate class, not the -1 unknown-status fallback
   // Semantic mapping - check configured flags first so colors are consistent
   // regardless of the order statuses appear in the list
   if(statusIsReleased[s])  return 's-released';   // green
@@ -3024,8 +3029,12 @@ function populateStatusSelects(){
   // Rebuild the topbar multi-select status filter panel
   const panel = document.getElementById('statusDropPanel');
   const prevChecked = [...panel.querySelectorAll('input[type=checkbox]:not([value="all"])')].filter(c=>c.checked).map(c=>c.value);
+  // TRANSFER-1: append the reserved "Transferred" status as a FILTER option (after the config
+  // statuses) so transferred items can be found - this is a filter checkbox, never a status
+  // picker, so it does not make the status hand-selectable anywhere.
   panel.innerHTML = `<label class="ms-opt" data-val="all"><input type="checkbox" value="all" ${prevChecked.length===0?'checked':''}> All</label>` +
-    statuses.map(s=>`<label class="ms-opt" data-val="${escA(s)}"><input type="checkbox" value="${escA(s)}"${prevChecked.includes(s)?' checked':''}> ${esc(s)}</label>`).join('');
+    statuses.map(s=>`<label class="ms-opt" data-val="${escA(s)}"><input type="checkbox" value="${escA(s)}"${prevChecked.includes(s)?' checked':''}> ${esc(s)}</label>`).join('') +
+    `<label class="ms-opt" data-val="${escA(TRANSFERRED_STATUS)}"><input type="checkbox" value="${escA(TRANSFERRED_STATUS)}"${prevChecked.includes(TRANSFERRED_STATUS)?' checked':''}> ${esc(TRANSFERRED_STATUS)}</label>`;
   // Re-wire multi-select listeners
   wireStatusDropdown();
 }
@@ -3838,7 +3847,13 @@ function generateEchoDescriptors(p){
 }
 
 // ── STATUS HELPERS ────────────────────────────────────────────────────────────
-const isTerminalStatus = s => !!(statusIsTerminal[s]);
+// TRANSFER-1: the reserved system status a transferred (tombstoned) source takes. Hardcoded on
+// purpose (see server.py TRANSFERRED_STATUS) - it is never in any team's `statuses` config, so
+// it is unselectable in every picker (all built from `statuses`). But terminality is read from
+// the statusIsTerminal config map, so it is forced terminal in isTerminalStatus below, or a
+// transferred item would count as ACTIVE in capacity + open counts (the opposite of intent).
+const TRANSFERRED_STATUS = 'Transferred';
+const isTerminalStatus = s => s === TRANSFERRED_STATUS || !!(statusIsTerminal[s]);
 const isActiveStatus   = s => !!(statusIsActive[s]);
 const isLockedActive   = p => !!(p.dev && isActiveStatus(p.status));
 const getDefaultStatus  = () => statuses.find(s => statusIsDefault[s])  || statuses[0] || 'Backlogged';
@@ -15783,6 +15798,7 @@ function renderItemPage(p){
           ${p.hidden?'Hidden':'Visible'}
         </button>
       </div>`,
+      _ipTransferSection(p),   // TRANSFER-1: cross-team transfer control / pending / already-moved
       ipField('Item ID', `#${p.id}`, {muted:true}),
     ].filter(Boolean).join('') ||
       `<div style="font-size:12px;color:var(--muted)">No admin data</div>`;
@@ -15798,6 +15814,113 @@ function ipToggleHidden(id){
   if(!p || !isAdmin) return;
   _ipPersist({...p, hidden: !p.hidden, _username: getUsername()},
              {msg: (!p.hidden ? 'Item hidden (Gantt only)' : 'Item is now visible')});
+}
+
+// ── TRANSFER-1: cross-team transfer (admin only; lives in ipAdminCard) ──────────────────
+// Cross-team links degrade to TEXT, never a dead link/401 (Q5): this is a single-team-session
+// app, so a transferred item shows the target team + key as text with a note, not a link into
+// a team you cannot reach in this session.
+function _transferRef(p){
+  return (p.externalRefs||[]).filter(r=>r&&r.system==='flow-transfer'&&r.kind==='transferred-to')[0] || null;
+}
+function _ipTransferSection(p){
+  const ref = _transferRef(p);
+  const lbl = ref ? esc(ref.targetLabel || teamLabel(ref.targetTeam||'')) : '';
+  if(ref && ref.status==='linked'){
+    return `<div style="padding:8px 10px;background:var(--surface2);border-radius:6px;border:1px solid var(--border)">
+      <div style="font-size:10px;font-weight:700;color:var(--muted);margin-bottom:4px">TRANSFERRED</div>
+      <div style="font-size:12px;color:var(--text)">Moved to <b>${lbl}</b>${ref.number?' · '+esc(ref.number):''}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:3px">Open it from the ${lbl} team (you don't have access to that team from here).</div>
+    </div>`;
+  }
+  if(ref && ref.status==='pending'){
+    return `<div style="padding:8px 10px;background:#fff8f0;border-radius:6px;border:1px solid #e8a000">
+      <div style="font-size:10px;font-weight:700;color:#c06000;margin-bottom:4px">TRANSFER PENDING</div>
+      <div style="font-size:12px;color:var(--text)">A transfer to <b>${lbl}</b> did not finish - this item may be live on both teams.</div>
+      <button onclick="retryTransfer(${p.id})" style="margin-top:6px;padding:6px 12px;border-radius:6px;border:1px solid #c06000;background:#c06000;color:#fff;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Retry transfer</button>
+    </div>`;
+  }
+  return `<div>
+    <button onclick="openTransferModal(${p.id})" style="width:100%;padding:8px 14px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:7px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Transfer to another team</button>
+    <div style="font-size:10px;color:var(--muted);margin-top:4px;text-align:center">Move a misrouted ticket to the correct team + project</div>
+  </div>`;
+}
+function retryTransfer(id){
+  const p = projects.find(x=>x.id===id); if(!p) return;
+  const ref = _transferRef(p); if(!ref) return;
+  _submitTransfer(id, ref.targetTeam, ref.targetProject||'', null);
+}
+function _trMsg(msg, type){
+  const el=document.getElementById('trMsg'); if(!el) return;
+  el.style.display='block'; el.textContent=msg;
+  el.style.color = type==='error' ? '#c0362c' : 'var(--muted)';
+}
+function _closeTransferModal(){ const ov=document.getElementById('transferOverlay'); if(ov) ov.remove(); }
+async function openTransferModal(id){
+  const p = projects.find(x=>x.id===id); if(!p || !isAdmin) return;
+  _closeTransferModal();
+  const ov = document.createElement('div');
+  ov.id='transferOverlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(20,40,63,.45);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
+  ov.innerHTML=`<div style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;max-width:440px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,.3);overflow:hidden">
+    <div style="padding:14px 18px;border-bottom:1px solid var(--border);font-weight:800;font-size:15px">Transfer to another team</div>
+    <div style="padding:16px 18px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Moves this ticket - summary, description, reporter, priority and attachments - to the chosen team, and closes it here. Comments, history and assignments stay on this team.</div>
+      <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px">TARGET TEAM</label>
+      <select id="trTeam" style="width:100%;padding:8px 10px;font-size:13px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;margin-bottom:12px"></select>
+      <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px">TARGET PROJECT</label>
+      <select id="trProject" style="width:100%;padding:8px 10px;font-size:13px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px"></select>
+      <div id="trMsg" style="display:none;font-size:12px;margin-top:10px"></div>
+    </div>
+    <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px">
+      <button onclick="_closeTransferModal()" style="padding:8px 14px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-weight:700;font-size:12px;cursor:pointer">Cancel</button>
+      <button id="trConfirm" style="padding:8px 16px;border-radius:6px;border:none;background:var(--accent);color:#fff;font-weight:700;font-size:12px;cursor:pointer">Transfer</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener('click', e=>{ if(e.target===ov) _closeTransferModal(); });
+  document.getElementById('trConfirm').onclick=function(){
+    const team=document.getElementById('trTeam').value;
+    const proj=document.getElementById('trProject').value;
+    if(!team){ _trMsg('Choose a target team.','error'); return; }
+    _submitTransfer(id, team, proj, this);
+  };
+  let data;
+  try { data = await API.get('/api/intake/projects'); }   // the SAME cross-team list the portal uses
+  catch(e){ _trMsg('Could not load target teams.','error'); return; }
+  const cur = (API._team()||'').toLowerCase();
+  const rows = (data.projects||[]).filter(r=>String(r.team).toLowerCase()!==cur);   // never the current team
+  if(!rows.length){ _trMsg('No other teams are accepting transfers.','error'); const b=document.getElementById('trConfirm'); if(b) b.disabled=true; return; }
+  const teams=[]; rows.forEach(r=>{ if(!teams.some(t=>t===r.team)) teams.push(r.team); });
+  const teamSel=document.getElementById('trTeam');
+  teamSel.innerHTML = teams.map(t=>`<option value="${escA(t)}">${esc(teamLabel(t))}</option>`).join('');
+  function fillProjects(){
+    const t=teamSel.value, ps=rows.filter(r=>r.team===t);
+    document.getElementById('trProject').innerHTML =
+      ps.map(r=>`<option value="${escA(r.product)}">${esc(r.product)}</option>`).join('') || '<option value="">(no projects)</option>';
+  }
+  teamSel.onchange=fillProjects; fillProjects();
+}
+async function _submitTransfer(id, team, project, btn){
+  if(btn){ btn.disabled=true; btn.textContent='Transferring…'; }   // client half of the double-click guard
+  try {
+    const res = await API.post('/api/items/'+id+'/transfer', {targetTeam:team, targetProject:project});
+    _closeTransferModal();
+    if(res && res.already) showToast('This item was already transferred.','info');
+    else showToast('Transferred to '+teamLabel(team)+(res&&res.targetKey?' ('+res.targetKey+')':''));
+    try {   // refresh so the tombstone + "moved to X" section show (mirrors the sync-children refresh)
+      const fresh = await API.get('/api/all');
+      if(fresh.projects){ projects.length=0; fresh.projects.forEach(x=>projects.push(x)); }
+      if(fresh.activities && typeof activities!=='undefined' && Array.isArray(activities)){ activities.length=0; fresh.activities.forEach(a=>activities.push(a)); }
+      render();
+    } catch(_){}
+    const np = projects.find(x=>x.id===id);
+    if(np && typeof _itemPageId!=='undefined' && _itemPageId===id) renderItemPage(np);
+  } catch(e){
+    if(btn){ btn.disabled=false; btn.textContent='Transfer'; }
+    const m=(e&&e.message)?e.message:'Transfer failed.';
+    if(document.getElementById('trMsg')) _trMsg(m,'error'); else showToast('Transfer failed: '+m,'error');
+  }
 }
 
 async function fetchJiraStatusesForPage(tickets){
@@ -19373,7 +19496,11 @@ if ('serviceWorker' in navigator) {
   }
   // TERMINAL = the per-team `statusIsTerminal` flag (Admin → Statuses "Terminal"). Falls
   // back to STATUS_META only when the team hasn't flagged ANY terminal status.
+  // TRANSFER-1: reserved system status (mirrors server.py TRANSFERRED_STATUS + the classic const).
+  // Beta-local so the shell never depends on cross-script binding visibility.
+  var TRANSFERRED_STATUS = 'Transferred';
   function isTermStatus(s){
+    if(s === TRANSFERRED_STATUS) return true;   // TRANSFER-1: terminal by construction, never in any config map
     var m=_val('statusIsTerminal',{})||{}, any=false;
     for(var k in m){ if(m[k]){ any=true; break; } }
     if(any) return !!m[s];
@@ -20970,7 +21097,7 @@ if ('serviceWorker' in navigator) {
     // Exclude archived AND hidden (hidden = the Gantt-visibility flag / utility rows).
     var all=(_val('projects',[])||[]).filter(function(p){ return !p.archived && !p.hidden; });
     var f=_rptFilters, nowIso=new Date().toISOString(), today=nowIso.slice(0,10);
-    var termMap=_val('statusIsTerminal',{})||{};   // for overdue: past-due AND not terminal
+    var termMap=Object.assign({}, _val('statusIsTerminal',{})||{}); termMap[TRANSFERRED_STATUS]=true;   // for overdue: past-due AND not terminal; TRANSFER-1: transferred counts as terminal (not open/overdue)
     // RPT-DRILL-1 Stage 1: state object -> column/CSV string. null (parked / pre-effectiveFrom /
     // no priority target / SLA disabled) -> '' (blank). The verbose no-first-touch `.full` ("Closed,
     // none recorded (3d to close)") is trimmed to "None recorded"; every other kind uses `.full` as-is.
@@ -25762,6 +25889,20 @@ if ('serviceWorker' in navigator) {
   }
   function _frzExtRefRowHtml(r, canEdit){
     r = r || {};
+    // TRANSFER-1: a Flow-to-Flow transfer link. Always cross-team, and this app holds one team
+    // session at a time, so it renders as TEXT (target team + key), never a link that would 401
+    // or dead-end into a team you cannot reach from here (Q5).
+    if(r.system==='flow-transfer'){
+      var dir = r.kind==='transferred-from' ? 'Transferred from' : 'Transferred to';
+      var tlbl = String((r.kind==='transferred-from' ? (r.sourceLabel||r.sourceTeam) : (r.targetLabel||r.targetTeam)) || '');
+      var numT = r.number ? ' · '+esc(String(r.number)) : '';
+      var whenT = r.at ? '<span style="color:var(--muted);font-size:11px">'+esc(fmtTS(r.at))+'</span>' : '';
+      var noteT = r.status==='pending'
+        ? '<span style="color:#c06000;font-weight:700;font-size:11px">transfer pending</span>'
+        : '<span style="color:var(--muted);font-size:11px">on the '+esc(tlbl)+' team (no access from here)</span>';
+      return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+        +'<span style="font-weight:700;color:var(--text)">'+esc(dir)+' '+esc(tlbl)+numT+'</span>'+noteT+whenT+'</div>';
+    }
     var sys = _frzExtRefSys(r.system), kind = _frzExtRefKind(r.kind);
     var when = r.at ? '<span style="color:var(--muted);font-size:11px">'+esc(fmtTS(r.at))+'</span>' : '';
     var head = '<span style="font-weight:700;color:var(--text)">'+esc(sys)+' '+esc(kind)+'</span>';
@@ -27707,10 +27848,18 @@ if ('serviceWorker' in navigator) {
   // section or "(0)"). A2.1: scope for owner-scoped editors EXACTLY as unreadActivities does, so the badge
   // count and the section list agree (owner-filter is a focus aid, not a security boundary - consistency wins).
   function _frzBacklogActs(){
+    // BELL-2 fix: the bell backlog and the Activity Center panel MUST read the same predicate, or
+    // they disagree (they did: the bell counted 25 `SLA clock` audit rows the panel never showed).
+    // `Info`-status rows are audit entries (SLA clock basis/pause history) and are never actionable.
+    // This diverged once because BELL-1 assumed the status set from development's data - which has
+    // SLA off and generates no `Info` rows - so the divergence was invisible until IT. Delegate to
+    // openActivities() (Open|Read, owner-scoped) so there is ONE predicate, two consumers, and no
+    // second status filter to drift. Do NOT re-apply the owner scope here; openActivities() already does.
     var raw=_val('_openActs', null);
-    if(raw==null) return null;                                   // tri-state: loading / cold-error -> nothing
-    var scope = _val('isEditor',false) ? _call('getCurrentOwnerFilter') : null;
-    return (raw||[]).filter(function(a){ return !scope || a.owner===scope; });
+    if(raw==null) return null;                                   // tri-state MUST stay: loading / cold-error -> nothing.
+    // openActivities() returns [] for a null _openActs, which would read as "loaded and empty" - so the
+    // null check above runs BEFORE delegating, or the loading state would wrongly render "Activity Center (0)".
+    return _call('openActivities') || [];
   }
   function _frzBacklogCount(){ var a=_frzBacklogActs(); return a?a.length:0; }
   // BELL-1 title: the composition, so the meaning never depends on colour. Singulars kept; a zero half omitted.
