@@ -1549,7 +1549,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.8.2"
+APP_VERSION = "6.8.3"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -7762,6 +7762,10 @@ def create_item_request(pid: int, body: dict = Body(...),
     if qty < 1 or qty > _REQUEST_MAX_QTY:
         raise HTTPException(422, f"Quantity must be between 1 and {_REQUEST_MAX_QTY}.")
     requested_for = (body.get("requestedForEmail") or "").strip()   # may be blank -> technician attribution
+    # REQ-NOTE-1: optional justification -> AssetHub's Request.description (the approver reads it as
+    # "Justification"). Trimmed + re-capped at 5000 server-side (the client caps too, but is not
+    # authoritative; AssetHub would silently truncate at 5000, so we never let it get that far).
+    justification = (body.get("justification") or "").strip()[:5000]
     tech_email = _user_email(team, username)
     if not tech_email:
         # technician_email is REQUIRED by the contract and must be a real actor - fail BEFORE
@@ -7777,7 +7781,8 @@ def create_item_request(pid: int, body: dict = Body(...),
             "system": "assethub", "kind": "request", "operationRef": op_ref,
             "status": "queued", "at": now, "attempts": 0,
             # stashed so a later retry rebuilds the same body (title/technician are re-derived):
-            "req": {"categoryId": category_id, "quantity": qty, "requestedForEmail": requested_for},
+            "req": {"categoryId": category_id, "quantity": qty, "requestedForEmail": requested_for,
+                    "justification": justification},   # REQ-NOTE-1: preserved so a failed-before-send retry keeps it
         })
         _save_project(c, pid, p)
     # 2) Assemble + send synchronously (bounded by the client's timeout/retry).
@@ -7791,6 +7796,17 @@ def create_item_request(pid: int, body: dict = Body(...),
     }
     if requested_for:
         reqbody["requested_for_email"] = requested_for
+    # REQ-NOTE-1: `description` is AssetHub's schema key for the justification; sent field-by-field
+    # (never a body spread) and only when non-empty (omitted otherwise - AssetHub's extra="forbid"
+    # rejects UNKNOWN keys, not an omitted optional one, and description is nullable). The
+    # justification does NOT touch `source_reference` (op_ref) - the idempotency key - so it never
+    # affects dedupe. REPLAY EDGE: a re-send with the SAME source_reference returns the existing
+    # AssetHub row UNCHANGED, so an edited justification re-sent from Flow is a silent no-op (this
+    # modal only creates, so that is fine). If edited notes ever need to propagate, that needs a
+    # deliberate update path - it MUST NOT be done by varying source_reference, which would create a
+    # duplicate procurement Request (and duplicates reach purchase orders).
+    if justification:
+        reqbody["description"] = justification
     return _drive_request_send(team, auth.get("role"), pid, op_ref, reqbody, username, "request-create")
 
 @app.post("/api/items/{pid}/requests/{operation_ref}/retry")
@@ -7833,6 +7849,9 @@ def retry_item_request(pid: int, operation_ref: str,
     rf = (req.get("requestedForEmail") or "").strip()
     if rf:
         reqbody["requested_for_email"] = rf
+    just = (req.get("justification") or "").strip()[:5000]   # REQ-NOTE-1: preserved so a retry keeps the justification
+    if just:
+        reqbody["description"] = just
     return _drive_request_send(team, auth.get("role"), pid, op_ref, reqbody, username, "request-retry")
 
 @app.post("/api/items/{pid}/requests/{operation_ref}/refresh")
