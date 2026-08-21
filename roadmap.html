@@ -2217,7 +2217,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.9.2';
+const APP_VERSION = '6.9.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -18618,7 +18618,12 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-notif-meta { font-size:11px; color:var(--frz-text-muted); }
   .frz-beta .frz-notif-empty { padding:22px 14px; text-align:center; font-size:12.5px; color:var(--frz-text-muted); }
   /* REM-3: snooze row under a reminder notification (sibling of the row button; buttons can't nest). */
-  .frz-beta .frz-notif-snooze { display:flex; align-items:center; gap:6px; padding:0 14px 10px; border-bottom:1px solid var(--frz-border); border-radius:0; }   /* POLISH-2: square, so a reminder row + its snooze block read as one continuous rectangle */
+  /* POLISH-2: square, so a reminder row + its snooze block read as one continuous rectangle.
+     SNOOZE-STYLE-1: symmetric 6px top/bottom padding centres the label + buttons (was 0 14px 10px,
+     which stuck them to the top); the .is-unread rule below matches the bar to an unread row's tint
+     so the pair shares one background. Horizontal 14px matches the row so the label lines up. */
+  .frz-beta .frz-notif-snooze { display:flex; align-items:center; gap:6px; padding:6px 14px; border-bottom:1px solid var(--frz-border); border-radius:0; }
+  .frz-beta .frz-notif-snooze.is-unread { background:var(--frz-accent-soft); }
   .frz-beta .frz-notif-snooze-lbl { font-size:11px; font-weight:700; color:var(--frz-text-muted); }
   .frz-beta .frz-notif-snooze-btn { font-size:11px; font-weight:700; color:var(--frz-accent); background:none; border:1px solid var(--frz-border-strong); border-radius:6px; padding:2px 9px; cursor:pointer; font-family:'Lato',sans-serif; }
   .frz-beta .frz-notif-snooze-btn:hover { border-color:var(--frz-accent); background:var(--frz-accent-soft); }
@@ -28527,7 +28532,11 @@ if ('serviceWorker' in navigator) {
       // _frzMyTodos===null), omit snooze rather than show a button that may fail; toggleNotif reloads the
       // cache and re-renders, so it appears once the data is in.
       var hasSnooze = (n.type==='reminder' && n.todo_id && _frzTodoExists(n.todo_id));
-      var snooze = hasSnooze ? '<div class="frz-notif-snooze" data-tdid="'+n.todo_id+'" data-nid="'+n.id+'">'+
+      // SNOOZE-STYLE-1: mirror the row's unread tint onto its snooze bar so the pair reads as one card.
+      // The class is DERIVED here from the SAME n.read as the row's is-unread (line below), in the same
+      // renderNotifPanel pass - never toggled in place - so both are set/cleared together on every render
+      // (markAllRead re-renders; a single row-read closes the panel, which re-renders on next open).
+      var snooze = hasSnooze ? '<div class="frz-notif-snooze'+(n.read?'':' is-unread')+'" data-tdid="'+n.todo_id+'" data-nid="'+n.id+'">'+
           '<span class="frz-notif-snooze-lbl">Snooze</span>'+
           '<button type="button" class="frz-notif-snooze-btn" data-days="1">Tomorrow</button>'+
           '<button type="button" class="frz-notif-snooze-btn" data-days="7">Next week</button>'+
