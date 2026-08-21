@@ -1558,7 +1558,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.9.0"
+APP_VERSION = "6.9.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
