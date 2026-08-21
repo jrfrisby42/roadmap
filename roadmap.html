@@ -2213,7 +2213,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.8.3';
+const APP_VERSION = '6.8.4';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -18578,10 +18578,13 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-notif-hd { display:flex; align-items:center; justify-content:space-between; padding:11px 14px; border-bottom:1px solid var(--frz-border); font-weight:800; font-size:13px; color:var(--frz-text); position:sticky; top:0; background:var(--frz-bg-surface); }
   .frz-beta .frz-notif-all { border:0; background:none; color:var(--frz-accent); font-weight:700; font-size:11px; cursor:pointer; }
   .frz-beta .frz-notif-list { display:flex; flex-direction:column; }
-  /* UI-POLISH-1: a <button> does not stretch on the flex cross-axis the way a <div> does, so
-     short rows sized to their content and left a ragged right edge (visible on unread rows, but
-     EVERY row was wrong). align-self:stretch fills the list's width for all rows. */
-  .frz-beta .frz-notif-row { text-align:left; border:0; border-bottom:1px solid var(--frz-border); background:none; cursor:pointer; padding:10px 14px; display:flex; flex-direction:column; gap:3px; align-self:stretch; }
+  /* NOTIF-WIDTH-1: a <button> sizes to its content, so short rows left a ragged right edge (visible
+     on unread rows, but EVERY row was wrong). UI-POLISH-1 tried align-self:stretch, but that is
+     INERT here - the row is not a flex child of .frz-notif-list; it sits inside the BLOCK wrapper
+     .frz-notif-rowwrap (BELL-1 added it so the per-row x could be a sibling of the button), and
+     cross-axis stretch does not apply in a block. An explicit width:100% is required; the row is
+     box-sizing:border-box (global reset), so the padding does not overflow. */
+  .frz-beta .frz-notif-row { text-align:left; border:0; border-bottom:1px solid var(--frz-border); background:none; cursor:pointer; padding:10px 14px; display:flex; flex-direction:column; gap:3px; width:100%; }
   .frz-beta .frz-notif-row:hover { background:var(--frz-bg-app); }
   .frz-beta .frz-notif-row.is-unread { background:var(--frz-accent-soft); }
   .frz-beta .frz-notif-msg { font-size:13px; color:var(--frz-text); }
