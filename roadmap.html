@@ -2217,7 +2217,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.9.3';
+const APP_VERSION = '6.9.4';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -18558,6 +18558,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-todo-adddate:hover { color:var(--frz-accent); border-color:var(--frz-accent); }
   .frz-beta .frz-todo-del { background:none; border:0; color:var(--frz-text-muted); font-size:18px; line-height:1; cursor:pointer; padding:0 6px; border-radius:6px; opacity:0; flex-shrink:0; }
   .frz-beta .frz-todo-row:hover .frz-todo-del { opacity:1; }
+  .frz-beta .frz-todo-logrow:hover .frz-todo-del { opacity:1; }   /* TODO-3: per-row delete in the completed log, same hover-reveal as the open list */
   .frz-beta .frz-todo-del:hover { color:var(--frz-danger); }
   .frz-beta .frz-todo-foot { margin-top:14px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
   /* TODO-2A: read-only completed log */
@@ -20762,6 +20763,7 @@ if ('serviceWorker' in navigator) {
       '</div>';
     }).join('');
   }
+  var _frzTodoLog = [];   // TODO-3: cached completed rows so a per-row delete + its undo can re-paint without a refetch
   function _frzRenderTodoLog(){
     var log=document.getElementById('frzTodoLog'), toggle=document.getElementById('frzTodoLogToggle');
     if(toggle) toggle.textContent='Back to open';
@@ -20769,25 +20771,51 @@ if ('serviceWorker' in navigator) {
     log.innerHTML='<div class="frz-mw-count">Loading…</div>';
     API.get('/api/my/todos?status=done').then(function(d){
       if(state.homeTab!=='todos' || _frzTodoView!=='log') return;
-      var done=(d && d.todos) || [];
-      if(!done.length){
-        log.innerHTML='<div class="frz-mw-empty">Nothing completed yet.'+
-          '<div class="frz-todo-empty2">Completed to-dos appear here, newest first. To bring one back, retype it.</div></div>';
-        return;
-      }
-      // Group by MT completion day, newest first (server already returns completed_ts DESC). Read-only.
-      var groups=[], byDay={};
-      done.forEach(function(t){ var day=_frzMTDay(t.completed_ts); if(!byDay[day]){ byDay[day]=[]; groups.push(day); } byDay[day].push(t); });
-      var todayK=_frzTodayMTKey(), yK=_frzDateFromMT(-1);
-      log.innerHTML=groups.map(function(day){
-        var label = day===todayK?'Today':(day===yK?'Yesterday':_frzFmtDayLong(day));
-        return '<div class="frz-todo-logday">'+esc(label)+'</div>'+byDay[day].map(function(t){
-          return '<div class="frz-todo-logrow">'+_frzTodoKeyHtml(t)+'<span class="frz-todo-logttl">'+esc(t.title)+'</span>'+   // REM-2: key prefix (read-only row; key still links if reachable)
-            (t.due_date?'<span class="frz-todo-logdue" title="Was due '+escA(t.due_date)+'">due '+esc(_frzFmtDue(t.due_date))+'</span>':'')+
-          '</div>';
-        }).join('');
-      }).join('');
+      _frzTodoLog=(d && d.todos) || [];
+      _frzPaintTodoLog();
     }).catch(function(){ if(_frzTodoView==='log' && log) log.innerHTML='<div class="frz-mw-empty">Could not load the completed log.</div>'; });
+  }
+  function _frzPaintTodoLog(){
+    var log=document.getElementById('frzTodoLog'); if(!log) return;
+    var done=_frzTodoLog;
+    if(!done.length){
+      log.innerHTML='<div class="frz-mw-empty">Nothing completed yet.'+
+        '<div class="frz-todo-empty2">Completed to-dos appear here, newest first. To bring one back, retype it.</div></div>';
+      return;
+    }
+    // Group by MT completion day, newest first (server already returns completed_ts DESC). Read-only apart
+    // from the per-row delete (TODO-3) - no checkbox, no inline edit, no un-complete.
+    var groups=[], byDay={};
+    done.forEach(function(t){ var day=_frzMTDay(t.completed_ts); if(!byDay[day]){ byDay[day]=[]; groups.push(day); } byDay[day].push(t); });
+    var todayK=_frzTodayMTKey(), yK=_frzDateFromMT(-1);
+    log.innerHTML=groups.map(function(day){
+      var label = day===todayK?'Today':(day===yK?'Yesterday':_frzFmtDayLong(day));
+      return '<div class="frz-todo-logday">'+esc(label)+'</div>'+byDay[day].map(function(t){
+        return '<div class="frz-todo-logrow">'+_frzTodoKeyHtml(t)+'<span class="frz-todo-logttl">'+esc(t.title)+'</span>'+   // REM-2: key prefix (read-only row; key still links if reachable)
+          (t.due_date?'<span class="frz-todo-logdue" title="Was due '+escA(t.due_date)+'">due '+esc(_frzFmtDue(t.due_date))+'</span>':'')+
+          '<button type="button" class="frz-todo-del frz-todo-logdel" data-tid="'+t.id+'" title="Delete" aria-label="Delete">&times;</button>'+   // TODO-3: per-row delete (undo covers a misclick); NO bulk clear (TODO-2A removed it deliberately)
+        '</div>';
+      }).join('');
+    }).join('');
+    log.querySelectorAll('.frz-todo-logdel').forEach(function(b){ b.addEventListener('click', function(){ _frzTodoLogDelete(+b.getAttribute('data-tid')); }); });
+  }
+  // TODO-3: delete one completed-log row, with undo - REUSES the open list's mechanism (DELETE
+  // /api/my/todos/{id} + create_todo restore + the shared showToast {label,fn}), not a second one. The
+  // snapshot carries completed_ts so undo restores the row STILL COMPLETED at its original time (create_todo
+  // honors completed_ts on restore). NO bulk "Clear completed" - TODO-2A removed it deliberately (bulk erase
+  // is what made tidying destructive); per-row deletion is a deliberate single act on the user's own private log.
+  function _frzTodoLogDelete(id){
+    var t=_frzTodoLog.filter(function(x){ return x.id===id; })[0]; if(!t) return;
+    _frzInvalidateMyTodos();
+    var snap={ title:t.title, notes:t.notes, status:t.status, due_date:t.due_date, completed_ts:t.completed_ts, item_id:t.item_id, item_key:t.item_key };
+    API.del('/api/my/todos/'+id).then(function(){
+      _frzTodoLog=_frzTodoLog.filter(function(x){ return x.id!==id; });
+      _frzCounts.done=Math.max(0,_frzCounts.done-1); _frzPaintHomeCounts(); _frzPaintTodoLog();
+      if(typeof showToast==='function') showToast('To-do deleted','info',5000,{ label:'Undo', fn:function(){
+        API.post('/api/my/todos', snap).then(function(){ _frzCounts.done++; _frzPaintHomeCounts(); if(state.homeTab==='todos'&&_frzTodoView==='log') _frzRenderTodoLog(); })
+          .catch(function(){ if(typeof showToast==='function') showToast('Could not undo','error'); });
+      }});
+    }).catch(function(){ if(typeof showToast==='function') showToast('Could not delete','error'); });
   }
   function _frzTodoPut(id, patch){   // title / due edits (status changes go through the checkbox path)
     _frzInvalidateMyTodos();   // REM-4: a to-do edit can change an item's reminder indicator; refetch next paint

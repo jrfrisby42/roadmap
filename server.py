@@ -1558,7 +1558,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.9.3"
+APP_VERSION = "6.9.4"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -6583,7 +6583,10 @@ def create_todo(body: dict = Body(...), auth: dict = Depends(require_auth)):
         raise HTTPException(400, "Invalid status")
     due = _todo_due(body.get("due_date"))
     now = datetime.now(timezone.utc).isoformat()
-    completed = now if status == "Done" else None
+    # TODO-3: a Done row is stamped completed NOW on a normal create, but the completed-log delete's UNDO
+    # re-POSTs its snapshot and must restore the ORIGINAL completion time - so honor a caller-provided
+    # completed_ts when Done (else a restored row would come back re-dated to today, an undo that changes data).
+    completed = (body.get("completed_ts") or now) if status == "Done" else None
     # REM-2: optional item link (a Reminder from the Flag modal). item_id is validated against THIS team's
     # items - the per-team DB means an id from another team is simply not found here, so a cross-team link
     # is rejected by construction. item_key is DERIVED from the item's blob, never trusted from the client
@@ -6648,6 +6651,12 @@ def update_todo(tid: int, body: dict = Body(...), auth: dict = Depends(require_a
             completed = None
         c.execute("UPDATE todos SET title=?, notes=?, status=?, due_date=?, updated_ts=?, completed_ts=?, reminded_ts=? "
                   "WHERE id=? AND username=?", (title, notes, status, due, now, completed, reminded, tid, auth["username"]))
+        # TODO-3: completing a to-do deletes its reminder notification (delete, not mark-read - the completed
+        # log is the durable record, and a snooze button on finished work would re-arm the reminder). Fires
+        # only on the transition INTO Done. username in the WHERE (privacy rule 2): a crafted todo_id can
+        # never reach another user's notification. todo_id is set only on reminder rows, so this is scoped.
+        if status == "Done" and cur["status"] != "Done":
+            c.execute("DELETE FROM notifications WHERE todo_id=? AND username=?", (tid, auth["username"]))
         row2 = c.execute("SELECT * FROM todos WHERE id=?", (tid,)).fetchone()
     return {"todo": dict(row2)}
 
@@ -6659,6 +6668,10 @@ def delete_todo(tid: int, auth: dict = Depends(require_auth)):
         cur = c.execute("DELETE FROM todos WHERE id=? AND username=?", (tid, auth["username"]))
         if cur.rowcount == 0:
             raise HTTPException(404, "To-do not found")
+        # TODO-3 (Part 2.3): a deleted to-do also loses any surviving reminder notification (rare after the
+        # completion cleanup, but a to-do deleted while open + unfired can still have one). Same username-in-
+        # WHERE guard - a crafted todo_id can never reach another user's notification.
+        c.execute("DELETE FROM notifications WHERE todo_id=? AND username=?", (tid, auth["username"]))
     return {"ok": True}
 
 # TODO-2A: the POST /api/my/todos/clear-completed endpoint was REMOVED. It hard-deleted the caller's
