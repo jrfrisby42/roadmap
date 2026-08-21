@@ -2217,7 +2217,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.9.1';
+const APP_VERSION = '6.9.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -15655,7 +15655,7 @@ function renderItemPage(p){
   const lockNote = isLocked && !isAdmin ? `<span style="font-size:10px;color:#e8a000;display:block;margin-top:2px">🔒 Locked - active item</span>` : '';
 
   document.getElementById('ipFields').innerHTML = [
-    ipEditField('status',     'Status',       p.status ? `<span class="${statusCls(p.status)}" style="background:none;border:none;padding:0">${esc(p.status)}</span>` : '', 'select', {bold:true}),
+    ipEditField('status',     'Status',       p.status ? `<span class="${statusCls(p.status)}" style="background:none;border:none;padding:0">${esc(p.status)}</span>` : '', 'select', {bold:true, readonly: RESERVED_TERMINAL_STATUSES.has(p.status)}),   // POLISH-2: reserved statuses (Transferred/Duplicate) are locked - no inline picker (server-enforced; use "Not a duplicate" to reopen)
     ipEditField('dev',        'Owner (Pod)',  esc(p.dev||''),    'select', {bold:true}),
     ipEditField('assignee',   'Assignee',     esc(p.assignee ? displayName(p.assignee) : ''), 'select'),
     ipEditField('type',       'Type',         esc(p.type||''),   'select'),
@@ -18608,14 +18608,17 @@ if ('serviceWorker' in navigator) {
      .frz-notif-rowwrap (BELL-1 added it so the per-row x could be a sibling of the button), and
      cross-axis stretch does not apply in a block. An explicit width:100% is required; the row is
      box-sizing:border-box (global reset), so the padding does not overflow. */
-  .frz-beta .frz-notif-row { text-align:left; border:0; border-bottom:1px solid var(--frz-border); background:none; cursor:pointer; padding:10px 14px; display:flex; flex-direction:column; gap:3px; width:100%; }
+  /* POLISH-2: square the rows (they inherit a 6px radius from the beta button rule) so consecutive
+     is-unread highlights form ONE continuous band with no notches between them. The panel keeps its
+     own 12px radius (.frz-notif) and overflow:auto clips the top/bottom rows to the curve. */
+  .frz-beta .frz-notif-row { text-align:left; border:0; border-bottom:1px solid var(--frz-border); background:none; cursor:pointer; padding:10px 14px; display:flex; flex-direction:column; gap:3px; width:100%; border-radius:0; }
   .frz-beta .frz-notif-row:hover { background:var(--frz-bg-app); }
   .frz-beta .frz-notif-row.is-unread { background:var(--frz-accent-soft); }
   .frz-beta .frz-notif-msg { font-size:13px; color:var(--frz-text); }
   .frz-beta .frz-notif-meta { font-size:11px; color:var(--frz-text-muted); }
   .frz-beta .frz-notif-empty { padding:22px 14px; text-align:center; font-size:12.5px; color:var(--frz-text-muted); }
   /* REM-3: snooze row under a reminder notification (sibling of the row button; buttons can't nest). */
-  .frz-beta .frz-notif-snooze { display:flex; align-items:center; gap:6px; padding:0 14px 10px; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-notif-snooze { display:flex; align-items:center; gap:6px; padding:0 14px 10px; border-bottom:1px solid var(--frz-border); border-radius:0; }   /* POLISH-2: square, so a reminder row + its snooze block read as one continuous rectangle */
   .frz-beta .frz-notif-snooze-lbl { font-size:11px; font-weight:700; color:var(--frz-text-muted); }
   .frz-beta .frz-notif-snooze-btn { font-size:11px; font-weight:700; color:var(--frz-accent); background:none; border:1px solid var(--frz-border-strong); border-radius:6px; padding:2px 9px; cursor:pointer; font-family:'Lato',sans-serif; }
   .frz-beta .frz-notif-snooze-btn:hover { border-color:var(--frz-accent); background:var(--frz-accent-soft); }
@@ -26100,7 +26103,10 @@ if ('serviceWorker' in navigator) {
     sec.style.cssText='display:flex;flex-direction:column;gap:8px';
     sec.innerHTML = dupRefs.map(function(r){ return _frzExtRefRowHtml(r, canEdit); }).join('')
       + ((canEdit && !isDup)
-        ? '<button type="button" class="frz-dup-mark" style="align-self:flex-start;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:6px;padding:5px 12px;font-family:\'Lato\',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Mark as duplicate of...</button>'
+        // POLISH-2: match the two sibling buttons ("+ Add relationship" / "+ Add linked work") exactly -
+        // they are inline-styled (no shared class), so mirror their values: transparent bg, accent text,
+        // 5px radius, 11px/700, 3px 10px padding, same border. align-self keeps natural (not stretched) width.
+        ? '<button type="button" class="frz-dup-mark" style="align-self:flex-start;background:none;border:1px solid var(--border);color:var(--accent);padding:3px 10px;border-radius:5px;font-family:\'Lato\',sans-serif;font-weight:700;font-size:11px;cursor:pointer">Mark as duplicate of...</button>'
         : '');
     deps.appendChild(sec);
     var _dm = sec.querySelector('.frz-dup-mark'); if(_dm) _dm.addEventListener('click', function(){ _frzOpenDuplicatePicker(p); });
@@ -27451,7 +27457,9 @@ if ('serviceWorker' in navigator) {
     var sCls=_call('statusCls', p.status)||'';
     // Editable status pill for admin/editor; read-only badge for viewers. Wiring + the
     // targeted refresh are in frzOpenPanel; persistence reuses saveItemPageField.
-    var statusCtl = canEdit
+    // POLISH-2: a reserved terminal status (Transferred/Duplicate) is locked - fall through to the
+    // read-only badge (no picker) even for editors; the server refuses the change regardless.
+    var statusCtl = (canEdit && !RESERVED_TERMINAL_STATUSES[p.status])
       ? '<select id="frzLpStatus" class="frz-lp-status '+sCls+'" title="'+escA(p.status||'')+'">'+ ((_call('_ipFieldOptions','status')||[]).map(function(o){ return '<option value="'+escA(o.value)+'"'+(String(p.status||'')===String(o.value)?' selected':'')+'>'+esc(o.label)+'</option>'; }).join('')) +'</select>'   // REM-2 (7.2): title = full status name, hover fallback when a long name ellipsizes at max-width:150px
       : '<span class="'+sCls+'" style="padding:1px 9px;border-radius:9px;font-size:11px;font-weight:700">'+esc(p.status||'-')+'</span>';
     // REM-1: the panel's flag entry point (REM-1b moved it from the now-removed .frz-lp-badges row into the
