@@ -2213,7 +2213,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.8.1';
+const APP_VERSION = '6.8.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -15834,7 +15834,23 @@ function ipToggleHidden(id){
 function _transferRef(p){
   return (p.externalRefs||[]).filter(r=>r&&r.system==='flow-transfer'&&r.kind==='transferred-to')[0] || null;
 }
-function _ipTransferSection(p){
+// The transfer button must NOT appear at all when the item cannot be transferred (it mirrors the
+// server's Addendum-A1 guard, which stays authoritative). 5 of the 6 blockers live on the item
+// blob and are checked synchronously here; the 6th (any comments) is not on the blob, so the item
+// page supplies its comment count via _ipCommentCount when it loads comments (renderItemPageComments).
+let _ipCommentCount = null, _ipCommentCountFor = null;   // count for the item it belongs to; null = not yet loaded
+function _ipTransferBlockers(p){
+  const b=[];
+  if(p.sprintId || (p.sprintHistory && p.sprintHistory.length)) b.push('sprint');
+  if(p.release || p.releaseNumber) b.push('release');
+  if(p.storyPoints!=null && p.storyPoints!=='' && +p.storyPoints>0) b.push('points');
+  if(p.jiraTickets && p.jiraTickets.length) b.push('jira');
+  if(p.assetLinks && p.assetLinks.length) b.push('assets');
+  return b;
+}
+function _ipTransferSection(p){ return `<div id="ipTransferSlot">${_ipTransferSlotInner(p)}</div>`; }
+function _refreshTransferSlot(p){ const s=document.getElementById('ipTransferSlot'); if(s) s.innerHTML=_ipTransferSlotInner(p); }
+function _ipTransferSlotInner(p){
   const ref = _transferRef(p);
   const lbl = ref ? esc(ref.targetLabel || teamLabel(ref.targetTeam||'')) : '';
   if(ref && ref.status==='linked'){
@@ -15851,9 +15867,14 @@ function _ipTransferSection(p){
       <button onclick="retryTransfer(${p.id})" style="margin-top:6px;padding:6px 12px;border-radius:6px;border:1px solid #c06000;background:#c06000;color:#fff;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Retry transfer</button>
     </div>`;
   }
-  // UI-POLISH-1: label-above-control (one card rhythm); the button is auto-width + secondary, so
-  // Transfer reads as an available action, not the card's headline (it is the least-used, only
-  // destructive control). Caption kept - it is genuinely useful. Behaviour unchanged.
+  // Not yet transferred: show the Transfer control ONLY when the item is eligible. Hide it entirely
+  // (render nothing) when a blocker is present. While the comment count is still loading for THIS
+  // item, keep it hidden so an ineligible button never flashes - renderItemPageComments refreshes
+  // this slot once the count is known.
+  const cc = (_ipCommentCountFor===p.id) ? _ipCommentCount : null;
+  if(_ipTransferBlockers(p).length || cc===null || cc>0) return '';
+  // UI-POLISH-1: label-above-control (one card rhythm); auto-width + secondary, so Transfer reads
+  // as an available action, not the card's headline. Caption kept. Behaviour unchanged.
   return `<div>
     <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">Transfer</div>
     <button onclick="openTransferModal(${p.id})" style="padding:5px 12px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Transfer to another team</button>
@@ -16015,6 +16036,11 @@ async function renderItemPageComments(itemId){
   if(inputWrap) inputWrap.style.display = canComment ? 'flex' : 'none';
   try {
     const data = await API.get('/api/comments/'+itemId);
+    // Transfer-button gate: now that THIS item's comment count is known, refresh the (admin-only)
+    // transfer slot - any comments block a transfer (Addendum A1), so the button hides. Runs before
+    // the render branches below so it covers both the beta threaded path and the classic path.
+    _ipCommentCount = data.length; _ipCommentCountFor = itemId;
+    try { const _tp = projects.find(x=>x.id===itemId); if(_tp) _refreshTransferSlot(_tp); } catch(e){}
     // /beta (Stage 4): threaded render - top-level newest-first, replies nested +
     // chronological, with reply composer + collapse. Classic root stays flat below.
     if(document.body.classList.contains('frz-beta-active') && window._frzRenderThreads){
@@ -16047,7 +16073,15 @@ async function renderItemPageComments(itemId){
     // and keep the rich composer pinned above the (re-rendered) list.
     if(window._frzRehydrateCommentImages) window._frzRehydrateCommentImages(itemId);
     if(window._frzPlaceComposerTop) window._frzPlaceComposerTop();
-  } catch(e){ el.innerHTML = `<div style="font-size:12px;color:var(--muted)">Could not load comments</div>`; }
+  } catch(e){
+    el.innerHTML = `<div style="font-size:12px;color:var(--muted)">Could not load comments</div>`;
+    // Comments could not load, so eligibility can't be confirmed by count. Fail OPEN (treat as 0)
+    // rather than remove the action over a transient sub-widget error - the server guard still
+    // refuses an actual ineligible transfer. Only the comment dimension is assumed; blob blockers
+    // (sprint/release/points/jira/assets) are still enforced in _ipTransferSlotInner.
+    _ipCommentCount = 0; _ipCommentCountFor = itemId;
+    try { const _tp = projects.find(x=>x.id===itemId); if(_tp) _refreshTransferSlot(_tp); } catch(_){}
+  }
 }
 
 async function postItemPageComment(){
