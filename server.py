@@ -1558,7 +1558,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.8.5"
+APP_VERSION = "6.8.6"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -8104,7 +8104,15 @@ def link_jira_issue(body: dict = Body(...),
     # Duplicate check - scan all items
     existing_map = _get_all_jira_tickets(team)
     if ticket in existing_map and existing_map[ticket] != item_id:
-        raise HTTPException(409, f"{ticket} is already linked to item #{existing_map[ticket]}")
+        # FIX-409-HDR-1: name the holding item by its KEY (not the numeric id), and return a DICT detail
+        # (the canonical 409 shape) carrying `message`, so the client surfaces "<ticket> is already linked
+        # to <key>" instead of the generic concurrency fallback. Falls back to #id only if the key is unset.
+        _holder_id = existing_map[ticket]
+        with db(team) as c:
+            _hrow = c.execute("SELECT item_key FROM projects WHERE id=?", (_holder_id,)).fetchone()
+        _holder = (_hrow["item_key"] if _hrow and _hrow["item_key"] else "") or f"#{_holder_id}"
+        raise HTTPException(409, detail={"error": "duplicate_link",
+            "message": f"{ticket} is already linked to {_holder}"})
 
     # Verify ticket exists in Jira
     fields = "summary,status,issuetype,project"
