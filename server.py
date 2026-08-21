@@ -1558,7 +1558,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.8.6"
+APP_VERSION = "6.9.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2152,6 +2152,18 @@ _PRIO_LABEL = {"1": "Urgent", "2": "High", "3": "Medium", "4": "Low"}
 # It is deliberately NOT treated as "completed": the tombstone does not stamp completedAt, so
 # a misroute never inflates the target team's resolution-time / throughput metrics.
 TRANSFERRED_STATUS = "Transferred"
+
+# DUPLICATE-1: the status an item takes once it is marked a duplicate of another. Same hardcoded
+# reserved-system-status reasoning as TRANSFERRED_STATUS above (a fact about the record, written
+# by one code path, never selectable). Unlike transfer it is REVERSIBLE (nothing moves), and like
+# transfer it must NEVER stamp completedAt - a duplicate is a submission, not completed work.
+DUPLICATE_STATUS = "Duplicate"
+
+# The reserved system statuses that are terminal by construction. They are NOT in any team's
+# statusIsTerminal config (they are not team config at all), so terminality must be forced here
+# and in the two client helpers (isTerminalStatus / isTermStatus) - a shared set so a new reserved
+# status is one entry and cannot be taught to fewer places than its siblings (the drift trap).
+RESERVED_TERMINAL_STATUSES = {TRANSFERRED_STATUS, DUPLICATE_STATUS}
 
 # Status badge swatches - the EXACT (bg, fg, border) of roadmap.html's .s-* classes
 # so portal pills match the logged-in badges 1:1.
@@ -5809,6 +5821,151 @@ def transfer_item(pid: int, body: dict = Body(...), auth: dict = Depends(require
 # except) and the on-item Retry (roadmap.html _ipTransferSection, keyed off the item's own pending
 # externalRef - no endpoint needed).
 
+# ── Duplicate marking (DUPLICATE-1) ──────────────────────────────────────────
+# Mark an item as a duplicate of another (SAME team). This is duplicate-MARKING, not merge:
+# NOTHING moves - the loser is closed (status -> DUPLICATE_STATUS) and cross-linked to the
+# survivor via the server-owned externalRefs (system 'flow-duplicate'), and that is all. Because
+# nothing moves it is non-destructive and REVERSIBLE ("Not a duplicate" restores the prior status,
+# stashed in the duplicate-of ref, and removes both link directions). The tombstone is a DIRECT
+# write that skips update_project's terminal hooks, so completedAt is never stamped: a duplicate is
+# a submission, not completed work.
+_DUPLICATE_SYSTEM = "flow-duplicate"
+
+def _find_dup_ref(item: dict, kind: str = None):
+    """The item's flow-duplicate externalRef (or None). kind filters duplicate-of / duplicated-by.
+    An item has at most one 'duplicate-of'; a survivor may have several 'duplicated-by'."""
+    for r in (item.get("externalRefs") or []):
+        if isinstance(r, dict) and r.get("system") == _DUPLICATE_SYSTEM and (kind is None or r.get("kind") == kind):
+            return r
+    return None
+
+def _dup_activity(c, pid: int, item: dict, actor: str, message: str, prev: str, new: str, ts: str):
+    """One attributed item-history row for a duplicate mark/unmark. status='Resolved' (+ resolved_by/ts)
+    so it lands in History, not the Open work queue - same shape as _transfer_activity."""
+    c.execute(
+        "INSERT INTO activities(activity_type,source,item_id,item_name,owner,project,"
+        "created_by,created_ts,note,status,message,previous_value,new_value,resolved_by,resolved_ts)"
+        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        ("Duplicate", "System", pid, item.get("name", ""), item.get("dev", ""),
+         item.get("product", ""), actor, ts, "", "Resolved", message, prev, new, actor, ts))
+
+def _duplicate_send_email(team: str, item: dict, pid: int):
+    """One best-effort message to the duplicate's reporter: this was already reported and is being
+    tracked. DELIBERATELY carries NO link to the survivor and NO survivor key (the reporters are
+    different submitters with no relationship) - the CTA is the reporter's OWN /my-tickets list.
+    Never blocks or reverses the marking; skipped cleanly when there is no reporterEmail."""
+    if not mail_configured():
+        return
+    reporter_email = (item.get("reporterEmail") or "").strip()
+    if not reporter_email:
+        return
+    key = item.get("itemKey") or f"#{pid}"
+    prio = _PRIO_LABEL.get(str(item.get("priority") or ""), "")
+    rows = [("Ticket", key), ("Type", item.get("type") or ""), ("Priority", prio),
+            ("Project", item.get("product") or "")]
+    intro = ("Thanks for your report. This has already been reported and is being tracked, so we have "
+             "closed this copy to keep things tidy - there is nothing more you need to do. If you have "
+             "details to add, contact the team.")
+    body = _intake_email_html(item, rows, "This one is already on our radar", intro,
+                              "View all your tickets", _my_tickets_url(reporter_email))
+    text = ("Thanks for your report. This has already been reported and is being tracked, so we have "
+            "closed this copy. Nothing more is needed from you.\n\n"
+            f"All your tickets: {_my_tickets_url(reporter_email)}\n")
+    send_email(reporter_email, "Your request has already been reported", text, body)
+
+@app.post("/api/items/{pid}/mark-duplicate")
+def mark_duplicate(pid: int, body: dict = Body(...), auth: dict = Depends(require_role("admin", "editor"))):
+    """Mark item {pid} a duplicate of {survivorId} (same team). Admin/editor. Reversible; nothing moves."""
+    team = auth["team"]; actor = auth.get("username", "")
+    try:
+        survivor_id = int(body.get("survivorId") or body.get("survivorItemId") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(422, "Choose the item this duplicates.")
+    if not survivor_id:
+        raise HTTPException(422, "Choose the item this duplicates.")
+    if survivor_id == pid:
+        raise HTTPException(422, "An item cannot be a duplicate of itself.")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    ts_h = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    op = _uuid.uuid4().hex
+    with db(team) as c:
+        c.execute("BEGIN IMMEDIATE")
+        dup = _get_item_blob(c, pid)                                   # the loser
+        srow = c.execute("SELECT data FROM projects WHERE id=?", (survivor_id,)).fetchone()
+        if not srow:
+            raise HTTPException(404, "That item was not found.")
+        surv = json.loads(srow["data"])
+        if _find_dup_ref(dup, "duplicate-of"):
+            raise HTTPException(409, detail={"error": "already_duplicate",
+                "message": "This item is already marked as a duplicate."})
+        # Chains are refused, not resolved: if the chosen survivor is itself a duplicate, name ITS
+        # survivor so the user picks that instead (silently redirecting one hop hides a data shape).
+        surv_dup = _find_dup_ref(surv, "duplicate-of")
+        if surv_dup:
+            _real = surv_dup.get("number") or f"#{surv_dup.get('targetId')}"
+            raise HTTPException(409, detail={"error": "chain",
+                "message": f"{surv.get('itemKey') or ('#'+str(survivor_id))} is itself a duplicate of "
+                           f"{_real}. Mark this a duplicate of {_real} instead."})
+        prev_status = dup.get("status") or ""
+        dup_key = dup.get("itemKey") or f"#{pid}"
+        surv_key = surv.get("itemKey") or f"#{survivor_id}"
+        _append_external_ref(dup, {"system": _DUPLICATE_SYSTEM, "kind": "duplicate-of", "operationRef": op,
+            "targetId": survivor_id, "number": surv_key, "url": f"{APP_BASE_URL}/item/{survivor_id}",
+            "prevStatus": prev_status, "status": "linked", "at": now_iso})   # prevStatus -> reversibility
+        dup["status"] = DUPLICATE_STATUS                                # direct write; NO completedAt
+        _save_project(c, pid, dup)
+        _append_external_ref(surv, {"system": _DUPLICATE_SYSTEM, "kind": "duplicated-by", "operationRef": op,
+            "sourceId": pid, "number": dup_key, "url": f"{APP_BASE_URL}/item/{pid}", "status": "linked", "at": now_iso})
+        _save_project(c, survivor_id, surv)
+        _dup_activity(c, pid, dup, actor, f"Marked as a duplicate of {surv_key}", prev_status, DUPLICATE_STATUS, ts_h)
+        _dup_activity(c, survivor_id, surv, actor, f"{dup_key} marked as a duplicate of this item", "", "", ts_h)
+    write_audit(team, "duplicate:mark", actor, pid, dup.get("name", ""),
+                changes={"survivorId": survivor_id, "survivorKey": surv_key, "operationRef": op})
+    write_audit(team, "duplicate:link", actor, survivor_id, surv.get("name", ""),
+                changes={"duplicateId": pid, "duplicateKey": dup_key, "operationRef": op})
+    try:
+        _duplicate_send_email(team, dup, pid)
+    except Exception as e:
+        log.warning("[Duplicate] reporter email failed for item %s: %s", pid, e)
+    return {"ok": True, "survivorId": survivor_id, "survivorKey": surv_key,
+            "status": DUPLICATE_STATUS, "externalRefs": dup.get("externalRefs") or []}
+
+@app.post("/api/items/{pid}/unmark-duplicate")
+def unmark_duplicate(pid: int, body: dict = Body({}), auth: dict = Depends(require_role("admin", "editor"))):
+    """Reverse a duplicate mark: restore the prior status (stashed in the duplicate-of ref) and remove
+    BOTH link directions. Admin/editor. Nothing was moved, so this fully undoes the mark."""
+    team = auth["team"]; actor = auth.get("username", "")
+    ts_h = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    with db(team) as c:
+        c.execute("BEGIN IMMEDIATE")
+        dup = _get_item_blob(c, pid)
+        ref = _find_dup_ref(dup, "duplicate-of")
+        if not ref:
+            raise HTTPException(409, detail={"error": "not_duplicate", "message": "This item is not marked as a duplicate."})
+        op = ref.get("operationRef")
+        survivor_id = ref.get("targetId")
+        restore = ref.get("prevStatus") or _resolve_default_status(c)
+        dup["externalRefs"] = [r for r in (dup.get("externalRefs") or [])
+                               if not (r.get("system") == _DUPLICATE_SYSTEM and r.get("kind") == "duplicate-of")]
+        prev = dup.get("status") or ""
+        dup["status"] = restore
+        _save_project(c, pid, dup)
+        dup_key = dup.get("itemKey") or f"#{pid}"
+        surv_key = ref.get("number") or (f"#{survivor_id}" if survivor_id else "")
+        if survivor_id:
+            srow = c.execute("SELECT data FROM projects WHERE id=?", (survivor_id,)).fetchone()
+            if srow:
+                surv = json.loads(srow["data"])
+                surv["externalRefs"] = [r for r in (surv.get("externalRefs") or [])
+                                        if not (r.get("system") == _DUPLICATE_SYSTEM
+                                                and r.get("kind") == "duplicated-by" and r.get("operationRef") == op)]
+                _save_project(c, survivor_id, surv)
+                _dup_activity(c, survivor_id, surv, actor, f"{dup_key} un-marked as a duplicate of this item", "", "", ts_h)
+        _dup_activity(c, pid, dup, actor, f"Un-marked as a duplicate of {surv_key}", prev, restore, ts_h)
+    write_audit(team, "duplicate:unmark", actor, pid, dup.get("name", ""),
+                changes={"survivorId": survivor_id, "restoredStatus": restore, "operationRef": op})
+    return {"ok": True, "status": restore, "externalRefs": dup.get("externalRefs") or []}
+
 # ── Notifications & watchers (Stage 3b) ──────────────────────────────────────
 # Server-side generation hooked into the real write paths (item update/assign,
 # comment, planning commit, jira sync). Every hook runs AFTER the primary write
@@ -8534,11 +8691,11 @@ def sync_jira_to_roadmap(pid: int, body: dict = Body({}), x_team: Optional[str] 
 
 def _is_terminal(status: str, team: str) -> bool:
     """Check if a status is terminal using the team's statusIsTerminal config.
-    TRANSFER-1: the reserved TRANSFERRED_STATUS is terminal by construction - it is never in
-    any team's statusIsTerminal config (it is not team config at all), so it must be forced
-    true here or a transferred (tombstoned) source would read as active in every open/terminal
+    The reserved system statuses (Transferred, Duplicate) are terminal by construction - they are
+    never in any team's statusIsTerminal config (they are not team config at all), so they must be
+    forced true here or a transferred/duplicate item would read as active in every open/terminal
     count. Checked FIRST so it holds even on a team with an empty terminal map."""
-    if status == TRANSFERRED_STATUS:
+    if status in RESERVED_TERMINAL_STATUSES:
         return True
     with db(team) as c:
         row = c.execute("SELECT value FROM config WHERE key='statusIsTerminal'").fetchone()
