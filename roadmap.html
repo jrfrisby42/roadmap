@@ -207,6 +207,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   body.dark-mode .s-approved   { background: rgba(34,185,110,0.18) !important; border-color: rgba(34,185,110,0.3)  !important; color: #3dd68a !important; }
   body.dark-mode .s-terminal   { background: rgba(29,184,106,0.18) !important; border-color: rgba(29,184,106,0.3)  !important; color: #3dd68a !important; }
   body.dark-mode .s-transferred{ background: rgba(140,160,185,0.18)!important; border-color: rgba(140,160,185,0.3) !important; color: #a7b6c9 !important; }
+  body.dark-mode .s-duplicate  { background: rgba(200,170,90,0.18) !important; border-color: rgba(200,170,90,0.3)  !important; color: #d8b979 !important; }
   body.dark-mode .s-tbd        { background: rgba(120,120,160,0.18)!important; border-color: rgba(120,120,160,0.28)!important; color: #9090b8 !important; }
 
   /* ── Dark mode: action buttons ── */
@@ -482,6 +483,9 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   /* TRANSFER-1: transferred = a rerouted record, not completed work - a neutral slate, deliberately
      NOT the green of terminal/done, so it never reads as "this team finished it". */
   .s-transferred { background: rgba(90,110,130,0.12); color: #52627a; border: 1px solid rgba(90,110,130,0.3); }
+  /* DUPLICATE-1: duplicate = closed-not-completed, a muted amber-grey distinct from transfer's slate
+     and from the green of done, so it never reads as work this team finished. */
+  .s-duplicate  { background: rgba(150,120,60,0.12); color: #8a6d2f; border: 1px solid rgba(150,120,60,0.3); }
 
   /* IT/Ops SLA badge (Stage A) - reuses the overdue/status color language; global (classic + Flow) */
   .sla-badge { display:inline-block; padding:1px 8px; border-radius:9px; font-size:11px; font-weight:700; white-space:nowrap; border:1px solid transparent; vertical-align:middle; }
@@ -2213,7 +2217,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.8.6';
+const APP_VERSION = '6.9.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -3013,6 +3017,7 @@ const STATUS_BADGE_COLORS = ['s-inprogress','s-planned','s-testing','s-released'
 function statusCls(s){
   if(!s) return 's-tbd';
   if(s === TRANSFERRED_STATUS) return 's-transferred';   // TRANSFER-1: deliberate class, not the -1 unknown-status fallback
+  if(s === DUPLICATE_STATUS)   return 's-duplicate';     // DUPLICATE-1: deliberate class
   // Semantic mapping - check configured flags first so colors are consistent
   // regardless of the order statuses appear in the list
   if(statusIsReleased[s])  return 's-released';   // green
@@ -3039,12 +3044,13 @@ function populateStatusSelects(){
   // Rebuild the topbar multi-select status filter panel
   const panel = document.getElementById('statusDropPanel');
   const prevChecked = [...panel.querySelectorAll('input[type=checkbox]:not([value="all"])')].filter(c=>c.checked).map(c=>c.value);
-  // TRANSFER-1: append the reserved "Transferred" status as a FILTER option (after the config
-  // statuses) so transferred items can be found - this is a filter checkbox, never a status
-  // picker, so it does not make the status hand-selectable anywhere.
+  // TRANSFER-1 / DUPLICATE-1: append the reserved statuses as FILTER options (after the config
+  // statuses) so transferred + duplicate items can be found - these are filter checkboxes, never
+  // status pickers, so they do not make the statuses hand-selectable anywhere.
+  const _reservedFilter = s => `<label class="ms-opt" data-val="${escA(s)}"><input type="checkbox" value="${escA(s)}"${prevChecked.includes(s)?' checked':''}> ${esc(s)}</label>`;
   panel.innerHTML = `<label class="ms-opt" data-val="all"><input type="checkbox" value="all" ${prevChecked.length===0?'checked':''}> All</label>` +
     statuses.map(s=>`<label class="ms-opt" data-val="${escA(s)}"><input type="checkbox" value="${escA(s)}"${prevChecked.includes(s)?' checked':''}> ${esc(s)}</label>`).join('') +
-    `<label class="ms-opt" data-val="${escA(TRANSFERRED_STATUS)}"><input type="checkbox" value="${escA(TRANSFERRED_STATUS)}"${prevChecked.includes(TRANSFERRED_STATUS)?' checked':''}> ${esc(TRANSFERRED_STATUS)}</label>`;
+    _reservedFilter(TRANSFERRED_STATUS) + _reservedFilter(DUPLICATE_STATUS);
   // Re-wire multi-select listeners
   wireStatusDropdown();
 }
@@ -3857,13 +3863,16 @@ function generateEchoDescriptors(p){
 }
 
 // ── STATUS HELPERS ────────────────────────────────────────────────────────────
-// TRANSFER-1: the reserved system status a transferred (tombstoned) source takes. Hardcoded on
-// purpose (see server.py TRANSFERRED_STATUS) - it is never in any team's `statuses` config, so
-// it is unselectable in every picker (all built from `statuses`). But terminality is read from
-// the statusIsTerminal config map, so it is forced terminal in isTerminalStatus below, or a
-// transferred item would count as ACTIVE in capacity + open counts (the opposite of intent).
+// Reserved system statuses (mirror server.py). Hardcoded on purpose - never in any team's
+// `statuses` config, so unselectable in every picker (all built from `statuses`). Terminality is
+// read from the statusIsTerminal config map, which will NOT contain them, so they are forced
+// terminal via the shared set below - or a transferred/duplicate item would count as ACTIVE in
+// capacity + open counts. One set so a new reserved status is one entry and can't be taught to
+// fewer places than its siblings (the drift trap).
 const TRANSFERRED_STATUS = 'Transferred';
-const isTerminalStatus = s => s === TRANSFERRED_STATUS || !!(statusIsTerminal[s]);
+const DUPLICATE_STATUS   = 'Duplicate';
+const RESERVED_TERMINAL_STATUSES = new Set([TRANSFERRED_STATUS, DUPLICATE_STATUS]);
+const isTerminalStatus = s => RESERVED_TERMINAL_STATUSES.has(s) || !!(statusIsTerminal[s]);
 const isActiveStatus   = s => !!(statusIsActive[s]);
 const isLockedActive   = p => !!(p.dev && isActiveStatus(p.status));
 const getDefaultStatus  = () => statuses.find(s => statusIsDefault[s])  || statuses[0] || 'Backlogged';
@@ -19569,11 +19578,12 @@ if ('serviceWorker' in navigator) {
   }
   // TERMINAL = the per-team `statusIsTerminal` flag (Admin → Statuses "Terminal"). Falls
   // back to STATUS_META only when the team hasn't flagged ANY terminal status.
-  // TRANSFER-1: reserved system status (mirrors server.py TRANSFERRED_STATUS + the classic const).
-  // Beta-local so the shell never depends on cross-script binding visibility.
-  var TRANSFERRED_STATUS = 'Transferred';
+  // Reserved system statuses (mirror server.py + the classic consts). Beta-local so the shell never
+  // depends on cross-script binding visibility. Shared set so a new one is taught in one place.
+  var TRANSFERRED_STATUS = 'Transferred', DUPLICATE_STATUS = 'Duplicate';
+  var RESERVED_TERMINAL_STATUSES = { 'Transferred': true, 'Duplicate': true };
   function isTermStatus(s){
-    if(s === TRANSFERRED_STATUS) return true;   // TRANSFER-1: terminal by construction, never in any config map
+    if(RESERVED_TERMINAL_STATUSES[s]) return true;   // TRANSFER-1/DUPLICATE-1: terminal by construction, never in any config map
     var m=_val('statusIsTerminal',{})||{}, any=false;
     for(var k in m){ if(m[k]){ any=true; break; } }
     if(any) return !!m[s];
@@ -21170,7 +21180,7 @@ if ('serviceWorker' in navigator) {
     // Exclude archived AND hidden (hidden = the Gantt-visibility flag / utility rows).
     var all=(_val('projects',[])||[]).filter(function(p){ return !p.archived && !p.hidden; });
     var f=_rptFilters, nowIso=new Date().toISOString(), today=nowIso.slice(0,10);
-    var termMap=Object.assign({}, _val('statusIsTerminal',{})||{}); termMap[TRANSFERRED_STATUS]=true;   // for overdue: past-due AND not terminal; TRANSFER-1: transferred counts as terminal (not open/overdue)
+    var termMap=Object.assign({}, _val('statusIsTerminal',{})||{}); termMap[TRANSFERRED_STATUS]=true; termMap[DUPLICATE_STATUS]=true;   // overdue = past-due AND not terminal; TRANSFER-1/DUPLICATE-1: reserved statuses count as terminal (not open/overdue)
     // RPT-DRILL-1 Stage 1: state object -> column/CSV string. null (parked / pre-effectiveFrom /
     // no priority target / SLA disabled) -> '' (blank). The verbose no-first-touch `.full` ("Closed,
     // none recorded (3d to close)") is trimmed to "None recorded"; every other kind uses `.full` as-is.
@@ -25987,6 +25997,20 @@ if ('serviceWorker' in navigator) {
       return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
         +'<span style="font-weight:700;color:var(--text)">'+esc(dir)+' '+esc(tlbl)+numT+'</span>'+noteT+whenT+'</div>';
     }
+    // DUPLICATE-1: a Flow-to-Flow duplicate link. SAME team, so it is a LIVE link to the other item
+    // (unlike transfer, which is cross-team and text-only). The link renders for ALL roles - a closed
+    // item's reason must be visible to anyone. "Not a duplicate" (admin/editor) reverses it.
+    if(r.system==='flow-duplicate'){
+      var dwhen = r.at ? '<span style="color:var(--muted);font-size:11px">'+esc(fmtTS(r.at))+'</span>' : '';
+      var dkey = esc(String(r.number || ('#'+(r.kind==='duplicate-of' ? r.targetId : r.sourceId)) || ''));
+      var dlink = r.url ? '<a href="'+esc(String(r.url))+'" style="color:var(--frz-accent);font-weight:700;text-decoration:none">'+dkey+'</a>'
+                        : '<span style="font-weight:700;color:var(--text)">'+dkey+'</span>';
+      if(r.kind==='duplicate-of'){
+        var unbtn = canEdit ? '<button type="button" class="frz-dup-unmark" style="border:none;background:none;color:var(--frz-accent);cursor:pointer;font-size:12px;font-weight:700">Not a duplicate</button>' : '';
+        return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="font-weight:700;color:var(--text)">Duplicate of</span>'+dlink+dwhen+unbtn+'</div>';
+      }
+      return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="font-weight:700;color:var(--text)">Duplicated by</span>'+dlink+dwhen+'</div>';
+    }
     var sys = _frzExtRefSys(r.system), kind = _frzExtRefKind(r.kind);
     var when = r.at ? '<span style="color:var(--muted);font-size:11px">'+esc(fmtTS(r.at))+'</span>' : '';
     var head = '<span style="font-weight:700;color:var(--text)">'+esc(sys)+' '+esc(kind)+'</span>';
@@ -26027,7 +26051,10 @@ if ('serviceWorker' in navigator) {
     var card = document.getElementById('frzExtRefsCard');
     // Hidden/archived -> treated as having no externalRefs (render nothing / drop the card).
     var refs = (!p.hidden && !p.archived && Array.isArray(p.externalRefs)) ? p.externalRefs : [];
-    if(!refs.length){ if(card && card.parentNode) card.parentNode.removeChild(card); return; }
+    var canEditDup = _frzCanEditAssets() && !p.hidden && !p.archived;
+    // DUPLICATE-1: the "Mark as duplicate" action lives in this card, so an editor sees the card even
+    // when there are no refs yet. Only drop the card when there is nothing to show AND nothing to do.
+    if(!refs.length && !canEditDup){ if(card && card.parentNode) card.parentNode.removeChild(card); return; }
     if(!card){
       var attach = document.getElementById('frzAttachCard');
       var anchor = attach || (function(){ var n=document.getElementById('ipNotes'); return n ? n.parentElement.parentElement : document.getElementById('ipFieldsCard'); })();
@@ -26041,12 +26068,111 @@ if ('serviceWorker' in navigator) {
     }
     var list = card.querySelector('#frzExtRefsList'); if(!list) return;
     var canEdit = _frzCanEditAssets();
-    list.innerHTML = refs.map(function(r){ return _frzExtRefRowHtml(r, canEdit); }).join('');
+    var isDup = !!(p.externalRefs||[]).filter(function(r){ return r&&r.system==='flow-duplicate'&&r.kind==='duplicate-of'; })[0];
+    // DUPLICATE-1: the "Mark as duplicate of..." action (admin/editor), hidden once the item IS a
+    // duplicate (then only "Not a duplicate" on its row applies). An empty card would look broken, so
+    // show a hint line when there are no refs at all.
+    var dupAction = (canEditDup && !isDup)
+      ? '<button type="button" class="frz-dup-mark" style="align-self:flex-start;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:6px;padding:5px 12px;font-family:\'Lato\',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Mark as duplicate of...</button>'
+      : '';
+    var emptyHint = (!refs.length) ? '<div style="font-size:11px;color:var(--muted)">No linked records.</div>' : '';
+    list.innerHTML = refs.map(function(r){ return _frzExtRefRowHtml(r, canEdit); }).join('') + emptyHint + dupAction;
     if(canEdit) list.querySelectorAll('.frz-req-retry').forEach(function(b){
       b.addEventListener('click', function(){ _frzRequestRetry(p, b.getAttribute('data-op'), b); });
     });
     if(canEdit) list.querySelectorAll('.frz-req-status').forEach(function(b){
       b.addEventListener('click', function(){ _frzRequestStatusCheck(p, b.getAttribute('data-op'), b); });
+    });
+    var _dm = list.querySelector('.frz-dup-mark'); if(_dm) _dm.addEventListener('click', function(){ _frzOpenDuplicatePicker(p); });
+    var _du = list.querySelector('.frz-dup-unmark'); if(_du) _du.addEventListener('click', function(){ _frzUnmarkDuplicate(p, _du); });
+  }
+  // ── DUPLICATE-1: mark / un-mark an item as a duplicate of another (same team) ──────
+  function _frzCloseDupModal(){ var ov=document.getElementById('frzDupOverlay'); if(ov) ov.remove(); }
+  function _frzSyncItemInMemory(p){
+    try { var arr=_val('projects',[])||[]; for(var i=0;i<arr.length;i++){ if(arr[i] && arr[i].id===p.id){ arr[i].status=p.status; arr[i].externalRefs=p.externalRefs; break; } } } catch(e){}
+  }
+  function _frzOpenDuplicatePicker(p){
+    if(!p || !_frzCanEditAssets()) return;
+    _frzCloseDupModal();
+    // Survivor candidates: same-team items that are not this one, not hidden/archived, and not
+    // themselves a duplicate (the server refuses a chain; filtering here keeps the picker honest).
+    var all = (_val('projects', []) || []).filter(function(x){
+      return x && x.id!==p.id && !x.hidden && !x.archived
+        && !((x.externalRefs||[]).some(function(r){ return r&&r.system==='flow-duplicate'&&r.kind==='duplicate-of'; }));
+    });
+    var sel=null;
+    var warn = (p.sprintId || (p.sprintHistory&&p.sprintHistory.length) || p.release || p.releaseNumber)
+      ? '<div style="margin-top:10px;padding:8px 10px;background:#fff8f0;border:1px solid #e8a000;border-radius:6px;font-size:12px;color:#c06000">Heads up: this item is in a sprint or linked to a release. Closing it as a duplicate removes it from those counts.</div>' : '';
+    var ov=document.createElement('div'); ov.id='frzDupOverlay';
+    ov.style.cssText='position:fixed;inset:0;background:rgba(20,40,63,.45);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;font-family:\'Lato\',system-ui,sans-serif';
+    ov.innerHTML='<div style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;max-width:460px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,.3);overflow:hidden">'
+      +'<div style="padding:14px 18px;border-bottom:1px solid var(--border);font-weight:800;font-size:15px">Mark as duplicate</div>'
+      +'<div style="padding:16px 18px">'
+        +'<div style="font-size:12px;color:var(--muted);margin-bottom:10px">Choose the item this duplicates. This will <b>close '+esc(p.itemKey||('#'+p.id))+'</b> (status Duplicate) and link it to that item. Nothing is moved - you can undo it.</div>'
+        +'<input type="text" id="frzDupSearch" placeholder="Search by key or title..." autocomplete="off" style="width:100%;box-sizing:border-box;height:34px;padding:0 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px">'
+        +'<div id="frzDupResults" style="margin-top:8px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px"></div>'
+        +'<div id="frzDupChosen" style="margin-top:10px;font-size:12px;color:var(--text)"></div>'+warn
+        +'<div id="frzDupMsg" style="display:none;font-size:12px;margin-top:8px"></div>'
+      +'</div>'
+      +'<div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px">'
+        +'<button type="button" id="frzDupCancel" style="height:34px;padding:0 14px;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:7px;font-weight:700;font-size:12px;cursor:pointer">Cancel</button>'
+        +'<button type="button" id="frzDupConfirm" disabled style="height:34px;padding:0 16px;border:none;background:var(--border);color:#fff;border-radius:7px;font-weight:800;font-size:12px;cursor:not-allowed">Mark duplicate &amp; close</button>'
+      +'</div></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('mousedown', function(e){ if(e.target===ov) _frzCloseDupModal(); });
+    ov.querySelector('#frzDupCancel').addEventListener('click', _frzCloseDupModal);
+    var searchEl=ov.querySelector('#frzDupSearch'), resEl=ov.querySelector('#frzDupResults'),
+        chosenEl=ov.querySelector('#frzDupChosen'), confirmEl=ov.querySelector('#frzDupConfirm');
+    function setConfirm(on){ confirmEl.disabled=!on; confirmEl.style.background=on?'var(--accent)':'var(--border)'; confirmEl.style.cursor=on?'pointer':'not-allowed'; }
+    function draw(){
+      var q=(searchEl.value||'').trim().toLowerCase();
+      var rows = !q ? [] : all.filter(function(x){
+        return String(x.itemKey||'').toLowerCase().indexOf(q)>=0 || String(x.name||'').toLowerCase().indexOf(q)>=0;
+      }).slice(0,20);
+      resEl.innerHTML = rows.length ? rows.map(function(x){
+        return '<button type="button" class="frz-dup-opt" data-id="'+x.id+'" style="text-align:left;border:0;background:none;cursor:pointer;padding:6px 8px;border-radius:6px;color:var(--text);font-size:13px"><b>'+esc(x.itemKey||('#'+x.id))+'</b> '+esc(x.name||'')+'</button>';
+      }).join('') : (q ? '<div style="font-size:12px;color:var(--muted);padding:6px 8px">No matches.</div>' : '');
+      resEl.querySelectorAll('.frz-dup-opt').forEach(function(b){
+        b.addEventListener('click', function(){
+          sel = all.filter(function(x){ return x.id===+b.getAttribute('data-id'); })[0] || null;
+          chosenEl.innerHTML = sel ? 'Duplicate of <b>'+esc(sel.itemKey||('#'+sel.id))+'</b> - '+esc(sel.name||'') : '';
+          setConfirm(!!sel);
+        });
+      });
+    }
+    searchEl.addEventListener('input', draw);
+    confirmEl.addEventListener('click', function(){ if(sel) _frzMarkDuplicate(p, sel.id, confirmEl); });
+    setTimeout(function(){ try{ searchEl.focus(); }catch(e){} }, 30);
+  }
+  function _frzMarkDuplicate(p, survivorId, btn){
+    if(btn){ btn.disabled=true; btn.textContent='Marking...'; }
+    API.post('/api/items/'+p.id+'/mark-duplicate', {survivorId:survivorId}).then(function(r){
+      if(r && r.externalRefs) p.externalRefs = r.externalRefs;
+      if(r && r.status) p.status = r.status;
+      _frzCloseDupModal();
+      _frzSyncItemInMemory(p);
+      try { _call('renderItemPage', p); } catch(e){}
+      injectExternalRefs(p);
+      _call('showToast', 'Marked as a duplicate of '+((r&&r.survivorKey)||'the selected item')+'.');
+    }).catch(function(e){
+      if(btn){ btn.disabled=false; btn.textContent='Mark duplicate & close'; }
+      var m=(e&&e.message)?e.message:'Could not mark as duplicate.';
+      var el=document.getElementById('frzDupMsg'); if(el){ el.style.display='block'; el.textContent=m; el.style.color='#c0362c'; }
+      else _call('showToast', m, 'error');
+    });
+  }
+  function _frzUnmarkDuplicate(p, btn){
+    if(btn){ btn.disabled=true; btn.textContent='...'; }
+    API.post('/api/items/'+p.id+'/unmark-duplicate', {}).then(function(r){
+      if(r && r.externalRefs) p.externalRefs = r.externalRefs;
+      if(r && r.status) p.status = r.status;
+      _frzSyncItemInMemory(p);
+      try { _call('renderItemPage', p); } catch(e){}
+      injectExternalRefs(p);
+      _call('showToast', 'No longer marked as a duplicate.');
+    }).catch(function(e){
+      if(btn){ btn.disabled=false; btn.textContent='Not a duplicate'; }
+      _call('showToast', (e&&e.message)||'Could not un-mark.', 'error');
     });
   }
   // ── FLOW-1: linked AssetHub assets (item page), read-only against AssetHub ──────
