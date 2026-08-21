@@ -71,3 +71,29 @@ def test_prefix_defaults_to_flow(tmp_path, monkeypatch):
     monkeypatch.delenv("LITESTREAM_S3_PREFIX", raising=False)
     assert server.sync_litestream_config(tenants_dir=str(tenants), do_reload=False) is True
     assert "path: flow/acme" in cfg.read_text()
+
+
+def test_sse_kms_emitted_only_when_configured(tmp_path, monkeypatch):
+    """The KMS-enforced backup bucket denies un-encrypted PUTs, so the replica must carry sse +
+    sse-kms-key-id when configured - and nothing when not (backward-compatible)."""
+    tenants = tmp_path / "tenants"; tenants.mkdir()
+    _mk_team(str(tenants), "acme")
+    cfg = tmp_path / "ls.yml"
+    monkeypatch.setenv("LITESTREAM_FLOW_CONFIG", str(cfg))
+    monkeypatch.setenv("LITESTREAM_S3_BUCKET", "b")
+
+    # Unset -> no encryption directives (unchanged behaviour).
+    monkeypatch.delenv("LITESTREAM_S3_SSE", raising=False)
+    monkeypatch.delenv("LITESTREAM_S3_SSE_KMS_KEY_ID", raising=False)
+    assert server.sync_litestream_config(tenants_dir=str(tenants), do_reload=False) is True
+    t0 = cfg.read_text()
+    assert "sse:" not in t0 and "sse-kms-key-id:" not in t0
+
+    # Set -> both directives appear per replica; still no credentials in the file.
+    monkeypatch.setenv("LITESTREAM_S3_SSE", "aws:kms")
+    monkeypatch.setenv("LITESTREAM_S3_SSE_KMS_KEY_ID", "arn:aws:kms:us-west-2:1:key/abc")
+    assert server.sync_litestream_config(tenants_dir=str(tenants), do_reload=False) is True
+    t1 = cfg.read_text()
+    assert "sse: aws:kms" in t1
+    assert "sse-kms-key-id: arn:aws:kms:us-west-2:1:key/abc" in t1
+    assert "access-key" not in t1.lower()
