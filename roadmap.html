@@ -2217,7 +2217,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.9.0';
+const APP_VERSION = '6.9.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -15451,8 +15451,10 @@ function ipUnlinkRequires(){ saveItemPagePatch({requires:null, parallel:false});
 const IP_LINK_TYPES = {
   related:    { fwd:'Related to',  inv:'Related to' },
   blocks:     { fwd:'Blocks',      inv:'Blocked by' },
-  causes:     { fwd:'Causes',      inv:'Caused by' },
-  duplicates: { fwd:'Duplicates',  inv:'Duplicated by' }
+  causes:     { fwd:'Causes',      inv:'Caused by' }
+  // DUP-CONSOLIDATE-1: `duplicates` retired here. A duplicate is not a free-form relationship, it
+  // is a triage decision that CLOSES an item (DUPLICATE-1) - it lives in exactly one place now
+  // (the "Mark as duplicate of..." action), not as a typed link that left the item open + counting.
 };
 function _ipTypedLinksHtml(p, canEdit){
   if(!document.body.classList.contains('frz-beta-active')) return '';   // /beta-scoped
@@ -23103,9 +23105,9 @@ if ('serviceWorker' in navigator) {
     // Stage 2: inject Attachments + Sprint-history sections (beta-only; idempotent).
     // Release is now (re)placed by _frzItemLayout, which also consolidates the rail
     // and reorders the main column.
-    injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); injectAssetLinks(p); injectFlag(p); injectReminderIndicator(p);   // REM-4: after injectFlag so the indicator sits below the flag banner
+    injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); _frzInjectDuplicate(p); injectAssetLinks(p); injectFlag(p); injectReminderIndicator(p);   // REM-4: after injectFlag so the indicator sits below the flag banner
     _frzOrderMain();   // rail is consolidated by the renderItemPage wrapper; here we only (re)order the main column for the just-injected cards
-    setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); injectAssetLinks(p); injectFlag(p); injectReminderIndicator(p); _frzOrderMain(); }, 500);
+    setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); _frzInjectDuplicate(p); injectAssetLinks(p); injectFlag(p); injectReminderIndicator(p); _frzOrderMain(); }, 500);
     // Render-then-edit: set the description's beta read-styling + edit bridge NOW (no mount on
     // load → no flash); the comment composer still mounts its editor deferred (out of scope here).
     frzInitDescription(p);
@@ -26050,11 +26052,14 @@ if ('serviceWorker' in navigator) {
     if(!p) return;
     var card = document.getElementById('frzExtRefsCard');
     // Hidden/archived -> treated as having no externalRefs (render nothing / drop the card).
-    var refs = (!p.hidden && !p.archived && Array.isArray(p.externalRefs)) ? p.externalRefs : [];
-    var canEditDup = _frzCanEditAssets() && !p.hidden && !p.archived;
-    // DUPLICATE-1: the "Mark as duplicate" action lives in this card, so an editor sees the card even
-    // when there are no refs yet. Only drop the card when there is nothing to show AND nothing to do.
-    if(!refs.length && !canEditDup){ if(card && card.parentNode) card.parentNode.removeChild(card); return; }
+    // DUP-CONSOLIDATE-1: the flow-duplicate refs (duplicate-of / duplicated-by) now render in the
+    // Dependencies card (_frzInjectDuplicate), beside the "Mark as duplicate" action - they are
+    // relationships, not provenance. Linked Records keeps everything else (transfer provenance,
+    // AssetHub). Filter them out here so they are not shown twice, and restore the original
+    // drop-card-when-empty behaviour (the action no longer needs to keep this card alive).
+    var refs = (!p.hidden && !p.archived && Array.isArray(p.externalRefs))
+      ? p.externalRefs.filter(function(r){ return !(r && r.system==='flow-duplicate'); }) : [];
+    if(!refs.length){ if(card && card.parentNode) card.parentNode.removeChild(card); return; }
     if(!card){
       var attach = document.getElementById('frzAttachCard');
       var anchor = attach || (function(){ var n=document.getElementById('ipNotes'); return n ? n.parentElement.parentElement : document.getElementById('ipFieldsCard'); })();
@@ -26068,23 +26073,38 @@ if ('serviceWorker' in navigator) {
     }
     var list = card.querySelector('#frzExtRefsList'); if(!list) return;
     var canEdit = _frzCanEditAssets();
-    var isDup = !!(p.externalRefs||[]).filter(function(r){ return r&&r.system==='flow-duplicate'&&r.kind==='duplicate-of'; })[0];
-    // DUPLICATE-1: the "Mark as duplicate of..." action (admin/editor), hidden once the item IS a
-    // duplicate (then only "Not a duplicate" on its row applies). An empty card would look broken, so
-    // show a hint line when there are no refs at all.
-    var dupAction = (canEditDup && !isDup)
-      ? '<button type="button" class="frz-dup-mark" style="align-self:flex-start;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:6px;padding:5px 12px;font-family:\'Lato\',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Mark as duplicate of...</button>'
-      : '';
-    var emptyHint = (!refs.length) ? '<div style="font-size:11px;color:var(--muted)">No linked records.</div>' : '';
-    list.innerHTML = refs.map(function(r){ return _frzExtRefRowHtml(r, canEdit); }).join('') + emptyHint + dupAction;
+    list.innerHTML = refs.map(function(r){ return _frzExtRefRowHtml(r, canEdit); }).join('');
     if(canEdit) list.querySelectorAll('.frz-req-retry').forEach(function(b){
       b.addEventListener('click', function(){ _frzRequestRetry(p, b.getAttribute('data-op'), b); });
     });
     if(canEdit) list.querySelectorAll('.frz-req-status').forEach(function(b){
       b.addEventListener('click', function(){ _frzRequestStatusCheck(p, b.getAttribute('data-op'), b); });
     });
-    var _dm = list.querySelector('.frz-dup-mark'); if(_dm) _dm.addEventListener('click', function(){ _frzOpenDuplicatePicker(p); });
-    var _du = list.querySelector('.frz-dup-unmark'); if(_du) _du.addEventListener('click', function(){ _frzUnmarkDuplicate(p, _du); });
+  }
+  // DUP-CONSOLIDATE-1: the duplicate relationship + action live in the Dependencies card (#ipDeps,
+  // a production card rebuilt by renderItemPage each render), so this beta hook re-injects them each
+  // render - the same additive pattern injectExternalRefs uses. The refs render as LIVE same-team
+  // links for ALL roles (a viewer must see why an item is closed); the "Mark as duplicate of..."
+  // action is admin/editor and hidden on hidden/archived items or once the item IS a duplicate.
+  function _frzInjectDuplicate(p){
+    if(!p) return;
+    var deps = document.getElementById('ipDeps'); if(!deps) return;
+    var old = document.getElementById('frzDupDepsSection'); if(old) old.remove();   // idempotent per render
+    var dupRefs = (!p.hidden && !p.archived && Array.isArray(p.externalRefs))
+      ? p.externalRefs.filter(function(r){ return r && r.system==='flow-duplicate'
+          && (r.kind==='duplicate-of' || r.kind==='duplicated-by'); }) : [];
+    var canEdit = _frzCanEditAssets() && !p.hidden && !p.archived;   // hidden = Jira-sourced children: no dup action
+    var isDup = dupRefs.some(function(r){ return r.kind==='duplicate-of'; });
+    if(!dupRefs.length && !canEdit) return;                          // nothing to show, nothing to do
+    var sec = document.createElement('div'); sec.id='frzDupDepsSection';
+    sec.style.cssText='display:flex;flex-direction:column;gap:8px';
+    sec.innerHTML = dupRefs.map(function(r){ return _frzExtRefRowHtml(r, canEdit); }).join('')
+      + ((canEdit && !isDup)
+        ? '<button type="button" class="frz-dup-mark" style="align-self:flex-start;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:6px;padding:5px 12px;font-family:\'Lato\',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Mark as duplicate of...</button>'
+        : '');
+    deps.appendChild(sec);
+    var _dm = sec.querySelector('.frz-dup-mark'); if(_dm) _dm.addEventListener('click', function(){ _frzOpenDuplicatePicker(p); });
+    var _du = sec.querySelector('.frz-dup-unmark'); if(_du) _du.addEventListener('click', function(){ _frzUnmarkDuplicate(p, _du); });
   }
   // ── DUPLICATE-1: mark / un-mark an item as a duplicate of another (same team) ──────
   function _frzCloseDupModal(){ var ov=document.getElementById('frzDupOverlay'); if(ov) ov.remove(); }
@@ -26152,7 +26172,7 @@ if ('serviceWorker' in navigator) {
       _frzCloseDupModal();
       _frzSyncItemInMemory(p);
       try { _call('renderItemPage', p); } catch(e){}
-      injectExternalRefs(p);
+      injectExternalRefs(p); _frzInjectDuplicate(p);
       _call('showToast', 'Marked as a duplicate of '+((r&&r.survivorKey)||'the selected item')+'.');
     }).catch(function(e){
       if(btn){ btn.disabled=false; btn.textContent='Mark duplicate & close'; }
@@ -26168,7 +26188,7 @@ if ('serviceWorker' in navigator) {
       if(r && r.status) p.status = r.status;
       _frzSyncItemInMemory(p);
       try { _call('renderItemPage', p); } catch(e){}
-      injectExternalRefs(p);
+      injectExternalRefs(p); _frzInjectDuplicate(p);
       _call('showToast', 'No longer marked as a duplicate.');
     }).catch(function(e){
       if(btn){ btn.disabled=false; btn.textContent='Not a duplicate'; }
