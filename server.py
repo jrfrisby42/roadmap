@@ -1558,7 +1558,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.9.1"
+APP_VERSION = "6.9.2"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2164,6 +2164,19 @@ DUPLICATE_STATUS = "Duplicate"
 # and in the two client helpers (isTerminalStatus / isTermStatus) - a shared set so a new reserved
 # status is one entry and cannot be taught to fewer places than its siblings (the drift trap).
 RESERVED_TERMINAL_STATUSES = {TRANSFERRED_STATUS, DUPLICATE_STATUS}
+
+def _reserved_lock_msg(old_status: str) -> str:
+    """POLISH-2: an item already IN a reserved terminal status cannot have its status changed by an
+    ordinary picker / bulk / planning write - only the dedicated flows (mark/unmark duplicate,
+    transfer), which write via _save_project directly and bypass this check, move it. Returns the
+    refusal message (naming the way out for a duplicate) or '' when the item is not reserved. The
+    membership test reuses RESERVED_TERMINAL_STATUSES; the copy differs because only duplicate has a
+    way out (transfer has none - POLISH-2 1.3, un-transfer deferred)."""
+    if old_status not in RESERVED_TERMINAL_STATUSES:
+        return ""
+    if old_status == DUPLICATE_STATUS:
+        return 'This item is marked as a duplicate. Use "Not a duplicate" to reopen it before changing its status.'
+    return "This item was transferred to another team and its status is locked."
 
 # Status badge swatches - the EXACT (bg, fg, border) of roadmap.html's .s-* classes
 # so portal pills match the logged-in badges 1:1.
@@ -4286,6 +4299,16 @@ def update_project(pid: int, body: dict, background: BackgroundTasks = None,
                 "current": current,
             })
 
+        # POLISH-2: an item in a reserved terminal status (Transferred/Duplicate) is status-locked -
+        # only the dedicated flows move it. Refuse a picker/inline/modal status CHANGE (other field
+        # edits still pass; an unchanged status passes). Those flows write via _save_project, not this
+        # path, so "Not a duplicate" / transfer / mark are never blocked by this.
+        _new_status = body.get("status")
+        if _new_status is not None and _new_status != old.get("status"):
+            _lock = _reserved_lock_msg(old.get("status") or "")
+            if _lock:
+                raise HTTPException(409, detail={"error": "reserved_status_locked", "message": _lock})
+
         cfg = {r["key"]: json.loads(r["value"]) for r in c.execute(
             "SELECT key, value FROM config WHERE key IN "
             "('statusIsActive','statusIsReleased','statusIsBlocked','statusIsTerminal','statusIsOffFlow','statusIsWaiting','statusIsParked','statuses')"
@@ -4779,6 +4802,8 @@ def bulk_update_items(body: dict = Body(...),
         patch["archived"] = bool(patch["archived"])
 
     updated = 0
+    skipped = []   # POLISH-2: reserved-status items whose status change was refused
+    _changing_status = "status" in patch
     with db(team) as c:
         for raw in ids:
             try:
@@ -4789,12 +4814,19 @@ def bulk_update_items(body: dict = Body(...),
             if not row:
                 continue
             data = json.loads(row["data"])
+            # POLISH-2: a status change (via bulk) cannot move an item out of a reserved terminal
+            # status - skip it and name it so the caller can tell the user. A non-status bulk patch on
+            # such an item is unaffected (only the status field is locked).
+            if _changing_status and patch.get("status") != data.get("status") \
+                    and data.get("status") in RESERVED_TERMINAL_STATUSES:
+                skipped.append(data.get("itemKey") or f"#{pid}")
+                continue
             data.update(patch)
             _save_project(c, pid, data)
             updated += 1
     write_audit(team, "bulk_update", auth["username"],
-                changes={"count": updated, "fields": list(patch.keys())})
-    return {"updated": updated, "patch": patch}
+                changes={"count": updated, "fields": list(patch.keys()), "skipped": len(skipped)})
+    return {"updated": updated, "patch": patch, "skipped": skipped}
 
 # ── Config ────────────────────────────────────────────────────────────────────
 VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
@@ -9454,6 +9486,11 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
     with db(team) as c:
         proj_rows = {r["id"]: json.loads(r["data"])
                      for r in c.execute("SELECT id, data FROM projects").fetchall()}
+        # POLISH-2: an item in a reserved terminal status (Transferred/Duplicate) is status-locked and a
+        # planning commit must not move it. Drop them here so every apply branch (each guards
+        # `if not p: continue`) skips them uniformly - one guard instead of one per branch. Such items
+        # are terminal and are not offered in planning anyway; this is a backstop.
+        proj_rows = {i: p for i, p in proj_rows.items() if p.get("status") not in RESERVED_TERMINAL_STATUSES}
 
     today       = datetime.now(timezone.utc).date().isoformat()
     changes     = []
