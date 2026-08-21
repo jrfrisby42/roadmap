@@ -2213,7 +2213,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.8.2';
+const APP_VERSION = '6.8.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -26286,6 +26286,12 @@ if ('serviceWorker' in navigator) {
         '<div><span style="'+lbl+'">Quantity</span><input type="number" id="frzReqQty" min="1" step="1" value="1" style="'+inp+'"></div>'+
         '<div><span style="'+lbl+'">Requested for</span><input type="text" id="frzReqFor" value="'+escA(reqFor)+'" placeholder="Leave blank to request as yourself" style="'+inp+'">'+
           '<div style="font-size:11px;color:var(--muted);margin-top:5px">You ('+esc(_val('currentUser','')||'the signed-in technician')+') are recorded as the technician. Leave blank to also be the requester.</div></div>'+
+        // REQ-NOTE-1: optional Justification -> the approver reads it as "Justification" on the AssetHub
+        // Request detail page. maxlength enforces the 5000 cap client-side (AssetHub silently truncates
+        // at 5000, so the limit must be visible here, not discovered after the fact); server re-caps.
+        '<div><span style="'+lbl+'">Justification</span>'+
+          '<textarea id="frzReqJust" rows="3" maxlength="5000" placeholder="Why is this needed?" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;font-family:inherit;resize:vertical;min-height:62px"></textarea>'+
+          '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:5px"><span style="font-size:11px;color:var(--muted)">Why is this needed? (optional)</span><span id="frzReqJustCount" style="font-size:11px;color:var(--muted)">0 / 5000</span></div></div>'+
       '</div>'+
       '<div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px">'+
         '<button type="button" id="frzReqCancel" style="height:36px;padding:0 14px;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:8px;font-weight:700;cursor:pointer">Cancel</button>'+
@@ -26298,6 +26304,10 @@ if ('serviceWorker' in navigator) {
     bg.querySelector('#frzReqClose').addEventListener('click', close);
     bg.querySelector('#frzReqCancel').addEventListener('click', close);
     bg.addEventListener('mousedown', function(e){ if(e.target===bg) close(); });
+    // REQ-NOTE-1: live char counter for the 5000 cap (maxlength blocks typing past it; this makes
+    // the ceiling visible as the technician approaches it rather than silently at the boundary).
+    var jtEl=bg.querySelector('#frzReqJust'), jcEl=bg.querySelector('#frzReqJustCount');
+    if(jtEl && jcEl){ var _updJ=function(){ jcEl.textContent=jtEl.value.length+' / 5000'; jcEl.style.color=(jtEl.value.length>=5000)?'#e8394a':'var(--muted)'; }; jtEl.addEventListener('input', _updJ); _updJ(); }
     var sb=bg.querySelector('#frzReqSubmit');
     if(sb && canSubmit) sb.addEventListener('click', function(){
       var catEl=bg.querySelector('#frzReqCat'), qtyEl=bg.querySelector('#frzReqQty'), rfEl=bg.querySelector('#frzReqFor');
@@ -26305,8 +26315,11 @@ if ('serviceWorker' in navigator) {
       if(!categoryId) return;
       var qty = Math.max(1, parseInt((qtyEl&&qtyEl.value)||'1',10) || 1);
       var requestedFor = rfEl ? (rfEl.value||'').trim() : '';
+      var justification = jtEl ? (jtEl.value||'').trim().slice(0,5000) : '';   // trimmed + capped; server re-caps
       sb.disabled=true; sb.textContent='Creating...';   // double-submit guard: each click otherwise mints a distinct request
-      API.post('/api/items/'+p.id+'/requests', {categoryPublicId:categoryId, quantity:qty, requestedForEmail:requestedFor}).then(function(r){
+      // The modal is left open on failure (close() runs only on success), so typed justification is
+      // retained for a retry without any extra state handling.
+      API.post('/api/items/'+p.id+'/requests', {categoryPublicId:categoryId, quantity:qty, requestedForEmail:requestedFor, justification:justification}).then(function(r){
         if(r && r.externalRefs) p.externalRefs = r.externalRefs;
         injectExternalRefs(p);
         close();

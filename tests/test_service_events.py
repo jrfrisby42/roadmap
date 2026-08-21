@@ -435,3 +435,72 @@ def test_service_type_mapping_config_roundtrip(client, team, admin_headers):
     r = client.put("/api/config/assethubServiceTypeMapping", json={"Task": "Repair"}, headers=admin_headers)
     assert r.status_code == 200
     assert client.get("/api/all", headers=admin_headers).json()["assethubServiceTypeMapping"] == {"Task": "Repair"}
+
+
+# ── REQ-NOTE-1: procurement-request justification -> AssetHub Request.description ──────
+def _admin_with_email(team, email="tech@freezingpointllc.com"):
+    _set_cfg(team, "users", [{"username": "admin", "role": "admin", "builtin": True, "email": email}])
+
+
+def _mk_req_item(client, headers):
+    return client.post("/api/projects", json={"name": "Need a laptop", "status": NONTERMINAL},
+                       headers=headers).json()["id"]
+
+
+def _last_request_body(state):
+    return [p for p in state["posts"] if p["path"].endswith("/requests")][-1]["body"]
+
+
+def test_request_sends_justification_as_description(client, team, admin_headers, monkeypatch):
+    _enable(team, monkeypatch); _admin_with_email(team)
+    state = _install(monkeypatch)
+    pid = _mk_req_item(client, admin_headers)
+    r = client.post(f"/api/items/{pid}/requests",
+                    json={"categoryPublicId": "cat-1", "quantity": 1,
+                          "justification": "  Broken screen, needs replacing  "}, headers=admin_headers)
+    assert r.status_code == 200, r.text
+    body = _last_request_body(state)
+    assert body["description"] == "Broken screen, needs replacing"   # trimmed
+    # every other outbound field is untouched
+    assert body["source_system"] == "flow"
+    assert body["source_reference"]                                  # the per-request op_ref
+    assert body["category_public_id"] == "cat-1"
+    assert body["technician_email"] == "tech@freezingpointllc.com"
+
+
+def test_request_omits_description_when_empty(client, team, admin_headers, monkeypatch):
+    _enable(team, monkeypatch); _admin_with_email(team)
+    state = _install(monkeypatch)
+    pid = _mk_req_item(client, admin_headers)
+    r = client.post(f"/api/items/{pid}/requests",
+                    json={"categoryPublicId": "cat-1", "quantity": 1, "justification": "   "},
+                    headers=admin_headers)
+    assert r.status_code == 200
+    assert "description" not in _last_request_body(state)            # omitted, never sent as ""
+
+
+def test_request_justification_capped_server_side(client, team, admin_headers, monkeypatch):
+    _enable(team, monkeypatch); _admin_with_email(team)
+    state = _install(monkeypatch)
+    pid = _mk_req_item(client, admin_headers)
+    r = client.post(f"/api/items/{pid}/requests",
+                    json={"categoryPublicId": "cat-1", "quantity": 1, "justification": "x" * 6000},
+                    headers=admin_headers)
+    assert r.status_code == 200
+    assert len(_last_request_body(state)["description"]) == 5000     # not relying on AssetHub truncation
+
+
+def test_request_retry_preserves_justification(client, team, admin_headers, monkeypatch):
+    _enable(team, monkeypatch); _admin_with_email(team)
+    # first send FAILS before AssetHub records it, so a retry must rebuild from the stashed req.
+    state = _install(monkeypatch, post_handler=_post_raise("validation_error", 422))
+    pid = _mk_req_item(client, admin_headers)
+    r = client.post(f"/api/items/{pid}/requests",
+                    json={"categoryPublicId": "cat-1", "quantity": 1, "justification": "Keep me"},
+                    headers=admin_headers)
+    assert r.status_code == 200 and r.json()["ok"] is False          # 422 surfaced as ok:False, not swallowed
+    op = r.json()["operationRef"]
+    state2 = _install(monkeypatch)                                   # retry with a healthy transport
+    r2 = client.post(f"/api/items/{pid}/requests/{op}/retry", json={}, headers=admin_headers)
+    assert r2.status_code == 200
+    assert _last_request_body(state2)["description"] == "Keep me"    # rebuilt from the stash
