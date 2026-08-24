@@ -2225,7 +2225,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.10.4';
+const APP_VERSION = '6.10.5';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -4343,7 +4343,7 @@ function render(){
       const _grpLbl = (groupBy==='status')   ? _groupBadge('status', g.label)
                     : (groupBy==='priority') ? _groupBadge('priority', g._priorityVal)
                     : esc(g.label);
-      lRows += `<div class="left-row grp" data-group="${escA(g.label)}"><span class="grp-lbl">${_grpLbl}</span>${grpLabelExtra}<span class="grp-cnt">${g.items.length}</span><span class="grp-tog">${coll?'▶':'▼'}</span></div>`;
+      lRows += `<div class="left-row grp" data-group="${escA(g.label)}"><span class="grp-lbl">${_grpLbl}</span>${grpLabelExtra}<span class="grp-cnt">${g.items.length}</span><span class="grp-tog">${_caretSvg(coll)}</span></div>`;
       cH += `<div class="chart-row grp" style="width:${totalPx}px;overflow:hidden">${wCells}${grpChartExtra}</div>`;
       rowIndex++;
     }
@@ -4437,7 +4437,7 @@ function render(){
         }
 
         const caretBtn = hasChildren
-          ? `<button class="caret-btn" data-parent="${p.id}" title="${parentCollapsed?'Expand':'Collapse'} children">${parentCollapsed?'▶':'▼'}</button>`
+          ? `<button class="caret-btn" data-parent="${p.id}" title="${parentCollapsed?'Expand':'Collapse'} children">${_caretSvg(parentCollapsed)}</button>`
           : '';
 
         const conflictIcon = _conflictingIds.has(p.id)
@@ -4679,8 +4679,16 @@ function render(){
   // when the mouse is over the project name column
   leftPanel.addEventListener('wheel', e => {
     e.preventDefault();
-    chartWrap.scrollTop  += e.deltaY;
-    chartWrap.scrollLeft += e.deltaX;
+    // SCROLL-CARET-1: normalise deltaMode so the gesture over the left column feels the SAME as over the
+    // chart, on any device. A wheel delta is in pixels (mode 0), lines (mode 1) or pages (mode 2). Mode 1
+    // -> multiply by the scroller's computed line-height (browsers report ~1-3 lines per notch, so a raw
+    // "+=3" barely moved); "normal"/unparseable line-height falls back to 16px (the app's ~1rem base line).
+    // Mode 2 -> multiply by the scroller's client dimension. Then scrollBy, so the browser applies its own
+    // (momentum-aware) scrolling exactly like the chart area does.
+    let unitY = 1, unitX = 1;
+    if(e.deltaMode === 1){ const lh = parseFloat(getComputedStyle(chartWrap).lineHeight); const line = (lh && !isNaN(lh)) ? lh : 16; unitY = line; unitX = line; }
+    else if(e.deltaMode === 2){ unitY = chartWrap.clientHeight; unitX = chartWrap.clientWidth; }
+    chartWrap.scrollBy({ top: e.deltaY * unitY, left: e.deltaX * unitX });
   }, { passive: false });
 
   syncLeftScroll();
@@ -10762,6 +10770,18 @@ function _frzSprintLabel(id){
 // unit (label + sort key + cell renderer) so its behavior travels when reordered. The
 // multi-select checkbox column is pinned at position 0 and is NOT part of this model.
 const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','reporter','points','sprint','project','created'];   // UI-POLISH-1: +reporter, +created (both default hidden via _optin2)
+// SCROLL-CARET-1: one shared caret asset for every expand/collapse indicator (replaces the ▶/▾/▼ text
+// glyphs, which Unicode ships at different sizes). Reuses the IC.caret glyph - the same path + the (now
+// mode-safe) .frz-chip-caret class. 12px SVG; the caller keeps its own fixed-width box, so collapsed and
+// expanded can never differ in size. Rotated -90deg when collapsed, 0 when expanded (STATIC, no animation,
+// so prefers-reduced-motion is moot). `inherit` overrides the muted stroke with currentColor - for the
+// status/priority edit-caret, which sits inside a coloured pill and must match it (not a chevron; no rotation).
+function _caretSvg(collapsed, inherit){
+  return '<svg class="frz-chip-caret" viewBox="0 0 12 12" style="vertical-align:middle;'
+    + (collapsed ? 'transform:rotate(-90deg);' : '')
+    + (inherit ? 'stroke:currentColor;' : '')
+    + '"><path d="M3 4.5l3 3 3-3"/></svg>';
+}
 // LIST-VISUAL-1: assignee avatar (a coloured initials disc - a distinct SHAPE, not just another hue, so it
 // never converges with the status pill / project dot). Narrower than a name, which helps the overflowing
 // table. Unassigned -> a dashed outline circle (deliberate empty, never a blank cell or broken image). Sort
@@ -10942,7 +10962,7 @@ function _listRowHtml(it, depth){
   const tree = _listState.tree;
   const hasKids = tree && (it._childCount||0) > 0;
   const chevron = tree
-    ? `<span class="list-chevron" data-id="${it.id}" style="display:inline-block;width:14px;text-align:center;cursor:${hasKids?'pointer':'default'};color:var(--muted)">${hasKids?'▶':''}</span> `
+    ? `<span class="list-chevron" data-id="${it.id}" style="display:inline-block;width:14px;text-align:center;cursor:${hasKids?'pointer':'default'};color:var(--muted)">${hasKids?_caretSvg(true):''}</span> `
     : '';
   const firstPad = `padding:7px 10px;padding-left:${10 + (tree ? depth*18 : 0)}px`;
   const cb = (isAdmin||isEditor)
@@ -10994,14 +11014,14 @@ async function _listToggleExpand(tr){
     let n = tr.nextElementSibling;
     while(n && parseInt(n.dataset.depth||'-1') > depth){ const nx = n.nextElementSibling; n.remove(); n = nx; }
     tr.dataset.expanded = '0';
-    if(chev) chev.textContent = '▶';
+    if(chev) chev.innerHTML = _caretSvg(true);   // SCROLL-CARET-1: shared SVG caret (collapsed)
     _listSyncHScroll();   // VISUAL-1: rows removed -> re-measure width (a removed wide row can narrow the table)
     return;
   }
-  if(chev) chev.textContent = '▼';   // GANTT-GROUP-1: matched pair ▶/▼ (was ▾ U+25BE, a smaller glyph than ▶)
+  if(chev) chev.innerHTML = _caretSvg(false);   // SCROLL-CARET-1: expanded
   let data;
   try { data = await API.get(`/api/items?parent_id=${id}&counts=1&page_size=500&sort=id:asc`); }
-  catch(e){ if(chev) chev.textContent = '▶'; return; }
+  catch(e){ if(chev) chev.innerHTML = _caretSvg(true); return; }
   const rows = (data.items||[]).map(it => _listRowHtml(it, depth+1)).join('');
   if(rows) tr.insertAdjacentHTML('afterend', rows);
   tr.dataset.expanded = '1';
@@ -11094,7 +11114,7 @@ function _listOrderGroups(field, groups){
 function _listGroupHeaderHtml(field, g, isColl, colspan){
   return `<tr class="list-grouphd" data-field="${escA(field)}" data-gv="${escA(g.value===null?'':String(g.value))}" data-null="${g.value===null?1:0}" data-coll="${isColl?1:0}" style="cursor:pointer">`
     + `<td colspan="${colspan}" style="padding:9px 10px;border-top:2px solid var(--row-sep);background:var(--surface);font-size:12px">`
-    +   `<span class="list-gchev" style="display:inline-block;width:14px;text-align:center;color:var(--muted)">${isColl?'▶':'▼'}</span> `
+    +   `<span class="list-gchev" style="display:inline-block;width:14px;text-align:center;color:var(--muted)">${_caretSvg(isColl)}</span> `
     +   _listGroupLabel(field, g.value)
     +   ` <span style="color:var(--muted);font-weight:600;margin-left:4px">${g.count}</span>`
     + `</td></tr>`;
@@ -11169,11 +11189,11 @@ function _listToggleGroup(ghd){
   const chev = ghd.querySelector('.list-gchev');
   if(ghd.getAttribute('data-coll')==='1'){                 // expand
     coll.delete(id); _listSaveGroupCollapsed(coll);
-    ghd.setAttribute('data-coll','0'); if(chev) chev.textContent='▼';   // GANTT-GROUP-1: matched ▶/▼
+    ghd.setAttribute('data-coll','0'); if(chev) chev.innerHTML=_caretSvg(false);   // SCROLL-CARET-1: expanded
     _listLoadGroupRows(ghd, field, value, 1);
   } else {                                                 // collapse: remove this group's rows
     coll.add(id); _listSaveGroupCollapsed(coll);
-    ghd.setAttribute('data-coll','1'); if(chev) chev.textContent='▶';
+    ghd.setAttribute('data-coll','1'); if(chev) chev.innerHTML=_caretSvg(true);   // SCROLL-CARET-1: collapsed
     let n = ghd.nextElementSibling;
     while(n && !n.classList.contains('list-grouphd')){ const nx = n.nextElementSibling; n.remove(); n = nx; }
     _listSyncHScroll();   // VISUAL-1: group collapsed -> re-measure width + visibility
@@ -18390,7 +18410,10 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-chip.is-active { background:var(--frz-accent-soft); border-color:var(--frz-accent-soft-border); }
   .frz-beta .frz-chip.is-active .frz-chip-value { color:var(--frz-accent); }
   .frz-beta .frz-chip-clear { width:14px; height:14px; border-radius:50%; display:grid; place-items:center; background:var(--frz-accent); color:#fff; font-size:10px; font-weight:700; border:0; cursor:pointer; padding:0; }
-  .frz-beta .frz-chip-caret { width:12px; height:12px; stroke:var(--frz-text-muted); stroke-width:2; fill:none; }
+  /* SCROLL-CARET-1: unscoped from .frz-beta and given a classic fallback token so the shared caret renders
+     in classic mode too (the Gantt + List reuse this at ?classic=1, where --frz-text-muted does not resolve
+     - the LIST-SCROLL-1 trap). Filter chips (beta-only) are visually unchanged. */
+  .frz-chip-caret { width:12px; height:12px; stroke:var(--frz-text-muted, var(--muted)); stroke-width:2; fill:none; }
   .frz-beta .frz-chip--ghost { border-style:dashed; color:var(--frz-text-muted); }
   .frz-beta .frz-chip--ghost:hover { color:var(--frz-accent); }
   .frz-beta .frz-chip--ghost svg { width:12px; height:12px; stroke-width:2; fill:none; }
@@ -23021,8 +23044,8 @@ if ('serviceWorker' in navigator) {
       if(stVal && stVal.classList.contains('ip-edit')){
         stVal.style.cssText += ';cursor:pointer';
         if(stSpan && !stSpan.querySelector('.frz-st-caret')){
-          var car=document.createElement('span'); car.className='frz-st-caret'; car.textContent='▾';
-          car.style.cssText='margin-left:6px;font-size:10px;line-height:1;opacity:.85'; stSpan.appendChild(car);   // caret inside the pill, inherits its color
+          var car=document.createElement('span'); car.className='frz-st-caret'; car.innerHTML=_caretSvg(false,true);   // SCROLL-CARET-1: shared SVG caret (static edit-affordance, inherits the pill colour via currentColor)
+          car.style.cssText='margin-left:6px;display:inline-flex;align-items:center;opacity:.85'; stSpan.appendChild(car);
         }
       }
     }
@@ -23039,8 +23062,8 @@ if ('serviceWorker' in navigator) {
       if(prVal && prVal.classList.contains('ip-edit')){
         prVal.style.cssText += ';cursor:pointer';
         if(prSpan && !prSpan.querySelector('.frz-st-caret')){
-          var pcar=document.createElement('span'); pcar.className='frz-st-caret'; pcar.textContent='▾';
-          pcar.style.cssText='margin-left:6px;font-size:10px;line-height:1;opacity:.85'; prSpan.appendChild(pcar);
+          var pcar=document.createElement('span'); pcar.className='frz-st-caret'; pcar.innerHTML=_caretSvg(false,true);   // SCROLL-CARET-1: shared SVG caret (static, inherits the pill colour)
+          pcar.style.cssText='margin-left:6px;display:inline-flex;align-items:center;opacity:.85'; prSpan.appendChild(pcar);
         }
       }
     }
