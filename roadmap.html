@@ -1188,7 +1188,6 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   </div>
   <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px">
     <button id="listTreeToggle" title="Toggle hierarchy (parent → children)" style="padding:6px 12px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">☰ Tree: Off</button>
-    <select id="listGroupBy" title="Group the list by a field" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"><option value="">Group: None</option><option value="status">Group: Status</option><option value="assignee">Group: Assignee</option><option value="priority">Group: Priority</option><option value="product">Group: Project</option><option value="owner">Group: Owner</option><option value="type">Group: Type</option></select>
     <select id="listPageSize" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"><option value="25">25 / page</option><option value="50" selected>50 / page</option><option value="100">100 / page</option></select>
     <div id="listPager" style="display:flex;gap:10px;align-items:center;justify-content:center;flex:1"></div>
     <span id="listCount" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
@@ -2218,7 +2217,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.10.0';
+const APP_VERSION = '6.10.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -10898,11 +10897,7 @@ function _listRowHtml(it, depth){
 }
 
 async function renderList(){
-  if(!_listGroupInited){   // LIST-GROUPBY-1: one-time hydrate of the group pref + the select
-    _listGroupInited = true;
-    _listState.group = _listGroupPref();
-    const gs = document.getElementById('listGroupBy'); if(gs) gs.value = _listState.group;
-  }
+  if(!_listGroupInited){ _listGroupInited = true; _listState.group = _listGroupPref(); }   // LIST-GROUPBY-1: hydrate the group pref once (control lives in the filter row - GROUPBY-2)
   if(_listState.group){ return _renderListGrouped(); }   // grouped path; ungrouped falls through unchanged
   const tree = _listState.tree;
   const body = document.getElementById('listBody');
@@ -10983,7 +10978,11 @@ function _listGroupLabel(field, value){
       field==='assignee' ? 'Unassigned' : field==='owner' ? 'No owner' : field==='priority' ? 'No priority'
       : field==='product' ? 'No project' : field==='type' ? 'No type' : field==='status' ? 'No status' : 'None') + '</span>';
   }
-  if(field==='status') return `<span class="${statusCls(value)}" style="padding:2px 8px">${esc(value)}</span>`;
+  // GROUPBY-2: match the ROW status badge's inline style EXACTLY (line ~10757). The .s-* class carries
+  // color only - radius/size/weight are inline on the row, so the header must repeat them or it renders
+  // square. (This was the group header's square badge - not a POLISH-2 override; the notification-panel
+  // border-radius:0 rules do not reach .s-* badges.)
+  if(field==='status') return `<span class="${statusCls(value)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(value)}</span>`;
   if(field==='priority'){
     const c = (typeof PRIO_COLORS!=='undefined' && PRIO_COLORS[value]) || 'var(--muted)';
     const lbl = (typeof PRIO_LABELS!=='undefined' && PRIO_LABELS[value]) || value;
@@ -10998,9 +10997,19 @@ function _listOrderGroups(field, groups){
   const real = groups.filter(g => g.value!==null && g.value!=='');
   const none = groups.filter(g => g.value===null || g.value==='');
   if(field==='status'){
+    // GROUPBY-2: order by LIFECYCLE BAND, then config order within a band. Config order is a workflow
+    // order (the parking lot leads) - wrong for a grouped list, where live work should lead and the
+    // terminal bulk (Released/Done) should sink. Bands come from the existing per-team flag maps: no
+    // hardcoded status names, no new config. Assignment precedence reserved > terminal > off-flow >
+    // active > other resolves a status flagged in more than one band (an active+off-flow status parks
+    // with the off-flow band). DISPLAY order = band number ascending: active, other-on-flow, off-flow,
+    // terminal, reserved. Reserved (Duplicate/Transferred) also fall last by being absent from `statuses`;
+    // the band makes that DELIBERATE, not incidental.
     const order = (typeof statuses!=='undefined' && statuses) ? statuses : [];
-    const rank = v => { const i = order.indexOf(v); return i<0 ? 9999 : i; };
-    real.sort((a,b)=> rank(a.value)-rank(b.value) || String(a.value).localeCompare(String(b.value)));
+    const band = s => RESERVED_TERMINAL_STATUSES.has(s) ? 5
+                    : (statusIsTerminal[s] ? 4 : (statusIsOffFlow[s] ? 3 : (statusIsActive[s] ? 1 : 2)));
+    const cfg = s => { const i = order.indexOf(s); return i < 0 ? 9999 : i; };
+    real.sort((a,b)=> band(a.value)-band(b.value) || cfg(a.value)-cfg(b.value) || String(a.value).localeCompare(String(b.value)));
   } else if(field==='priority'){
     real.sort((a,b)=> (parseInt(a.value)||99) - (parseInt(b.value)||99));
   } else {
@@ -11187,12 +11196,16 @@ document.getElementById('listTreeToggle')?.addEventListener('click', ()=>{
   }
   renderList();
 });
-document.getElementById('listGroupBy')?.addEventListener('change', (e)=>{   // LIST-GROUPBY-1
-  _listState.group = e.target.value || '';
+// GROUPBY-2: the group control moved into the beta filter row (a frz-viewopt button + picker, matching
+// Columns/Export). Behaviour, options and persistence are unchanged - only the control's home + shape.
+// These two are the cross-block bridge the beta picker drives (via _call); ungrouped List still uses them.
+function _listSetGroup(v){
+  _listState.group = v || '';
   _listSetGroupPref(_listState.group);
   _listState.page = 1;
   renderList();
-});
+}
+function _listGetGroup(){ return _listState.group || ''; }
 
 // ── Bulk actions (Phase 1d-ii) ──
 function updateBulkBar(){
@@ -19452,7 +19465,7 @@ if ('serviceWorker' in navigator) {
   var CFG = {
     gantt:    { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['groupby','legend','capacity'] },   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
     kanban:   { chips:['owner','assignee','type','status'], extra:['sprint','priority','dept'], opts:['flagged','hideEmpty'] },   // FN5: +Flagged toggle
-    list:     { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['flagged','columns','export'] },     // FN5: +Flagged toggle
+    list:     { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['listgroup','flagged','columns','export'] },     // FN5: +Flagged toggle; GROUPBY-2: +Group by (leftmost, discoverable)
     planning: { chips:['owner','status'],                   extra:['type','assignee','priority','dept'], opts:['whatif'] },   // What-if (Phase 0)
     dashboard:{ chips:['owner','range'],                    extra:[], opts:[] },
     'my-home':{ chips:[],                                   extra:[], opts:[] },  // Stage 5: personal landing, no chips
@@ -20574,11 +20587,13 @@ if ('serviceWorker' in navigator) {
     var map = {
       groupby:'Group by', legend:'Legend', capacity:'Capacity', whatif:'Scenario',   // Phase 1c: renamed display "What-if" -> "Scenario" (opt id stays 'whatif')
       hideEmpty:'Hide empty columns', columns:'Columns', export:'Export', newSession:'New session', history:'History',
-      flagged:'Flagged'   // FN5: show only items with an unresolved flag (At Risk / Blocked / Needs Decision). NOT the SLA at-risk state.
+      flagged:'Flagged',   // FN5: show only items with an unresolved flag (At Risk / Blocked / Needs Decision). NOT the SLA at-risk state.
+      listgroup:'Group by'   // GROUPBY-2: List grouping (its own control; independent of the Gantt 'groupby')
     };
     var label = map[o]||o;
     if (o==='groupby'){ var gb=document.getElementById('groupBy'); var cur=gb?(gb.options[gb.selectedIndex]||{}).text:'Owner'; label='Group by: '+(cur||'Owner'); }
-    var activeStyle = (o==='hideEmpty' && _betaHideEmpty) || (o==='flagged' && _betaFlagged) || (o==='whatif' && _val('_scenarioActive',false))
+    if (o==='listgroup'){ var lg=_call('_listGetGroup')||''; label='Group by'+(lg?': '+(_FRZ_GROUP_LABELS[lg]||lg):''); }
+    var activeStyle = (o==='hideEmpty' && _betaHideEmpty) || (o==='flagged' && _betaFlagged) || (o==='whatif' && _val('_scenarioActive',false)) || (o==='listgroup' && _call('_listGetGroup'))
       ? ' style="border-color:var(--frz-accent);color:var(--frz-accent);background:var(--frz-accent-soft)"' : '';
     // Phase 1c: decision-tree glyph + explanatory tooltip on the Scenario button only.
     var titleAttr = (o==='whatif') ? ' title="Model plan changes without saving - see who\'s over-committed, then commit or discard."' : '';
@@ -24062,6 +24077,25 @@ if ('serviceWorker' in navigator) {
     }
     if (o==='columns'){ openListColsPop(anchor); return; }
     if (o==='export'){ openExportMenu(anchor); return; }
+    if (o==='listgroup'){ openListGroupPop(anchor); return; }   // GROUPBY-2
+  }
+  // GROUPBY-2: List "Group by" picker - a frz-viewopt button + popover, matching Columns/Export and the
+  // Gantt's groupByMenu. Independent of the Gantt's #groupBy (different element, different options).
+  // Drives the classic List's grouping via the cross-block bridge (_listSetGroup); options + persistence
+  // are LIST-GROUPBY-1's, unchanged - only the control's home + shape changed from the pager <select>.
+  var _FRZ_GROUP_LABELS = { '':'None', status:'Status', assignee:'Assignee', priority:'Priority', product:'Project', owner:'Owner', type:'Type' };
+  var _FRZ_GROUP_ORDER = ['', 'status', 'assignee', 'priority', 'product', 'owner', 'type'];
+  function openListGroupPop(anchor){
+    var cur = _call('_listGetGroup') || '';
+    openPop(anchor, function(pop){
+      _FRZ_GROUP_ORDER.forEach(function(v){
+        var b=document.createElement('button'); b.className='frz-pop-opt';
+        b.textContent='Group by: '+_FRZ_GROUP_LABELS[v];
+        if(v===cur){ b.style.color='var(--frz-accent)'; b.style.fontWeight='700'; }
+        b.addEventListener('click', function(){ _call('_listSetGroup', v); closePop(); renderBar(); });
+        pop.appendChild(b);
+      });
+    });
   }
   // List column show/hide - toggled via a generated <style> using positional
   // nth-child, so it needs NO edits to the production table markup. Per-user persisted.
