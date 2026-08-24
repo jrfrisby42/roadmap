@@ -834,6 +834,8 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       <option value="assignee">Assignee</option>
       <option value="status">Status</option>
       <option value="priority">Priority</option>
+      <option value="product">Project</option>
+      <option value="type">Type</option>
       <option value="none">None</option>
     </select>
     <span class="ctrl-lbl">Project</span>
@@ -2223,7 +2225,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.10.3';
+const APP_VERSION = '6.10.4';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -4241,6 +4243,8 @@ function render(){
       let k;
       if(groupBy==='developer')      k = p.dev || 'Unassigned';
       else if(groupBy==='assignee')  k = p.assignee ? displayName(p.assignee) : 'Unassigned';
+      else if(groupBy==='product')   k = p.product || 'No project';   // GANTT-GROUP-1: align with the List
+      else if(groupBy==='type')      k = p.type || 'No type';         // GANTT-GROUP-1
       else                           k = p.status || 'Unknown';
       (map[k]=map[k]||[]).push(p);
     });
@@ -4260,8 +4264,29 @@ function render(){
         if(b.label==='Unassigned') return -1;
         return a.label.localeCompare(b.label);  // otherwise alphabetical by display name
       });
-    } else {
+    } else if(groupBy==='product' || groupBy==='type'){
+      // GANTT-GROUP-1: config order (like Owner), unset bucket ("No project"/"No type") last. Config entries
+      // may be OBJECTS ({name,color}) or bare strings (see projectColor), so match by (x.name||x), not indexOf.
+      const cfg = (groupBy==='product') ? (products||[]) : (types||[]);
+      const unset = (groupBy==='product') ? 'No project' : 'No type';
+      const cfgIdx = lbl => cfg.findIndex(x => ((x && x.name) || x) === lbl);
       groups = Object.entries(map).map(([label,items])=>({label,items:sortByStart(items)}));
+      groups.sort((a,b)=>{
+        if(a.label===unset) return 1; if(b.label===unset) return -1;
+        const ai=cfgIdx(a.label), bi=cfgIdx(b.label);
+        return (ai<0?9999:ai)-(bi<0?9999:bi) || a.label.localeCompare(b.label);
+      });
+    } else {
+      // GANTT-GROUP-1: status by LIFECYCLE BAND (shared _statusBand), then `statuses` config order within a
+      // band - the SAME order the List produces. "Unknown" (no status) sorts last. Was previously unsorted.
+      const order = (typeof statuses!=='undefined' && statuses) ? statuses : [];
+      groups = Object.entries(map).map(([label,items])=>({label,items:sortByStart(items)}));
+      groups.sort((a,b)=>{
+        const au=(a.label==='Unknown'), bu=(b.label==='Unknown');
+        if(au!==bu) return au?1:-1;   // Unknown (no status) last
+        const cfgA=order.indexOf(a.label), cfgB=order.indexOf(b.label);
+        return _statusBand(a.label)-_statusBand(b.label) || (cfgA<0?9999:cfgA)-(cfgB<0?9999:cfgB) || a.label.localeCompare(b.label);
+      });
     }
   }
 
@@ -4312,7 +4337,13 @@ function render(){
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="flex-shrink:0"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>cap (${capacityMode[owner]==='derived' ? getBaseCapacity(owner) : (ownerCapacity[owner] || '-')})</span>`;
       }
 
-      lRows += `<div class="left-row grp" data-group="${escA(g.label)}"><span class="grp-lbl">${esc(g.label)}</span>${grpLabelExtra}<span class="grp-cnt">${g.items.length}</span><span class="grp-tog">${coll?'▶':'▼'}</span></div>`;
+      // GANTT-GROUP-1: status/priority headers render the SHARED pill badge (same as the List + the rows);
+      // owner/assignee/project/type stay plain accent text. Priority needs the CODE (g._priorityVal), not the
+      // display label. Chevron is left as the Gantt's existing matched ▶/▼ pair (the List's ▶/▾ was the mismatch).
+      const _grpLbl = (groupBy==='status')   ? _groupBadge('status', g.label)
+                    : (groupBy==='priority') ? _groupBadge('priority', g._priorityVal)
+                    : esc(g.label);
+      lRows += `<div class="left-row grp" data-group="${escA(g.label)}"><span class="grp-lbl">${_grpLbl}</span>${grpLabelExtra}<span class="grp-cnt">${g.items.length}</span><span class="grp-tog">${coll?'▶':'▼'}</span></div>`;
       cH += `<div class="chart-row grp" style="width:${totalPx}px;overflow:hidden">${wCells}${grpChartExtra}</div>`;
       rowIndex++;
     }
@@ -10967,7 +10998,7 @@ async function _listToggleExpand(tr){
     _listSyncHScroll();   // VISUAL-1: rows removed -> re-measure width (a removed wide row can narrow the table)
     return;
   }
-  if(chev) chev.textContent = '▾';
+  if(chev) chev.textContent = '▼';   // GANTT-GROUP-1: matched pair ▶/▼ (was ▾ U+25BE, a smaller glyph than ▶)
   let data;
   try { data = await API.get(`/api/items?parent_id=${id}&counts=1&page_size=500&sort=id:asc`); }
   catch(e){ if(chev) chev.textContent = '▶'; return; }
@@ -11003,22 +11034,35 @@ function _listSaveGroupCollapsed(set){ try { localStorage.setItem('frazil_beta_l
 function _groupCollId(field, value){ return field + ':' + (value===null ? ' none' : value); }
 
 // Label for a group header. null = the unset bucket. Reuses the production status/priority badges.
-function _listGroupLabel(field, value){
-  if(value===null || value===''){
-    return '<span style="color:var(--muted)">' + esc(
-      field==='assignee' ? 'Unassigned' : field==='owner' ? 'No owner' : field==='priority' ? 'No priority'
-      : field==='product' ? 'No project' : field==='type' ? 'No type' : field==='status' ? 'No status' : 'None') + '</span>';
-  }
-  // GROUPBY-2: match the ROW status badge's inline style EXACTLY (line ~10757). The .s-* class carries
-  // color only - radius/size/weight are inline on the row, so the header must repeat them or it renders
-  // square. (This was the group header's square badge - not a POLISH-2 override; the notification-panel
-  // border-radius:0 rules do not reach .s-* badges.)
+// GANTT-GROUP-1: shared by the List AND the Gantt (do not duplicate - two copies would diverge the first
+// time a status flag changes, silently). Lifecycle band for a status: assignment precedence reserved >
+// terminal > off-flow > active > other, sourced from the per-team flag maps - NO hardcoded status names.
+// Display bands ascending: active(1), other-on-flow(2), off-flow/parked(3), terminal(4), reserved(5).
+function _statusBand(s){
+  return RESERVED_TERMINAL_STATUSES.has(s) ? 5
+       : (statusIsTerminal[s] ? 4 : (statusIsOffFlow[s] ? 3 : (statusIsActive[s] ? 1 : 2)));
+}
+// GANTT-GROUP-1: shared group-header badge for status / priority (the SAME pill the List rows and headers
+// use). Returns '' for the fields that stay plain text (owner/assignee/project/type) so the caller renders
+// those itself. value is the raw status name / priority CODE (not a display label).
+function _groupBadge(field, value){
   if(field==='status') return `<span class="${statusCls(value)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(value)}</span>`;
   if(field==='priority'){
     const c = (typeof PRIO_COLORS!=='undefined' && PRIO_COLORS[value]) || 'var(--muted)';
     const lbl = (typeof PRIO_LABELS!=='undefined' && PRIO_LABELS[value]) || value;
     return `<span style="background:${c}22;color:${c};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(lbl)}</span>`;
   }
+  return '';
+}
+function _listGroupLabel(field, value){
+  if(value===null || value===''){
+    return '<span style="color:var(--muted)">' + esc(
+      field==='assignee' ? 'Unassigned' : field==='owner' ? 'No owner' : field==='priority' ? 'No priority'
+      : field==='product' ? 'No project' : field==='type' ? 'No type' : field==='status' ? 'No status' : 'None') + '</span>';
+  }
+  // GANTT-GROUP-1: status/priority pills now come from the shared _groupBadge (byte-identical to the prior
+  // inline markup - the .s-* class carries colour only, radius/size/weight are inline, matching the rows).
+  if(field==='status' || field==='priority') return _groupBadge(field, value);
   if(field==='assignee') return esc(displayName(value));
   return esc(String(value));
 }
@@ -11037,10 +11081,8 @@ function _listOrderGroups(field, groups){
     // terminal, reserved. Reserved (Duplicate/Transferred) also fall last by being absent from `statuses`;
     // the band makes that DELIBERATE, not incidental.
     const order = (typeof statuses!=='undefined' && statuses) ? statuses : [];
-    const band = s => RESERVED_TERMINAL_STATUSES.has(s) ? 5
-                    : (statusIsTerminal[s] ? 4 : (statusIsOffFlow[s] ? 3 : (statusIsActive[s] ? 1 : 2)));
-    const cfg = s => { const i = order.indexOf(s); return i < 0 ? 9999 : i; };
-    real.sort((a,b)=> band(a.value)-band(b.value) || cfg(a.value)-cfg(b.value) || String(a.value).localeCompare(String(b.value)));
+    const cfg = s => { const i = order.indexOf(s); return i < 0 ? 9999 : i; };   // GANTT-GROUP-1: band via shared _statusBand
+    real.sort((a,b)=> _statusBand(a.value)-_statusBand(b.value) || cfg(a.value)-cfg(b.value) || String(a.value).localeCompare(String(b.value)));
   } else if(field==='priority'){
     real.sort((a,b)=> (parseInt(a.value)||99) - (parseInt(b.value)||99));
   } else {
@@ -11052,7 +11094,7 @@ function _listOrderGroups(field, groups){
 function _listGroupHeaderHtml(field, g, isColl, colspan){
   return `<tr class="list-grouphd" data-field="${escA(field)}" data-gv="${escA(g.value===null?'':String(g.value))}" data-null="${g.value===null?1:0}" data-coll="${isColl?1:0}" style="cursor:pointer">`
     + `<td colspan="${colspan}" style="padding:9px 10px;border-top:2px solid var(--row-sep);background:var(--surface);font-size:12px">`
-    +   `<span class="list-gchev" style="display:inline-block;width:14px;text-align:center;color:var(--muted)">${isColl?'▶':'▾'}</span> `
+    +   `<span class="list-gchev" style="display:inline-block;width:14px;text-align:center;color:var(--muted)">${isColl?'▶':'▼'}</span> `
     +   _listGroupLabel(field, g.value)
     +   ` <span style="color:var(--muted);font-weight:600;margin-left:4px">${g.count}</span>`
     + `</td></tr>`;
@@ -11127,7 +11169,7 @@ function _listToggleGroup(ghd){
   const chev = ghd.querySelector('.list-gchev');
   if(ghd.getAttribute('data-coll')==='1'){                 // expand
     coll.delete(id); _listSaveGroupCollapsed(coll);
-    ghd.setAttribute('data-coll','0'); if(chev) chev.textContent='▾';
+    ghd.setAttribute('data-coll','0'); if(chev) chev.textContent='▼';   // GANTT-GROUP-1: matched ▶/▼
     _listLoadGroupRows(ghd, field, value, 1);
   } else {                                                 // collapse: remove this group's rows
     coll.add(id); _listSaveGroupCollapsed(coll);
@@ -23902,9 +23944,17 @@ if ('serviceWorker' in navigator) {
   }
   function groupByMenu(anchor){
     var gb=document.getElementById('groupBy'); if(!gb) return;
+    var cur=gb.value;
     openPop(anchor, function(pop){
       [].slice.call(gb.options).forEach(function(o){
-        var b=document.createElement('button'); b.className='frz-pop-opt'; b.textContent='Group by: '+o.text;
+        var b=document.createElement('button'); b.className='frz-pop-opt';
+        var sel=(o.value===cur);
+        // GANTT-GROUP-1: bare labels (the trigger keeps its "Group by: X" prefix) + LIST-VISUAL-1 selected
+        // treatment - a leading check on the active option, an aligned blank slot on the rest, bold on the
+        // selected one only (the global .frz-pop-opt weight is already 400).
+        var mark='<span style="display:inline-block;width:14px;flex-shrink:0;text-align:center;color:var(--frz-accent)">'+(sel?'✓':'')+'</span>';
+        b.innerHTML=mark+'<span>'+esc(o.text)+'</span>';
+        if(sel){ b.style.color='var(--frz-accent)'; b.style.fontWeight='700'; }
         b.addEventListener('click', function(){ gb.value=o.value; gb.dispatchEvent(new Event('change')); closePop(); renderBar(); reflow(); });
         pop.appendChild(b);
       });
