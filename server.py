@@ -1558,7 +1558,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.9.6"
+APP_VERSION = "6.10.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -4542,6 +4542,12 @@ _ITEMS_SORTABLE = {"updated_ts", "item_key", "status", "type", "product",
                    "owner", "assignee", "priority", "story_points", "sprint_id", "id",
                    "reporter"}   # UI-POLISH-1: reporter is an indexed column; add it so the List Reporter column sorts
 
+# LIST-GROUPBY-1: fields the List may group by -> their INDEXED column. Whitelisted (never
+# interpolated from raw input). Each key is also a filter param eq() accepts, so a group's rows
+# load by re-querying /api/items with <key>=<value> (or __none__ for the unset bucket).
+_GROUP_COLS = {"status": "status", "assignee": "assignee", "priority": "priority",
+               "product": "product", "owner": "owner", "type": "type"}
+
 # ── FN5: the FLAGGED predicate, single source ──────────────────────────────────────────────────────
 # An item is "flagged" iff it has an activity of a user-raisable FLAG_TYPE whose status is NOT terminal
 # (unresolved). Defined by EXCLUSION of terminal states, not by enumerating Open/Read, so a new
@@ -4597,6 +4603,7 @@ def list_items(
     page: int = 1,
     page_size: int = 50,
     counts: Optional[str] = None,
+    group_by: Optional[str] = None,
 ):
     """Server-side query/search/paginate over the indexed item columns
     (JIRA-REPLACEMENT.md §3.2). Returns a page of full item blobs + total count.
@@ -4610,13 +4617,23 @@ def list_items(
     def eq(col, val):
         # A value may be a single term or a comma-separated list (multi-select
         # filters from the top bar). Single → `col=?`; multiple → `col IN (...)`.
-        if val is not None and val != "":
-            vals = [v for v in val.split(",") if v != ""]
-            if len(vals) == 1:
-                where.append(f"{col}=?"); params.append(vals[0])
-            elif len(vals) > 1:
-                where.append(f"{col} IN ({','.join('?' * len(vals))})")
-                params.extend(vals)
+        # LIST-GROUPBY-1: a `__none__` member means "this field is unset" (NULL or '') so the
+        # grouped List can load the unset bucket's rows; it combines with real values via OR.
+        # `col` is always a literal we pass (never raw input), so the interpolation is safe.
+        if val is None or val == "":
+            return
+        vals = [v for v in val.split(",") if v != ""]
+        want_none = "__none__" in vals
+        reals = [v for v in vals if v != "__none__"]
+        clauses = []
+        if len(reals) == 1:
+            clauses.append(f"{col}=?"); params.append(reals[0])
+        elif len(reals) > 1:
+            clauses.append(f"{col} IN ({','.join('?' * len(reals))})"); params.extend(reals)
+        if want_none:
+            clauses.append(f"({col} IS NULL OR {col}='')")
+        if clauses:
+            where.append("(" + " OR ".join(clauses) + ")")
     eq("product", product)
     eq("type", type)
     eq("status", status)
@@ -4748,6 +4765,20 @@ def list_items(
             order = "bm25(projects_fts), projects.id DESC"
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     with db(team) as c:
+        # LIST-GROUPBY-1: group-count mode. One aggregate over the SAME where (so it respects every
+        # active filter, the contributor scope, parent_id and archived exactly like the row query -
+        # counts can never disagree with the rows a group will show). Returns present values + counts;
+        # no item page. NULL/'' comes back as its own {value:null} = the unset bucket.
+        if group_by:
+            gcol = _GROUP_COLS.get(group_by)
+            if not gcol:
+                raise HTTPException(400, "Invalid group_by")
+            grows = c.execute(
+                f"SELECT {gcol} AS gv, COUNT(*) AS n FROM projects {join} {where_sql} GROUP BY {gcol}",
+                params).fetchall()
+            groups = [{"value": (r["gv"] if r["gv"] not in (None, "") else None), "count": r["n"]}
+                      for r in grows]
+            return {"groups": groups, "total": sum(g["count"] for g in groups)}
         total = c.execute(f"SELECT COUNT(*) FROM projects {join} {where_sql}", params).fetchone()[0]
         rows = c.execute(
             f"SELECT projects.id AS id, projects.data AS data FROM projects {join} {where_sql} "

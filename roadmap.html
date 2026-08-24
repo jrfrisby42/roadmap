@@ -1188,6 +1188,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   </div>
   <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px">
     <button id="listTreeToggle" title="Toggle hierarchy (parent → children)" style="padding:6px 12px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">☰ Tree: Off</button>
+    <select id="listGroupBy" title="Group the list by a field" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"><option value="">Group: None</option><option value="status">Group: Status</option><option value="assignee">Group: Assignee</option><option value="priority">Group: Priority</option><option value="product">Group: Project</option><option value="owner">Group: Owner</option><option value="type">Group: Type</option></select>
     <select id="listPageSize" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"><option value="25">25 / page</option><option value="50" selected>50 / page</option><option value="100">100 / page</option></select>
     <div id="listPager" style="display:flex;gap:10px;align-items:center;justify-content:center;flex:1"></div>
     <span id="listCount" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
@@ -2217,7 +2218,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.9.6';
+const APP_VERSION = '6.10.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -10662,7 +10663,8 @@ document.getElementById('filterFrom')?.addEventListener('change', ()=>{ if(viewM
 document.getElementById('filterTo')?.addEventListener('change',   ()=>{ if(viewMode==='dashboard') renderDashboard(); });
 
 // ── LIST VIEW (Phase 1d-i) - server-paginated item table backed by /api/items ──
-const _listState = { page: 1, page_size: 50, tree: false, sort: '' };  // sort: '<col>:<asc|desc>' ('' = server default)
+const _listState = { page: 1, page_size: 50, tree: false, sort: '', group: '' };  // group: '' = ungrouped (LIST-GROUPBY-1); else a field name
+let _listGroupInited = false;   // one-time: hydrate _listState.group + the select from the per-user pref
 let _listSelected = new Set();
 function _listQuery(){
   const v = id => (document.getElementById(id)?.value || '').trim();
@@ -10896,6 +10898,12 @@ function _listRowHtml(it, depth){
 }
 
 async function renderList(){
+  if(!_listGroupInited){   // LIST-GROUPBY-1: one-time hydrate of the group pref + the select
+    _listGroupInited = true;
+    _listState.group = _listGroupPref();
+    const gs = document.getElementById('listGroupBy'); if(gs) gs.value = _listState.group;
+  }
+  if(_listState.group){ return _renderListGrouped(); }   // grouped path; ungrouped falls through unchanged
   const tree = _listState.tree;
   const body = document.getElementById('listBody');
   const countEl = document.getElementById('listCount');
@@ -10957,6 +10965,153 @@ function _renderListPager(data){
   document.getElementById('listNext')?.addEventListener('click', ()=>{ if(_listState.page<pages){ _listState.page++; renderList(); }});
 }
 
+// ════════ LIST-GROUPBY-1: group the List by a field ════════
+// Additive layer over renderList: fetch per-group counts (one server aggregate that respects every
+// active filter), render collapsible group headers, and lazy-load each group's rows (paginated within
+// the group) reusing _listRowHtml + /api/items. Ungrouped stays exactly as before. See flow-list-groupby-1-spec.md.
+function _listGroupUser(){ try { return localStorage.getItem('frazil_rm_user')||''; } catch(e){ return ''; } }
+function _listGroupPref(){ try { return localStorage.getItem('frazil_beta_listgroup_'+_listGroupUser())||''; } catch(e){ return ''; } }
+function _listSetGroupPref(v){ try { const k='frazil_beta_listgroup_'+_listGroupUser(); v ? localStorage.setItem(k,v) : localStorage.removeItem(k); } catch(e){} }
+function _listGroupCollapsed(){ try { return new Set(JSON.parse(localStorage.getItem('frazil_beta_listgroupcoll_'+_listGroupUser())||'[]')); } catch(e){ return new Set(); } }
+function _listSaveGroupCollapsed(set){ try { localStorage.setItem('frazil_beta_listgroupcoll_'+_listGroupUser(), JSON.stringify([...set])); } catch(e){} }
+function _groupCollId(field, value){ return field + ':' + (value===null ? ' none' : value); }
+
+// Label for a group header. null = the unset bucket. Reuses the production status/priority badges.
+function _listGroupLabel(field, value){
+  if(value===null || value===''){
+    return '<span style="color:var(--muted)">' + esc(
+      field==='assignee' ? 'Unassigned' : field==='owner' ? 'No owner' : field==='priority' ? 'No priority'
+      : field==='product' ? 'No project' : field==='type' ? 'No type' : field==='status' ? 'No status' : 'None') + '</span>';
+  }
+  if(field==='status') return `<span class="${statusCls(value)}" style="padding:2px 8px">${esc(value)}</span>`;
+  if(field==='priority'){
+    const c = (typeof PRIO_COLORS!=='undefined' && PRIO_COLORS[value]) || 'var(--muted)';
+    const lbl = (typeof PRIO_LABELS!=='undefined' && PRIO_LABELS[value]) || value;
+    return `<span style="background:${c}22;color:${c};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(lbl)}</span>`;
+  }
+  if(field==='assignee') return esc(displayName(value));
+  return esc(String(value));
+}
+
+// Deterministic header order: status by config order, priority Urgent->Low, else count desc; unset last.
+function _listOrderGroups(field, groups){
+  const real = groups.filter(g => g.value!==null && g.value!=='');
+  const none = groups.filter(g => g.value===null || g.value==='');
+  if(field==='status'){
+    const order = (typeof statuses!=='undefined' && statuses) ? statuses : [];
+    const rank = v => { const i = order.indexOf(v); return i<0 ? 9999 : i; };
+    real.sort((a,b)=> rank(a.value)-rank(b.value) || String(a.value).localeCompare(String(b.value)));
+  } else if(field==='priority'){
+    real.sort((a,b)=> (parseInt(a.value)||99) - (parseInt(b.value)||99));
+  } else {
+    real.sort((a,b)=> (b.count-a.count) || String(a.value).localeCompare(String(b.value)));
+  }
+  return real.concat(none);   // the unset bucket always last
+}
+
+function _listGroupHeaderHtml(field, g, isColl, colspan){
+  return `<tr class="list-grouphd" data-field="${escA(field)}" data-gv="${escA(g.value===null?'':String(g.value))}" data-null="${g.value===null?1:0}" data-coll="${isColl?1:0}" style="cursor:pointer">`
+    + `<td colspan="${colspan}" style="padding:9px 10px;border-top:2px solid var(--row-sep);background:var(--surface);font-size:12px">`
+    +   `<span class="list-gchev" style="display:inline-block;width:14px;text-align:center;color:var(--muted)">${isColl?'▶':'▾'}</span> `
+    +   _listGroupLabel(field, g.value)
+    +   ` <span style="color:var(--muted);font-weight:600;margin-left:4px">${g.count}</span>`
+    + `</td></tr>`;
+}
+
+// Query for ONE group's rows: current filters + sort, override the group column to this value
+// (or __none__ for the unset bucket), this group's own page. field name == the /api/items param.
+function _listGroupRowQuery(field, value, page){
+  const params = new URLSearchParams(_listQuery());
+  params.set(field, value===null ? '__none__' : value);
+  params.set('page', page);
+  params.set('page_size', _listState.page_size);
+  if(_listState.tree){ params.set('parent_id','none'); params.set('counts','1'); }
+  return params.toString();
+}
+
+async function _renderListGrouped(){
+  const field = _listState.group;
+  const body = document.getElementById('listBody');
+  const countEl = document.getElementById('listCount');
+  if(!body) return;
+  _renderListHeader();                 // model-driven columns (also snapshots the render cache)
+  const colspan = _listColCount();
+  _listSelected.clear(); updateBulkBar();
+  const pager = document.getElementById('listPager'); if(pager) pager.innerHTML = '';   // no global pager when grouped
+  body.innerHTML = `<tr><td colspan="${colspan}" style="padding:24px;text-align:center;color:var(--muted)">Loading…</td></tr>`;
+  // Step 1. per-group counts: one aggregate, respects the active filter + contributor scope + tree top-level.
+  const cq = new URLSearchParams(_listQuery());
+  cq.delete('page'); cq.delete('page_size'); cq.delete('sort');
+  cq.set('group_by', field);
+  if(_listState.tree) cq.set('parent_id','none');
+  let gdata;
+  try { gdata = await API.get('/api/items?' + cq.toString()); }
+  catch(e){ body.innerHTML = `<tr><td colspan="${colspan}" style="padding:24px;text-align:center;color:var(--accent2)">${esc(e.message||'Failed to load')}</td></tr>`; return; }
+  const groups = _listOrderGroups(field, gdata.groups || []);
+  if(countEl) countEl.textContent = `${gdata.total} item${gdata.total!==1?'s':''}`;
+  if(!groups.length){ body.innerHTML = `<tr><td colspan="${colspan}" style="padding:24px;text-align:center;color:var(--muted)">${contributorEmptyMsg() || 'No matching items.'}</td></tr>`; return; }
+  // Step 2. headers + lazy per-group rows: expanded by default; collapsed groups don't fetch until opened.
+  body.innerHTML = '';
+  const coll = _listGroupCollapsed();
+  for(const g of groups){
+    const isColl = coll.has(_groupCollId(field, g.value));
+    body.insertAdjacentHTML('beforeend', _listGroupHeaderHtml(field, g, isColl, colspan));
+    if(!isColl){ await _listLoadGroupRows(body.lastElementChild, field, g.value, 1); }
+  }
+  _updateSortIndicators();
+}
+
+// Append a group's page of rows (and a Show-more row if there are more) right after `afterEl`.
+async function _listLoadGroupRows(afterEl, field, value, page){
+  let data;
+  try { data = await API.get('/api/items?' + _listGroupRowQuery(field, value, page)); }
+  catch(e){ return; }
+  const items = data.items || [];
+  let html = items.map(it => _listRowHtml(it, 0)).join('');
+  const pages = data.pages || 1;
+  if(page < pages){
+    html += `<tr class="list-gmore" data-field="${escA(field)}" data-gv="${escA(value===null?'':String(value))}" data-null="${value===null?1:0}" data-next="${page+1}" style="cursor:pointer">`
+      + `<td colspan="99" style="padding:7px 10px 7px 34px;color:var(--accent);font-size:12px;border-top:1px solid var(--row-sep)">Show more (${data.total - page*_listState.page_size} more)</td></tr>`;
+  }
+  afterEl.insertAdjacentHTML('afterend', html);
+}
+
+// Collapse/expand a group header: toggle its persisted state and add/remove its row block.
+function _listToggleGroup(ghd){
+  const field = ghd.getAttribute('data-field');
+  const value = ghd.getAttribute('data-null')==='1' ? null : ghd.getAttribute('data-gv');
+  const coll = _listGroupCollapsed();
+  const id = _groupCollId(field, value);
+  const chev = ghd.querySelector('.list-gchev');
+  if(ghd.getAttribute('data-coll')==='1'){                 // expand
+    coll.delete(id); _listSaveGroupCollapsed(coll);
+    ghd.setAttribute('data-coll','0'); if(chev) chev.textContent='▾';
+    _listLoadGroupRows(ghd, field, value, 1);
+  } else {                                                 // collapse: remove this group's rows
+    coll.add(id); _listSaveGroupCollapsed(coll);
+    ghd.setAttribute('data-coll','1'); if(chev) chev.textContent='▶';
+    let n = ghd.nextElementSibling;
+    while(n && !n.classList.contains('list-grouphd')){ const nx = n.nextElementSibling; n.remove(); n = nx; }
+  }
+}
+
+// Show-more within a group: fetch the next page, insert before the Show-more row, then drop/advance it.
+async function _listGroupShowMore(gmore){
+  const field = gmore.getAttribute('data-field');
+  const value = gmore.getAttribute('data-null')==='1' ? null : gmore.getAttribute('data-gv');
+  const next = parseInt(gmore.getAttribute('data-next')) || 2;
+  let data;
+  try { data = await API.get('/api/items?' + _listGroupRowQuery(field, value, next)); }
+  catch(e){ return; }
+  const items = data.items || [];
+  const rows = items.map(it => _listRowHtml(it, 0)).join('');
+  gmore.insertAdjacentHTML('beforebegin', rows);
+  const pages = data.pages || 1;
+  if(next < pages){ gmore.setAttribute('data-next', next+1);
+    const cell = gmore.querySelector('td'); if(cell) cell.textContent = `Show more (${data.total - next*_listState.page_size} more)`; }
+  else { gmore.remove(); }
+}
+
 // ── List column sorting ──
 // Click a header to sort by that column; click again to flip direction.
 function _listSetSort(col){
@@ -11012,6 +11167,10 @@ document.getElementById('listPageSize')?.addEventListener('change', e=>{
 document.getElementById('listBody')?.addEventListener('click', (e)=>{
   const chev = e.target.closest('.list-chevron');
   if(chev){ e.stopPropagation(); const tr = chev.closest('tr.list-row'); if(tr) _listToggleExpand(tr); return; }
+  const gmore = e.target.closest('.list-gmore');   // LIST-GROUPBY-1: paginate within a group
+  if(gmore){ e.stopPropagation(); _listGroupShowMore(gmore); return; }
+  const ghd = e.target.closest('tr.list-grouphd');  // LIST-GROUPBY-1: collapse/expand a group
+  if(ghd){ e.stopPropagation(); _listToggleGroup(ghd); return; }
   if(e.target.closest('.list-cb-cell')) return;   // checkbox clicks don't open the item
   const row = e.target.closest('tr.list-row');
   if(row && row.dataset.id) openItemPage(parseInt(row.dataset.id));
@@ -11026,6 +11185,12 @@ document.getElementById('listTreeToggle')?.addEventListener('click', ()=>{
     btn.style.background = _listState.tree ? 'var(--accent)' : 'var(--surface)';
     btn.style.color = _listState.tree ? '#fff' : 'var(--text)';
   }
+  renderList();
+});
+document.getElementById('listGroupBy')?.addEventListener('change', (e)=>{   // LIST-GROUPBY-1
+  _listState.group = e.target.value || '';
+  _listSetGroupPref(_listState.group);
+  _listState.page = 1;
   renderList();
 });
 
