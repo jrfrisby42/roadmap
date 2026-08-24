@@ -2223,7 +2223,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.10.2';
+const APP_VERSION = '6.10.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -10731,6 +10731,26 @@ function _frzSprintLabel(id){
 // unit (label + sort key + cell renderer) so its behavior travels when reordered. The
 // multi-select checkbox column is pinned at position 0 and is NOT part of this model.
 const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','reporter','points','sprint','project','created'];   // UI-POLISH-1: +reporter, +created (both default hidden via _optin2)
+// LIST-VISUAL-1: assignee avatar (a coloured initials disc - a distinct SHAPE, not just another hue, so it
+// never converges with the status pill / project dot). Narrower than a name, which helps the overflowing
+// table. Unassigned -> a dashed outline circle (deliberate empty, never a blank cell or broken image). Sort
+// and CSV are UNAFFECTED: the column sorts on the server 'assignee' column and CSV emits it.assignee - both
+// independent of this cell. No upload path (out of scope; no image field exists today - branch here if one lands).
+function _listAvatar(u){
+  if(!u) return '<span title="Unassigned" style="display:inline-block;width:20px;height:20px;border-radius:50%;border:1.5px dashed var(--border);vertical-align:middle"></span>';
+  var name=displayName(u);
+  return '<span title="'+escA(name)+'" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:'+avatarColorFor(u)+';color:#fff;font-size:9px;font-weight:700;line-height:1;vertical-align:middle">'+esc(avatarInitialsFor(u))+'</span>';
+}
+// LIST-VISUAL-1: project colour dot + label (dot ALONE fails for a colour-vision deficiency, so the label
+// stays). Single source projectColor() - no second lookup or palette. Suppressed when the List is scoped to
+// ONE project (getSelectedProducts() length 1 - set by the rail scope via setProjectPanel AND by the top-bar
+// chip): the column is constant there, so the dot is pure noise.
+function _listProjectDot(product){
+  if(!product) return '';
+  var sel=getSelectedProducts();
+  if(sel && sel.length===1) return '';
+  return '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0;vertical-align:middle;margin-right:6px;background:'+(projectColor(product)||'var(--accent)')+'"></span>';
+}
 const _LIST_COL_DEF = {
   key:        { label:'Key',         sort:'item_key',
                 td:(it,ctx)=>`<td style="${ctx.firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${ctx.chevron}${_listCell(it.itemKey)}</td>` },
@@ -10765,8 +10785,9 @@ const _LIST_COL_DEF = {
   owner:      { label:'Owner',       sort:'owner',
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.dev)}</td>` },
   assignee:   { label:'Assignee',    sort:'assignee',
-                // Display resolves username -> displayName; sort still keys on 'assignee' (username). Value untouched.
-                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.assignee ? displayName(it.assignee) : '')}</td>` },
+                // LIST-VISUAL-1: render an avatar disc (full name on hover). Sort still keys on the server
+                // 'assignee' column; CSV still emits it.assignee - both independent of this cell.
+                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listAvatar(it.assignee)}</td>` },
   points:     { label:'Points',      sort:'story_points', center:true,
                 td:(it)=>`<td style="padding:7px 10px;text-align:center">${_listCell(it.storyPoints)}</td>` },
   sprint:     { label:'Sprint',      sort:'sprint_id',
@@ -10774,7 +10795,8 @@ const _LIST_COL_DEF = {
                 // closed/classic); sort still keys on 'sprint_id'. Empty id -> the column's "-" convention.
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.sprintId ? _frzSprintLabel(it.sprintId) : '')}</td>` },
   project:    { label:'Project',     sort:'product',
-                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.product)}</td>` },
+                // LIST-VISUAL-1: project colour dot + name (dot suppressed under single-project scope).
+                td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listProjectDot(it.product)}${_listCell(it.product)}</td>` },
   sla:        { label:'SLA',         sort:null,   // IT/Ops SLA (Stage A); absent unless slaTargets.enabled (gated in _listColOrderAll)
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${slaBadgeHtml(it, true) || '-'}</td>` },
   // UI-POLISH-1: optional, default-hidden. data-col (LIST-CELL-1), _listCell for the '-' placeholder.
@@ -10942,7 +10964,7 @@ async function _listToggleExpand(tr){
     while(n && parseInt(n.dataset.depth||'-1') > depth){ const nx = n.nextElementSibling; n.remove(); n = nx; }
     tr.dataset.expanded = '0';
     if(chev) chev.textContent = '▶';
-    _listUpdateHScrollVis();   // SCROLL-1: height shrank, native bar may re-enter the fold
+    _listSyncHScroll();   // VISUAL-1: rows removed -> re-measure width (a removed wide row can narrow the table)
     return;
   }
   if(chev) chev.textContent = '▾';
@@ -10952,7 +10974,7 @@ async function _listToggleExpand(tr){
   const rows = (data.items||[]).map(it => _listRowHtml(it, depth+1)).join('');
   if(rows) tr.insertAdjacentHTML('afterend', rows);
   tr.dataset.expanded = '1';
-  _listUpdateHScrollVis();   // SCROLL-1: height grew, native bar may drop below the fold
+  _listSyncHScroll();   // VISUAL-1: rows added -> re-measure width (a new wide child can widen the table)
 }
 
 function _renderListPager(data){
@@ -11093,7 +11115,7 @@ async function _listLoadGroupRows(afterEl, field, value, page){
       + `<td colspan="99" style="padding:7px 10px 7px 34px;color:var(--accent);font-size:12px;border-top:1px solid var(--row-sep)">Show more (${data.total - page*_listState.page_size} more)</td></tr>`;
   }
   afterEl.insertAdjacentHTML('afterend', html);
-  _listUpdateHScrollVis();   // SCROLL-1: group rows added -> height changed, recompute proxy visibility
+  _listSyncHScroll();   // VISUAL-1: group rows added -> re-measure width + visibility
 }
 
 // Collapse/expand a group header: toggle its persisted state and add/remove its row block.
@@ -11112,7 +11134,7 @@ function _listToggleGroup(ghd){
     ghd.setAttribute('data-coll','1'); if(chev) chev.textContent='▶';
     let n = ghd.nextElementSibling;
     while(n && !n.classList.contains('list-grouphd')){ const nx = n.nextElementSibling; n.remove(); n = nx; }
-    _listUpdateHScrollVis();   // SCROLL-1: group collapsed -> height shrank
+    _listSyncHScroll();   // VISUAL-1: group collapsed -> re-measure width + visibility
   }
 }
 
@@ -11131,7 +11153,7 @@ async function _listGroupShowMore(gmore){
   if(next < pages){ gmore.setAttribute('data-next', next+1);
     const cell = gmore.querySelector('td'); if(cell) cell.textContent = `Show more (${data.total - next*_listState.page_size} more)`; }
   else { gmore.remove(); }
-  _listUpdateHScrollVis();   // SCROLL-1: rows added -> recompute proxy visibility
+  _listSyncHScroll();   // VISUAL-1: show-more rows added -> re-measure width + visibility
 }
 
 // ════════ LIST-SCROLL-1: reachable sticky horizontal scroll ════════
@@ -11151,17 +11173,16 @@ function _listSyncHScroll(){
   _listUpdateHScrollVis();
   _listWireHScroll();
 }
-// Show the proxy ONLY while the table overflows AND its native bar (the wrap's bottom edge) is below the
-// content fold - so exactly one bar shows at any page-scroll position, and it never covers the pager/last
-// row (once you scroll to the bottom and the native bar appears, the proxy hides). On the mobile card
-// layout the table does not overflow, so `need` is false and the proxy stays hidden - no phone special-case.
+// VISUAL-1 Part 5 (Option 2): show the proxy whenever the table overflows horizontally - full stop, no
+// fold-based hide. The old hide (proxy off once the native bar reached the fold) was geometry-dependent:
+// it fired at small seeded heights but NOT at the real 7,000px+ list, leaving two bars stacked at the
+// bottom anyway. The proxy covers nothing there (a gap sits above the pager), so dropping the hide removes
+// a state transition that could be wrong at some viewport heights, for zero visual cost. On the mobile card
+// layout the table does not overflow, so this stays hidden with no phone special-case.
 function _listUpdateHScrollVis(){
-  var sc=document.getElementById('frzContent')||document.querySelector('.frz-content');
   var wrap=document.getElementById('listScroll'), proxy=document.getElementById('listHScroll');
   if(!(wrap&&proxy)) return;
-  var need = wrap.scrollWidth > wrap.clientWidth + 2;
-  var vpBottom = sc ? sc.getBoundingClientRect().bottom : window.innerHeight;
-  var want = (need && wrap.getBoundingClientRect().bottom > vpBottom + 1) ? '' : 'none';
+  var want = (wrap.scrollWidth > wrap.clientWidth + 2) ? '' : 'none';
   if(proxy.style.display !== want) proxy.style.display = want;
 }
 function _listWireHScroll(){
@@ -11179,9 +11200,8 @@ function _listWireHScroll(){
     var d = e.deltaX || e.deltaY; if(!d) return;
     wrap.scrollLeft += d; e.preventDefault();
   }, { passive:false });
-  // Recompute visibility as the PAGE scrolls (the native bar moves in/out of the fold).
-  var sc=document.getElementById('frzContent')||document.querySelector('.frz-content');
-  if(sc) sc.addEventListener('scroll', _listUpdateHScrollVis, { passive:true });
+  // Option 2: visibility depends only on overflow, so no page-scroll listener is needed (the fold-based
+  // hide is gone). Re-measure on resize (viewport / rail collapse changes the available width).
   window.addEventListener('resize', function(){ if(document.getElementById('listScroll')) _listSyncHScroll(); });
 }
 
@@ -18389,7 +18409,11 @@ if ('serviceWorker' in navigator) {
 
   /* Popovers (chip menus, legend, group-by, + filter) */
   .frz-beta .frz-pop { position:fixed; background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:10px; box-shadow:0 10px 34px rgba(20,40,63,.18); z-index:90; min-width:200px; max-height:340px; overflow-y:auto; padding:6px; }
-  .frz-beta .frz-pop-opt { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:6px; cursor:pointer; font-size:13px; color:var(--frz-text); border:0; background:none; width:100%; text-align:left; }
+  /* LIST-VISUAL-1 4.1: popover options were 700 - inherited from the GLOBAL `select, button` rule (not from
+     .frz-pop-opt, which set no weight). That made every menu's contents heavier than the 600 control that
+     opened them. Drop to normal here (scoped to .frz-pop-opt = all popovers, NOT the global button rule);
+     the SELECTED option is re-bolded inline by its builder + gets a check (4.2), so colour is never the only cue. */
+  .frz-beta .frz-pop-opt { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:6px; cursor:pointer; font-size:13px; font-weight:400; color:var(--frz-text); border:0; background:none; width:100%; text-align:left; }
   .frz-beta .frz-pop-opt:hover { background:var(--frz-bg-app); }
   .frz-beta .frz-pop-opt input { accent-color:var(--frz-accent); }
   .frz-beta .frz-pop-row { display:flex; gap:8px; padding:6px; }
@@ -24154,8 +24178,13 @@ if ('serviceWorker' in navigator) {
     openPop(anchor, function(pop){
       _FRZ_GROUP_ORDER.forEach(function(v){
         var b=document.createElement('button'); b.className='frz-pop-opt';
-        b.textContent=_FRZ_GROUP_LABELS[v];   // SCROLL-1: bare labels in the menu (Export/Columns convention); the TRIGGER keeps its "Group by: X" prefix
-        if(v===cur){ b.style.color='var(--frz-accent)'; b.style.fontWeight='700'; }
+        var sel=(v===cur);
+        // VISUAL-1 4.2: leading fixed-width mark - a check on the selected option, an empty spacer on the
+        // rest so their text stays aligned (no horizontal shift). The selected option keeps BOTH the check
+        // and bold, so once the blanket weight drop lands, colour is never the sole cue (CVD-safe).
+        var mark='<span style="display:inline-block;width:14px;flex-shrink:0;text-align:center;color:var(--frz-accent)">'+(sel?'✓':'')+'</span>';
+        b.innerHTML=mark+'<span>'+esc(_FRZ_GROUP_LABELS[v])+'</span>';   // bare labels (SCROLL-1); the TRIGGER keeps its "Group by: X" prefix
+        if(sel){ b.style.color='var(--frz-accent)'; b.style.fontWeight='700'; }
         b.addEventListener('click', function(){ _call('_listSetGroup', v); closePop(); renderBar(); });
         pop.appendChild(b);
       });
