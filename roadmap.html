@@ -2217,7 +2217,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.9.4';
+const APP_VERSION = '6.9.5';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2683,6 +2683,19 @@ function _scenarioBanner(show){
   cb.style.display = _scenarioOps.length ? '' : 'none';   // Phase 1b: commit is built - show it once there's something to write
   cb.onclick = function(){ commitScenario(); };
 }
+
+// OCC self-conflict fix: posting a comment can bump the item's server updated_ts (the first-response
+// stamp, add_comment) even though nothing you can see changed. The page keeps its enter-time baseline,
+// so the NEXT guarded edit (status, notes) would 409 the poster against themselves. add_comment now
+// echoes the item's post-write updated_ts; call this with it to keep the cached baseline current.
+// No-op if the item isn't in the cache or the server sent no stamp (older server) - then behaviour
+// is exactly as before (a possible self-conflict), never worse.
+function _syncItemBaseTs(id, ts){
+  if(ts == null || typeof projects === 'undefined') return;
+  const p = projects.find(x=>x.id===id);
+  if(p) p.updated_ts = ts;
+}
+window._syncItemBaseTs = _syncItemBaseTs;   // reachable from the beta shell via _call('_syncItemBaseTs', ...)
 
 // ── T3: guarded item save (optimistic concurrency) ───────────────────────────
 // Sends the item's last-known updated_ts as _baseUpdatedTs; on 409 (someone else
@@ -14890,7 +14903,8 @@ async function postComment(){
   const body = inp?.value.trim();
   if(!body || !_commentsItemId) return;
   try {
-    await API.post('/api/comments', { item_id: _commentsItemId, author: getUsername(), body });
+    const res = await API.post('/api/comments', { item_id: _commentsItemId, author: getUsername(), body });
+    if(res) _syncItemBaseTs(_commentsItemId, res.item_updated_ts);   // keep the OCC baseline current (the comment may have bumped updated_ts)
     inp.value = '';
     await loadComments(_commentsItemId);
   } catch(e){ showToast('Failed to post comment'); }
@@ -27409,7 +27423,8 @@ if ('serviceWorker' in navigator) {
     var clean=frzSanitize(tmp.innerHTML);
     var textOnly=clean.replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').trim();
     if(!textOnly && !/<img\b/i.test(clean)) return;   // empty - nothing to post
-    API.post('/api/comments', { item_id:p.id, author:_call('getUsername'), body:clean }).then(function(){
+    API.post('/api/comments', { item_id:p.id, author:_call('getUsername'), body:clean }).then(function(res){
+      if(res) _call('_syncItemBaseTs', p.id, res.item_updated_ts);   // keep the OCC baseline current (the comment may have bumped updated_ts)
       ed.commands.clearContent();
       (ctx.onPosted || function(id){ _call('renderItemPageComments', id); })(p.id);
     }).catch(function(){ _call('showToast','Failed to post comment'); });
@@ -27861,7 +27876,8 @@ if ('serviceWorker' in navigator) {
         var clean=frzSanitize(tmp.innerHTML);
         var textOnly=clean.replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').trim();
         if(!textOnly && !/<img\b/i.test(clean)) return;
-        API.post('/api/comments', { item_id:p.id, author:_call('getUsername'), body:clean, parent_id:parentId }).then(function(){
+        API.post('/api/comments', { item_id:p.id, author:_call('getUsername'), body:clean, parent_id:parentId }).then(function(res){
+          if(res) _call('_syncItemBaseTs', p.id, res.item_updated_ts);   // keep the OCC baseline current (the comment may have bumped updated_ts)
           _frzReplyOpenFor=null;
           _call('renderItemPageComments', p.id);
         }).catch(function(){ _call('showToast','Failed to post reply'); });
