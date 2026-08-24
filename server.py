@@ -1558,7 +1558,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.9.4"
+APP_VERSION = "6.9.5"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -8942,12 +8942,19 @@ def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin
                     _save_project(c, item_id, _item)
         except Exception as e:
             log.warning(f"[Measure] first-response stamp failed for item {item_id}: {e}")
+        # OCC baseline echo: the first-response stamp above (and any future comment-time item write)
+        # bumps the item's updated_ts. Return it so the client can refresh its optimistic-concurrency
+        # baseline; otherwise the poster's NEXT guarded edit (status, notes) 409s against themselves
+        # because the page still holds its enter-time stamp. None when the item row is absent.
+        _iur = c.execute("SELECT updated_ts FROM projects WHERE id=?", (item_id,)).fetchone()
     # Stage 3b/4: mention + watcher (+ reply-to parent author) notifications (post-commit, best-effort)
     try:
         _notify_on_comment(team, item_id, author, body.get("body", ""), parent_id)
     except Exception as e:
         log.warning(f"[Notify] comment hook failed: {e}")
-    return dict(row)
+    resp = dict(row)
+    resp["item_updated_ts"] = (_iur["updated_ts"] if _iur else None)
+    return resp
 
 @app.delete("/api/comments/{cid}")
 def delete_comment(cid: int, auth: dict = Depends(require_role("admin", "editor", "contributor"))):
