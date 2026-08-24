@@ -1165,7 +1165,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     <button id="listBulkApply" style="padding:5px 14px;font-size:12px;border:none;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer;font-weight:700">Apply</button>
     <button id="listBulkClear" style="padding:5px 12px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--muted);cursor:pointer">Clear</button>
   </div>
-  <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
+  <div id="listScroll" style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead>
         <tr id="listHeadRow" style="background:var(--surface);text-align:left">
@@ -1186,6 +1186,12 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       <tbody id="listBody"></tbody>
     </table>
   </div>
+  <!-- SCROLL-1: sticky horizontal-scroll proxy for #listScroll. Sits inside .frz-content (the vertical
+       scroller) so position:sticky;bottom:0 pins it to the viewport bottom - reachable while the table's
+       own (far-below) h-scrollbar is off-screen. Hidden by JS unless the table overflows AND that native
+       bar is below the fold; inner width mirrors the table so its scroll range matches. Tokens match the
+       wrapper above (classic vars, since this lives in the shared classic List markup, not a .frz-beta node). -->
+  <div id="listHScroll" style="display:none;position:sticky;bottom:0;z-index:5;overflow-x:auto;overflow-y:hidden;height:14px;background:var(--surface);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px"><div id="listHScrollInner" style="height:1px"></div></div>
   <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px">
     <button id="listTreeToggle" title="Toggle hierarchy (parent → children)" style="padding:6px 12px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer;font-family:'Lato',sans-serif">☰ Tree: Off</button>
     <select id="listPageSize" style="padding:6px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none"><option value="25">25 / page</option><option value="50" selected>50 / page</option><option value="100">100 / page</option></select>
@@ -2217,7 +2223,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.10.1';
+const APP_VERSION = '6.10.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -10923,6 +10929,7 @@ async function renderList(){
   _updateSortIndicators();
   updateBulkBar();
   _renderListPager(data);
+  _listSyncHScroll();   // SCROLL-1: size + place the sticky h-scroll proxy for the new table width
 }
 
 // Tree expand/collapse with lazy child fetch.
@@ -10935,6 +10942,7 @@ async function _listToggleExpand(tr){
     while(n && parseInt(n.dataset.depth||'-1') > depth){ const nx = n.nextElementSibling; n.remove(); n = nx; }
     tr.dataset.expanded = '0';
     if(chev) chev.textContent = '▶';
+    _listUpdateHScrollVis();   // SCROLL-1: height shrank, native bar may re-enter the fold
     return;
   }
   if(chev) chev.textContent = '▾';
@@ -10944,6 +10952,7 @@ async function _listToggleExpand(tr){
   const rows = (data.items||[]).map(it => _listRowHtml(it, depth+1)).join('');
   if(rows) tr.insertAdjacentHTML('afterend', rows);
   tr.dataset.expanded = '1';
+  _listUpdateHScrollVis();   // SCROLL-1: height grew, native bar may drop below the fold
 }
 
 function _renderListPager(data){
@@ -11068,6 +11077,7 @@ async function _renderListGrouped(){
     if(!isColl){ await _listLoadGroupRows(body.lastElementChild, field, g.value, 1); }
   }
   _updateSortIndicators();
+  _listSyncHScroll();   // SCROLL-1: proxy also serves grouped mode (group headers colspan-span + scroll with the table)
 }
 
 // Append a group's page of rows (and a Show-more row if there are more) right after `afterEl`.
@@ -11083,6 +11093,7 @@ async function _listLoadGroupRows(afterEl, field, value, page){
       + `<td colspan="99" style="padding:7px 10px 7px 34px;color:var(--accent);font-size:12px;border-top:1px solid var(--row-sep)">Show more (${data.total - page*_listState.page_size} more)</td></tr>`;
   }
   afterEl.insertAdjacentHTML('afterend', html);
+  _listUpdateHScrollVis();   // SCROLL-1: group rows added -> height changed, recompute proxy visibility
 }
 
 // Collapse/expand a group header: toggle its persisted state and add/remove its row block.
@@ -11101,6 +11112,7 @@ function _listToggleGroup(ghd){
     ghd.setAttribute('data-coll','1'); if(chev) chev.textContent='▶';
     let n = ghd.nextElementSibling;
     while(n && !n.classList.contains('list-grouphd')){ const nx = n.nextElementSibling; n.remove(); n = nx; }
+    _listUpdateHScrollVis();   // SCROLL-1: group collapsed -> height shrank
   }
 }
 
@@ -11119,6 +11131,58 @@ async function _listGroupShowMore(gmore){
   if(next < pages){ gmore.setAttribute('data-next', next+1);
     const cell = gmore.querySelector('td'); if(cell) cell.textContent = `Show more (${data.total - next*_listState.page_size} more)`; }
   else { gmore.remove(); }
+  _listUpdateHScrollVis();   // SCROLL-1: rows added -> recompute proxy visibility
+}
+
+// ════════ LIST-SCROLL-1: reachable sticky horizontal scroll ════════
+// #listScroll keeps its native overflow-x, but it is as tall as every row so its real h-scrollbar sits far
+// below the fold. #listHScroll is a sticky proxy (position:sticky;bottom:0 relative to .frz-content, the
+// vertical scroller) whose inner width mirrors the table, kept in two-way scrollLeft sync with #listScroll.
+// Mirrors the proven Reports pattern (_rptSyncScroll) MINUS the vertical max-height: the List page scrolls
+// as a whole, not a bounded panel, so we never touch the wrapper height, the column widths or the layout.
+var _listHScrollWired = false;
+function _listSyncHScroll(){
+  var wrap=document.getElementById('listScroll'), table=wrap&&wrap.querySelector('table');
+  var proxy=document.getElementById('listHScroll'), inner=document.getElementById('listHScrollInner');
+  if(!(wrap&&table&&proxy&&inner)) return;
+  var need = table.scrollWidth > wrap.clientWidth + 2;   // does the table actually overflow horizontally?
+  inner.style.width = need ? table.scrollWidth+'px' : '0px';
+  proxy.scrollLeft = wrap.scrollLeft;
+  _listUpdateHScrollVis();
+  _listWireHScroll();
+}
+// Show the proxy ONLY while the table overflows AND its native bar (the wrap's bottom edge) is below the
+// content fold - so exactly one bar shows at any page-scroll position, and it never covers the pager/last
+// row (once you scroll to the bottom and the native bar appears, the proxy hides). On the mobile card
+// layout the table does not overflow, so `need` is false and the proxy stays hidden - no phone special-case.
+function _listUpdateHScrollVis(){
+  var sc=document.getElementById('frzContent')||document.querySelector('.frz-content');
+  var wrap=document.getElementById('listScroll'), proxy=document.getElementById('listHScroll');
+  if(!(wrap&&proxy)) return;
+  var need = wrap.scrollWidth > wrap.clientWidth + 2;
+  var vpBottom = sc ? sc.getBoundingClientRect().bottom : window.innerHeight;
+  var want = (need && wrap.getBoundingClientRect().bottom > vpBottom + 1) ? '' : 'none';
+  if(proxy.style.display !== want) proxy.style.display = want;
+}
+function _listWireHScroll(){
+  if(_listHScrollWired) return;
+  var wrap=document.getElementById('listScroll'), proxy=document.getElementById('listHScroll');
+  if(!(wrap&&proxy)) return; _listHScrollWired=true;
+  var sy=false;   // reentrancy guard so the two scroll listeners don't ping-pong
+  proxy.addEventListener('scroll', function(){ if(sy)return; sy=true; wrap.scrollLeft=proxy.scrollLeft; sy=false; });
+  wrap.addEventListener('scroll',  function(){ if(sy)return; sy=true; proxy.scrollLeft=wrap.scrollLeft; sy=false; });
+  // Shift + wheel scrolls the table horizontally (the reflex many try first). Only when it overflows, and
+  // only with Shift held - a plain vertical wheel is never swallowed.
+  wrap.addEventListener('wheel', function(e){
+    if(!e.shiftKey) return;
+    if(wrap.scrollWidth <= wrap.clientWidth) return;
+    var d = e.deltaX || e.deltaY; if(!d) return;
+    wrap.scrollLeft += d; e.preventDefault();
+  }, { passive:false });
+  // Recompute visibility as the PAGE scrolls (the native bar moves in/out of the fold).
+  var sc=document.getElementById('frzContent')||document.querySelector('.frz-content');
+  if(sc) sc.addEventListener('scroll', _listUpdateHScrollVis, { passive:true });
+  window.addEventListener('resize', function(){ if(document.getElementById('listScroll')) _listSyncHScroll(); });
 }
 
 // ── List column sorting ──
@@ -24090,7 +24154,7 @@ if ('serviceWorker' in navigator) {
     openPop(anchor, function(pop){
       _FRZ_GROUP_ORDER.forEach(function(v){
         var b=document.createElement('button'); b.className='frz-pop-opt';
-        b.textContent='Group by: '+_FRZ_GROUP_LABELS[v];
+        b.textContent=_FRZ_GROUP_LABELS[v];   // SCROLL-1: bare labels in the menu (Export/Columns convention); the TRIGGER keeps its "Group by: X" prefix
         if(v===cur){ b.style.color='var(--frz-accent)'; b.style.fontWeight='700'; }
         b.addEventListener('click', function(){ _call('_listSetGroup', v); closePop(); renderBar(); });
         pop.appendChild(b);
