@@ -313,6 +313,8 @@ Routes are gated with `Depends(require_role("admin", "editor"))` or similar. Nev
 
 **The "primary admin" rule:** only the builtin admin user (the one created at team init) can change other admin users' passwords via `POST /api/users/{username}/password`. This is checked inside the endpoint, not in `require_role`.
 
+**`assignee` is a USERNAME, and is normalized server-side (ASSIGNEE-NORMALIZE, 6.11.1).** The item field `assignee` is username-keyed everywhere - list/group/filter, contributor scope, notifications, and owner-pod bucketing all key off it (owner is the separate `dev` field). Every in-app picker writes `value=u.username` and renders `displayName(username)` for humans; never store a display name in `assignee`. Two write paths could still slip a display name in (JSON import inserts blobs verbatim; a direct API write), so `_resolve_assignee(c, value, users=None)` runs at all three write chokepoints (`create_project`, `update_project`, `bulk_import`) and heals it: a known username is kept, an *unambiguous* display-name match is rewritten to that username (case/whitespace-insensitive), and a blank/unknown/*ambiguous* value is left unchanged (never guess between two people, never destroy an unresolvable assignment). This exists because a legacy migration once stored ~425 items as the display name "Jake Smith" instead of `jacob.smith`, producing two phantom assignee buckets. Do not add a new path that writes a display name into `assignee`, and keep new assignee-writing code flowing through these chokepoints.
+
 ### 11. XSS — always escape user content
 
 The server-rendered audit log at `/audit` uses `html.escape()` on every dynamic value. Past XSS issues lived there. In the frontend, use the `esc()` helper before injecting into `innerHTML`.
