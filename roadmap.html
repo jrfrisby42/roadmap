@@ -2229,7 +2229,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.10.7';
+const APP_VERSION = '6.11.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2377,6 +2377,7 @@ const API = {
   async get(path)       { return this._check(await fetch(path, {headers:this._authHeaders()})); },
   async post(path,body) { this._assertTeam(); return this._check(await fetch(path,{method:'POST',  headers:this._h(), body:JSON.stringify(body)})); },
   async put(path,body)  { this._assertTeam(); return this._check(await fetch(path,{method:'PUT',   headers:this._h(), body:JSON.stringify(body)})); },
+  async patch(path,body){ this._assertTeam(); return this._check(await fetch(path,{method:'PATCH', headers:this._h(), body:JSON.stringify(body)})); },
   async del(path)       { this._assertTeam(); return this._check(await fetch(path,{method:'DELETE',headers:this._authHeaders()})); },
   // ATTACH-URL-1: fetch a binary body (an attachment) WITH auth and return an object URL. An <img src>
   // or <a href> cannot carry the bearer header, so attachments are fetched here and shown via a blob URL.
@@ -26426,11 +26427,25 @@ if ('serviceWorker' in navigator) {
       card.style.cssText='border:1px solid var(--border);border-radius:10px;overflow:hidden';
       card.innerHTML=''
         +'<div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between">'
-          +'Attachments<button type="button" class="frz-cardh-btn" id="frzAttUp" style="display:none">+ Upload</button>'
+          +'<span>Attachments &amp; Links</span>'
+          +'<span style="display:flex;gap:8px">'
+            +'<button type="button" class="frz-cardh-btn" id="frzLinkAdd" style="display:none">+ Add link</button>'
+            +'<button type="button" class="frz-cardh-btn" id="frzAttUp" style="display:none">+ Upload</button>'
+          +'</span>'
         +'</div>'
         +'<div style="padding:14px 16px">'
           +'<div class="frz-att-drop" id="frzAttDrop" style="display:none">Drop files here, click to browse, or paste a screenshot</div>'
           +'<input type="file" id="frzAttInput" multiple style="display:none">'
+          // LINKS-1: inline add/edit form for a reference link (hidden until "+ Add link" / a row's edit).
+          +'<div class="frz-link-form" id="frzLinkForm" style="display:none;margin-bottom:12px;border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--surface)">'
+            +'<input type="text" id="frzLinkLabel" placeholder="Label (e.g. Runbook, Design brief)" maxlength="120" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;margin-bottom:8px">'
+            +'<input type="url" id="frzLinkUrl" placeholder="https://…" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px">'
+            +'<div style="display:flex;gap:8px;align-items:center;margin-top:10px">'
+              +'<button type="button" class="frz-cardh-btn" id="frzLinkSave">Add link</button>'
+              +'<button type="button" id="frzLinkCancel" style="background:none;border:0;color:var(--frz-text-muted,var(--muted));font-size:13px;cursor:pointer;padding:6px 8px">Cancel</button>'
+              +'<span id="frzLinkErr" style="color:var(--frz-accent2,#c0392b);font-size:12px;display:none"></span>'
+            +'</div>'
+          +'</div>'
           +'<div class="frz-att-grid" id="frzAttList"></div>'
         +'</div>';
       anchor.parentNode.insertBefore(card, anchor.nextSibling);
@@ -26438,9 +26453,23 @@ if ('serviceWorker' in navigator) {
     // In-scope Contributors may add/remove attachments (server-gated by require_item_scope).
     var _inContribScope = _val('isContributor',false) && _call('itemInContributorScope', p);
     var canEdit=(_val('isAdmin',false)||_val('isEditor',false)) || _inContribScope;
+    // LINKS-1: links are admin/editor ONLY (contributors may read but not add - phishing path).
+    // This mirrors the server role gate; the endpoint is the real guard, this only hides the control.
+    var canLink=(_val('isAdmin',false)||_val('isEditor',false));
     var up=card.querySelector('#frzAttUp'), drop=card.querySelector('#frzAttDrop'), input=card.querySelector('#frzAttInput');
+    var linkAdd=card.querySelector('#frzLinkAdd');
     up.style.display = canEdit?'inline-flex':'none';
     drop.style.display = canEdit?'block':'none';
+    if(linkAdd) linkAdd.style.display = canLink?'inline-flex':'none';
+    // The link form is wired once (independent of the attachment canEdit gate, so an editor with no
+    // contributor-scope attachment rights still gets link controls).
+    if(canLink && linkAdd && !card._linkWired){
+      card._linkWired=true;
+      linkAdd.addEventListener('click', function(){ _frzOpenLinkForm(_frzCurItem()||p, null); });
+      card.querySelector('#frzLinkCancel').addEventListener('click', function(){ _frzCloseLinkForm(); });
+      card.querySelector('#frzLinkSave').addEventListener('click', function(){ _frzSubmitLinkForm(_frzCurItem()||p); });
+      card.querySelector('#frzLinkUrl').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); _frzSubmitLinkForm(_frzCurItem()||p); } });
+    }
     if(canEdit && !card._wired){
       card._wired=true;
       up.addEventListener('click', function(){ input.click(); });
@@ -27044,29 +27073,108 @@ if ('serviceWorker' in navigator) {
     var list=document.getElementById('frzAttList'); if(!list) return;
     API.get('/api/items/'+p.id+'/attachments').then(function(res){
       var atts=(res&&res.attachments)||[];
-      if(!atts.length){ list.innerHTML='<div class="frz-att-empty">No attachments yet.</div>'; return; }
-      var canEdit=(_val('isAdmin',false)||_val('isEditor',false));
+      var links=(p.extLinks)||[];   // LINKS-1: reference links travel in the item blob (no fetch)
+      if(!atts.length && !links.length){ list.innerHTML='<div class="frz-att-empty">No attachments or links yet.</div>'; return; }
+      var canEdit=(_val('isAdmin',false)||_val('isEditor',false));   // links: admin/editor only (same as attachment delete)
       var primary=((p.jiraTickets)||[])[0];   // Phase C2: ↗ Jira indicator when synced to the primary ticket
-      list.innerHTML=atts.map(function(a){
+      // One mixed list of attachment + link rows, ordered by added date (oldest first, matching the
+      // existing attachment append order). Each attachment carries `at`, each link `addedAt`.
+      var rows=[];
+      atts.forEach(function(a){
         var isImg=/^image\//.test(a.contentType||'');
         var del=canEdit?'<button type="button" class="frz-att-del" data-del="'+escA(a.id)+'" title="Remove">✕</button>':'';
         var onJira = primary && a.jira && a.jira[primary];
+        var h;
         // ATTACH-URL-1: a.url is the auth-proxy path. <img>/<a href> cannot carry the bearer header, so
         // the thumbnail loads via fetch-to-blob (data-proxy) and open is a click that fetches then opens.
         if(isImg && a.url){
           var pip = onJira?'<span title="On '+escA(primary)+'" style="position:absolute;top:3px;left:3px;background:var(--frz-accent);color:#fff;font-size:9px;font-weight:800;border-radius:3px;padding:0 3px;line-height:1.5">↗</span>':'';
-          return '<div class="frz-att-thumb"><a data-open="'+escA(a.url)+'" style="cursor:pointer"><img data-proxy="'+escA(a.url)+'" alt="'+escA(a.name)+'"></a>'+pip+del+'<div class="frz-att-cap" title="'+escA(a.name)+'">'+esc(a.name)+'</div></div>';
+          h='<div class="frz-att-thumb"><a data-open="'+escA(a.url)+'" style="cursor:pointer"><img data-proxy="'+escA(a.url)+'" alt="'+escA(a.name)+'"></a>'+pip+del+'<div class="frz-att-cap" title="'+escA(a.name)+'">'+esc(a.name)+'</div></div>';
+        } else {
+          var open=a.url?('data-open="'+escA(a.url)+'" style="cursor:pointer"'):'';
+          var badge = onJira?'<span title="On '+escA(primary)+'" style="font-size:10px;font-weight:800;color:var(--frz-accent);margin-left:6px;white-space:nowrap">↗ Jira</span>':'';
+          h='<a class="frz-att-file" '+open+'><span class="frz-att-ic">'+esc(attExt(a.name))+'</span><span class="frz-att-meta"><span class="frz-att-nm" title="'+escA(a.name)+'">'+esc(a.name)+'</span><span class="frz-att-sz">'+fmtBytes(a.size)+'</span></span>'+badge+del+'</a>';
         }
-        var open=a.url?('data-open="'+escA(a.url)+'" style="cursor:pointer"'):'';
-        var badge = onJira?'<span title="On '+escA(primary)+'" style="font-size:10px;font-weight:800;color:var(--frz-accent);margin-left:6px;white-space:nowrap">↗ Jira</span>':'';
-        return '<a class="frz-att-file" '+open+'><span class="frz-att-ic">'+esc(attExt(a.name))+'</span><span class="frz-att-meta"><span class="frz-att-nm" title="'+escA(a.name)+'">'+esc(a.name)+'</span><span class="frz-att-sz">'+fmtBytes(a.size)+'</span></span>'+badge+del+'</a>';
-      }).join('');
+        rows.push({at:(a.at||''), html:h});
+      });
+      links.forEach(function(l){ rows.push({at:(l.addedAt||''), html:_frzLinkRowHtml(l, canEdit)}); });
+      rows.sort(function(x,y){ return x.at<y.at?-1:(x.at>y.at?1:0); });
+      list.innerHTML=rows.map(function(r){return r.html;}).join('');
       // ATTACH-URL-1: resolve thumbnails via blob (auth), and wire open-in-new-tab through fetch-to-blob.
       list.querySelectorAll('img[data-proxy]').forEach(function(im){ _frzSetImgFromProxy(im, im.getAttribute('data-proxy')); });
       list.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); var u=el.getAttribute('data-open');
         API.getBlobURL(u).then(function(b){ window.open(b, '_blank', 'noopener'); }).catch(function(){ if(typeof showToast==='function') showToast('Could not open the attachment. Your session may have expired.','error'); }); }); });
       list.querySelectorAll('[data-del]').forEach(function(b){ b.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); var id=this.getAttribute('data-del'); var a=atts.filter(function(x){return x.id===id;})[0]; deleteAttachment(p, id, a?a.name:''); }); });
+      // LINKS-1: edit / delete wiring. Open is a native <a href target=_blank rel=noopener> - no JS.
+      list.querySelectorAll('[data-linkedit]').forEach(function(b){ b.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); var id=this.getAttribute('data-linkedit'); var l=((p.extLinks)||[]).filter(function(x){return x.id===id;})[0]; if(l) _frzOpenLinkForm(p, l); }); });
+      list.querySelectorAll('[data-linkdel]').forEach(function(b){ b.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); _frzDeleteLink(p, this.getAttribute('data-linkdel')); }); });
     }).catch(function(){ list.innerHTML='<div class="frz-att-empty">Could not load attachments.</div>'; });
+  }
+  // ── LINKS-1: reference-link helpers (render + add/edit/delete form) ───────────
+  var _frzLinkEditId=null;   // null = adding; a link id = editing that row
+  // RENDER-TIME scheme guard (defense-in-depth): a row could predate the save-time check, or arrive
+  // via import / a restored backup. Only http(s) becomes a real <a href>; anything else (a stored
+  // javascript: URL) renders as inert text, so a malicious href can never execute on click.
+  function _frzLinkSchemeOk(u){ return /^https?:\/\/[^\s]+/i.test(String(u||'').trim()); }
+  function _frzLinkRowHtml(l, canLink){
+    var ok=_frzLinkSchemeOk(l.url);
+    var label=esc(l.label||l.url||'link');
+    // Label is the clickable anchor; the raw URL is NOT shown inline but IS in title= (hover reveals
+    // the true destination, so a friendly label can't conceal a phishing target). href via escA, label via esc.
+    var body = ok
+      ? '<a class="frz-att-nm" href="'+escA(l.url)+'" target="_blank" rel="noopener" title="'+escA(l.url)+'" style="color:var(--frz-accent,var(--accent));text-decoration:none">'+label+'</a>'
+      : '<span class="frz-att-nm" title="'+escA(l.url)+' (blocked: not an http/https link)" style="color:var(--frz-text-muted,var(--muted))">'+label+' <span style="font-size:10px">(blocked link)</span></span>';
+    var edit=canLink?'<button type="button" class="frz-att-del" data-linkedit="'+escA(l.id)+'" title="Edit">✎</button>':'';
+    var del =canLink?'<button type="button" class="frz-att-del" data-linkdel="'+escA(l.id)+'" title="Remove">✕</button>':'';
+    return '<div class="frz-att-file"><span class="frz-att-ic" title="Link" style="font-weight:700">🔗</span><span class="frz-att-meta">'+body+'</span>'+edit+del+'</div>';
+  }
+  function _frzLinkFormEls(){
+    return { form:document.getElementById('frzLinkForm'), label:document.getElementById('frzLinkLabel'),
+             url:document.getElementById('frzLinkUrl'), save:document.getElementById('frzLinkSave'),
+             err:document.getElementById('frzLinkErr') };
+  }
+  function _frzOpenLinkForm(p, row){
+    var e=_frzLinkFormEls(); if(!e.form) return;
+    _frzLinkEditId = row ? row.id : null;
+    e.label.value = row ? (row.label||'') : '';
+    e.url.value   = row ? (row.url||'')   : '';
+    e.save.textContent = row ? 'Save' : 'Add link';
+    if(e.err){ e.err.style.display='none'; e.err.textContent=''; }
+    e.form.style.display='block';
+    try { e.label.focus(); } catch(_){}
+  }
+  function _frzCloseLinkForm(){
+    var e=_frzLinkFormEls(); if(!e.form) return;
+    _frzLinkEditId=null; e.form.style.display='none';
+    e.label.value=''; e.url.value='';
+    if(e.err){ e.err.style.display='none'; e.err.textContent=''; }
+  }
+  function _frzSubmitLinkForm(p){
+    var e=_frzLinkFormEls(); if(!e.form || !p) return;
+    var label=(e.label.value||'').trim(), url=(e.url.value||'').trim();
+    var showErr=function(m){ if(e.err){ e.err.textContent=m; e.err.style.display='inline'; } };
+    if(!_frzLinkSchemeOk(url)){ showErr('URL must start with http:// or https://'); return; }
+    var body={ label:label, url:url, _username:_call('getUsername') };
+    var req = _frzLinkEditId
+      ? API.patch('/api/items/'+p.id+'/links/'+encodeURIComponent(_frzLinkEditId), body)
+      : API.post('/api/items/'+p.id+'/links', body);
+    var wasEdit=!!_frzLinkEditId;
+    req.then(function(res){
+      p.extLinks = (res&&res.extLinks)||[];
+      _frzCloseLinkForm();
+      loadAttachments(p);
+      try { _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', (wasEdit?'Link edited: ':'Link added: ')+(label||url), null, null); } catch(_){}
+      _call('showToast', wasEdit?'Link updated':'Link added');
+    }).catch(function(err){ showErr((err&&err.message)||'Could not save the link.'); });
+  }
+  function _frzDeleteLink(p, id){
+    if(!p||!id) return;
+    API.del('/api/items/'+p.id+'/links/'+encodeURIComponent(id)).then(function(res){
+      p.extLinks=(res&&res.extLinks)||[];
+      loadAttachments(p);
+      try { _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Link removed', null, null); } catch(_){}
+      _call('showToast','Link removed');
+    }).catch(function(err){ _call('showToast', (err&&err.message)||'Could not remove the link.','error'); });
   }
   // Returns a Promise resolving to the attachment record {attId,key,name,...}
   // on success (null/throws on failure) so the inline-paste path can reference it.
