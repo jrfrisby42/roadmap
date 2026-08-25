@@ -3,6 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- CLASSIC-SUNSET-1: classic mode (?classic=1) is UNLINKED and UNSUPPORTED. New work does not need to
+     accommodate it - degrade classic rather than engineering around it (do not deliberately break it; it is
+     the shell-fail-to-mount fallback). It is not verified on deploy. Full policy + rationale + removal-cost
+     notes in CLAUDE.md ("CLASSIC IS UNLINKED AND UNSUPPORTED"). Read that before touching shared markup. -->
 <!-- FOUC guard: hide the classic top-bar chrome until the Flow shell mounts, so it never
      flashes on cold load. Must be inline + in <head> to apply before first paint. boot()
      removes .frz-boot at the reveal site once the rail is built + the initial route rendered;
@@ -2225,7 +2229,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.10.5';
+const APP_VERSION = '6.10.6';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
