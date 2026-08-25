@@ -2229,7 +2229,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.10.6';
+const APP_VERSION = '6.10.7';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2328,6 +2328,21 @@ const API = {
   _token(){ try { return localStorage.getItem('frazil_token') || ''; } catch(e){ return ''; } },
   _authHeaders(){ return { 'X-Team': this._team(), 'Authorization': 'Bearer ' + this._token() }; },
   _h(extra={}){ return { 'Content-Type':'application/json', ...this._authHeaders(), ...extra }; },
+  // MULTITEAM-DESYNC-1 (Ship C): refuse a mutating write when this tab's live team has diverged
+  // from the team it booted on. localStorage (team + token) is shared across every tab of this
+  // origin, so a team switch in another tab silently repoints this tab's identity while its
+  // in-memory data stays stale - a write would then land on the wrong team. This is the exact
+  // path that overwrote a team's user roster. The storage listener (_frzInstallTeamDesyncWatch)
+  // also raises a reload banner; this guard is the hard stop that runs even if that event was missed.
+  _assertTeam(){
+    const boot = _BOOT_TEAM || '';
+    const live = this._team();
+    if(boot && live && live !== boot){
+      try { _frzShowTeamDesyncBanner(live); } catch(e){}
+      throw new Error('This tab is signed into "' + boot + '" but the active team is now "' + live
+        + '". Reload this tab to continue.');
+    }
+  },
   async _check(r){
     if(r.status === 401){
       let _detail=null; try { _detail = (await r.json()).detail; } catch(_){}
@@ -2360,9 +2375,9 @@ const API = {
     return r.json();
   },
   async get(path)       { return this._check(await fetch(path, {headers:this._authHeaders()})); },
-  async post(path,body) { return this._check(await fetch(path,{method:'POST',  headers:this._h(), body:JSON.stringify(body)})); },
-  async put(path,body)  { return this._check(await fetch(path,{method:'PUT',   headers:this._h(), body:JSON.stringify(body)})); },
-  async del(path)       { return this._check(await fetch(path,{method:'DELETE',headers:this._authHeaders()})); },
+  async post(path,body) { this._assertTeam(); return this._check(await fetch(path,{method:'POST',  headers:this._h(), body:JSON.stringify(body)})); },
+  async put(path,body)  { this._assertTeam(); return this._check(await fetch(path,{method:'PUT',   headers:this._h(), body:JSON.stringify(body)})); },
+  async del(path)       { this._assertTeam(); return this._check(await fetch(path,{method:'DELETE',headers:this._authHeaders()})); },
   // ATTACH-URL-1: fetch a binary body (an attachment) WITH auth and return an object URL. An <img src>
   // or <a href> cannot carry the bearer header, so attachments are fetched here and shown via a blob URL.
   // 401 routes to the login wall the same way _check does (so an expired session is legible, not raw XML).
@@ -2389,6 +2404,54 @@ const API = {
     if(typeof showLoginWall === 'function') showLoginWall();
   },
 };
+// ── MULTITEAM-DESYNC-1 (Ship C): cross-tab team-switch guard ──────────────────────────────────
+// The team + token a tab uses live in shared localStorage, but a tab's in-memory data (the users
+// array, config, projects) is the team it booted on. If another tab switches teams, this tab's
+// shared identity flips underneath it while its data stays stale, so a save lands on the wrong
+// team. That is the mechanism that overwrote a team's user roster (2026-08-25). _BOOT_TEAM pins
+// the team THIS tab booted on; the API guard refuses a diverged write, and the storage listener
+// raises a reload banner. A legitimate in-tab switch always reloads, which re-runs boot() and
+// re-captures _BOOT_TEAM, so this only ever fires in a stale background tab.
+// The banner is appended to <body> with inline styles (like the @mention menu, it lives above the
+// shell and must show in either UI), so it does not depend on the .frz-beta style block.
+let _BOOT_TEAM = '';
+let _frzTeamDesynced = false;
+function _frzShowTeamDesyncBanner(liveTeam){
+  if(_frzTeamDesynced) return;                          // idempotent - only ever one banner per tab
+  _frzTeamDesynced = true;
+  try {
+    const bar = document.createElement('div');
+    bar.id = 'frzTeamDesyncBar';
+    bar.setAttribute('role', 'alert');
+    bar.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:2147483000;background:#8a1c1c;'
+      + 'color:#fff;padding:12px 18px;font:600 14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",'
+      + 'Roboto,Helvetica,Arial,sans-serif;display:flex;align-items:center;gap:16px;'
+      + 'box-shadow:0 2px 10px rgba(0,0,0,.35);';
+    const msg = document.createElement('span');
+    msg.style.cssText = 'flex:1 1 auto;';
+    msg.textContent = 'The active team changed to "' + (liveTeam || 'another team') + '" in another '
+      + 'tab. This tab is now out of date - reload before making any changes.';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'Reload this tab';
+    btn.style.cssText = 'flex:0 0 auto;background:#fff;color:#8a1c1c;border:0;border-radius:6px;'
+      + 'padding:8px 16px;font:700 13px/1 inherit;cursor:pointer;';
+    btn.addEventListener('click', function(){ try { location.reload(); } catch(e){} });
+    bar.appendChild(msg);
+    bar.appendChild(btn);
+    (document.body || document.documentElement).appendChild(bar);
+  } catch(e){}
+}
+function _frzInstallTeamDesyncWatch(){
+  try {
+    window.addEventListener('storage', function(e){
+      // The storage event fires only in OTHER tabs, which is exactly the background tab to warn.
+      if(e && e.key === SK.team && e.newValue && _BOOT_TEAM && e.newValue !== _BOOT_TEAM){
+        _frzShowTeamDesyncBanner(e.newValue);
+      }
+    });
+  } catch(e){}
+}
 // ATTACH-URL-1: resolve a proxy URL into an <img> via a blob (auth-carrying), with a LEGIBLE failure
 // (broken placeholder + title) instead of the old silent broken-image icon. Global so both the classic
 // rehydrator and the beta module can call it. Revokes the object URL once the image has decoded.
@@ -17533,6 +17596,10 @@ async function boot(){
     showLoginWall();
     return;
   }
+  // MULTITEAM-DESYNC-1 (Ship C): pin the team THIS tab booted on and watch for a cross-tab switch.
+  // Any later divergence between this and the live shared team blocks mutating writes (API._assertTeam).
+  _BOOT_TEAM = _storedTeam;
+  _frzInstallTeamDesyncWatch();
 
   showLoading(true);
   try {
