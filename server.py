@@ -1558,7 +1558,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.11.0"
+APP_VERSION = "6.11.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -4164,6 +4164,43 @@ def _enforce_contributor_status(current: str, target: str, all_statuses: list,
     if _status_rank(target, all_statuses) < _status_rank(current, all_statuses):
         raise HTTPException(403, "Contributors can only move an item's status forward")
 
+def _resolve_assignee(c, value, users=None):
+    """Normalize an item's `assignee` to a canonical USERNAME.
+
+    `assignee` is username-keyed everywhere - list/group/filter, contributor scope, notifications,
+    owner-pod bucketing all key off it. Every in-app picker already writes a username, but two
+    paths can still put a DISPLAY NAME in: JSON import (`/api/import` inserts blobs verbatim) and
+    direct API writes. A stored display name then groups/filters as a SECOND, phantom person - the
+    "two Jake Smiths" bug (one real user `jacob.smith`, plus 425 items literally holding
+    "Jake Smith"). Heal it at the write chokepoint:
+      - a value that IS a known username -> kept (the common case, a no-op);
+      - a value that UNAMBIGUOUSLY matches one user's display name -> rewritten to that username;
+      - blank, unknown, or an AMBIGUOUS display name (two users share it) -> left unchanged. We
+        never guess between two people and never destroy an assignment we cannot resolve.
+    """
+    if value in (None, ""):
+        return value
+    v = " ".join(str(value).split())            # trim + collapse internal whitespace
+    if not v:
+        return value
+    if users is None:                            # default: resolve against the team's live users
+        try:
+            row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+            users = json.loads(row["value"]) if row else []
+        except Exception:
+            return value
+    if any(str(u.get("username")) == v for u in users if u.get("username")):
+        return v                                 # already a username - nothing to do
+    target = v.casefold()
+    matches = set()
+    for u in users:
+        disp = " ".join(x for x in [u.get("firstName"), u.get("lastName")] if x) or u.get("name") or ""
+        if disp and " ".join(str(disp).split()).casefold() == target and u.get("username"):
+            matches.add(u["username"])
+    if len(matches) == 1:                         # exactly one user by that display name
+        return next(iter(matches))
+    return value                                  # unknown or ambiguous - leave as-is
+
 def _bucket_item_owner(c, item: dict, old: dict = None, client_owner_explicit: bool = False) -> bool:
     """Bucket an item (field 'dev' = owner pool) under its assignee's owner pod.
       - Fill a blank owner from the assignee's pod (create + update).
@@ -4253,6 +4290,8 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     body.pop("assetServiceSync", None)   # WRITE-1b: server-owned send-outcome record; never client-seeded
     body.pop("extLinks", None)           # LINKS-1: endpoint-mediated only; a create can't seed reference URLs
     with db(team) as c:
+        if "assignee" in body:
+            body["assignee"] = _resolve_assignee(c, body.get("assignee"))   # display name -> username (import/API safety)
         _bucket_item_owner(c, body)   # owner bucketing: fill a blank owner from the assignee's pod
         _assign_item_key(c, body)
         body["id"] = _insert_project(c, body)
@@ -4426,6 +4465,10 @@ def update_project(pid: int, body: dict, background: BackgroundTasks = None,
         # status; the open Blocked flag is auto-cleared post-commit below.
         if blocked_status and merged.get("status", "") != blocked_status:
             merged.pop("preBlockStatus", None)
+        # Normalize a display-name assignee to its username BEFORE bucketing, so the pod lookup
+        # (keyed by username) resolves and the "two Jake Smiths" drift cannot land via a PUT.
+        if "assignee" in merged:
+            merged["assignee"] = _resolve_assignee(c, merged.get("assignee"))
         # Owner bucketing: fill a blank owner from the assignee's pod, and follow an
         # assignee change to the new pod (an explicit owner in this same save wins).
         _client_owner_explicit = "dev" in body and bool((body.get("dev") or "").strip())
@@ -6894,6 +6937,9 @@ def my_recent(auth: dict = Depends(require_auth)):
 def bulk_import(body: dict = Body(...), auth: dict = Depends(require_role("admin"))):
     team = auth["team"]
     username = _audit_actor(body.pop("_username", None), auth)
+    # Resolve display-name assignees against the users being IMPORTED (they are written to config
+    # only after this loop), falling back to the team's current users when the import omits them.
+    _import_users = body.get("users") if isinstance(body.get("users"), list) else None
     with db(team) as c:
         c.execute("DELETE FROM projects")
         for p in body.get("projects", []):
@@ -6903,6 +6949,8 @@ def bulk_import(body: dict = Body(...), auth: dict = Depends(require_role("admin
             # management path, not a client forgery surface. Blobs insert verbatim, so an
             # export that carried integration links restores them - dropping them would make
             # linked items look unlinked after a restore. No strip here, by decision.
+            if "assignee" in p:
+                p["assignee"] = _resolve_assignee(c, p.get("assignee"), users=_import_users)   # heal display-name assignees on restore
             _insert_project(c, p)
     for key in VALID_KEYS:
         if key in body and body[key]:
