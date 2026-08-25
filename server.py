@@ -1558,7 +1558,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.10.7"
+APP_VERSION = "6.11.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3796,7 +3796,10 @@ SERVER_OWNED_FIELDS = ("reporter", "reporterEmail", "source", "createdAt", "spri
                        "basis", "pausedSince",        # SLA-3 Stage 2: server-owned SLA clock basis + wait-start
                        "externalRefs",
                        "assetLinks", "assetCache",    # FLOW-1: server-owned asset links + display cache
-                       "assetServiceSync")            # WRITE-1b: per-asset service-event send outcomes
+                       "assetServiceSync",            # WRITE-1b: per-asset service-event send outcomes
+                       "extLinks")                    # LINKS-1: user-supplied reference URLs - endpoint-mediated
+                                                      # (POST/PATCH/DELETE /api/items/{pid}/links) so the generic
+                                                      # item PUT cannot bypass the save-time scheme whitelist
 
 RECURRENCE_SKIP_KEYS = {
     # instance-specific / per-cycle fields a new occurrence starts fresh (incl. itemKey, which
@@ -3850,6 +3853,10 @@ RECURRENCE_INHERITED = {
     # Arguably should be STRIPPED, but that is a skip_keys change outside this fix's scope, so it
     # is parked here and reported rather than silently accepted.
     "hubspotId",
+    # LINKS-1: user-supplied reference URLs (runbooks, dashboards, briefs). A recurring item's
+    # links describe the ongoing work, not one occurrence, so they carry to the next occurrence -
+    # inherited, not stripped. In SERVER_OWNED_FIELDS, so the invariant requires it here or in SKIP.
+    "extLinks",
 }
 
 def _save_project(c, pid: int, data: dict, ts: str = None):
@@ -4244,6 +4251,7 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     body.pop("assetLinks", None)
     body.pop("assetCache", None)
     body.pop("assetServiceSync", None)   # WRITE-1b: server-owned send-outcome record; never client-seeded
+    body.pop("extLinks", None)           # LINKS-1: endpoint-mediated only; a create can't seed reference URLs
     with db(team) as c:
         _bucket_item_owner(c, body)   # owner bucketing: fill a blank owner from the assignee's pod
         _assign_item_key(c, body)
@@ -5604,6 +5612,104 @@ def delete_attachment(pid: int, att_id: str,
         log.warning("[Attach] S3 delete failed for %s: %s", target.get("key"), e)
     write_audit(team, "attachment:delete", username, pid, p.get("name", ""), changes={"file": target.get("name")})
     return {"deleted": att_id, "name": target.get("name")}
+
+# ── LINKS-1: external reference links (the "& Links" half of Attachments & Links) ─────────────
+# The FIRST user-supplied URLs in the app. Endpoint-mediated exactly like asset-links: `extLinks`
+# is in SERVER_OWNED_FIELDS, so update_project restores it from the stored blob on every generic
+# item PUT and these three routes are the SOLE write path. That makes the save-time scheme
+# whitelist UNBYPASSABLE - a `javascript:` URL cannot slip in through a wholesale item PUT. The
+# role gate (admin/editor) is also the contributor guard: a contributor is refused here and cannot
+# sneak extLinks through the generic PUT either (it is popped/restored). The client revalidates the
+# scheme at RENDER as defense-in-depth for rows that predate a check (import / restored backup).
+_EXT_LINK_CAP = 20      # max links per item
+_EXT_LABEL_MAX = 120    # max label length (chars)
+
+def _link_scheme_ok(url: str) -> bool:
+    """http/https ONLY (mailto deferred - the tighter the whitelist, the safer). A netloc is
+    required, so 'http:evil' or a bare 'javascript:alert(1)' is rejected."""
+    from urllib.parse import urlparse
+    try:
+        s = urlparse((url or "").strip())
+    except Exception:
+        return False
+    return s.scheme in ("http", "https") and bool(s.netloc)
+
+def _norm_item_link(body: dict) -> tuple:
+    """Validate + normalize an incoming link. 422 on a bad scheme (the save-time guard). A blank
+    label falls back to the URL's HOSTNAME, never the full URL (a SharePoint URL is unreadable)."""
+    from urllib.parse import urlparse
+    url = str(body.get("url") or "").strip()
+    if not _link_scheme_ok(url):
+        raise HTTPException(422, "Link URL must start with http:// or https://")
+    label = str(body.get("label") or "").strip()[:_EXT_LABEL_MAX]
+    if not label:
+        label = (urlparse(url).netloc or url)[:_EXT_LABEL_MAX]
+    return url, label
+
+@app.post("/api/items/{pid}/links")
+def add_item_link(pid: int, body: dict = Body(...),
+                  auth: dict = Depends(require_role("admin", "editor"))):
+    """Add a reference link to the item. Contributors are refused by the role gate (phishing risk)."""
+    team = auth["team"]
+    username = _audit_actor(body.get("_username"), auth)
+    url, label = _norm_item_link(body)
+    now = datetime.now(timezone.utc).isoformat()
+    with db(team) as c:
+        p = _get_item_blob(c, pid)
+        links = p.get("extLinks") or []
+        if len(links) >= _EXT_LINK_CAP:
+            raise HTTPException(422, f"An item can have at most {_EXT_LINK_CAP} links.")
+        rec = {"id": secrets.token_hex(6), "label": label, "url": url,
+               "addedBy": username, "addedAt": now}
+        links.append(rec)
+        p["extLinks"] = links
+        _save_project(c, pid, p)
+    write_audit(team, "link:add", username, pid, p.get("name", ""), changes={"label": label, "url": url})
+    return {"ok": True, "extLinks": p["extLinks"]}
+
+@app.patch("/api/items/{pid}/links/{link_id}")
+def edit_item_link(pid: int, link_id: str, body: dict = Body(...),
+                   auth: dict = Depends(require_role("admin", "editor"))):
+    """Edit a link's label and/or URL. History records WHICH changed (label, url, or both)."""
+    team = auth["team"]
+    username = _audit_actor(body.get("_username"), auth)
+    url, label = _norm_item_link(body)
+    with db(team) as c:
+        p = _get_item_blob(c, pid)
+        links = p.get("extLinks") or []
+        row = next((l for l in links if isinstance(l, dict) and l.get("id") == link_id), None)
+        if not row:
+            raise HTTPException(404, "Link not found")
+        before = {"label": row.get("label"), "url": row.get("url")}
+        row["label"] = label
+        row["url"] = url
+        p["extLinks"] = links
+        _save_project(c, pid, p)
+    ch = {}
+    if before["label"] != label:
+        ch["label"] = {"from": before["label"], "to": label}
+    if before["url"] != url:
+        ch["url"] = {"from": before["url"], "to": url}
+    write_audit(team, "link:edit", username, pid, p.get("name", ""), changes=(ch or {"label": label, "url": url}))
+    return {"ok": True, "extLinks": p["extLinks"]}
+
+@app.delete("/api/items/{pid}/links/{link_id}")
+def delete_item_link(pid: int, link_id: str, username: str = "",
+                     auth: dict = Depends(require_role("admin", "editor"))):
+    """Remove a link."""
+    team = auth["team"]
+    username = _audit_actor(username, auth)
+    with db(team) as c:
+        p = _get_item_blob(c, pid)
+        links = p.get("extLinks") or []
+        removed = next((l for l in links if isinstance(l, dict) and l.get("id") == link_id), None)
+        if not removed:
+            raise HTTPException(404, "Link not found")
+        p["extLinks"] = [l for l in links if not (isinstance(l, dict) and l.get("id") == link_id)]
+        _save_project(c, pid, p)
+    write_audit(team, "link:remove", username, pid, p.get("name", ""),
+                changes={"label": removed.get("label"), "url": removed.get("url")})
+    return {"ok": True, "extLinks": p["extLinks"]}
 
 # ── Cross-team transfer (TRANSFER-1) ─────────────────────────────────────────
 # Move a misrouted item to the correct team + project. The two teams are separate SQLite
