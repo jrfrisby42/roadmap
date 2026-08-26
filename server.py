@@ -1614,7 +1614,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.13.0"
+APP_VERSION = "6.14.2"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3916,9 +3916,12 @@ SERVER_OWNED_FIELDS = ("reporter", "reporterEmail", "source", "createdAt", "spri
                        "externalRefs",
                        "assetLinks", "assetCache",    # FLOW-1: server-owned asset links + display cache
                        "assetServiceSync",            # WRITE-1b: per-asset service-event send outcomes
-                       "extLinks")                    # LINKS-1: user-supplied reference URLs - endpoint-mediated
+                       "extLinks",                    # LINKS-1: user-supplied reference URLs - endpoint-mediated
                                                       # (POST/PATCH/DELETE /api/items/{pid}/links) so the generic
                                                       # item PUT cannot bypass the save-time scheme whitelist
+                       "ccList")                      # CC-1: external notify/CC list - endpoint-mediated
+                                                      # (POST/DELETE /api/items/{pid}/cc) so the generic item PUT
+                                                      # cannot direct item content to addresses of a client's choosing
 
 RECURRENCE_SKIP_KEYS = {
     # instance-specific / per-cycle fields a new occurrence starts fresh (incl. itemKey, which
@@ -3976,6 +3979,10 @@ RECURRENCE_INHERITED = {
     # links describe the ongoing work, not one occurrence, so they carry to the next occurrence -
     # inherited, not stripped. In SERVER_OWNED_FIELDS, so the invariant requires it here or in SKIP.
     "extLinks",
+    # CC-1: external notify/CC list. Per J.R.'s decision the external follower still cares about
+    # the next occurrence of a recurring item, so it is inherited (in SERVER_OWNED_FIELDS -> the
+    # invariant requires it here or in SKIP).
+    "ccList",
 }
 
 def _save_project(c, pid: int, data: dict, ts: str = None):
@@ -4408,6 +4415,7 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     body.pop("assetCache", None)
     body.pop("assetServiceSync", None)   # WRITE-1b: server-owned send-outcome record; never client-seeded
     body.pop("extLinks", None)           # LINKS-1: endpoint-mediated only; a create can't seed reference URLs
+    body.pop("ccList", None)             # CC-1: endpoint-mediated only; a create can't seed the external notify list
     with db(team) as c:
         if "assignee" in body:
             body["assignee"] = _resolve_assignee(c, body.get("assignee"))   # display name -> username (import/API safety)
@@ -5873,6 +5881,99 @@ def delete_item_link(pid: int, link_id: str, username: str = "",
                 changes={"label": removed.get("label"), "url": removed.get("url")})
     return {"ok": True, "extLinks": p["extLinks"]}
 
+# ── CC-1: external notify / CC list (reporter-equivalent access for a non-account address) ────
+# An external party (vendor, a requester's manager, a colleague without an account) follows an
+# item. Endpoint-mediated exactly like extLinks: `ccList` is in SERVER_OWNED_FIELDS so the generic
+# item PUT can neither forge nor wipe it, admin/editor only (contributors are refused - directing
+# item content to addresses of their choosing is the same phishing reasoning that kept them out of
+# extLinks), and domain-gated by the team's intakeDomains (reporter-equivalent). Recipients ride
+# the EXISTING reporter emails (completed / deferred / @reporter-comment) - no new mailer - each
+# with a per-item unsubscribe link. A CC address gets the per-item /ticket page (shared per-item
+# token) but NOT the aggregate /my-tickets list, which is submission-based.
+_CC_LIST_CAP = 20
+
+def _valid_email(e: str) -> bool:
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", (e or "").strip()))
+
+def _cc_unsub_token(team: str, pid, email: str) -> str:
+    """Stateless per-(item,address) unsubscribe token - no storage, mirrors _ticket_token."""
+    return _sign(f"ccunsub:{team}:{pid}:{(email or '').strip().lower()}")
+
+@app.post("/api/items/{pid}/cc")
+def add_item_cc(pid: int, body: dict = Body(...),
+                auth: dict = Depends(require_role("admin", "editor"))):
+    """Add an external address to the item's notify list. Admin/editor only (contributors refused
+    by the role gate). Validates the address and enforces the team's intakeDomains allowlist."""
+    team = auth["team"]
+    username = _audit_actor(body.get("_username"), auth)
+    email = (body.get("email") or "").strip()
+    if not _valid_email(email):
+        raise HTTPException(422, "Enter a valid email address.")
+    if not _intake_domain_ok(team, email):
+        raise HTTPException(422, "That email domain is not allowed for this team.")
+    now = datetime.now(timezone.utc).isoformat()
+    with db(team) as c:
+        p = _get_item_blob(c, pid)
+        cc = p.get("ccList") or []
+        if any((r.get("email") or "").strip().lower() == email.lower() for r in cc if isinstance(r, dict)):
+            raise HTTPException(409, "That address is already on the notify list.")
+        if len(cc) >= _CC_LIST_CAP:
+            raise HTTPException(422, f"An item can notify at most {_CC_LIST_CAP} external addresses.")
+        cc.append({"id": secrets.token_hex(6), "email": email, "addedBy": username, "addedAt": now})
+        p["ccList"] = cc
+        _save_project(c, pid, p)
+    write_audit(team, "cc:add", username, pid, p.get("name", ""), changes={"email": email})
+    return {"ok": True, "ccList": p["ccList"]}
+
+@app.delete("/api/items/{pid}/cc/{cc_id}")
+def remove_item_cc(pid: int, cc_id: str, username: str = "",
+                   auth: dict = Depends(require_role("admin", "editor"))):
+    """Remove an address from the notify list."""
+    team = auth["team"]
+    username = _audit_actor(username, auth)
+    with db(team) as c:
+        p = _get_item_blob(c, pid)
+        cc = p.get("ccList") or []
+        removed = next((r for r in cc if isinstance(r, dict) and r.get("id") == cc_id), None)
+        if not removed:
+            raise HTTPException(404, "Address not found on the notify list.")
+        p["ccList"] = [r for r in cc if not (isinstance(r, dict) and r.get("id") == cc_id)]
+        _save_project(c, pid, p)
+    write_audit(team, "cc:remove", username, pid, p.get("name", ""), changes={"email": removed.get("email")})
+    return {"ok": True, "ccList": p["ccList"]}
+
+def _cc_unsub_page(msg: str) -> str:
+    return (f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Notification settings</title>
+<link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
+<link rel="icon" href="/favicon.png">
+<style>*{{box-sizing:border-box;margin:0;padding:0}}body{{font-family:'Lato',sans-serif;background:#f5f6f8;color:#1a1a2e;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}}.card{{background:#fff;border-radius:12px;padding:36px;text-align:center;max-width:440px;box-shadow:0 4px 20px rgba(0,0,0,.08)}}h1{{font-size:18px;font-weight:900;margin-bottom:10px;color:#0059A9}}p{{font-size:14px;color:#555;line-height:1.5}}</style>
+</head><body><div class="card"><h1>Notification settings</h1><p>{html.escape(msg)}</p></div></body></html>""")
+
+@app.get("/cc-unsubscribe", response_class=HTMLResponse)
+def cc_unsubscribe(team: str = "", id: int = 0, email: str = "", t: str = ""):
+    """Public, stateless unsubscribe for a CC'd address. Removes it from THIS item's notify list
+    only (not every item). Signed token, no storage - mirrors the reporter status-link scheme."""
+    team_n = re.sub(r"[^a-z0-9]", "", (team or "").lower())
+    email_n = (email or "").strip().lower()
+    if not (team_n and valid_team(team_n) and id and email_n and t
+            and hmac.compare_digest(_cc_unsub_token(team_n, id, email_n), t)):
+        return HTMLResponse(_cc_unsub_page("This unsubscribe link is invalid or has expired."), status_code=400)
+    removed = False
+    with db(team_n) as c:
+        row = c.execute("SELECT data FROM projects WHERE id=?", (id,)).fetchone()
+        if row:
+            p = json.loads(row["data"])
+            cc = p.get("ccList") or []
+            kept = [r for r in cc if not (isinstance(r, dict) and (r.get("email") or "").strip().lower() == email_n)]
+            if len(kept) != len(cc):
+                p["ccList"] = kept
+                _save_project(c, id, p)
+                removed = True
+    return HTMLResponse(_cc_unsub_page(
+        "You have been unsubscribed from updates to this ticket. This affects this ticket only."
+        if removed else "You were not on the notify list for this ticket, so nothing changed."))
+
 # ── Cross-team transfer (TRANSFER-1) ─────────────────────────────────────────
 # Move a misrouted item to the correct team + project. The two teams are separate SQLite
 # files, so this CANNOT be one transaction; it is made IDEMPOTENT instead, via a server-owned
@@ -6054,6 +6155,10 @@ def transfer_item(pid: int, body: dict = Body(...), auth: dict = Depends(require
             # An internally created item must not arrive claiming portal origin; the transfer's own
             # provenance lives in externalRefs, which is the right place for it.
             "source": src.get("source") or "", "createdAt": src.get("createdAt") or now_iso, "attachments": [],
+            # CC-1: the external notify list rides the transfer (J.R.'s decision - the external
+            # follower still cares after a reroute). A DELIBERATE exception: transfer drops nearly
+            # every field, but this one is carried, exactly like reporter/reporterEmail above.
+            "ccList": src.get("ccList") or [],
         }
         _append_external_ref(tgt_item, {"system": _TRANSFER_SYSTEM, "kind": "transferred-from",
             "status": "linked", "operationRef": op, "sourceTeam": src_team, "sourceLabel": src_label,
@@ -6247,6 +6352,17 @@ def mark_duplicate(pid: int, body: dict = Body(...), auth: dict = Depends(requir
         _save_project(c, pid, dup)
         _append_external_ref(surv, {"system": _DUPLICATE_SYSTEM, "kind": "duplicated-by", "operationRef": op,
             "sourceId": pid, "number": dup_key, "url": f"{APP_BASE_URL}/item/{pid}", "status": "linked", "at": now_iso})
+        # CC-1 (2.5): OPT-IN only. DUPLICATE-1 deliberately does not introduce the two reporters; this
+        # reverses that just for the person who ticks "also notify" on the mark-duplicate modal, adding
+        # the loser's reporter to the survivor's CC list so they follow the item that lives on.
+        if body.get("notifyReporter"):
+            dup_re = (dup.get("reporterEmail") or "").strip()
+            if dup_re:
+                _cc = surv.get("ccList") or []
+                if len(_cc) < _CC_LIST_CAP and not any((r.get("email") or "").strip().lower() == dup_re.lower()
+                                                       for r in _cc if isinstance(r, dict)):
+                    _cc.append({"id": secrets.token_hex(6), "email": dup_re, "addedBy": actor, "addedAt": now_iso})
+                    surv["ccList"] = _cc
         _save_project(c, survivor_id, surv)
         _dup_activity(c, pid, dup, actor, f"Marked as a duplicate of {surv_key}", prev_status, DUPLICATE_STATUS, ts_h)
         _dup_activity(c, survivor_id, surv, actor, f"{dup_key} marked as a duplicate of this item", "", "", ts_h)
@@ -6639,23 +6755,61 @@ def _reporter_email(team, item, pid, heading, intro, note=None):
     except Exception as e:
         log.warning(f"[Intake] reporter email failed for {pid}: {e}")
 
+def _cc_notify(team, item, pid, heading, intro, note=None):
+    """CC-1: send the reporter-equivalent notification to every address on the item's ccList -
+    same cadence/content as _reporter_email, but WITHOUT the /my-tickets link (a CC does not get
+    the aggregate list) and WITH a per-item unsubscribe link. Best-effort per address; a bounce on
+    one address must never affect the others or the underlying mutation."""
+    if not mail_configured():
+        return
+    cc = [e for e in ((r.get("email") or "").strip() for r in (item.get("ccList") or []) if isinstance(r, dict)) if e]
+    if not cc:
+        return
+    key = item.get("itemKey") or f"#{pid}"
+    prio = _PRIO_LABEL.get(str(item.get("priority") or ""), "")
+    rows = [("Ticket", key), ("Status", item.get("status") or ""),
+            ("Type", item.get("type") or ""), ("Priority", prio),
+            ("Project", item.get("product") or "")]
+    url = f"{APP_BASE_URL}/ticket?team={team}&id={pid}&t={_ticket_token(team, pid)}"
+    for addr in cc:
+        unsub = (f"{APP_BASE_URL}/cc-unsubscribe?team={team}&id={pid}"
+                 f"&email={_urlq(addr, safe='')}&t={_cc_unsub_token(team, pid, addr)}")
+        body = _intake_email_html(item, rows, heading, intro, "View ticket status", url, note=note,
+                                  secondary=("Stop receiving these updates", unsub))
+        text = (f"{heading}\n\n{intro}\n\n" + (f"{note}\n\n" if note else "")
+                + f"Ticket: {key}\nStatus: {item.get('status','')}\n\nTrack it: {url}\n"
+                + f"Stop receiving these updates: {unsub}\n")
+        try:
+            send_email(addr, f"[{key}] {heading} - {item.get('name','')}", text, body)
+        except Exception as e:
+            log.warning(f"[CC-1] cc email failed for {pid} -> {addr}: {e}")
+
 def _notify_reporter_status(team, old, new, pid):
-    """Email the reporter when a portal ticket enters a terminal (complete) or
-    deferred status - transition-triggered, so it fires once per change."""
-    if new.get("source") != "portal" or not (new.get("reporterEmail") or "").strip():
+    """Email the reporter (portal ticket) AND any CC-1 notify addresses when an item enters a
+    terminal (complete) or deferred status - transition-triggered, fires once per change."""
+    # CC-1: fire when it is a portal ticket with a reporter OR when the item carries a CC list.
+    # _reporter_email keeps its own portal+reporterEmail gate (reporter behaviour is UNCHANGED);
+    # _cc_notify handles the external followers. Reuses the EXISTING mailer - no new mailer.
+    is_portal_rep = new.get("source") == "portal" and (new.get("reporterEmail") or "").strip()
+    if not is_portal_rep and not new.get("ccList"):
         return
     os_, ns_ = old.get("status", ""), new.get("status", "")
     if not ns_ or ns_ == os_:
         return
     term = _cfg_val(team, "statusIsTerminal", {}) or {}
     defr = _cfg_val(team, "statusIsDeferred", {}) or {}
+    heading = intro = None
     if term.get(ns_) and not term.get(os_):
-        _reporter_email(team, new, pid, "Your ticket is complete",
+        heading, intro = ("Your ticket is complete",
             "Good news - the team has completed your ticket. The current status and details are below.")
     elif defr.get(ns_) and not defr.get(os_):
-        _reporter_email(team, new, pid, "Your ticket has been deferred",
+        heading, intro = ("Your ticket has been deferred",
             "Your ticket has been deferred for now - it's still logged and can be revisited. "
             "You can check its status any time.")
+    if not heading:
+        return
+    _reporter_email(team, new, pid, heading, intro)   # own gate: portal + reporterEmail
+    _cc_notify(team, new, pid, heading, intro)         # CC-1: external followers
 
 def _notify_reporter_comment(team, pid, text):
     with db(team) as c:
@@ -6666,6 +6820,8 @@ def _notify_reporter_comment(team, pid, text):
     note = _strip_tags(re.sub(r'@reporter\b', '', text or '', flags=re.I)).strip()
     _reporter_email(team, item, pid, "There's an update on your ticket",
         "The team added a note to your ticket:", note=note or "(no message)")
+    _cc_notify(team, item, pid, "There's an update on your ticket",
+        "The team added a note to this ticket:", note=note or "(no message)")   # CC-1: external followers
 
 @app.get("/api/notifications")
 def list_notifications(auth: dict = Depends(require_auth)):
