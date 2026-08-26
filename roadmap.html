@@ -2136,6 +2136,11 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
               Notify the team when a ticket is created
             </label>
             <div style="font-size:11px;color:var(--muted);margin:-4px 0 2px">Sends an in-app notification to admins and editors, and posts to the team Slack channel if a webhook is configured. Separate from the email above.</div>
+            <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:700;cursor:pointer;user-select:none;margin:10px 0 2px">
+              <input type="checkbox" id="tsIntakeCombined" style="accent-color:var(--accent);width:16px;height:16px;cursor:pointer">
+              Show this team on the combined request portal
+            </label>
+            <div style="font-size:11px;color:var(--muted);margin:-4px 0 2px">When off, this team is left off the shared <b>/report</b> list, but its own link above keeps working and it stays available as a transfer target.</div>
             <div style="font-size:12px;font-weight:700;color:var(--text);margin:8px 0 6px">Projects offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all; optional per-project email overrides the team address for that project's tickets)</span></div>
             <div id="tsIntakeProjects" style="display:flex;flex-direction:column;gap:6px;max-width:520px"></div>
             <div style="font-size:12px;font-weight:700;color:var(--text);margin:12px 0 6px">Types offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all)</span></div>
@@ -2229,7 +2234,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.11.1';
+const APP_VERSION = '6.12.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2879,6 +2884,7 @@ let intakeProjectStatus = {};   // optional per-Project DEFAULT STATUS for porta
 let intakeDefaultType = '';     // portal Type preselect ('' = none: reporters must choose when several types are offered). (config)
 let intakeDomains = [];         // allowed reporter email domains for the portal (empty = allow any). (config)
 let intakeNotifyTeam = false;   // notify the team (in-app + Slack channel) on a new portal ticket. (config)
+let intakeCombined = true;      // PORTAL-SCOPE-LOCK-1: show this team on the COMBINED public /report list (default true). (config)
 let departmentMeta = {};        // per-department {name:{color,emails}} - pill color + notify list. (config)
 let productIgnoreConflicts = {}; // { [productName]: bool } - exempt a whole project from capacity-conflict accounting
 
@@ -7782,6 +7788,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       intakeProjects = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];
       intakeNotifyEmail = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : '';
       intakeNotifyTeam = data.intakeNotifyTeam === true;
+      intakeCombined = data.intakeCombined !== false;   // PORTAL-SCOPE-LOCK-1: default true; only an explicit false hides from combined
       intakeTypes   = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];
       if(data.intakeProjectEmails && typeof data.intakeProjectEmails === 'object') intakeProjectEmails = data.intakeProjectEmails;
       if(data.intakeProjectStatus && typeof data.intakeProjectStatus === 'object') intakeProjectStatus = data.intakeProjectStatus;
@@ -16349,7 +16356,7 @@ async function openTransferModal(id){
     _submitTransfer(id, team, proj, this);
   };
   let data;
-  try { data = await API.get('/api/intake/projects'); }   // the SAME cross-team list the portal uses
+  try { data = await API.get('/api/transfer/targets'); }   // PORTAL-SCOPE-LOCK-1: authenticated, ALL enabled teams (incl. portal-excluded), unlike the public /api/intake/projects
   catch(e){ _trMsg('Could not load target teams.','error'); return; }
   const cur = (API._team()||'').toLowerCase();
   const rows = (data.projects||[]).filter(r=>String(r.team).toLowerCase()!==cur);   // never the current team
@@ -16764,6 +16771,11 @@ function renderIntakePortalSettings(){
   if(notifyTeam){
     notifyTeam.checked = !!intakeNotifyTeam;
     notifyTeam.onchange = () => { intakeNotifyTeam = notifyTeam.checked; saveConfig('intakeNotifyTeam', intakeNotifyTeam); };
+  }
+  const combined = document.getElementById('tsIntakeCombined');   // PORTAL-SCOPE-LOCK-1
+  if(combined){
+    combined.checked = !!intakeCombined;
+    combined.onchange = () => { intakeCombined = combined.checked; saveConfig('intakeCombined', intakeCombined); };
   }
   const projWrap = document.getElementById('tsIntakeProjects');
   const projNames = (products||[]).map(p => (p&&p.name)||p).filter(Boolean);
