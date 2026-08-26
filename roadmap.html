@@ -539,6 +539,12 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .bar.plan       { border-radius: 4px 0 0 4px; background: var(--bar-green); }
   .bar.plan.solo  { border-radius: 4px; }
   .bar.delay      { border-radius: 0 4px 4px 0; background: var(--bar-red); opacity: 0.9; }
+  /* UI-TRIO-1 P3: INFERRED overrun (release later than the scheduled end). Deliberately NOT the
+     solid .bar.delay above: a real `revised` delay carries a required reason + an audit trail, an
+     inferred overrun has neither, so they must read differently. Hatched fill + dashed outline in
+     the same red hue = "past due, but no reason was recorded". Display only - nothing writes revised. */
+  .bar.overrun    { border-radius: 0 4px 4px 0; border: 1px dashed var(--bar-red); opacity: 0.85; box-sizing: border-box;
+                    background: repeating-linear-gradient(45deg, var(--bar-red) 0, var(--bar-red) 3px, transparent 3px, transparent 7px); }
 
   /* TESTING BAR - blue outline, white fill, blue crosshatch */
   .bar.testing-bar {
@@ -1583,11 +1589,11 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <div style="display:flex;align-items:center;gap:12px">
         <h2 id="modalTitle" style="margin:0">Edit Project</h2>
-        <button type="button" id="modalOpenPageBtn" onclick="openItemPageFromModal()" title="Open the full item page (schedule, activity, comments)"
-          style="display:none;align-items:center;gap:6px;background:#0059A9;color:#fff;border:none;padding:6px 13px;border-radius:8px;font-family:'Lato',sans-serif;font-weight:600;font-size:13px;cursor:pointer">
+        <a id="modalOpenPageBtn" href="#" target="_blank" rel="noopener" title="Open the full item page in a new tab (schedule, activity, comments)"
+          style="display:none;align-items:center;gap:6px;background:#0059A9;color:#fff;text-decoration:none;padding:6px 13px;border-radius:8px;font-family:'Lato',sans-serif;font-weight:600;font-size:13px;cursor:pointer">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           Open Item Page
-        </button>
+        </a>
       </div>
       <button id="flagIssueBtn" style="display:none;background:none;border:1px solid #e8a000;color:#c06000;padding:5px 11px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer;align-items:center;gap:5px" onclick="openFlagIssue(editingId)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
@@ -2234,7 +2240,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.14.2';
+const APP_VERSION = '6.14.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -4607,7 +4613,18 @@ function render(){
         if(e){
           cH += `<div class="diamond" data-id="${p.id}" title="Expected: ${fmtD(e)}" style="left:${px(e).toFixed(1)}px"></div>`;
         }
+        // UI-TRIO-1 P3: inferred overrun segment. When the release is LATER than the scheduled end
+        // (revised if delayed, else due), draw a connecting segment so the Released marker attaches to
+        // the bar instead of floating past it. overrunStart == the bar's right edge in every case
+        // (testEnd = revised/due; delay bar ends at revised; a no-test/no-delay dev bar ends at due),
+        // so it joins cleanly. Early release (rl <= scheduled end) draws nothing - the marker stays
+        // inside the bar (3.4, unchanged). DISPLAY ONLY - `revised` is never written (that would fire
+        // the delay-reason prompt + an audit trail); it is rendered HATCHED, distinct from .bar.delay.
         if(rl){
+          const overrunStart = hasDelay ? r : d;
+          if(overrunStart && px(overrunStart) < px(rl)){
+            cH += `<div class="bar overrun" data-id="${p.id}" title="Released ${fmtD(rl)} - past the ${hasDelay?'revised':'due'} date (no delay reason recorded)" style="left:${px(overrunStart).toFixed(1)}px;width:${pxW(overrunStart,rl).toFixed(1)}px"></div>`;
+          }
           cH += `<div class="plane-marker" data-id="${p.id}" title="Released: ${fmtD(rl)}" style="left:${px(rl).toFixed(1)}px">${PLANE_SVG}</div>`;
         }
         cH += `</div></div>`;
@@ -5271,6 +5288,15 @@ document.getElementById('fParallel')?.addEventListener('change', ()=>{
   }
 });
 
+// UI-TRIO-1 Part 1: canonical item-page URL for new-tab "open item page" anchors. Carries the team
+// explicitly (sessions are per-team). boot() also resolves team from shared localStorage (per-origin,
+// shared across tabs), so a new tab inherits the current team regardless; the param is a
+// self-documenting hint and belt-and-suspenders. /item/{id} is the canonical route.
+function _frzItemPageUrl(id){
+  var t=''; try { t=localStorage.getItem('frazil_rm_team')||''; } catch(e){}
+  return location.origin + '/item/' + id + (t ? ('?team='+encodeURIComponent(t)) : '');
+}
+
 // Jump from the quick-edit modal to the full item page (closes the modal first).
 function openItemPageFromModal(){
   const id = editingId;
@@ -5873,11 +5899,14 @@ function openProjectModal(id){
   const onItemPage = !!(id && _itemPageId && _itemPageId === id);
   const itemPageLink = document.getElementById('itemPageLink');
   if(itemPageLink){
-    itemPageLink.href = itemUrl;
+    itemPageLink.href = id ? _frzItemPageUrl(id) : '#';   // UI-TRIO-1 P1: team-explicit new-tab URL
     itemPageLink.style.display = (id && !onItemPage) ? 'block' : 'none';
   }
   const modalOpenPageBtn = document.getElementById('modalOpenPageBtn');
-  if(modalOpenPageBtn) modalOpenPageBtn.style.display = (id && !onItemPage) ? 'inline-flex' : 'none';
+  if(modalOpenPageBtn){
+    modalOpenPageBtn.href = id ? _frzItemPageUrl(id) : '#';   // UI-TRIO-1 P1: was a JS button; now a real new-tab anchor
+    modalOpenPageBtn.style.display = (id && !onItemPage) ? 'inline-flex' : 'none';
+  }
   // Show jiraModalRow only when Jira is configured AND the item's project is mapped
   const jiraModalRow = document.getElementById('jiraModalRow');
   const featureFlagsRow = document.getElementById('featureFlagsRow');
@@ -12064,11 +12093,12 @@ function renderKanban(){
         onclick="openProjectModal(${p.id})"
         style="position:relative;background:#fff;border:1px solid var(--border);border-left:3px solid ${isActiveStatus(status)?'var(--accent)':'var(--border)'};border-radius:8px;padding:10px 12px;cursor:pointer;user-select:none;margin-bottom:8px">
         <!-- Open the full item page - top right -->
-        <button class="kanban-open-btn" data-id="${p.id}" title="Open item page" draggable="false"
-          onclick="event.stopPropagation();openItemPage(${p.id})"
-          style="position:absolute;top:5px;right:26px;background:none;border:none;padding:2px;color:var(--muted);line-height:1;cursor:pointer">
+        <a class="kanban-open-btn" data-id="${p.id}" title="Open item page in a new tab" draggable="false"
+          href="${_frzItemPageUrl(p.id)}" target="_blank" rel="noopener"
+          onclick="event.stopPropagation()"
+          style="position:absolute;top:5px;right:26px;background:none;border:none;text-decoration:none;padding:2px;color:var(--muted);line-height:1;cursor:pointer">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>
-        </button>
+        </a>
         <!-- Ellipsis tooltip trigger - top right -->
         <span class="kanban-tip-btn" data-id="${p.id}"
           style="position:absolute;top:6px;right:6px;font-size:13px;font-weight:900;letter-spacing:1px;color:var(--muted);line-height:1;padding:2px 4px;border-radius:3px;cursor:default;user-select:none"
@@ -28278,7 +28308,7 @@ if ('serviceWorker' in navigator) {
       + '<div class="frz-lp-hd-top">'
         + '<div class="frz-lp-hdside">'+(p.itemKey?'<span class="frz-bcard-key" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></span>':'')+'</div>'
         + '<div class="frz-lp-hdmid">'+statusCtl+flagBtn+'</div>'   // REM-2 (7.1): status then Flag, Flag RIGHTMOST - matches the item page (#frzBadges builds Watch then Flag, Flag rightmost) and the modal (primary Flag button bottom-right). If a Watch button is ever added here it belongs LEFT of Flag, so the relative order still matches the item page. Flag's right edge sits ~8px from ⤢ and ~61px from ✕, so no mis-click concern.
-        + '<div class="frz-lp-actions"><button type="button" class="frz-lp-full" title="Open full page" aria-label="Open full page">⤢</button>'
+        + '<div class="frz-lp-actions"><a class="frz-lp-full" href="'+_frzItemPageUrl(p.id)+'" target="_blank" rel="noopener" title="Open full page in a new tab" aria-label="Open full page in a new tab" style="text-decoration:none">⤢</a>'
         + '<button type="button" class="frz-lp-close" title="Close" aria-label="Close">✕</button></div>'
       + '</div>'
       + '<div class="frz-lp-name">'+esc(p.name||'')+'</div></div>'
@@ -28304,11 +28334,13 @@ if ('serviceWorker' in navigator) {
     var _c=document.getElementById('frzContent');                 // align the fixed panel below the top bar
     _frzPanelEl.style.top=(_c?Math.max(0,_c.getBoundingClientRect().top):56)+'px';
     _frzPanelEl.innerHTML='<div class="frz-lp-scroll">'+_frzPanelChrome(p, canEdit)+'</div>'
-      + '<div class="frz-lp-footer"><button type="button" class="frz-lp-openbtn" title="Open the full item page (schedule, activity, comments)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open Item Page</button></div>';
+      + '<div class="frz-lp-footer"><a class="frz-lp-openbtn" href="'+_frzItemPageUrl(id)+'" target="_blank" rel="noopener" title="Open the full item page in a new tab (schedule, activity, comments)" style="text-decoration:none"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open Item Page</a></div>';
     var _sc=_frzPanelEl.querySelector('.frz-lp-scroll'); if(_sc) _sc.scrollTop=0;
     _frzPanelEl.querySelector('.frz-lp-close').addEventListener('click', function(){ frzClosePanel(); });
-    _frzPanelEl.querySelector('.frz-lp-full').addEventListener('click', function(){ _frzPanelOpenFull(id); });
-    var _lpOpen=_frzPanelEl.querySelector('.frz-lp-openbtn'); if(_lpOpen) _lpOpen.addEventListener('click', function(){ _frzPanelOpenFull(id); });
+    // UI-TRIO-1 P1: .frz-lp-full and .frz-lp-openbtn are now real new-tab <a> anchors (href set above);
+    // no click handler - the panel stays open in this tab and the item opens in a new tab. This gives
+    // middle-click / cmd-click / open-in-new-window for free. _frzPanelOpenFull is retained for any
+    // other caller but is no longer invoked from these two controls.
     var desc=_frzPanelEl.querySelector('#frzLpDesc');
     if(desc){
       if(p.description){ var _openedFor=id; renderRichInto(desc, p.description, id, function(){ return state.panelId===_openedFor; }); }   // async-race guard: bail if a newer row opened
@@ -28555,13 +28587,30 @@ if ('serviceWorker' in navigator) {
     el.innerHTML=tops.map(function(c){
       var reps=byParent[c.id]||[], collapsed=!!_frzCollapsed[c.id], n=reps.length;
       var rlabel=n+' '+(n===1?'reply':'replies');
-      var toggle=n ? '<button class="frz-thread-toggle" data-thread="'+c.id+'" onclick="window._frzToggleThread('+c.id+')">'+(collapsed?'▸ ':'▾ ')+rlabel+'</button>' : '';
+      var slot='<div class="frz-reply-slot" id="frzReplySlot-'+c.id+'"></div>';
+      // UI-TRIO-1 P2: a bare comment keeps its Reply on the control row (unchanged). A thread WITH
+      // replies moves the Reply affordance to the FOOT - after the last reply, as "N replies · Reply"
+      // - so it sits where the conversation ended instead of drifting above the replies. One
+      // affordance per thread; the SAME composer machinery is reused (frzReplySlot + _frzReplyOpenFor),
+      // only the position moves and the slot moves with it. The collapse toggle shows the count only
+      // when collapsed (else "Hide replies"), so the count is never shown twice.
+      if(n){
+        var toggle='<button class="frz-thread-toggle" data-thread="'+c.id+'" onclick="window._frzToggleThread('+c.id+')">'+(collapsed?('▸ '+rlabel):'▾ Hide replies')+'</button>';
+        var footReply=canEdit ? '<div class="frz-thread-foot" style="display:flex;align-items:center;gap:5px;margin-left:22px;padding:5px 2px 2px"><span style="font-size:11px;color:var(--frz-text-muted)">'+rlabel+' &middot;</span><button class="frz-reply-btn" onclick="window._frzToggleReply('+c.id+')">Reply</button></div>' : '';
+        // Foot affordance + composer slot live INSIDE the collapsible thread, so a collapsed thread
+        // shows only its toggle; expand to reply.
+        var thread='<div class="frz-thread" id="frzThread-'+c.id+'"'+(collapsed?' style="display:none"':'')+'>'
+          + reps.map(function(rc){ return _frzCommentCard(rc, true); }).join('')
+          + footReply + slot + '</div>';
+        return '<div class="frz-comment-thread">'+_frzCommentCard(c, false)
+          + '<div class="frz-thread-ctl">'+toggle+'</div>'
+          + thread + '</div>';
+      }
+      // No replies: Reply stays on the control row, slot beneath the comment (unchanged).
       var replyBtn=canEdit ? '<button class="frz-reply-btn" onclick="window._frzToggleReply('+c.id+')">Reply</button>' : '';
-      var thread = n ? '<div class="frz-thread" id="frzThread-'+c.id+'"'+(collapsed?' style="display:none"':'')+'>'+reps.map(function(rc){ return _frzCommentCard(rc, true); }).join('')+'</div>' : '';
       return '<div class="frz-comment-thread">'+_frzCommentCard(c, false)
-        + '<div class="frz-thread-ctl">'+toggle+replyBtn+'</div>'
-        + '<div class="frz-reply-slot" id="frzReplySlot-'+c.id+'"></div>'
-        + thread + '</div>';
+        + '<div class="frz-thread-ctl">'+replyBtn+'</div>'
+        + slot + '</div>';
     }).join('');
     if(opts.panel){ _frzRehydrateImagesIn(el, itemId); }   // panel: rehydrate THIS host
     else { _frzRehydrateCommentImages(itemId); _frzPlaceComposerTop(); }
