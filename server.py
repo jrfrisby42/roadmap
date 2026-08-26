@@ -470,19 +470,27 @@ def _load_token_secret() -> str:
         return secrets.token_hex(32)
 
 _TOKEN_SECRET = _load_token_secret()
-_TOKEN_EXPIRY = 86400  # 24 hours
+_TOKEN_EXPIRY = 604800  # 7 days. SESSION-SLIDE-1: sliding-session BASE lifetime. An active user's
+                        # token is renewed past half-life (see require_auth), so activity within any
+                        # 3.5-day window never interrupts; an abandoned session dies within 7 days of
+                        # last use. Exposure is bounded by IDLE time, not total time.
 
 def _sign(payload: str) -> str:
     return hmac.new(_TOKEN_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()[:32]
 
-def create_token(team: str, username: str, role: str) -> str:
+def create_token(team: str, username: str, role: str, gen: int = 0) -> str:
+    # SESSION-SLIDE-1: `gen` is the user's token generation (config['users'][*].tokenGen, absent=0).
+    # Bumping it invalidates every prior token for that user ("sign out everywhere"), verified live.
     expiry = int(time.time()) + _TOKEN_EXPIRY
-    payload = f"{team}:{username}:{role}:{expiry}"
+    payload = f"{team}:{username}:{role}:{expiry}:{int(gen or 0)}"
     sig = _sign(payload)
     return base64.urlsafe_b64encode(f"{payload}:{sig}".encode()).decode()
 
 def decode_token(token: str) -> dict:
-    """Decode and verify a token. Returns {"team", "username", "role"} or raises HTTPException."""
+    """Decode and verify a token. Returns {"team","username","role","expiry","gen"} or raises
+    HTTPException. SESSION-SLIDE-1: accepts BOTH the 5-field payload (with gen) AND the legacy
+    4-field payload minted before this deploy - a missing gen reads as 0 - so existing sessions
+    keep working through the deploy."""
     try:
         raw = base64.urlsafe_b64decode(token.encode()).decode()
         parts = raw.rsplit(":", 1)
@@ -491,10 +499,18 @@ def decode_token(token: str) -> dict:
         payload, sig = parts
         if not hmac.compare_digest(_sign(payload), sig):
             raise ValueError("bad signature")
-        team, username, role, expiry_str = payload.split(":")
-        if int(expiry_str) < int(time.time()):
+        fields = payload.split(":")
+        if len(fields) == 5:
+            team, username, role, expiry_str, gen_str = fields
+        elif len(fields) == 4:                       # legacy pre-deploy token: no gen -> generation 0
+            team, username, role, expiry_str = fields
+            gen_str = "0"
+        else:
+            raise ValueError("malformed")
+        expiry = int(expiry_str)
+        if expiry < int(time.time()):
             raise ValueError("expired")
-        return {"team": team, "username": username, "role": role}
+        return {"team": team, "username": username, "role": role, "expiry": expiry, "gen": int(gen_str or 0)}
     except (ValueError, Exception) as e:
         raise HTTPException(401, f"Invalid or expired token: {e}")
 
@@ -544,8 +560,25 @@ def _is_user_revoked(team: str, username: str) -> bool:
         log.warning(f"[Auth] revocation lookup failed for '{username}'@'{team}': {e}")
         return False
 
+def _user_token_gen(team: str, username: str):
+    """SESSION-SLIDE-1: the user's current token generation (config['users'][*].tokenGen, absent
+    reads as 0). A live per-request lookup, exactly like `_is_user_revoked` - users live in the
+    config blob, not a table, so this is a field on the user record (no schema/column). Returns the
+    int, or **None on any lookup error** so the caller SKIPS the generation check (fail-OPEN): a
+    transient DB issue must not mass-invalidate every token (revocation + expiry still bound it)."""
+    try:
+        with db(team) as c:
+            row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+        users = json.loads(row["value"]) if row else []
+        u = next((u for u in users if u.get("username") == username), None)
+        return int((u or {}).get("tokenGen") or 0)
+    except Exception as e:
+        log.warning(f"[Auth] token-gen lookup failed for '{username}'@'{team}': {e}")
+        return None
+
 def require_auth(authorization: Optional[str] = Header(None),
-                 x_team: Optional[str] = Header(None)) -> dict:
+                 x_team: Optional[str] = Header(None),
+                 response: Response = None) -> dict:
     """FastAPI dependency: extract and verify the bearer auth token. A verified
     token is required (the old X-Team-only fallback was removed in 4.10.3). Also
     enforces user revocation on live tokens (T2). Returns {"team","username","role"}."""
@@ -566,10 +599,30 @@ def require_auth(authorization: Optional[str] = Header(None),
                 if resolved and resolved != auth["team"]:
                     raise HTTPException(403, "Token team does not match X-Team header")
             # T2: honor revocation on EXISTING tokens - a revoked user's live token
-            # dies immediately, not just at next login (tokens live 24h otherwise).
+            # dies immediately, not just at expiry.
             if _is_user_revoked(auth["team"], auth["username"]):
                 raise HTTPException(401, "Account access has been revoked. Please contact an admin.")
-            return auth
+            # SESSION-SLIDE-1: token-generation check ("sign out everywhere"). A live lookup, like
+            # revocation - a bumped generation invalidates every prior token for the user. Absent/null
+            # reads as 0, so legacy pre-deploy tokens (gen 0) keep working. None = lookup error ->
+            # skip (fail-open, same posture as revocation).
+            cur_gen = _user_token_gen(auth["team"], auth["username"])
+            if cur_gen is not None and auth.get("gen", 0) != cur_gen:
+                raise HTTPException(401, "Session ended. Please log in again.")
+            # SESSION-SLIDE-1: sliding renewal. Runs ONLY here, AFTER every check above has passed, so
+            # a revoked or generation-bumped user can never receive a fresh token. Fires only past
+            # half-life. Best-effort: a renewal failure leaves the request successful and the session
+            # intact - a renewal bug must never log anyone out. The new token is delivered in the
+            # X-Renew-Token response header; the client adopts it (never touches frazil_rm_login_ts).
+            if response is not None:
+                try:
+                    if (auth["expiry"] - int(time.time())) < (_TOKEN_EXPIRY // 2):
+                        gen_for_renew = cur_gen if cur_gen is not None else auth.get("gen", 0)
+                        response.headers["X-Renew-Token"] = create_token(
+                            auth["team"], auth["username"], auth["role"], gen_for_renew)
+                except Exception as e:
+                    log.warning(f"[Auth] token renewal skipped: {e}")
+            return {"team": auth["team"], "username": auth["username"], "role": auth["role"]}
         except HTTPException:
             raise
         except Exception as e:
@@ -1561,7 +1614,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.12.0"
+APP_VERSION = "6.13.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1600,6 +1653,7 @@ def _configure_cors(app, allowed_origins):
         app.add_middleware(CORSMiddleware,
                            allow_origins=allowed_origins,
                            allow_methods=["*"], allow_headers=["*"],
+                           expose_headers=["X-Renew-Token"],   # SESSION-SLIDE-1: JS must read the sliding-renewal header cross-origin
                            allow_credentials=True)
         log.info("[CORS] Restricted to: %s", ", ".join(allowed_origins))
     else:
@@ -3057,7 +3111,7 @@ def login(body: dict = Body(...), request: FRequest = None, response: Response =
     # comments/mentions/assignee/contributor-scope all key off username. The response already returns
     # user["username"]; align the token + audit with it.
     canonical = user["username"]
-    token = create_token(team, canonical, role)
+    token = create_token(team, canonical, role, int(user.get("tokenGen") or 0))   # SESSION-SLIDE-1: current generation
     write_audit(team, "login", canonical)
     # Set httpOnly session cookie so the audit page can verify auth server-side
     if response:
@@ -3177,6 +3231,35 @@ def admin_change_user_password(
     write_audit(team, "password:admin_change", caller,
                 changes={"target": target_username, "by_primary": is_primary})
     return {"ok": True}
+
+
+@app.post("/api/users/{target_username}/signout-all")
+def signout_user_everywhere(target_username: str, auth: dict = Depends(require_role("admin"))):
+    """SESSION-SLIDE-1: 'sign out everywhere'. Bump the user's token generation, invalidating
+    EVERY existing token for them - a clean kill for a suspected compromise WITHOUT revoking the
+    account (they can log in again immediately and get a fresh-generation token). Distinct from
+    revocation, which locks the account out entirely. Mirrors the password endpoint's primary-admin
+    guard: a non-primary admin cannot sign out another admin."""
+    team   = auth["team"]
+    caller = auth["username"]
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+    if not row:
+        raise HTTPException(404, "User store not found")
+    users = json.loads(row["value"])
+    caller_user = next((u for u in users if u["username"] == caller), None)
+    is_primary  = bool(caller_user and caller_user.get("builtin", False))
+    target_user = next((u for u in users if u["username"] == target_username), None)
+    if not target_user:
+        raise HTTPException(404, f"User '{target_username}' not found")
+    if target_user.get("role", "viewer") == "admin" and not is_primary and caller != target_username:
+        raise HTTPException(403, "Only the primary admin can sign out another admin everywhere")
+    target_user["tokenGen"] = int(target_user.get("tokenGen") or 0) + 1
+    with db(team) as c:
+        c.execute("UPDATE config SET value=? WHERE key='users'", (json.dumps(users),))
+    write_audit(team, "signout-all", caller, project_name=target_username,
+                changes={"target": target_username, "tokenGen": target_user["tokenGen"]})
+    return {"ok": True, "username": target_username, "tokenGen": target_user["tokenGen"]}
 
 
 # ── Self-service password reset / invite (Amazon SES) ─────────────────────────
@@ -3326,7 +3409,7 @@ def force_change_password(body: dict = Body(...), auth: dict = Depends(require_a
     write_audit(team, "password:change", username, changes={"forced": True})
     # Issue a fresh token
     role = user.get("role", "viewer")
-    token = create_token(team, username, role)
+    token = create_token(team, username, role, int(user.get("tokenGen") or 0))   # SESSION-SLIDE-1: current generation
     return {"ok": True, "token": token}
 
 # ── Data ──────────────────────────────────────────────────────────────────────

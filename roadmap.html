@@ -2234,7 +2234,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.12.0';
+const APP_VERSION = '6.13.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2348,8 +2348,45 @@ const API = {
         + '". Reload this tab to continue.');
     }
   },
-  async _check(r){
+  // SESSION-SLIDE-1: adopt a sliding-renewal token the server issued (X-Renew-Token). Writes ONLY
+  // frazil_token + the active team's entry in the sessions map - NEVER frazil_rm_login_ts, so the
+  // client-side revocation-message check (~17721) keeps working.
+  _adoptRenewal(r){
+    try {
+      const nt = r && r.headers && r.headers.get('X-Renew-Token');
+      if(!nt) return;
+      localStorage.setItem('frazil_token', nt);
+      try {
+        var tm = localStorage.getItem('frazil_rm_team') || '';
+        if(tm && typeof _loadSessions === 'function'){
+          var m = _loadSessions();
+          if(m[tm]){ m[tm].token = nt; if(typeof _saveSessions === 'function') _saveSessions(m); }
+        }
+      } catch(e){}
+    } catch(e){}
+  },
+  // SESSION-SLIDE-1: true if the stored token has moved on from the one a request was SENT with -
+  // i.e. a renewal landed mid-flight. Used so a stale-token 401 never wipes the fresh token.
+  _rotated(sentToken){
+    try { const cur = localStorage.getItem('frazil_token') || ''; return !!(sentToken && cur && cur !== sentToken); }
+    catch(e){ return false; }
+  },
+  // SESSION-SLIDE-1: run a request through _check; if it 401s only because a renewal rotated the
+  // stored token mid-flight, retry ONCE with the now-current token instead of logging out.
+  async _withRenew(sentToken, doFetch){
+    try {
+      return await this._check(await doFetch(), sentToken);
+    } catch(e){
+      if(e && e._tokenRotated){ return await this._check(await doFetch(), this._token()); }
+      throw e;
+    }
+  },
+  async _check(r, sentToken){
+    this._adoptRenewal(r);   // SESSION-SLIDE-1: pick up a renewed token before anything else
     if(r.status === 401){
+      // SESSION-SLIDE-1: a renewal landed mid-flight (stored token moved on from the one we sent).
+      // Do NOT wipe the fresh token or wall the user - signal a one-shot retry with the current token.
+      if(this._rotated(sentToken)){ const e=new Error('Session token refreshed; retrying.'); e._tokenRotated=true; throw e; }
       let _detail=null; try { _detail = (await r.json()).detail; } catch(_){}
       try { if(typeof _frzCaptureDrafts==='function') _frzCaptureDrafts(); } catch(e){}   // SESS-1 Part 2: save unsaved text before the wall/reload
       try { localStorage.removeItem('frazil_token'); } catch(e){}
@@ -2379,17 +2416,19 @@ const API = {
     if(!r.ok) throw new Error(await r.text());
     return r.json();
   },
-  async get(path)       { return this._check(await fetch(path, {headers:this._authHeaders()})); },
-  async post(path,body) { this._assertTeam(); return this._check(await fetch(path,{method:'POST',  headers:this._h(), body:JSON.stringify(body)})); },
-  async put(path,body)  { this._assertTeam(); return this._check(await fetch(path,{method:'PUT',   headers:this._h(), body:JSON.stringify(body)})); },
-  async patch(path,body){ this._assertTeam(); return this._check(await fetch(path,{method:'PATCH', headers:this._h(), body:JSON.stringify(body)})); },
-  async del(path)       { this._assertTeam(); return this._check(await fetch(path,{method:'DELETE',headers:this._authHeaders()})); },
+  async get(path)       { const t=this._token(); return this._withRenew(t, ()=>fetch(path, {headers:this._authHeaders()})); },
+  async post(path,body) { this._assertTeam(); const t=this._token(); return this._withRenew(t, ()=>fetch(path,{method:'POST',  headers:this._h(), body:JSON.stringify(body)})); },
+  async put(path,body)  { this._assertTeam(); const t=this._token(); return this._withRenew(t, ()=>fetch(path,{method:'PUT',   headers:this._h(), body:JSON.stringify(body)})); },
+  async patch(path,body){ this._assertTeam(); const t=this._token(); return this._withRenew(t, ()=>fetch(path,{method:'PATCH', headers:this._h(), body:JSON.stringify(body)})); },
+  async del(path)       { this._assertTeam(); const t=this._token(); return this._withRenew(t, ()=>fetch(path,{method:'DELETE',headers:this._authHeaders()})); },
   // ATTACH-URL-1: fetch a binary body (an attachment) WITH auth and return an object URL. An <img src>
   // or <a href> cannot carry the bearer header, so attachments are fetched here and shown via a blob URL.
   // 401 routes to the login wall the same way _check does (so an expired session is legible, not raw XML).
   async getBlobURL(path){
+    const t=this._token();
     const r = await fetch(path, {headers:this._authHeaders()});
-    if(r.status === 401){ this._on401(); throw new Error('Session expired. Please log in again.'); }
+    this._adoptRenewal(r);   // SESSION-SLIDE-1
+    if(r.status === 401){ if(!this._rotated(t)) this._on401(); throw new Error('Session expired. Please log in again.'); }
     if(!r.ok) throw new Error('Attachment load failed ('+r.status+')');
     return URL.createObjectURL(await r.blob());
   },
@@ -2397,8 +2436,10 @@ const API = {
   // handling, so an expired session shows the login wall instead of an alert with a raw status code.
   // Caller reads .blob()/.headers off the returned Response.
   async getRaw(path){
+    const t=this._token();
     const r = await fetch(path, {headers:this._authHeaders()});
-    if(r.status === 401){ this._on401(); throw new Error('Session expired. Please log in again.'); }
+    this._adoptRenewal(r);   // SESSION-SLIDE-1
+    if(r.status === 401){ if(!this._rotated(t)) this._on401(); throw new Error('Session expired. Please log in again.'); }
     if(r.status === 403) throw new Error('Permission denied. This action requires a higher role.');
     if(!r.ok) throw new Error(await r.text());
     return r;
@@ -7853,6 +7894,9 @@ function renderUserList(){
     const deleteBtn = canDelete ? `<button class="btn-ic del" onclick="deleteUser(${i})" title="Delete"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`
       : isBuiltin ? `<span class="btn-ic" style="opacity:0.35;cursor:default" title="Built-in"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>` : '';
     const logoutBtn = canLogout ? `<button class="btn-ic" onclick="forceLogoutUser(${i})" title="Force logout" style="font-size:13px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polygon points="23 7 12 2 1 7 12 12 23 7"/><line x1="12" y1="17" x2="12" y2="22"/><line x1="7" y1="17" x2="17" y2="17"/></svg></button>` : '';
+    // SESSION-SLIDE-1: "sign out everywhere" (bump token generation) - ends all sessions but the
+    // user can sign back in immediately. Distinct from Force logout above, which REVOKES (locks out).
+    const signoutBtn = canLogout ? `<button class="btn-ic" onclick="signoutEverywhere(${i})" title="Sign out everywhere (ends active sessions; user can sign back in)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>` : '';
     const selfBadge = isSelf ? ' <span style="font-size:10px;background:rgba(0,89,169,0.1);color:var(--accent);padding:1px 6px;border-radius:8px;font-weight:700">you</span>' : '';
     const emailTxt = u.email ? `<span style="font-size:11px;color:var(--muted);margin-left:2px">${esc(u.email)}</span>` : '';
     const noPwBadge = (!u.password) ? ` <span style="font-size:10px;background:rgba(240,165,0,0.15);color:#b06f00;padding:1px 6px;border-radius:8px;font-weight:700" title="No password set - pending setup link">pending</span>` : '';
@@ -7865,7 +7909,7 @@ function renderUserList(){
       <span class="dev-nm">${esc(dName)}${uHint}${selfBadge}${noPwBadge}</span>
       ${emailTxt}
       ${rolePill}${ownerPill}
-      ${editBtn}${linkBtn}${logoutBtn}${deleteBtn}
+      ${editBtn}${linkBtn}${signoutBtn}${logoutBtn}${deleteBtn}
     </div>`;
   }).join('');
   _syncNewUserOwner();
@@ -8021,6 +8065,19 @@ function forceLogoutUser(i){
   // Store a revocation timestamp on the user record; client checks this on boot
   users[i].revokedAt = Date.now();
   saveConfig('users', users); renderUserList();
+}
+// SESSION-SLIDE-1: "sign out everywhere" - bumps the user's token generation server-side, ending
+// EVERY active session without revoking the account (they can sign back in immediately). A clean
+// kill for a lost or suspected-compromised session. Distinct from forceLogoutUser (which revokes).
+async function signoutEverywhere(i){
+  const u = users[i];
+  if(!confirm(`Sign "${u.username}" out of all sessions now? They can sign back in immediately. Use this to kick a lost or compromised session without locking the account.`)) return;
+  try {
+    await API.post('/api/users/' + encodeURIComponent(u.username) + '/signout-all', {});
+    if(typeof showToast === 'function') showToast('Signed ' + displayName(u.username) + ' out everywhere');
+  } catch(e){
+    if(typeof showToast === 'function') showToast('Could not sign out: ' + (e && e.message || ''), 'error');
+  }
 }
 
 function deleteUser(i){
