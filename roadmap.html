@@ -2253,7 +2253,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.15.0';
+const APP_VERSION = '6.15.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -12266,6 +12266,46 @@ function promptKanbanOwner(p){
   });
 }
 
+// BLOCK-REASON-2: one reason-capture prompt reused by ALL THREE interactive blocked transitions
+// (Kanban drag via betaBoardDrop, and the item-page + List-panel status controls via
+// saveItemPageField). Promise-based, modelled on promptKanbanOwner so any caller can `await` it and
+// defer its write until the reason is confirmed. Resolves {reason, note} on confirm, or null on
+// cancel (a TRUE cancel - the caller writes nothing). Required select over the team's blockedReasons
+// + an optional note, matching the flag modal's Blocked branch (BLOCK-REASON-1). Writes NO activity -
+// the status change already logs to item history; the reason rides that + the blockedReason item field.
+// Callers only invoke this when blockedReasons is non-empty (empty = feature off = no prompt).
+function promptBlockedReason(p){
+  return new Promise(resolve => {
+    const reasons = Array.isArray(blockedReasons) ? blockedReasons : [];
+    const bg = document.createElement('div');
+    bg.style.cssText = 'position:fixed;inset:0;background:rgba(20,40,63,.38);z-index:100002;display:flex;align-items:center;justify-content:center';
+    bg.innerHTML = `<div style="background:var(--surface,#fff);border-radius:12px;padding:20px 22px;width:360px;max-width:92vw;box-shadow:0 14px 44px rgba(20,40,63,.28);font-family:'Lato',sans-serif">
+      <div style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:4px">Why is this blocked?</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Moving &ldquo;<strong>${esc(p.name)}</strong>&rdquo; to Blocked. Pick a reason so it can be reported on.</div>
+      <select id="_brSel" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:14px;margin-bottom:10px">
+        <option value="">- Select a reason -</option>
+        ${reasons.map(r=>`<option value="${escA(r)}">${esc(r)}</option>`).join('')}
+      </select>
+      <textarea id="_brNote" rows="2" placeholder="Add a note (optional)" style="width:100%;padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none;resize:vertical;margin-bottom:16px"></textarea>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        <button id="_brCancel" style="padding:8px 14px;border:1px solid var(--border);background:transparent;color:var(--text);border-radius:8px;font-weight:700;font-size:13px;cursor:pointer">Cancel</button>
+        <button id="_brOk" style="padding:8px 16px;border:0;background:#0059A9;color:#fff;border-radius:8px;font-weight:700;font-size:13px;cursor:pointer">Block item</button>
+      </div>
+    </div>`;
+    document.body.appendChild(bg);
+    const sel = bg.querySelector('#_brSel'), note = bg.querySelector('#_brNote');
+    const done = v => { bg.remove(); resolve(v); };
+    setTimeout(()=>sel.focus(), 30);
+    bg.querySelector('#_brCancel').onclick = () => done(null);
+    bg.querySelector('#_brOk').onclick = () => {
+      if(!sel.value){ sel.style.borderColor='#c0392b'; return; }   // reason required, like the flag modal
+      done({ reason: sel.value, note: (note.value||'').trim() });
+    };
+    bg.addEventListener('click', e => { if(e.target === bg) done(null); });
+    bg.addEventListener('keydown', e => { if(e.key === 'Escape') done(null); });
+  });
+}
+
 // KAN-VIS-1 Stage 2: confirm before a drag COMMITS a terminal status. completedAt is
 // server-owned, set-once and forward-only (server _stamp_measurement_ts, "first completion
 // wins"), so a terminal drop is NOT undoable by dragging the card back out. On an
@@ -15787,6 +15827,31 @@ async function saveItemPageField(field, value, opts={}){
   if(field==='status' && isActiveStatus(value) && !p.dev){
     if(typeof showToast==='function') showToast('Assign an Owner before moving to an active status.','error');
     refresh(p); return;
+  }
+  // BLOCK-REASON-2: capture the reason on an interactive block. BOTH the item-page status control
+  // AND the List detail-panel status select land here, so one intercept covers 2.2 + 2.3. Prompt only
+  // when moving INTO the team's blocked status (resolved via getBlockedStatus, never hardcoded), the
+  // team has blockedReasons configured, and the item is not already blocked. Cancel is a TRUE cancel -
+  // refresh back to p, no status change, no reason written. On confirm, stamp blockedReason/blockedNote
+  // and echo the reason into item history (no activity - the change already rides history), then persist
+  // through the same _ipPersist path. Empty blockedReasons -> this branch is skipped -> behaviour is
+  // byte-identical to 6.15.0. Bulk/planning never call this fn - the deliberate coverage boundary.
+  if(field==='status'){
+    const _bs = (typeof getBlockedStatus==='function') ? getBlockedStatus() : '';
+    const _brReasons = Array.isArray(blockedReasons) ? blockedReasons : [];
+    if(_bs && value===_bs && p.status!==_bs && _brReasons.length){
+      promptBlockedReason(p).then(r => {
+        if(!r){ refresh(p); return; }   // true cancel - nothing written
+        const upd = {...p, status: value, blockedReason: r.reason, blockedNote: r.note, _username: getUsername() };
+        try {
+          logActionOnItem(p.id, p.name||'', p.dev||'', p.product||'',
+            `Status: ${p.status||'(none)'} → ${value} (reason: ${r.reason}${r.note?' - '+r.note:''})`,
+            { status: p.status }, { status: value });
+        } catch(e){}
+        _ipPersist(upd, { refresh });
+      });
+      return;   // defer: the persist happens only after the reason is confirmed
+    }
   }
   const updated = {...p, [field]: value, _username: getUsername()};
   // UI polish (item 6): DEFAULT-NEVER-OVERRIDE. Selecting an owner (pod) whose recorded membership
@@ -24923,6 +24988,7 @@ if ('serviceWorker' in navigator) {
     // Moving into an active status: fill in what's needed instead of blocking.
     // Start date defaults to today (if blank); owner is prompted (if blank).
     var setStart = null;
+    var _brCaptured = null;   // BLOCK-REASON-2: {reason,note} captured before an interactive block via drag
     function commit(setOwner){
       // KAN-VIS-1 Stage 2: terminal-drop confirm. Placed here so it runs AFTER the terminal
       // admin gate above and AFTER promptKanbanOwner resolves, and BEFORE any mutation of p,
@@ -24932,13 +24998,17 @@ if ('serviceWorker' in navigator) {
       p.status=newStatus;
       if(setStart) p.start=setStart;
       if(setOwner) p.dev=setOwner;
+      if(_brCaptured){ p.blockedReason=_brCaptured.reason; p.blockedNote=_brCaptured.note; }   // BLOCK-REASON-2
       var body=Object.assign({}, p, {_username:_call('getUsername')});
+      // BLOCK-REASON-2: echo the reason into the item-history line (no separate activity - a drag
+      // filling the bell would be noise; the status change already logs to history here).
+      var _brMsg = _brCaptured ? ' (reason: '+_brCaptured.reason+(_brCaptured.note?' - '+_brCaptured.note:'')+')' : '';
       API.put('/api/projects/'+p.id, body).then(function(updated){
         var i=ps.findIndex(function(x){return x.id===p.id;}); if(i>-1) ps[i]=updated;
         // attributed entry to the item's Activity & History (spec requirement)
-        _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Board move: Status '+oldStatus+' → '+newStatus, {status:oldStatus}, {status:newStatus});
+        _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Board move: Status '+oldStatus+' → '+newStatus+_brMsg, {status:oldStatus}, {status:newStatus});
         renderBetaKanban(); renderRail();
-      }).catch(function(err){ p.status=oldStatus; p.start=oldStart; p.dev=oldDev; _call('showToast','Save failed: '+(err&&err.message||''),'error'); });
+      }).catch(function(err){ p.status=oldStatus; p.start=oldStart; p.dev=oldDev; if(_brCaptured){ delete p.blockedReason; delete p.blockedNote; } _call('showToast','Save failed: '+(err&&err.message||''),'error'); });
     }
     if(_call('isActiveStatus',newStatus)){
       if(!p.start) setStart = _call('todayStrMT');
@@ -24949,6 +25019,20 @@ if ('serviceWorker' in navigator) {
         });
         return;
       }
+    }
+    // BLOCK-REASON-2: dragging a card into the blocked column prompts for a reason BEFORE the write.
+    // Held the same way as the owner prompt: p is not mutated until commit, and the card only moves on
+    // the post-save renderBetaKanban, so a cancel leaves it exactly where it was (re-render restores it).
+    // Gate: into the team's blocked status (getBlockedStatus, not hardcoded), not already blocked, and
+    // blockedReasons non-empty. Empty list -> straight to commit, byte-identical to 6.15.0.
+    var _brBS = _call('getBlockedStatus') || '';
+    var _brReasons = _val('blockedReasons', []) || [];
+    if(_brBS && newStatus===_brBS && p.status!==_brBS && _brReasons.length){
+      _call('promptBlockedReason', p).then(function(r){
+        if(!r){ renderBetaKanban(); return; }   // true cancel - no status change, no reason written
+        _brCaptured = r; commit(null);
+      });
+      return;
     }
     commit(null);
   }
