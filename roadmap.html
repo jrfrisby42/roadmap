@@ -470,9 +470,11 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .chart-row.hidden-row { opacity: 0.35; }
   .left-row.grp { background: var(--surface); border-bottom: 1px solid var(--border); }
   .left-row.grp:hover { background: var(--surface2); }
-  .grp-lbl { flex: 1; font-size: 12px; font-weight: 900; color: var(--accent); }
-  .grp-cnt { font-size: 10px; color: var(--muted); background: var(--surface2); border-radius: 10px; padding: 1px 7px; }
-  .grp-tog { font-size: 9px; color: var(--muted); }
+  /* COUNTER-ALIGN-1: same fix as the rail - the group label flexes/truncates (min-width:0 load-bearing)
+     so a long group name can't push the count off; the count is a fixed 2-digit box, centred + shrink-proof. */
+  .grp-lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 900; color: var(--accent); }
+  .grp-cnt { flex-shrink: 0; box-sizing: border-box; min-width: 24px; text-align: center; font-size: 10px; color: var(--muted); background: var(--surface2); border-radius: 10px; padding: 1px 7px; }
+  .grp-tog { flex-shrink: 0; font-size: 9px; color: var(--muted); }
   .proj-name { flex: 1; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sbadge { width: 88px; text-align: center; padding: 2px 5px; border-radius: 4px; font-size: 10px; font-weight: 700; flex-shrink: 0; }
   /* Semantic status badge colors - used by statusCls() */
@@ -2265,7 +2267,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.16.0';
+const APP_VERSION = '6.16.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -4491,7 +4493,7 @@ function render(){
       const _grpLbl = (groupBy==='status')   ? _groupBadge('status', g.label)
                     : (groupBy==='priority') ? _groupBadge('priority', g._priorityVal)
                     : esc(g.label);
-      lRows += `<div class="left-row grp" data-group="${escA(g.label)}"><span class="grp-lbl">${_grpLbl}</span>${grpLabelExtra}<span class="grp-cnt">${g.items.length}</span><span class="grp-tog">${_caretSvg(coll)}</span></div>`;
+      lRows += `<div class="left-row grp" data-group="${escA(g.label)}"><span class="grp-lbl" title="${escA(g.label)}">${_grpLbl}</span>${grpLabelExtra}<span class="grp-cnt">${g.items.length}</span><span class="grp-tog">${_caretSvg(coll)}</span></div>`;   /* COUNTER-ALIGN-1: title = full group label (hover recovery when truncated) */
       cH += `<div class="chart-row grp" style="width:${totalPx}px;overflow:hidden">${wCells}${grpChartExtra}</div>`;
       rowIndex++;
     }
@@ -18513,7 +18515,14 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-item:hover { background:#EBF2F9; color:var(--frz-text); }
   .frz-beta .frz-item[aria-current="true"] { background:var(--frz-accent-soft); color:var(--frz-accent); font-weight:600; }
   .frz-beta .frz-item svg { width:16px; height:16px; flex-shrink:0; }
-  .frz-beta .frz-item .frz-count { margin-left:auto; font-size:11.5px; font-weight:600; color:var(--frz-text-muted); background:#E7EEF5; border-radius:999px; padding:1px 7px; }
+  /* COUNTER-ALIGN-1: the label flexes and truncates so a long project name can never push the count
+     pill off the row. min-width:0 is load-bearing - without it a flex item won't shrink below its
+     content width and the pill still overflows. Full text is on the span's title (hover recovery). */
+  .frz-beta .frz-item .frz-item-lbl { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  /* COUNTER-ALIGN-1: min-width sizes the pill for two digits so 1- and 2-digit counts share one box and
+     centre their numerals; 3-4 digits (dev's 721) grow the pill, still centred + right-pinned. flex-shrink:0
+     so the pill is never squeezed - only the label shrinks. */
+  .frz-beta .frz-item .frz-count { margin-left:auto; flex-shrink:0; box-sizing:border-box; min-width:26px; text-align:center; font-size:11.5px; font-weight:600; color:var(--frz-text-muted); background:#E7EEF5; border-radius:999px; padding:1px 7px; }
   .frz-beta .frz-item[aria-current="true"] .frz-count { background:#D2E5F6; color:var(--frz-accent); }
   .frz-beta .frz-item .frz-item-fdot { margin-left:auto; width:7px; height:7px; border-radius:50%; background:var(--frz-accent); flex:0 0 auto; }   /* active-filter cue */
   .frz-beta .frz-item .frz-item-fdot + .frz-count { margin-left:8px; }   /* when both show, the count sits just after the dot (dot takes the auto-margin) */
@@ -19043,6 +19052,10 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-tbl { border:1px solid var(--frz-border); border-radius:10px; overflow:hidden; background:var(--frz-bg-surface); }
   .frz-beta .frz-tbl-head, .frz-beta .frz-tbl-row { display:grid; grid-template-columns:2fr 1.4fr .9fr .7fr .9fr .8fr; gap:8px; align-items:center; padding:9px 14px; }
   .frz-beta .frz-tbl-head { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); border-bottom:1px solid var(--frz-border); background:var(--frz-bg-app); }
+  /* COUNTER-ALIGN-1: HEADER cells only truncate (single-line labels) so a long metric label like
+     "Time Spent (hrs)" can't force its grid column wider and distort the row. Data rows are untouched
+     (their name cell keeps its own min-width:0 wrapper + actions). Full label is on the cell's title. */
+  .frz-beta .frz-tbl-head .frz-tbl-c { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .frz-beta .frz-tbl-row { border-top:1px solid var(--frz-row-sep,var(--frz-border)); cursor:pointer; font-size:13px; color:var(--frz-text); }
   .frz-beta .frz-tbl-row:hover { background:var(--frz-bg-app); }
   .frz-beta .frz-tbl-row.is-active { background:var(--frz-accent-soft); }
@@ -19662,7 +19675,10 @@ if ('serviceWorker' in navigator) {
   .frz-list-panel .frz-lp-details { margin:16px 0; border:1px solid var(--frz-border); border-radius:8px; overflow:hidden; }
   .frz-list-panel .frz-lp-row { display:flex; gap:10px; padding:6px 12px; font-size:12px; border-top:1px solid var(--frz-border); }
   .frz-list-panel .frz-lp-row:first-child { border-top:0; }
-  .frz-list-panel .frz-lp-k { width:84px; flex-shrink:0; color:var(--frz-text-muted); font-weight:700; text-transform:uppercase; letter-spacing:.4px; font-size:10px; padding-top:1px; }
+  /* COUNTER-ALIGN-1: was a fixed width:84px, too narrow for a long metric label ("Time Spent (hrs)")
+     which wrapped to 2-3 lines. min-width keeps short keys aligned at 84px; max-width caps very long
+     ones; nowrap + ellipsis keep it to one line (full text on the span's title). */
+  .frz-list-panel .frz-lp-k { min-width:84px; max-width:150px; flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--frz-text-muted); font-weight:700; text-transform:uppercase; letter-spacing:.4px; font-size:10px; padding-top:1px; }
   .frz-list-panel .frz-lp-v { color:var(--frz-text); }
   .frz-list-panel .frz-lp-sec-hd { font-size:10px; font-weight:900; text-transform:uppercase; letter-spacing:.5px; color:var(--frz-text-muted); margin:0 0 8px; }
   .frz-list-panel .frz-lp-empty { font-size:12px; color:var(--frz-text-muted); }
@@ -20811,7 +20827,7 @@ if ('serviceWorker' in navigator) {
     hb.className='frz-item'; hb.setAttribute('data-nav','view:my-home');
     hb.setAttribute('aria-current', String(state.view==='my-home' && !state.onItem));
     hb.title='My Home';
-    hb.innerHTML = IC.home + '<span>My Home</span>' + (mwCount>0 ? '<span class="frz-count">'+mwCount+'</span>' : '') + '<span class="frz-item-cdot" aria-hidden="true"></span>';
+    hb.innerHTML = IC.home + '<span class="frz-item-lbl" title="My Home">My Home</span>' + (mwCount>0 ? '<span class="frz-count">'+mwCount+'</span>' : '') + '<span class="frz-item-cdot" aria-hidden="true"></span>';   // COUNTER-ALIGN-1: label flexes/truncates
     nav.appendChild(hb);
     // Ordered VIEWS (My Home is pinned above, always). Each entry is gated by role AND by the
     // per-team enabledViews allowlist (_viewEnabled). admin + my-home are always on and are not in
@@ -20828,7 +20844,7 @@ if ('serviceWorker' in navigator) {
       b.title = VIEW_LABEL[v];
       var icon = (v==='team-calendar') ? IC.teamCalendar : IC[v];
       var c = (v==='team-calendar' || v==='reports') ? null : viewCount(v);   // Calendar + Reports carry no count pill
-      b.innerHTML = icon + '<span>'+VIEW_LABEL[v]+'</span>' + (c!=null ? '<span class="frz-count">'+c+'</span>' : '') + '<span class="frz-item-cdot" aria-hidden="true"></span>';
+      b.innerHTML = icon + '<span class="frz-item-lbl" title="'+escA(VIEW_LABEL[v])+'">'+VIEW_LABEL[v]+'</span>' + (c!=null ? '<span class="frz-count">'+c+'</span>' : '') + '<span class="frz-item-cdot" aria-hidden="true"></span>';   // COUNTER-ALIGN-1: label flexes/truncates
       nav.appendChild(b);
     });
     // projects
@@ -20838,14 +20854,14 @@ if ('serviceWorker' in navigator) {
     var allBtn = document.createElement('button');
     allBtn.className='frz-item'; allBtn.setAttribute('data-proj','__all__');
     allBtn.setAttribute('aria-current', String(state.project==='__all__'));
-    allBtn.innerHTML = '<span class="frz-dot" style="background:var(--frz-accent)"></span><span>All projects</span><span class="frz-count">'+_frzScopeCount(null)+'</span>';
+    allBtn.innerHTML = '<span class="frz-dot" style="background:var(--frz-accent)"></span><span class="frz-item-lbl" title="All projects">All projects</span><span class="frz-count">'+_frzScopeCount(null)+'</span>';   // COUNTER-ALIGN-1: label flexes/truncates
     pn.appendChild(allBtn);
     products.forEach(function(pr, i){
       var name = pr.name || pr;
       var b = document.createElement('button');
       b.className='frz-item'; b.setAttribute('data-proj', name);
       b.setAttribute('aria-current', String(state.project===name));
-      b.innerHTML = '<span class="frz-dot" style="background:'+(_call('projectColor',name)||'var(--frz-accent)')+'"></span><span>'+esc(name)+'</span><span class="frz-count">'+_frzScopeCount(name)+'</span>';   // PALETTE-1: projectColor() is the single source; the accent is only a defensive fallback if the cross-block _call returns undefined (matches the other dot sites)
+      b.innerHTML = '<span class="frz-dot" style="background:'+(_call('projectColor',name)||'var(--frz-accent)')+'"></span><span class="frz-item-lbl" title="'+escA(name)+'">'+esc(name)+'</span><span class="frz-count">'+_frzScopeCount(name)+'</span>';   // PALETTE-1: projectColor() is the single source. COUNTER-ALIGN-1: label flexes/truncates + full name on hover
       pn.appendChild(b);
     });
     // boards + saved filters
@@ -24981,8 +24997,8 @@ if ('serviceWorker' in navigator) {
       var cards=s.items.map(function(p){ return _betaCardHtml(p, multi); }).join('');
       return '<div class="kanban-col" style="width:'+colW+'px;min-width:160px;flex:1;background:var(--frz-kanban-lane);border-radius:10px;padding:10px">'
         + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;padding-bottom:8px;border-bottom:2px solid var(--frz-border-strong)">'
-        + '<span style="font-size:12px;font-weight:900;color:var(--frz-text)">'+esc(col.name)+'</span>'
-        + '<span style="font-size:10px;color:var(--frz-text-muted);background:rgba(128,128,128,0.15);padding:1px 6px;border-radius:8px">'+s.items.length+'</span>'
+        + '<span title="'+escA(col.name)+'" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:900;color:var(--frz-text)">'+esc(col.name)+'</span>'   // COUNTER-ALIGN-1: name flexes/truncates
+        + '<span style="margin-left:auto;flex-shrink:0;box-sizing:border-box;min-width:24px;text-align:center;font-size:10px;color:var(--frz-text-muted);background:rgba(128,128,128,0.15);padding:1px 6px;border-radius:8px">'+s.items.length+'</span>'   // COUNTER-ALIGN-1: count right-pinned + 2-digit box
         + '</div>'
         + '<div class="frz-board-zone" data-drop="'+escA(col.dropStatus)+'">'+cards+'</div>'
         + '</div>';
@@ -26129,7 +26145,7 @@ if ('serviceWorker' in navigator) {
       '<div class="frz-tbl-detail" id="frzSpDetail_'+escA(sp.id)+'" hidden></div>';
     }).join('');
     host.innerHTML='<div class="frz-tbl">'+
-      '<div class="frz-tbl-head"><div class="frz-tbl-c frz-tbl-name">Sprint</div><div class="frz-tbl-c">Dates</div><div class="frz-tbl-c">State</div><div class="frz-tbl-c">Items</div><div class="frz-tbl-c">'+esc(metricLabel)+'</div><div class="frz-tbl-c">Carry-over</div></div>'+rows+'</div>';   // METRIC-LABEL-1
+      '<div class="frz-tbl-head"><div class="frz-tbl-c frz-tbl-name">Sprint</div><div class="frz-tbl-c">Dates</div><div class="frz-tbl-c">State</div><div class="frz-tbl-c">Items</div><div class="frz-tbl-c" title="'+escA(metricLabel)+'">'+esc(metricLabel)+'</div><div class="frz-tbl-c">Carry-over</div></div>'+rows+'</div>';   // METRIC-LABEL-1 / COUNTER-ALIGN-1: title for hover when truncated
     host.querySelectorAll('[data-sprintrow]').forEach(function(row){
       row.addEventListener('click', function(){
         var id=row.getAttribute('data-sprintrow'); var det=document.getElementById('frzSpDetail_'+id); if(!det) return;
@@ -28458,7 +28474,7 @@ if ('serviceWorker' in navigator) {
     [].slice.call(lb.querySelectorAll('tr.list-row.frz-row-active')).forEach(function(tr){ tr.classList.remove('frz-row-active'); });
     if(state.panelId!=null){ var row=lb.querySelector('tr.list-row[data-id="'+state.panelId+'"]'); if(row) row.classList.add('frz-row-active'); }
   }
-  function _frzPanelRow(k, v){ return (v==null||v==='') ? '' : '<div class="frz-lp-row"><span class="frz-lp-k">'+esc(k)+'</span><span class="frz-lp-v">'+esc(String(v))+'</span></div>'; }
+  function _frzPanelRow(k, v){ return (v==null||v==='') ? '' : '<div class="frz-lp-row"><span class="frz-lp-k" title="'+escA(String(k))+'">'+esc(k)+'</span><span class="frz-lp-v">'+esc(String(v))+'</span></div>'; }   // COUNTER-ALIGN-1: title for hover when a long key truncates
   function _frzPanelChrome(p, canEdit){
     var sCls=_call('statusCls', p.status)||'';
     // Editable status pill for admin/editor; read-only badge for viewers. Wiring + the
