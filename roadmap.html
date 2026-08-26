@@ -2234,7 +2234,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.13.0';
+const APP_VERSION = '6.14.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -23550,6 +23550,7 @@ if ('serviceWorker' in navigator) {
     // Linked Records (requests/service events) sits just below Linked Assets as its related actions.
     [ cardOf('ipNotes'), document.getElementById('frzAttachCard'), document.getElementById('frzAssetCard'),
       document.getElementById('frzExtRefsCard'),
+      document.getElementById('frzCcCard'),
       document.getElementById('frzActivityCard'),
       document.getElementById('ipFeatureFlagsCard'), document.getElementById('ipSubtasksCard'),
       document.getElementById('ipDepsCard'), document.getElementById('frzSprintHistCard'),
@@ -23629,9 +23630,9 @@ if ('serviceWorker' in navigator) {
     // Stage 2: inject Attachments + Sprint-history sections (beta-only; idempotent).
     // Release is now (re)placed by _frzItemLayout, which also consolidates the rail
     // and reorders the main column.
-    injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); _frzInjectDuplicate(p); injectAssetLinks(p); injectFlag(p); injectReminderIndicator(p);   // REM-4: after injectFlag so the indicator sits below the flag banner
+    injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); injectCc(p); _frzInjectDuplicate(p); injectAssetLinks(p); injectFlag(p); injectReminderIndicator(p);   // REM-4: after injectFlag so the indicator sits below the flag banner
     _frzOrderMain();   // rail is consolidated by the renderItemPage wrapper; here we only (re)order the main column for the just-injected cards
-    setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); _frzInjectDuplicate(p); injectAssetLinks(p); injectFlag(p); injectReminderIndicator(p); _frzOrderMain(); }, 500);
+    setTimeout(function(){ injectSprintHistory(p); injectAttachments(p); injectExternalRefs(p); injectCc(p); _frzInjectDuplicate(p); injectAssetLinks(p); injectFlag(p); injectReminderIndicator(p); _frzOrderMain(); }, 500);
     // Render-then-edit: set the description's beta read-styling + edit bridge NOW (no mount on
     // load → no flash); the comment composer still mounts its editor deferred (out of scope here).
     frzInitDescription(p);
@@ -26704,6 +26705,71 @@ if ('serviceWorker' in navigator) {
       b.addEventListener('click', function(){ _frzRequestStatusCheck(p, b.getAttribute('data-op'), b); });
     });
   }
+  // CC-1: external notify / CC list. A compact card listing the addresses CC'd on this item's
+  // reporter-equivalent updates. Admin/editor add/remove (contributors never see the controls;
+  // server-enforced too). ccList travels in the item blob (/api/all), so no fetch is needed.
+  function injectCc(p){
+    if(!p) return;
+    var canEdit = (_val('isAdmin',false) || _val('isEditor',false));   // NOT contributor
+    var cc = (!p.hidden && !p.archived && Array.isArray(p.ccList)) ? p.ccList : [];
+    var card = document.getElementById('frzCcCard');
+    if(!cc.length && !canEdit){ if(card && card.parentNode) card.parentNode.removeChild(card); return; }
+    if(!card){
+      var anchor = document.getElementById('frzExtRefsCard') || document.getElementById('frzAttachCard')
+        || (function(){ var n=document.getElementById('ipNotes'); return n ? n.parentElement.parentElement : document.getElementById('ipFieldsCard'); })();
+      if(!anchor || !anchor.parentNode) return;
+      card = document.createElement('div'); card.id='frzCcCard';
+      card.style.cssText='border:1px solid var(--border);border-radius:10px;overflow:hidden';
+      card.innerHTML=''
+        +'<div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between"><span>Notify (CC)</span><button type="button" class="frz-cardh-btn" id="frzCcAdd" style="display:none">+ Add</button></div>'
+        +'<div style="padding:14px 16px">'
+          +'<div id="frzCcForm" style="display:none;margin-bottom:12px;border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--surface)">'
+            +'<input type="email" id="frzCcEmail" placeholder="name@example.com" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px">'
+            +'<div style="font-size:11px;color:var(--muted);margin-top:6px">Gets the same status updates the reporter gets (completed, deferred, and notes tagged @reporter), with a one-click unsubscribe in every email.</div>'
+            +'<div style="display:flex;gap:8px;align-items:center;margin-top:8px"><button type="button" class="frz-cardh-btn" id="frzCcSave">Add</button><button type="button" id="frzCcCancel" style="background:none;border:0;color:var(--frz-text-muted,var(--muted));font-size:13px;cursor:pointer;padding:6px 8px">Cancel</button><span id="frzCcErr" style="color:var(--frz-accent2,#c0392b);font-size:12px;display:none"></span></div>'
+          +'</div>'
+          +'<div id="frzCcList"></div>'
+        +'</div>';
+      anchor.parentNode.insertBefore(card, anchor.nextSibling);   // placement finalized by _frzOrderMain
+    }
+    var addBtn=card.querySelector('#frzCcAdd'); if(addBtn) addBtn.style.display=canEdit?'inline-flex':'none';
+    if(canEdit && !card._ccWired){
+      card._ccWired=true;
+      addBtn.addEventListener('click', function(){ var f=card.querySelector('#frzCcForm'); f.style.display='block'; var i=card.querySelector('#frzCcEmail'); i.value=''; var e=card.querySelector('#frzCcErr'); e.style.display='none'; try{ i.focus(); }catch(_){}; });
+      card.querySelector('#frzCcCancel').addEventListener('click', function(){ card.querySelector('#frzCcForm').style.display='none'; });
+      card.querySelector('#frzCcSave').addEventListener('click', function(){ _frzCcSubmit(_frzCurItem()||p); });
+      card.querySelector('#frzCcEmail').addEventListener('keydown', function(ev){ if(ev.key==='Enter'){ ev.preventDefault(); _frzCcSubmit(_frzCurItem()||p); } });
+    }
+    var list=card.querySelector('#frzCcList');
+    if(!cc.length){ list.innerHTML='<div style="font-size:12px;color:var(--muted)">No external addresses are notified on this item yet.</div>'; }
+    else {
+      list.innerHTML=cc.map(function(r){
+        var del=canEdit?'<button type="button" class="frz-att-del" data-ccdel="'+escA(r.id)+'" title="Remove">✕</button>':'';
+        return '<div class="frz-att-file"><span class="frz-att-ic" title="Notify">✉</span><span class="frz-att-meta"><span class="frz-att-nm" title="'+escA(r.email)+'">'+esc(r.email)+'</span></span>'+del+'</div>';
+      }).join('');
+      if(canEdit) list.querySelectorAll('[data-ccdel]').forEach(function(b){ b.addEventListener('click', function(){ _frzCcRemove(_frzCurItem()||p, this.getAttribute('data-ccdel')); }); });
+    }
+  }
+  function _frzCcSubmit(p){
+    if(!p) return;
+    var card=document.getElementById('frzCcCard'); if(!card) return;
+    var i=card.querySelector('#frzCcEmail'), e=card.querySelector('#frzCcErr');
+    var email=(i.value||'').trim();
+    var showErr=function(m){ if(e){ e.textContent=m; e.style.display='inline'; } };
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ showErr('Enter a valid email address.'); return; }
+    API.post('/api/items/'+p.id+'/cc', {email:email, _username:_call('getUsername')}).then(function(res){
+      p.ccList=(res&&res.ccList)||[]; card.querySelector('#frzCcForm').style.display='none'; injectCc(p);
+      try { _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'CC added: '+email, null, null); } catch(_){}
+      _call('showToast','Added '+email+' to the notify list');
+    }).catch(function(err){ showErr((err&&err.message)||'Could not add the address.'); });
+  }
+  function _frzCcRemove(p, id){
+    if(!p||!id) return;
+    API.del('/api/items/'+p.id+'/cc/'+encodeURIComponent(id)).then(function(res){
+      p.ccList=(res&&res.ccList)||[]; injectCc(p);
+      _call('showToast','Removed from the notify list');
+    }).catch(function(err){ _call('showToast',(err&&err.message)||'Could not remove the address.','error'); });
+  }
   // DUP-CONSOLIDATE-1: the duplicate relationship + action live in the Dependencies card (#ipDeps,
   // a production card rebuilt by renderItemPage each render), so this beta hook re-injects them each
   // render - the same additive pattern injectExternalRefs uses. The refs render as LIVE same-team
@@ -26758,6 +26824,7 @@ if ('serviceWorker' in navigator) {
         +'<input type="text" id="frzDupSearch" placeholder="Search by key or title..." autocomplete="off" style="width:100%;box-sizing:border-box;height:34px;padding:0 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px">'
         +'<div id="frzDupResults" style="margin-top:8px;max-height:220px;overflow:auto;display:flex;flex-direction:column;gap:2px"></div>'
         +'<div id="frzDupChosen" style="margin-top:10px;font-size:12px;color:var(--text)"></div>'+warn
+        +(p.reporterEmail ? '<label style="display:flex;align-items:flex-start;gap:8px;margin-top:12px;font-size:12px;color:var(--text);cursor:pointer"><input type="checkbox" id="frzDupNotify" style="accent-color:var(--accent);width:15px;height:15px;margin-top:1px;flex:0 0 auto"><span>Also notify this ticket\'s reporter about updates to the item it duplicates. Off by default - tick only if it is appropriate to connect them.</span></label>' : '')
         +'<div id="frzDupMsg" style="display:none;font-size:12px;margin-top:8px"></div>'
       +'</div>'
       +'<div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px">'
@@ -26787,12 +26854,12 @@ if ('serviceWorker' in navigator) {
       });
     }
     searchEl.addEventListener('input', draw);
-    confirmEl.addEventListener('click', function(){ if(sel) _frzMarkDuplicate(p, sel.id, confirmEl); });
+    confirmEl.addEventListener('click', function(){ if(sel) _frzMarkDuplicate(p, sel.id, confirmEl, !!(ov.querySelector('#frzDupNotify') && ov.querySelector('#frzDupNotify').checked)); });
     setTimeout(function(){ try{ searchEl.focus(); }catch(e){} }, 30);
   }
-  function _frzMarkDuplicate(p, survivorId, btn){
+  function _frzMarkDuplicate(p, survivorId, btn, notify){
     if(btn){ btn.disabled=true; btn.textContent='Marking...'; }
-    API.post('/api/items/'+p.id+'/mark-duplicate', {survivorId:survivorId}).then(function(r){
+    API.post('/api/items/'+p.id+'/mark-duplicate', {survivorId:survivorId, notifyReporter:!!notify}).then(function(r){
       if(r && r.externalRefs) p.externalRefs = r.externalRefs;
       if(r && r.status) p.status = r.status;
       _frzCloseDupModal();
