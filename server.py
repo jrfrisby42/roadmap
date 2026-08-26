@@ -1123,6 +1123,13 @@ def init_team_db(team: str):
             # external ticket-creation page, and which item Types it offers there.
             "intakeEnabled": False,
             "intakeCombined": True,  # PORTAL-SCOPE-LOCK-1: show this team on the COMBINED public /report list.
+            # METRIC-LABEL-1: team-defined display label for the generic numeric metric (item field
+            # storyPoints). Dev calls it Story Points; IT can call it "Time Spent (hrs)". The LABEL carries
+            # the unit (units are whatever the team wants - no separate unit config, no conversion). The
+            # field key storyPoints is unchanged; only its presentation is configurable. Default reproduces
+            # today's most common wording. NOTE: the same field can't be an estimate AND an actual for one
+            # team, and cross-team sums are meaningless once two teams mean different things by the number.
+            "metricLabel": "Story Points",
                                      # false = reachable ONLY at its own /report?team=X (still a transfer target).
             "intakeProjects": [],  # which projects (products) are exposed; empty = all
             "intakeNotifyEmail": "",  # team inbox that gets a copy of each portal ticket
@@ -1243,6 +1250,11 @@ def _migrate_config_keys(team: str):
         "richTextEditor":   True,
         "intakeEnabled":    False,
         "intakeCombined":   True,   # PORTAL-SCOPE-LOCK-1: default true; MUST be presence-only (below) or an admin's False reverts on boot
+        # METRIC-LABEL-1: NOT presence-only. A label is a non-empty string, so the falsy-treated-as-missing
+        # re-seed only fires when the value is "" - which is a meaningless label that SHOULD fall back to the
+        # default anyway. So a plain migration entry is correct: it backfills the key for existing teams and
+        # never clobbers an admin's non-empty custom label. (Finding per Part 1: re-seed is safe here.)
+        "metricLabel":      "Story Points",
         "intakeProjects":   [],
         "intakeTypes":      [],
         "intakeNotifyEmail": "",
@@ -1618,7 +1630,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.15.2"
+APP_VERSION = "6.16.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3562,6 +3574,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "richTextEditor": cfg_map.get("richTextEditor", True),
             "intakeEnabled": cfg_map.get("intakeEnabled", False),
             "intakeCombined": bool(cfg_map.get("intakeCombined", True)),   # PORTAL-SCOPE-LOCK-1: default true; explicit False reaches the client
+            "metricLabel": (cfg_map.get("metricLabel") or "Story Points"),   # METRIC-LABEL-1: empty/missing -> default so the client never renders a blank label
             "intakeProjects": cfg_map.get("intakeProjects", []),
             "intakeTypes": cfg_map.get("intakeTypes", []),
             "intakeNotifyEmail": cfg_map.get("intakeNotifyEmail", ""),
@@ -5067,6 +5080,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "statusIsActive","statusIsTerminal",
               "statusIsDefault","statusIsDeferred",
               "changeReasons","deferReasons","blockedReasons","departments",
+              "metricLabel",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow","statusIsWaiting","statusIsParked",
