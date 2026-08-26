@@ -1065,6 +1065,8 @@ def init_team_db(team: str):
             # Public intake portal (/report): whether this team is exposed in the
             # external ticket-creation page, and which item Types it offers there.
             "intakeEnabled": False,
+            "intakeCombined": True,  # PORTAL-SCOPE-LOCK-1: show this team on the COMBINED public /report list.
+                                     # false = reachable ONLY at its own /report?team=X (still a transfer target).
             "intakeProjects": [],  # which projects (products) are exposed; empty = all
             "intakeNotifyEmail": "",  # team inbox that gets a copy of each portal ticket
             "intakeTypes": [],     # empty = offer ALL of the team's types
@@ -1183,6 +1185,7 @@ def _migrate_config_keys(team: str):
         "statusIsBlocked":  {},
         "richTextEditor":   True,
         "intakeEnabled":    False,
+        "intakeCombined":   True,   # PORTAL-SCOPE-LOCK-1: default true; MUST be presence-only (below) or an admin's False reverts on boot
         "intakeProjects":   [],
         "intakeTypes":      [],
         "intakeNotifyEmail": "",
@@ -1205,7 +1208,7 @@ def _migrate_config_keys(team: str):
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
     # an admin who deletes all types isn't re-seeded on next boot.)
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeProjectStatus", "intakeDefaultType", "intakeDomains", "intakeNotifyTeam", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify", "slaTargets", "digestConfig"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeCombined", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeProjectStatus", "intakeDefaultType", "intakeDomains", "intakeNotifyTeam", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify", "slaTargets", "digestConfig"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -1558,7 +1561,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.11.1"
+APP_VERSION = "6.12.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -1889,41 +1892,28 @@ _INTAKE_MAX_ATTACH_BYTES = 15 * 1024 * 1024   # 15 MB
 def _intake_attachment_key(team: str, att_id: str, name: str) -> str:
     return f"intake/{team}/{att_id}/{_sanitize_filename(name)}"
 
-@app.get("/api/intake/projects")
-def intake_projects_list(team: str = None):
-    """Public: exposed projects across all opted-in teams (team + product + label).
-    Labels are disambiguated with the team when the same product name spans teams.
-    PORTAL-SCOPE-1: an optional `team` scopes the result to ONE team, FAIL-CLOSED. A
-    NON-EMPTY value that is unknown, not portal-enabled, or malformed returns
-    {"projects": []} (never all teams), so the scoping cannot be bypassed by mistyping.
-    Absent (team is None) OR a genuinely empty value (?team=) keeps the all-teams
-    behaviour - see F1 below."""
-    # F1: test the RAW value for absence/emptiness BEFORE sanitizing. A None param or a
-    # genuinely empty value (?team=) is ABSENT -> all open teams: no scope was requested, so
-    # nothing is bypassed, and a link template that always appends an empty ?team= is not left
-    # with a dead dropdown. A NON-EMPTY value that merely SANITIZES to empty (?team=%20 -> " ",
-    # ?team=!!!, ?team=../) is still INVALID -> fail-closed, because someone passed something and
-    # it was not a team. Those two look identical AFTER re.sub, so the emptiness test comes FIRST.
-    scoped = None
-    if team is not None and team != "":
-        # Reuse the SAME sanitize + gates as the path-param endpoints (1785 / 1797): lowercase +
-        # strip to [a-z0-9], valid_team, _intake_open. Case is normalized so a human-typed
-        # ?team=IT scopes to `it` instead of failing closed on capitalization.
-        s = re.sub(r"[^a-z0-9]", "", team.lower())
-        if not (s and valid_team(s) and _intake_open(s)):
-            return {"projects": [], "team": s, "open": False}   # fail-closed; `open:false` marks a rejected scope
-        scoped = s
-    raw = []
+def _intake_open_teams() -> list:
+    """All portal-ENABLED team slugs (intakeEnabled), sorted. The base set for BOTH the public
+    combined list and the transfer picker - the intakeCombined narrowing is applied by the caller,
+    not here, so transfer keeps seeing every enabled team."""
     try:
-        teams = [scoped] if scoped else [
-            d for d in sorted(os.listdir(TENANTS_DIR))
-            if (os.path.isdir(os.path.join(TENANTS_DIR, d))
-                and re.match(r"^[a-z0-9]+$", d) and _intake_open(d))]
-        for d in teams:
-            for prod in _intake_projects(d):
-                raw.append({"team": d, "product": prod})
+        return [d for d in sorted(os.listdir(TENANTS_DIR))
+                if (os.path.isdir(os.path.join(TENANTS_DIR, d))
+                    and re.match(r"^[a-z0-9]+$", d) and _intake_open(d))]
     except FileNotFoundError:
-        pass
+        return []
+
+def _intake_combined(team: str) -> bool:
+    """PORTAL-SCOPE-LOCK-1: is this team shown on the COMBINED public /report list? Default true.
+    A team with intakeCombined=false still accepts requests at its OWN /report?team=X link and is
+    still a transfer target - it is only omitted from the anonymous all-teams combined list."""
+    return _cfg_val(team, "intakeCombined", True) is not False   # only an explicit False hides it
+
+def _intake_project_rows(teams: list) -> list:
+    """Build [{team, product, label}] for a set of teams, with the duplicate-product
+    disambiguation the portal has always used (label carries the team when a product name
+    spans teams). Shared by the public endpoint and the transfer picker so they cannot drift."""
+    raw = [{"team": d, "product": prod} for d in teams for prod in _intake_projects(d)]
     dup = {}
     for r in raw:
         dup[r["product"]] = dup.get(r["product"], 0) + 1
@@ -1931,10 +1921,47 @@ def intake_projects_list(team: str = None):
             "label": r["product"] if dup[r["product"]] == 1
                      else f'{r["product"]} · {_intake_label(r["team"])}'} for r in raw]
     out.sort(key=lambda x: x["label"].lower())
-    resp = {"projects": out}
+    return out
+
+@app.get("/api/intake/projects")
+def intake_projects_list(team: str = None):
+    """PUBLIC (unauthenticated): exposed projects for the /report portal (team + product + label).
+    PORTAL-SCOPE-1: an optional `team` scopes to ONE team, FAIL-CLOSED - a NON-EMPTY value that is
+    unknown, not portal-enabled, or malformed returns {"projects": []} (never all teams). Absent OR
+    a genuinely empty value (?team=) keeps the all-teams behaviour (F1).
+    PORTAL-SCOPE-LOCK-1: the all-teams (combined) branch omits teams with intakeCombined=false, so
+    an anonymous caller cannot enumerate them here. A team's OWN scoped link (?team=X) still returns
+    it even when excluded - that is the point of the flag. The transfer picker needs the FULL list
+    and so uses the AUTHENTICATED /api/transfer/targets, never a 'show everything' param on this
+    public route (which anyone could set)."""
+    # F1: test the RAW value for absence/emptiness BEFORE sanitizing. A None param or a genuinely
+    # empty value (?team=) is ABSENT -> all open teams. A NON-EMPTY value that merely SANITIZES to
+    # empty (?team=%20, ?team=!!!, ?team=../) is INVALID -> fail-closed. They look identical AFTER
+    # re.sub, so the emptiness test comes FIRST.
+    scoped = None
+    if team is not None and team != "":
+        s = re.sub(r"[^a-z0-9]", "", team.lower())   # same sanitize+gates as the path-param endpoints
+        if not (s and valid_team(s) and _intake_open(s)):
+            return {"projects": [], "team": s, "open": False}   # fail-closed; `open:false` marks a rejected scope
+        scoped = s
+    if scoped:
+        teams = [scoped]                                          # a team's OWN link works even when excluded (LOCK-1)
+    else:
+        teams = [d for d in _intake_open_teams() if _intake_combined(d)]   # LOCK-1: combined hides excluded teams
+    resp = {"projects": _intake_project_rows(teams)}
     if scoped:
         resp["team"] = scoped; resp["open"] = True   # `open:true` + projects:[] = a genuinely empty open team
     return resp
+
+@app.get("/api/transfer/targets")
+def transfer_targets(auth: dict = Depends(require_role("admin", "editor"))):
+    """AUTHENTICATED: every portal-enabled team's projects for the transfer picker, INCLUDING teams
+    excluded from the public combined portal (intakeCombined=false). PORTAL-SCOPE-LOCK-1 separates
+    the two consumers: transfer must still route to an excluded team even though the public list
+    hides it. The auth gate is WHY this is a separate endpoint rather than a query param on the
+    public /api/intake/projects - a client-chosen flag on a public route would let anyone enumerate
+    excluded teams, which is the security crux of this stage."""
+    return {"projects": _intake_project_rows(_intake_open_teams())}   # all enabled teams, no combined filter
 
 @app.get("/api/intake/config/{team}")
 def intake_team_config(team: str):
@@ -2599,6 +2626,14 @@ async function loadProjects(){
     var _pt=qs.get('team');
     var d=await (await fetch('/api/intake/projects'+(_pt!==null?('?team='+encodeURIComponent(_pt)):''))).json();
     _projects=d.projects||[];
+    // PORTAL-SCOPE-LOCK-1: degrade sensibly instead of a blank dropdown. Empty happens when every
+    // team is excluded from the combined list (or none is open), or when a scoped link is rejected
+    // (d.open===false). Show the reason in the control itself so it is visible without opening it.
+    if(!_projects.length){
+      var _emptyMsg=(d.open===false)?'This request link is not available.':'No projects are open for requests here right now.';
+      $('#project').innerHTML='<option value="">'+_emptyMsg+'</option>';
+      return;
+    }
     $('#project').innerHTML='<option value="">Select a project…</option>'+_projects.map(function(p,i){return '<option value="'+i+'">'+esc(p.label)+'</option>'}).join('');
     // Keep preselection for the ?product= deep-link (now near-redundant for team, but it still picks a
     // specific product WITHIN the scoped team). pt lowercased so ?team=IT preselects like the server scopes.
@@ -3438,6 +3473,7 @@ def get_all(auth: dict = Depends(require_auth)):
             # absent) so an admin's explicit False reaches the client and reverts the editor.
             "richTextEditor": cfg_map.get("richTextEditor", True),
             "intakeEnabled": cfg_map.get("intakeEnabled", False),
+            "intakeCombined": bool(cfg_map.get("intakeCombined", True)),   # PORTAL-SCOPE-LOCK-1: default true; explicit False reaches the client
             "intakeProjects": cfg_map.get("intakeProjects", []),
             "intakeTypes": cfg_map.get("intakeTypes", []),
             "intakeNotifyEmail": cfg_map.get("intakeNotifyEmail", ""),
@@ -4920,7 +4956,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow","statusIsWaiting","statusIsParked",
-              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeProjectStatus","intakeDefaultType","intakeDomains","intakeNotifyTeam","departmentMeta","maintenanceDutyTypeId",
+              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeProjectStatus","intakeDefaultType","intakeDomains","intakeNotifyTeam","intakeCombined","departmentMeta","maintenanceDutyTypeId",
               "externalRequestCategories","assethubConnection","assethubServiceTypeMapping","enabledViews",
               "slackNotify","slaTargets","digestConfig"}
 

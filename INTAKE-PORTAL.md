@@ -204,6 +204,14 @@ Then file one real test ticket end-to-end and confirm the confirmation email lan
 | `GET /my-tickets?email=&t=` | Token-gated list of a reporter's tickets. |
 | `POST /api/intake-track` | Email a reporter their private `/my-tickets` link. |
 
-Config (Team Settings → Public Ticket Portal): `intakeEnabled`, `intakeProjects`,
+Config (Team Settings → Public Ticket Portal): `intakeEnabled`, `intakeCombined`, `intakeProjects`,
 `intakeTypes`, `intakeNotifyEmail`, `intakeProjectEmails`, `intakeDomains`.
 Server env for CAPTCHA: `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`.
+
+**Combined-portal scoping (PORTAL-SCOPE-LOCK-1, `intakeCombined`, default true).** With "Show this
+team on the combined request portal" off (`intakeCombined: false`), the team is left off the shared
+`/report` list, but it is **reachable only at its direct `/report?team=<slug>` link** - share that
+link deliberately. The team also stays a **transfer target** (the picker reads the authenticated
+`GET /api/transfer/targets`, which includes excluded teams; the public `GET /api/intake/projects`
+does not). An excluded team therefore has no discoverable public entry point by design - do not
+mistake its absence from the combined list for intake being off.
