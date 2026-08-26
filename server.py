@@ -1090,6 +1090,10 @@ def init_team_db(team: str):
                               "Revised Estimate","Partner Delays","Other"],
             "deferReasons":  ["Not Ready","Deprioritised","Waiting on External",
                               "Resource Unavailable","Other"],
+            # BLOCK-REASON-1: coded Blocked reasons. Default EMPTY (feature off) - like delayReasons,
+            # a team opts in by populating it, and empty = today's free-text Blocked message. NOT in
+            # _migrate_config_keys new_keys (so it is never re-seeded; an emptied list survives a restart).
+            "blockedReasons": [],
             "departments":  [],
             "products":     [{"name":"Fraznet","builtin":True},
                              {"name":"HubSpot","builtin":True}],
@@ -1614,7 +1618,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.14.3"
+APP_VERSION = "6.15.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3546,6 +3550,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "statusIsParked": cfg("statusIsParked") or {},
             "changeReasons": cfg("changeReasons") or [],
             "deferReasons": cfg("deferReasons") or [],
+            "blockedReasons": cfg("blockedReasons") or [],   # BLOCK-REASON-1: empty = free-text Blocked (feature off)
             "departments": cfg("departments") or [],
             "jiraProjectMapping": cfg("jiraProjectMapping") or {},
             "jiraStatusMapping": cfg("jiraStatusMapping") or {},
@@ -3931,6 +3936,7 @@ RECURRENCE_SKIP_KEYS = {
     "jiraSyncSkipped", "jiraFeatureFlags", "revokedAt", "attachments",
     "sprintId", "sprintHistory", "release", "releaseNumber", "releaseNotes",
     "deferred", "deferReason", "deferNote", "deferRevisit", "preBlockStatus",
+    "blockedReason", "blockedNote",   # BLOCK-REASON-1: a new occurrence is not blocked (follows deferReason; NOT server-owned, NOT inherited)
     "externalRefs",   # AssetHub integration (PR1): a new occurrence is a new ticket, no link
     # Stripped AND then explicitly re-set to the spawning parent's id in spawn_recurrence.
     # Belt-and-suspenders on purpose: stripping removes the order dependency on that assignment
@@ -4590,8 +4596,20 @@ def update_project(pid: int, body: dict, background: BackgroundTasks = None,
             merged["departments"] = _normalize_departments(body.get("departments"))
         # Blocked binding: leaving the Blocked status clears the stashed pre-block
         # status; the open Blocked flag is auto-cleared post-commit below.
+        # BLOCK-REASON-1 (Addendum A1): clear the coded Blocked reason + note HERE too, alongside
+        # preBlockStatus, whenever an item leaves the Blocked status through update_project. This is
+        # the single-item PUT route, which is BOTH the un-block picker (status -> preBlockStatus) AND
+        # the ordinary status control, so a stale "waiting on vendor" qualifier can't survive an
+        # un-block by either. It runs on `merged` AFTER the SERVER_OWNED restore, so it is the sole
+        # guard and does not depend on the client sending anything. COVERAGE BOUNDARY (deliberate, and
+        # IDENTICAL to preBlockStatus): the bulk endpoint (/api/items/bulk) and planning commit write
+        # status directly via _save_project - they bypass update_project, so neither clears this (nor
+        # preBlockStatus, nor auto-clears the flag). blockedReason is therefore exactly as covered as
+        # its precedent; extending the clear to those paths is out of scope for this stage.
         if blocked_status and merged.get("status", "") != blocked_status:
             merged.pop("preBlockStatus", None)
+            merged.pop("blockedReason", None)
+            merged.pop("blockedNote", None)
         # Normalize a display-name assignee to its username BEFORE bucketing, so the pod lookup
         # (keyed by username) resolves and the "two Jake Smiths" drift cannot land via a PUT.
         if "assignee" in merged:
@@ -4724,7 +4742,12 @@ _ITEMS_SORTABLE = {"updated_ts", "item_key", "status", "type", "product",
 # interpolated from raw input). Each key is also a filter param eq() accepts, so a group's rows
 # load by re-querying /api/items with <key>=<value> (or __none__ for the unset bucket).
 _GROUP_COLS = {"status": "status", "assignee": "assignee", "priority": "priority",
-               "product": "product", "owner": "owner", "type": "type"}
+               "product": "product", "owner": "owner", "type": "type",
+               # BLOCK-REASON-1: blockedReason is a JSON-blob field, NOT one of the indexed mirror
+               # columns above (it needs neither sort nor filter - only group aggregation). Read it
+               # straight from the blob via json_extract; the value matches the client's p.blockedReason.
+               # gcol is used ONLY in the group query's SELECT/GROUP BY (never in a WHERE), so this is safe.
+               "blockedReason": "json_extract(projects.data, '$.blockedReason')"}
 
 # ── FN5: the FLAGGED predicate, single source ──────────────────────────────────────────────────────
 # An item is "flagged" iff it has an activity of a user-raisable FLAG_TYPE whose status is NOT terminal
@@ -5043,7 +5066,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "typeScheduled",
               "statusIsActive","statusIsTerminal",
               "statusIsDefault","statusIsDeferred",
-              "changeReasons","deferReasons","departments",
+              "changeReasons","deferReasons","blockedReasons","departments",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow","statusIsWaiting","statusIsParked",

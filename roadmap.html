@@ -2013,6 +2013,19 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         </div>
       </div>
 
+      <!-- Section 3: Blocked Reasons (BLOCK-REASON-1) -->
+      <div>
+        <div style="font-size:11px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;padding-bottom:6px;border-bottom:2px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+          <span>Blocked Reasons <span style="font-size:10px;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0"> - shown when flagging an item Blocked; leave empty to keep free-text</span></span>
+          <button id="saveBlockedReasonsBtn" onclick="saveReasonList('blockedReasons')" style="font-size:11px;font-weight:700;background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:5px;cursor:pointer;font-family:'Lato',sans-serif">Save</button>
+        </div>
+        <div class="dev-list" id="blockedReasonList" style="margin-bottom:8px"></div>
+        <div class="add-dev-row">
+          <input type="text" id="newBlockedReasonName" placeholder="New blocked reason…">
+          <button class="btn-add-dev" id="addBlockedReasonBtn">+ Add</button>
+        </div>
+      </div>
+
     </div>
 
     <!-- DEPARTMENTS TAB -->
@@ -2240,7 +2253,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.14.3';
+const APP_VERSION = '6.15.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2890,6 +2903,7 @@ let projects = [], developers = [], statuses = [], delayReasons = [], products =
 let _relatedStubs = {};
 let changeReasons = []; // admin-managed timeline change reasons
 let deferReasons  = []; // admin-managed defer reasons
+let blockedReasons = []; // BLOCK-REASON-1: admin-managed coded Blocked reasons (empty = free-text Blocked, feature off)
 let departments   = []; // shared master list of departments (free-text, grows on item save)
 // Capacity & conflict config (side-data, doesn't restructure core arrays)
 let ownerCapacity = {};        // { [ownerName]: number }  e.g. { "Tyler": 2 }  (FIXED-mode base per pod)
@@ -7701,6 +7715,7 @@ function renderAdminPanes(tabId){
   renderDelayList();
   renderChangeReasonList();
   renderDeferReasonList();
+  renderBlockedReasonList();
   renderUserList();
   renderTypeList();
   renderAssignmentTypesList();
@@ -7822,6 +7837,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       delayReasons  = data.delayReasons  || delayReasons;
     changeReasons = data.changeReasons || changeReasons;
     deferReasons  = data.deferReasons  || deferReasons;
+    blockedReasons = Array.isArray(data.blockedReasons) ? data.blockedReasons : [];   // BLOCK-REASON-1
     departments   = data.departments   || departments;
       products     = data.products     || products;
       if(data.ownerCapacity)         ownerCapacity         = data.ownerCapacity;
@@ -7887,7 +7903,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
         populateProductSelect();
       render();
       // Re-render admin lists
-      renderDevList(); renderProductList(); renderStatusList(); renderDelayList(); renderChangeReasonList(); renderDeferReasonList(); renderUserList();
+      renderDevList(); renderProductList(); renderStatusList(); renderDelayList(); renderChangeReasonList(); renderDeferReasonList(); renderBlockedReasonList(); renderUserList();
 
       status.textContent = `Imported ${projects.length} projects successfully.`;
       status.style.color = 'var(--bar-green, #22b96e)';
@@ -8485,6 +8501,10 @@ function populateDeferReasonSelect(){
 }
 
 // Generic list renderer for a simple string array
+// BLOCK-REASON-1: generic configKey -> array / save-button resolvers (was a hardcoded
+// changeReasons-else-deferReasons ternary in four places; now covers blockedReasons too).
+function _reasonArr(k){ return k==='changeReasons'?changeReasons : k==='blockedReasons'?blockedReasons : deferReasons; }
+function _reasonBtn(k){ return k==='changeReasons'?'saveChangeReasonsBtn' : k==='blockedReasons'?'saveBlockedReasonsBtn' : 'saveDeferReasonsBtn'; }
 function renderReasonList(listId, arr, configKey, repopulateFn){
   const list = document.getElementById(listId);
   if(!list) return;
@@ -8507,9 +8527,11 @@ function renderReasonList(listId, arr, configKey, repopulateFn){
 
 function renderChangeReasonList(){ renderReasonList('changeReasonList', changeReasons, 'changeReasons', 'populateChangeReasonSelect'); }
 function renderDeferReasonList(){  renderReasonList('deferReasonList',  deferReasons,  'deferReasons',  'populateDeferReasonSelect'); }
+function renderBlockedReasonList(){ renderReasonList('blockedReasonList', blockedReasons, 'blockedReasons', 'populateBlockedReasonSelect'); }   // BLOCK-REASON-1
+function populateBlockedReasonSelect(){}   // BLOCK-REASON-1: the flag modal's Blocked select is built fresh each open (_flagTypeChanged); nothing to repopulate live
 
 function startEditReason(listId, i, configKey, repopulateFn){
-  const arr = configKey === 'changeReasons' ? changeReasons : deferReasons;
+  const arr = _reasonArr(configKey);
   const item = document.querySelector(`#${listId} .dev-item[data-idx="${i}"]`);
   if(!item) return;
   item.innerHTML = `
@@ -8517,32 +8539,32 @@ function startEditReason(listId, i, configKey, repopulateFn){
     <button class="btn-ic" onclick="saveEditReason('${listId}',${i},'${configKey}','${repopulateFn}')" style="color:var(--accent)">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="20 6 9 17 4 12"/></svg>
     </button>
-    <button class="btn-ic" onclick="renderChangeReasonList();renderDeferReasonList()">
+    <button class="btn-ic" onclick="renderChangeReasonList();renderDeferReasonList();renderBlockedReasonList()">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>`;
   document.getElementById(`reason_edit_${i}`)?.focus();
 }
 
 function saveEditReason(listId, i, configKey, repopulateFn){
-  const arr  = configKey === 'changeReasons' ? changeReasons : deferReasons;
+  const arr  = _reasonArr(configKey);
   const inp  = document.getElementById(`reason_edit_${i}`);
   const val  = inp?.value.trim();
   if(!val) return;
   arr[i] = val;
-  renderChangeReasonList(); renderDeferReasonList();
+  renderChangeReasonList(); renderDeferReasonList(); renderBlockedReasonList();
   window[repopulateFn]?.();
-  const btnId = configKey === 'changeReasons' ? 'saveChangeReasonsBtn' : 'saveDeferReasonsBtn';
+  const btnId = _reasonBtn(configKey);
   const btn = document.getElementById(btnId);
   if(btn){ btn.style.background='#e8a000'; btn.textContent='Save ●'; }
 }
 
 function deleteReason(configKey, i, listId, repopulateFn){
-  const arr = configKey === 'changeReasons' ? changeReasons : deferReasons;
+  const arr = _reasonArr(configKey);
   if(!confirm(`Delete "${arr[i]}"?`)) return;
   arr.splice(i, 1);
-  renderChangeReasonList(); renderDeferReasonList();
+  renderChangeReasonList(); renderDeferReasonList(); renderBlockedReasonList();
   window[repopulateFn]?.();
-  const btnId = configKey === 'changeReasons' ? 'saveChangeReasonsBtn' : 'saveDeferReasonsBtn';
+  const btnId = _reasonBtn(configKey);
   const btn = document.getElementById(btnId);
   if(btn){ btn.style.background='#e8a000'; btn.textContent='Save ●'; }
 }
@@ -8568,8 +8590,8 @@ async function seedDefaultReasons(){
 }
 
 async function saveReasonList(configKey){
-  const arr = configKey === 'changeReasons' ? changeReasons : deferReasons;
-  const btnId = configKey === 'changeReasons' ? 'saveChangeReasonsBtn' : 'saveDeferReasonsBtn';
+  const arr = _reasonArr(configKey);
+  const btnId = _reasonBtn(configKey);
   const btn = document.getElementById(btnId);
   if(btn){ btn.textContent = 'Saving…'; btn.disabled = true; }
   try {
@@ -8661,6 +8683,21 @@ document.getElementById('addDeferReasonBtn')?.addEventListener('click', ()=>{
 });
 document.getElementById('newDeferReasonName')?.addEventListener('keydown', e=>{
   if(e.key==='Enter'){ e.preventDefault(); document.getElementById('addDeferReasonBtn')?.click(); }
+});
+
+document.getElementById('addBlockedReasonBtn')?.addEventListener('click', ()=>{   // BLOCK-REASON-1
+  const inp = document.getElementById('newBlockedReasonName');
+  const val = inp?.value.trim();
+  if(!val) return;
+  if(blockedReasons.includes(val)){ inp.value=''; return; }
+  blockedReasons.push(val);
+  inp.value = '';
+  renderBlockedReasonList();
+  const btn = document.getElementById('saveBlockedReasonsBtn');
+  if(btn){ btn.style.background='#e8a000'; btn.textContent='Save ●'; }
+});
+document.getElementById('newBlockedReasonName')?.addEventListener('keydown', e=>{
+  if(e.key==='Enter'){ e.preventDefault(); document.getElementById('addBlockedReasonBtn')?.click(); }
 });
 
 // ── OLD DELAY REASONS (kept for backward compat - data field p.delay still used for tooltips/dashboard) ──
@@ -10291,7 +10328,8 @@ function openFlagIssue(itemId){
 // Toggling display never strands a value: submitFlagIssue reads flagNote only on the flag path and flagDate
 // only on the Reminder path, so a hidden field is never submitted.
 function _flagTypeChanged(){
-  var isRem = document.getElementById('flagType').value === 'Reminder';
+  var _type = document.getElementById('flagType').value;
+  var isRem = _type === 'Reminder';
   var noteRow = document.getElementById('flagNoteRow'), dateRow = document.getElementById('flagDateRow');
   if(noteRow) noteRow.style.display = isRem ? 'none' : '';
   if(dateRow) dateRow.style.display = isRem ? '' : 'none';
@@ -10299,11 +10337,39 @@ function _flagTypeChanged(){
   var save = document.getElementById('flagIssueSaveBtn'); if(save) save.textContent = isRem ? 'Add reminder' : 'Flag Issue';
   var lbl = document.getElementById('flagMessageLabel'); if(lbl) lbl.innerHTML = (isRem ? 'What to remember' : 'Message') + ' <span style="color:var(--accent2)">*</span>';
   var msg = document.getElementById('flagMessage'); if(msg) msg.placeholder = isRem ? 'e.g. Follow up with Carson' : 'Describe the issue…';
+  // BLOCK-REASON-1: Blocked + a configured reason list swaps the free-text Message row for a required coded
+  // select. Any other type (or empty blockedReasons) keeps the free-text row exactly as before. The optional
+  // Note row is shared - it stays visible for every flag type (only Reminder hides it, handled above).
+  var useReasons = _type === 'Blocked' && Array.isArray(blockedReasons) && blockedReasons.length > 0;
+  var msgRow = document.getElementById('flagMessageRow');
+  var rsnRow = document.getElementById('flagBlockedReasonRow');
+  var rsnSel = document.getElementById('flagBlockedReason');
+  if(msgRow) msgRow.style.display = useReasons ? 'none' : '';
+  if(rsnRow) rsnRow.style.display = useReasons ? '' : 'none';
+  if(useReasons && rsnSel){
+    rsnSel.style.borderColor = '';   // clear a prior required-field flag
+    rsnSel.innerHTML = '<option value="">Select a reason…</option>' +
+      blockedReasons.map(function(r){ return '<option value="'+escA(r)+'">'+esc(r)+'</option>'; }).join('');
+  }
 }
 
 async function submitFlagIssue(){
-  const msg = document.getElementById('flagMessage').value.trim();
-  if(!msg){ document.getElementById('flagMessage').style.borderColor='var(--accent2)'; return; }
+  const _type = document.getElementById('flagType').value;
+  // BLOCK-REASON-1: on the Blocked-with-reasons path the coded select replaces the free-text message. The
+  // note is optional and the activity message is composed as `reason - note` (the existing Defer idiom), so
+  // downstream (notify, banner, activity write) is byte-identical - only the SOURCE of `msg` differs.
+  const _useReasons = _type === 'Blocked' && Array.isArray(blockedReasons) && blockedReasons.length > 0;
+  let msg, _bReason = '', _bNote = '';
+  if(_useReasons){
+    const _sel = document.getElementById('flagBlockedReason');
+    _bReason = _sel ? _sel.value.trim() : '';
+    if(!_bReason){ if(_sel) _sel.style.borderColor='var(--accent2)'; return; }
+    _bNote = document.getElementById('flagNote').value.trim();
+    msg = _bNote ? (_bReason + ' - ' + _bNote) : _bReason;
+  } else {
+    msg = document.getElementById('flagMessage').value.trim();
+    if(!msg){ document.getElementById('flagMessage').style.borderColor='var(--accent2)'; return; }
+  }
   const p = projects.find(x=>x.id===_flagItemId);
   if(!p) return;
   // REM-2: the Reminder branch creates a PRIVATE to-do and NOTHING else - no activity, no flag, no banner,
@@ -10355,6 +10421,10 @@ async function submitFlagIssue(){
     const prev = p.status;
     p.preBlockStatus = prev;
     p.status = blockedStatus;
+    // BLOCK-REASON-1: stamp the coded reason + note ALONGSIDE the status move (same PUT). Cleared SERVER-SIDE
+    // whenever the item later leaves the blocked status (server.py Blocked binding), so no stale qualifier
+    // survives an un-block by any path. Only set on the reasons path; free-text Blocked leaves them untouched.
+    if(_useReasons){ p.blockedReason = _bReason; p.blockedNote = _bNote; }
     try {
       const updated = await API.put('/api/projects/'+p.id, {...p, _username:getUsername()});
       const idx = projects.findIndex(x=>x.id===p.id); if(idx>=0) projects[idx]=updated;
@@ -10930,7 +11000,7 @@ function _frzSprintLabel(id){
 // Single source of truth for the main #listView table. Each column is a self-contained
 // unit (label + sort key + cell renderer) so its behavior travels when reordered. The
 // multi-select checkbox column is pinned at position 0 and is NOT part of this model.
-const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','reporter','points','sprint','project','created'];   // UI-POLISH-1: +reporter, +created (both default hidden via _optin2)
+const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','reporter','blockedReason','points','sprint','project','created'];   // UI-POLISH-1: +reporter, +created (both default hidden via _optin2). BLOCK-REASON-1: +blockedReason (default hidden via _optin3)
 // SCROLL-CARET-1: one shared caret asset for every expand/collapse indicator (replaces the ▶/▾/▼ text
 // glyphs, which Unicode ships at different sizes). Reuses the IC.caret glyph - the same path + the (now
 // mode-safe) .frz-chip-caret class. 12px SVG; the caller keeps its own fixed-width box, so collapsed and
@@ -11018,6 +11088,10 @@ const _LIST_COL_DEF = {
                 td:(it)=>`<td data-col="created" style="padding:7px 10px;white-space:nowrap">${_listCell(it.createdAt ? fmtTSDate(it.createdAt) : '')}</td>` },
   reporter:   { label:'Reporter',    sort:'reporter',
                 td:(it)=>`<td data-col="reporter" style="padding:7px 10px;white-space:nowrap">${_listCell(it.reporter)}</td>` },
+  // BLOCK-REASON-1: optional, default-hidden (via _optin3). Coded Blocked reason (the note is NOT shown here -
+  // the column is for aggregation/scan). No server sort column exists for it (JSON-blob field), so sort:null.
+  blockedReason:{ label:'Blocked Reason', sort:null,
+                td:(it)=>`<td data-col="blockedReason" style="padding:7px 10px;white-space:nowrap">${_listCell(it.blockedReason)}</td>` },
 };
 function _listColUser(){ try { return (typeof uname==='function'?uname():'') || localStorage.getItem('frazil_rm_user') || ''; } catch(e){ return ''; } }
 function _listOrderKey(){ return 'frazil_beta_listorder_' + _listColUser(); }   // NEW key, separate from the visibility key
@@ -17970,9 +18044,15 @@ if ('serviceWorker' in navigator) {
         </optgroup>
       </select>
     </div>
-    <div class="form-row">
+    <div class="form-row" id="flagMessageRow">
       <label id="flagMessageLabel">Message <span style="color:var(--accent2)">*</span></label>
       <input type="text" id="flagMessage" placeholder="Describe the issue…">
+    </div>
+    <!-- BLOCK-REASON-1: when blockedReasons is configured and type is Blocked, this coded-reason select
+         REPLACES the free-text message row (required). Empty blockedReasons keeps the free-text row above. -->
+    <div class="form-row" id="flagBlockedReasonRow" style="display:none">
+      <label>Reason <span style="color:var(--accent2)">*</span></label>
+      <select id="flagBlockedReason" style="width:100%;padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none"></select>
     </div>
     <div class="form-row" id="flagNoteRow">
       <label>Note (optional)</label>
@@ -21769,6 +21849,7 @@ if ('serviceWorker' in navigator) {
         description:_call('stripHtml', p.description||'')||'',
         notes:p.notes||'',
         resolution:p.resolution||'',
+        blockedReason:p.blockedReason||'',   // BLOCK-REASON-1: coded stall reason; auto-hidden via _rptHas when no row carries one (dev sees no change)
         jira:(p.jiraTickets||[]).join('; '),
         attachCount:(p.attachments||[]).length,
         overdue: !!(due && due < today && !termMap[p.status||'']),
@@ -21842,6 +21923,7 @@ if ('serviceWorker' in navigator) {
     {h:'Description',    k:'description',    always:true, kind:'desc'},
     {h:'Notes',          k:'notes',          ft:true},
     {h:'Resolution',     k:'resolution',     ft:true},
+    {h:'Blocked Reason', k:'blockedReason'},   // BLOCK-REASON-1: NOT always -> _rptHas auto-hides it on teams with no coded reasons (e.g. development)
     {h:'Jira',           k:'jira'},
     {h:'Attach',         k:'attachCount',    kind:'num'},
     {h:'Age (d)',        k:'age',            always:true, kind:'num'},
@@ -24419,8 +24501,8 @@ if ('serviceWorker' in navigator) {
   // Gantt's groupByMenu. Independent of the Gantt's #groupBy (different element, different options).
   // Drives the classic List's grouping via the cross-block bridge (_listSetGroup); options + persistence
   // are LIST-GROUPBY-1's, unchanged - only the control's home + shape changed from the pager <select>.
-  var _FRZ_GROUP_LABELS = { '':'None', status:'Status', assignee:'Assignee', priority:'Priority', product:'Project', owner:'Owner', type:'Type' };
-  var _FRZ_GROUP_ORDER = ['', 'status', 'assignee', 'priority', 'product', 'owner', 'type'];
+  var _FRZ_GROUP_LABELS = { '':'None', status:'Status', assignee:'Assignee', priority:'Priority', product:'Project', owner:'Owner', type:'Type', blockedReason:'Blocked Reason' };   // BLOCK-REASON-1
+  var _FRZ_GROUP_ORDER = ['', 'status', 'assignee', 'priority', 'product', 'owner', 'type', 'blockedReason'];   // BLOCK-REASON-1: unset bucket sorts last (server returns the null bucket; generic ordering parks it at the end)
   function openListGroupPop(anchor){
     var cur = _call('_listGetGroup') || '';
     openPop(anchor, function(pop){
@@ -24461,6 +24543,7 @@ if ('serviceWorker' in navigator) {
       // hidden for existing users too, without disturbing anyone's saved layout or the prior step.
       if(!ls(key+'_optin1')){ set.add('project'); set.add('description'); lset(key+'_optin1','1'); changed=true; }
       if(!ls(key+'_optin2')){ set.add('created');  set.add('reporter');    lset(key+'_optin2','1'); changed=true; }   // UI-POLISH-1
+      if(!ls(key+'_optin3')){ set.add('blockedReason');                     lset(key+'_optin3','1'); changed=true; }   // BLOCK-REASON-1
       if(changed) lset(key, JSON.stringify(Array.from(set)));
     } catch(e){}
   }
@@ -24529,14 +24612,15 @@ if ('serviceWorker' in navigator) {
       project:    {label:'Project',     get:function(it){ return it.product||''; }},
       description:{label:'Description', get:function(it){ return _call('descToPlainText', it.description)||''; }},
       created:    {label:'Created',     get:function(it){ return it.createdAt ? fmtTSDate(it.createdAt) : ''; }},   // UI-POLISH-1
-      reporter:   {label:'Reporter',    get:function(it){ return it.reporter||''; }}
+      reporter:   {label:'Reporter',    get:function(it){ return it.reporter||''; }},
+      blockedReason:{label:'Blocked Reason', get:function(it){ return it.blockedReason||''; }}   // BLOCK-REASON-1
     };
   }
   // mode 'all' → full set in the prompt's order; 'visible' → only shown cols, in table display order.
   function _exportCols(mode){
     var D=_exportColDefs();
     if(mode==='all'){
-      return ['key','name','type','status','priority','owner','assignee','reporter','points','sprint','project','created','description'].map(function(k){ return D[k]; });   // UI-POLISH-1: +reporter, +created
+      return ['key','name','type','status','priority','owner','assignee','reporter','blockedReason','points','sprint','project','created','description'].map(function(k){ return D[k]; });   // UI-POLISH-1: +reporter, +created. BLOCK-REASON-1: +blockedReason
     }
     var hidden=hiddenListCols();
     // Follow the user's live display order (same source as the table). Fallback to default order.
