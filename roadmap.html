@@ -2291,7 +2291,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.17.1';
+const APP_VERSION = '6.17.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -11558,23 +11558,28 @@ function _listSyncHScroll(){
   _listUpdateHScrollVis();
   _listWireHScroll();
 }
-// LIST-SCROLL-2: show the proxy only when the table overflows horizontally AND the native bottom
-// scrollbar is NOT already reachable without scrolling. VISUAL-1's "always show while overflowing"
-// (no height gate) was measured only against a 7,000px+ list where the native bar sat far below the
-// fold; on a SHORT list both bars show at once. The reinstated gate is HEIGHT-based, not the original
-// scroll-POSITION test: the native bar (at #listScroll's bottom) is reachable iff the vertical scroller
-// (.frz-content) does not overflow vertically. scrollHeight/clientHeight are SCROLL-INVARIANT, so the
-// answer never changes as the user scrolls a long list - no boundary flicker (the fault that got the
-// original hide dropped). +2 tolerance absorbs the proxy's own 14px of sticky layout at the boundary.
-// A table shorter than the viewport -> scroller fits -> one native bar. A tall table -> one proxy bar.
-// Mobile card layout: the table doesn't overflow horizontally, so this stays hidden with no phone case.
+// LIST-SCROLL-3: show the proxy ONLY while #listScroll's native bottom scrollbar is below the visible
+// fold - the scroll-DEPENDENT question, adopted verbatim from Reports' _rptUpdateProxyVis (the reference).
+// LIST-SCROLL-2's fitsVert (scrollHeight vs clientHeight) was a property of the LIST, not of scroll
+// position: on a tall list it was permanently false, so the proxy showed at EVERY position - including
+// the bottom, where the native bar itself comes into view and BOTH bars showed. This instead reads the
+// wrap's bottom edge against the scroller's visible bottom on each (rAF-coalesced) scroll. HYSTERESIS band
+// (8px, ~half the 14px proxy): show past +8, hide past -8, hold state within the band, so a boundary
+// resting right at the fold cannot flash on/off. No overflow -> never a proxy (mobile card layout too).
+var _LIST_HS_BAND = 8;
 function _listUpdateHScrollVis(){
   var wrap=document.getElementById('listScroll'), proxy=document.getElementById('listHScroll');
   if(!(wrap&&proxy)) return;
-  var overflowsX = wrap.scrollWidth > wrap.clientWidth + 2;
-  var scroller = wrap.closest('.frz-content');
-  var fitsVert = scroller ? (scroller.scrollHeight <= scroller.clientHeight + 2) : true;   // scroller fits -> native bar on screen
-  var want = (overflowsX && !fitsVert) ? '' : 'none';
+  var need = wrap.scrollWidth > wrap.clientWidth + 2;   // horizontal overflow (unchanged)
+  var sc = wrap.closest('.frz-content') || document.getElementById('frzContent');
+  var vpBottom = sc ? sc.getBoundingClientRect().bottom : (window.innerHeight||0);
+  var delta = wrap.getBoundingClientRect().bottom - vpBottom;   // >0 => native bar below the fold
+  var shown = proxy.style.display !== 'none';
+  var want;
+  if(!need) want='none';                           // no horizontal overflow -> never a proxy
+  else if(delta >  _LIST_HS_BAND) want='';         // native bar clearly below the fold -> show proxy
+  else if(delta < -_LIST_HS_BAND) want='none';     // native bar clearly on screen -> hide proxy
+  else want = shown ? '' : 'none';                 // within the band -> hold current state (hysteresis)
   if(proxy.style.display !== want) proxy.style.display = want;
 }
 function _listWireHScroll(){
@@ -11592,9 +11597,17 @@ function _listWireHScroll(){
     var d = e.deltaX || e.deltaY; if(!d) return;
     wrap.scrollLeft += d; e.preventDefault();
   }, { passive:false });
-  // LIST-SCROLL-2: the visibility gate is SCROLL-INVARIANT (overflow + scroller.scrollHeight vs
-  // clientHeight), so no page-scroll listener is needed - scrolling never changes the answer. Re-measure
-  // on resize (viewport / rail collapse changes both the available width and the scroller's client height).
+  // LIST-SCROLL-3: the gate is scroll-DEPENDENT (is the native bar below the fold?), so recompute on
+  // page scroll - mirrors Reports' _rptWireContentScroll EXACTLY: a PLAIN passive listener, no rAF and no
+  // IntersectionObserver. Reports documents why (and the local harness confirmed it): rAF / IO callbacks
+  // do NOT fire while the tab is backgrounded, so a coalesced handler goes stale until the next real
+  // reflow - and it is unverifiable headlessly. A plain listener fires regardless. The handler is one
+  // rect-read + a change-guarded style write and scroll does not dirty layout, so per-event cost is
+  // negligible (the hysteresis in _listUpdateHScrollVis, not coalescing, is what prevents boundary
+  // flicker). Wired ONCE; guarded to act only while the List is mounted (#listScroll present) so it is
+  // inert on every other view - no teardown needed. Resize still re-measures WIDTH via _listSyncHScroll.
+  var sc = document.getElementById('frzContent') || document.querySelector('.frz-content');
+  if(sc) sc.addEventListener('scroll', function(){ if(document.getElementById('listScroll')) _listUpdateHScrollVis(); }, { passive:true });
   window.addEventListener('resize', function(){ if(document.getElementById('listScroll')) _listSyncHScroll(); });
 }
 
