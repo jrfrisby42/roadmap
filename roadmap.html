@@ -924,7 +924,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     <span class="ctrl-lbl" id="dateRangeLbl2" style="display:none">To</span>
     <input type="date" id="filterTo" style="display:none;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none">
     <button class="primary" id="addBtn">+ Item</button>
-    <button id="showHiddenBtn" style="display:none" title="Show hidden projects"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> Show Hidden</button>
+    <button id="showHiddenBtn" style="display:none" title="Show hidden items"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg> Show Hidden</button>
     <span class="save-badge" id="saveBadge"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="20 6 9 17 4 12"/></svg> Saved</span>
   </div>
   <div class="auth-area">
@@ -1604,7 +1604,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   <div class="modal">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <div style="display:flex;align-items:center;gap:12px">
-        <h2 id="modalTitle" style="margin:0">Edit Project</h2>
+        <h2 id="modalTitle" style="margin:0">Item</h2>
         <a id="modalOpenPageBtn" href="#" target="_blank" rel="noopener" title="Open the full item page in a new tab (schedule, activity, comments)"
           style="display:none;align-items:center;gap:6px;background:#0059A9;color:#fff;text-decoration:none;padding:6px 13px;border-radius:8px;font-family:'Lato',sans-serif;font-weight:600;font-size:13px;cursor:pointer">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
@@ -1786,7 +1786,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
           <label id="syncChildrenRow" style="display:none;align-items:center;gap:7px;margin-top:8px;font-size:12px;font-weight:700;cursor:pointer;user-select:none">
             <input type="checkbox" id="fSyncChildren" style="accent-color:var(--accent);width:14px;height:14px;cursor:pointer">
             Sync Children from Jira
-            <span style="font-size:10px;font-weight:400;color:var(--muted)">(auto-creates child items from linked Jira subtasks)</span>
+            <span style="font-size:10px;font-weight:400;color:var(--muted)">(auto-creates subitems from linked Jira subtasks)</span>
           </label>
         </div>
 
@@ -1926,7 +1926,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       <button class="admin-tab" data-tab="delayTab">Reasons</button>
       <button class="admin-tab" data-tab="deptTab">Departments &amp; Locations</button>
       <button class="admin-tab" data-tab="usersTab">Users</button>
-      <button class="admin-tab" data-tab="assignmentsTab">Assignments</button>
+      <button class="admin-tab" data-tab="assignmentsTab">Availability</button>
       <button class="admin-tab" data-tab="dataTab">Data</button>
       <button class="admin-tab" data-tab="teamSettingsTab">⚙ Organization Settings</button>
     </div>
@@ -1945,7 +1945,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     <div class="admin-pane" id="productTab">
       <div class="dev-list" id="productList"></div>
       <div class="add-dev-row">
-        <input type="text" id="newProductName" placeholder="New project name…">
+        <input type="text" id="newProductName" placeholder="New Space name…">
         <button class="btn-add-dev" id="addProductBtn">+ Add</button>
       </div>
     </div>
@@ -1992,7 +1992,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       </div>
       <div class="dev-list" id="assignmentTypesList"></div>
       <div class="add-dev-row">
-        <input type="text" id="newAssignmentTypeName" placeholder="New assignment type…">
+        <input type="text" id="newAssignmentTypeName" placeholder="New entry type…">
         <button class="btn-add-dev" id="addAssignmentTypeBtn">+ Add</button>
       </div>
     </div>
@@ -8491,19 +8491,19 @@ function renderAssignmentTypesList(){
   const list = document.getElementById('assignmentTypesList'); if(!list) return;
   _syncMaintDutyTypeSel();
   const types = _assignmentTypes || [];
-  const hint = `<div style="padding:8px 13px 10px;font-size:11px;color:var(--muted);line-height:1.5">Drag the <b>⠿</b> handle to reorder - display order controls calendar stacking and conflict priority. <b>Blocks Work</b> warns against overlapping tickets; <b>Exclusive</b> warns against another assignment overlapping. <b>Capacity Impact</b> is subtracted from the owner's effective capacity.</div>`;
-  if(!types.length){ list.innerHTML = hint + '<div class="dev-empty">No assignment types yet.</div>'; return; }
+  const hint = `<div style="padding:8px 13px 10px;font-size:11px;color:var(--muted);line-height:1.5">Drag the <b>⠿</b> handle to reorder - display order controls calendar stacking and conflict priority. <b>Blocks Work</b> warns against overlapping tickets; <b>Exclusive</b> warns against another entry overlapping. <b>Capacity Impact</b> is subtracted from the owner's effective capacity.</div>`;
+  if(!types.length){ list.innerHTML = hint + '<div class="dev-empty">No entry types yet.</div>'; return; }
   const header = `<div style="display:flex;align-items:center;padding:6px 13px;border-bottom:2px solid var(--border);font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;gap:8px">
     <span style="width:20px"></span>
-    <span style="flex:1;min-width:150px">Assignment</span>
-    <span style="width:50px;text-align:center" title="Available for new assignments">Active</span>
+    <span style="flex:1;min-width:150px">Type</span>
+    <span style="width:50px;text-align:center" title="Available for new entries">Active</span>
     <span style="width:52px;text-align:center" title="Built-in - cannot be deleted">System</span>
-    <span style="width:52px;text-align:center" title="Default type for new assignments (one only)">Default</span>
+    <span style="width:52px;text-align:center" title="Default type for new entries (one only)">Default</span>
     <span style="width:60px;text-align:center" title="Warns against overlapping ticket work">Blocks<br>Work</span>
-    <span style="width:64px;text-align:center" title="Warns against another exclusive assignment overlapping">Exclusive</span>
+    <span style="width:64px;text-align:center" title="Warns against another exclusive entry overlapping">Exclusive</span>
     <span style="width:74px;text-align:center" title="Units subtracted from the owner's capacity">Capacity<br>Impact</span>
-    <span style="width:58px;text-align:center" title="Tickets may overlap this assignment">Allow<br>Tickets</span>
-    <span style="width:64px;text-align:center" title="Other assignments may overlap this one">Allow<br>Assign.</span>
+    <span style="width:58px;text-align:center" title="Tickets may overlap this entry">Allow<br>Tickets</span>
+    <span style="width:64px;text-align:center" title="Other entries may overlap this one">Allow<br>Entries</span>
     <span style="width:58px;text-align:center" title="Show on the Team Calendar">On<br>Calendar</span>
     <span style="width:54px"></span>
   </div>`;
@@ -9100,7 +9100,7 @@ document.getElementById('newTypeName')?.addEventListener('keydown', e=>{ if(e.ke
 // ── PRODUCT MANAGEMENT ──
 function renderProductList(){
   const list = document.getElementById('productList');
-  if(!products.length){ list.innerHTML='<div class="dev-empty">No projects yet.</div>'; return; }
+  if(!products.length){ list.innerHTML='<div class="dev-empty">No Spaces yet.</div>'; return; }
   list.innerHTML = products.map((p,i) => {
     const cnt     = projects.filter(pr => pr.product === p.name).length;
     const inUse   = cnt > 0;
@@ -9160,7 +9160,7 @@ function startEditProduct(i){
         <label style="font-size:11px;color:var(--muted);min-width:84px">Item key prefix</label>
         <input class="dev-edit-inp" id="pei_prefix_${i}" value="${escA(p.keyPrefix||'')}" placeholder="e.g. FRAZ" maxlength="8" style="flex:1;text-transform:uppercase" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')">
       </div>
-      <div style="font-size:10px;color:var(--muted)">Generates item keys like <b>${escA(p.keyPrefix||'KEY')}-142</b>. Saving assigns keys to existing items in this project.</div>
+      <div style="font-size:10px;color:var(--muted)">Generates item keys like <b>${escA(p.keyPrefix||'KEY')}-142</b>. Saving assigns keys to existing items in this Space.</div>
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
         <label style="font-size:11px;color:var(--muted);min-width:84px">Color</label>
         <input type="hidden" id="pei_color_${i}" value="${escA(p.color||'')}">
@@ -15546,7 +15546,7 @@ async function syncChildrenFromJira(itemId){
     const count = result.created || 0;
     const skipped = result.skipped || 0;
     if(count){
-      showToast(`${count} child item${count!==1?'s':''} created from Jira subtasks${skipped?' ('+skipped+' already existed)':''}`);
+      showToast(`${count} subitem${count!==1?'s':''} created from Jira subtasks${skipped?' ('+skipped+' already existed)':''}`);
       // Reload projects to pick up new children
       const fresh = await API.get('/api/all');
       if(fresh.projects){
@@ -15558,7 +15558,7 @@ async function syncChildrenFromJira(itemId){
       const p = projects.find(x => x.id === itemId);
       if(p && _itemPageId === itemId) renderItemPage(p);
     } else {
-      showToast(skipped ? `All ${skipped} subtasks already have child items` : 'No Jira subtasks found to sync', 'info');
+      showToast(skipped ? `All ${skipped} subtasks already have subitems` : 'No Jira subtasks found to sync', 'info');
     }
   } catch(e){
     showToast('Sync failed: ' + (e.message||'unknown error'), 'error');
@@ -16280,10 +16280,10 @@ function renderItemPageSubtasks(p){
       <span style="font-size:11px;color:var(--muted)">${esc(ch.status||'')}</span>
     </div>`).join('');
   const addRow = `<div id="ipAddSubtaskRow" style="display:none;gap:6px">
-      <input id="ipNewSubtaskName" type="text" placeholder="Subtask name…" onkeydown="if(event.key==='Enter'){event.preventDefault();ipCreateSubtask();}else if(event.key==='Escape'){document.getElementById('ipAddSubtaskRow').style.display='none';}" style="flex:1;padding:6px 10px;font-size:13px;border:1px solid var(--accent);border-radius:6px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif;outline:none">
+      <input id="ipNewSubtaskName" type="text" placeholder="Subitem name…" onkeydown="if(event.key==='Enter'){event.preventDefault();ipCreateSubtask();}else if(event.key==='Escape'){document.getElementById('ipAddSubtaskRow').style.display='none';}" style="flex:1;padding:6px 10px;font-size:13px;border:1px solid var(--accent);border-radius:6px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif;outline:none">
       <button onclick="ipCreateSubtask()" style="background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Add</button>
     </div>`;
-  listEl.innerHTML = (rows || `<div style="font-size:12px;color:var(--muted)">No subtasks</div>`) + addRow;
+  listEl.innerHTML = (rows || `<div style="font-size:12px;color:var(--muted)">No subitems</div>`) + addRow;
 }
 function ipShowAddSubtask(){
   const row = document.getElementById('ipAddSubtaskRow');
@@ -16300,7 +16300,7 @@ async function ipCreateSubtask(){
   try {
     const created = await API.post('/api/projects', {...child, _username:getUsername()});
     if(created && created.id) projects.push(created);
-    if(typeof showToast==='function') showToast('Subtask added','success');
+    if(typeof showToast==='function') showToast('Subitem added','success');
     renderItemPage(parent);
   } catch(e){ if(typeof showToast==='function') showToast('Failed to add subtask: '+(e.message||e),'error'); else alert(e.message||e); }
 }
@@ -16648,7 +16648,7 @@ function renderItemPage(p){
   let linkControl = '';
   if(depCanEdit && !p.requires){
     if(p.parent){
-      linkControl = `<div style="font-size:11px;color:var(--muted);font-style:italic">Linked items unavailable - this is a child item (has a parent). Remove the parent to add a dependency.</div>`;
+      linkControl = `<div style="font-size:11px;color:var(--muted);font-style:italic">Linked items unavailable - this is a subitem (has a parent). Remove the parent to add a dependency.</div>`;
     } else {
       const cands = projects.filter(x => x.id!==p.id && x.requires!==p.id && !x.archived)
         .sort((a,b)=>(a.name||'').localeCompare(b.name||''));
@@ -16694,7 +16694,7 @@ function renderItemPage(p){
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           Sync Children from Jira
         </button>
-        <div style="font-size:10px;color:var(--muted);margin-top:4px;text-align:center">Creates child items from linked Jira subtasks</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:4px;text-align:center">Creates subitems from linked Jira subtasks</div>
       </div>` : '',
       p.deferred ? `<div style="padding:8px 10px;background:#fff8f0;border-radius:6px;border:1px solid #e8a000">
         <div style="font-size:10px;font-weight:700;color:#c06000;margin-bottom:4px">DEFERRED</div>
@@ -18578,7 +18578,7 @@ if ('serviceWorker' in navigator) {
         <!-- Subtasks card -->
         <div id="ipSubtasksCard" style="border:1px solid var(--border);border-radius:10px;overflow:hidden">
           <div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;justify-content:space-between">
-            <span>Subtasks <span id="ipSubtaskRollup" style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;font-size:11px"></span></span>
+            <span>Subitems <span id="ipSubtaskRollup" style="font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;font-size:11px"></span></span>
             <button id="ipAddSubtaskBtn" onclick="ipShowAddSubtask()" style="display:none;background:none;border:1px solid var(--border);color:var(--accent);padding:0 10px;height:24px;line-height:22px;margin:-4px 0;box-sizing:border-box;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Add subtask</button>
           </div>
           <div id="ipSubtasks" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px"></div>
@@ -25413,7 +25413,7 @@ if ('serviceWorker' in navigator) {
       pop.appendChild(mk(isDef?'✓ Default board':'Set as default', isDef?'var(--frz-accent)':null, function(){ closePop(); _setDefaultBoard(isDef?null:id); }));
       pop.appendChild(mk('Edit',null,function(){ closePop(); openBoardEditor(b); }));
       pop.appendChild(mk('Duplicate',null,function(){ closePop(); duplicateBoard(b); }));
-      pop.appendChild(mk('Delete','#C0392B',function(){ closePop(); if(confirm('Delete board "'+b.name+'"?')) deleteBoard(id); }));
+      pop.appendChild(mk('Delete','#C0392B',function(){ closePop(); if(confirm('Delete Kanban board "'+b.name+'"?')) deleteBoard(id); }));
     });
   }
   function duplicateBoard(b){
@@ -25435,9 +25435,9 @@ if ('serviceWorker' in navigator) {
     var allStatuses=(_val('statuses',[])||[]);
     var bg=document.createElement('div'); bg.className='frz-modal-bg';
     bg.innerHTML='<div class="frz-modal" role="dialog" aria-modal="true">'
-      + '<div class="frz-modal-hd">'+(editing?'Edit board':'Create board')+'<button class="frz-iconbtn" id="frzBeClose" title="Close">✕</button></div>'
+      + '<div class="frz-modal-hd">'+(editing?'Edit Kanban board':'Create Kanban board')+'<button class="frz-iconbtn" id="frzBeClose" title="Close">✕</button></div>'
       + '<div class="frz-modal-bd">'
-      +   '<label class="frz-lbl">Board name</label>'
+      +   '<label class="frz-lbl">Kanban board name</label>'
       +   '<input class="frz-fld" id="frzBeName" placeholder="e.g. Wasatch Board" style="margin-bottom:14px">'
       +   '<label class="frz-lbl">Columns</label><div id="frzBeCols"></div>'
       +   '<button class="frz-viewopt" id="frzBeAddCol" style="margin-top:4px">+ Add column</button>'
@@ -25504,7 +25504,7 @@ if ('serviceWorker' in navigator) {
     bg.querySelector('#frzBeAddCol').addEventListener('click', function(){ draft.columns.push({name:'Column '+(draft.columns.length+1),statuses:[],dropStatus:''}); renderCols(); updateUnassigned(); });
     bg.querySelector('#frzBeSave').addEventListener('click', function(){
       var err=bg.querySelector('#frzBeErr'); err.textContent='';
-      if(!(draft.name||'').trim()){ err.textContent='Board name is required.'; return; }
+      if(!(draft.name||'').trim()){ err.textContent='Kanban board name is required.'; return; }
       if(!draft.columns.length){ err.textContent='Add at least one column.'; return; }
       for(var i=0;i<draft.columns.length;i++){ var c=draft.columns[i];
         if(!(c.name||'').trim()){ err.textContent='Every column needs a name.'; return; }
@@ -29636,7 +29636,7 @@ if ('serviceWorker' in navigator) {
       '<h3>The workspace</h3>'+
       '<p>Flow has three regions:</p>'+
       '<ul>'+
-        '<li><b>Left rail</b> - navigation. <b>Views</b> (My Home, Gantt, Kanban, List, Planning, Calendar, Dashboard, Reports), <b>Spaces</b> (scope to one Space or all), <b>Boards</b> (Kanban layouts), <b>Saved filters</b>, and <b>Settings</b> / <b>Admin</b>. Collapse the rail with the toggle to widen the workspace.</li>'+
+        '<li><b>Left rail</b> - navigation. <b>Views</b> (My Home, Gantt, Kanban, List, Planning, Calendar, Dashboard, Reports), <b>Spaces</b> (scope to one Space or all), <b>Kanban boards</b> (custom column layouts), <b>Saved filters</b>, and <b>Settings</b> / <b>Admin</b>. Collapse the rail with the toggle to widen the workspace.</li>'+
         '<li><b>Top bar</b> - search, the notifications bell '+_mi('bell')+', the <b>New item</b> button '+_mi('plus')+', and your <b>account</b> menu (top right).</li>'+
         '<li><b>Main content</b> - the current view.</li>'+
       '</ul>'+
@@ -29656,7 +29656,7 @@ if ('serviceWorker' in navigator) {
 
       '<p><b><span class="frz-man-role">Editor</span> - create and update, with guardrails.</b> The day-to-day working role.</p>'+
       '<ul>'+
-        '<li><b>Can:</b> create and update items across Gantt, Kanban, List and Planning; <b>comment</b> (with @mentions) and add/remove <b>attachments</b>; plan - run planning sessions, add/remove items to <b>sprints</b> and <b>releases</b>, set <b>capacity overrides</b>, and create <b>assignments</b> (PTO, training, on-call) on the Team Calendar; set an item’s status, owner, assignee, type, start date, time estimate, story points and sprint.</li>'+
+        '<li><b>Can:</b> create and update items across Gantt, Kanban, List and Planning; <b>comment</b> (with @mentions) and add/remove <b>attachments</b>; plan - run planning sessions, add/remove items to <b>sprints</b> and <b>releases</b>, set <b>capacity overrides</b>, and create <b>availability entries</b> (PTO, training, on-call) on the Calendar; set an item’s status, owner, assignee, type, start date, time estimate, story points and sprint.</li>'+
         '<li><b>Guardrails:</b> once an item is in an <b>active status, its time and date fields lock</b> - to move dates, use <b>Delay</b>, and an editor’s delay change is <b>sent to an admin for approval</b> rather than applied immediately. An editor also can’t move an item back out of an active status (that’s an admin action). A few fields are <b>admin-only</b> and don’t appear in the editor’s form: Priority, Parallel Resources, Recurrence, Ignore Conflicts, and Gantt visibility.</li>'+
         '<li><b>Cannot:</b> change configuration, manage users, delete items, run Jira admin/imports, or edit another admin’s password.</li>'+
         '<li><b>Owner-scoped editors:</b> an editor may be limited to one owner pod (a 📌 badge shows this) - their views focus on that pod’s items and the owner field is locked. This is a focus aid for the person, not a hard security boundary.</li>'+
@@ -29710,7 +29710,7 @@ if ('serviceWorker' in navigator) {
       '<h3>'+_mi('planning')+' Planning</h3>'+
       '<p>Three tabs - <b>Plan</b> (backlog + the current sprint), <b>Sprints</b>, and <b>Releases</b>. Covered in detail in section 5.</p>'+
       '<h3>'+_mi('teamCalendar')+' Team Calendar</h3>'+
-      '<p>Who is working on what, and who is out. Switch between <b>Month</b>, <b>Week</b> and <b>Timeline</b>. Rows are grouped by owner then by person, showing assignments (PTO, Training, On Call, and so on) and scheduled tickets. A <b>Work days / All days</b> toggle controls whether weekends appear. On a phone the calendar shows a compact month agenda.</p>'+
+      '<p>Who is working on what, and who is out. Switch between <b>Month</b>, <b>Week</b> and <b>Timeline</b>. Rows are grouped by owner then by person, showing availability entries (PTO, Training, On Call, and so on) and scheduled tickets. A <b>Work days / All days</b> toggle controls whether weekends appear. On a phone the calendar shows a compact month agenda.</p>'+
       '<h3>'+_mi('dashboard')+' Dashboard</h3>'+
       '<p>A management overview: a <b>capacity heatmap</b> per owner and week, <b>at-risk</b> and needs-decision items, estimate-vs-actual <b>variance</b>, and a <b>Maintenance &amp; Operations</b> section that reports each sprint’s maintenance-duty work.</p>'+
       '<h3>'+_mi('reports')+' Reports</h3>'+
@@ -29744,7 +29744,7 @@ if ('serviceWorker' in navigator) {
         '<li><b>Inline editing</b> - click Status, Owner, Assignee, Type, Priority, '+esc(metricLabel)+', Sprint, the schedule dates or Recurrence to edit them in place. Press <b>Esc</b> to cancel.</li>'+   // METRIC-LABEL-1: team label
         '<li><b>Schedule</b> - Start, Code Complete, Due, Revised (delay), Expected and Release dates.</li>'+
         '<li><b>Dependencies</b> - <b>Depends On</b> is a scheduling link (A must precede B; mark it <b>parallel</b> if they can overlap). <b>Parent</b> is organizational containment (an epic and its children). An item uses one or the other, not both.</li>'+
-        '<li><b>Subtasks</b> - child items with a roll-up and inline create.</li>'+
+        '<li><b>Subitems</b> - child items with a roll-up and inline create.</li>'+
         '<li><b>Comments</b> - a rich-text thread with single-level replies. Type <b>@</b> to mention a teammate (they get notified); paste or drag <b>images and attachments</b>. Formatting (bold, lists, links, panels) is preserved.</li>'+
         '<li><b>Attachments</b> - files stored securely; inline images render in the description and comments.</li>'+
         '<li><b>Activity</b> - a full history of changes.</li>'+
@@ -29783,9 +29783,9 @@ if ('serviceWorker' in navigator) {
     '<div class="frz-man-sec" id="man-capacity"><h2>6 &nbsp;Capacity &amp; the team calendar</h2>'+
       '<p>Each <b>owner</b> is a capacity pool with a base number of resource units per day. An item consumes capacity across its phases: development work consumes its <b>parallel resources</b>, testing and delay consume one unit.</p>'+
       '<h3>Effective capacity</h3>'+
-      '<p>What a pool can actually deliver on a day is: <code>(override or base) minus assignment impacts</code>, never below zero. So a person on PTO or a pod on maintenance duty reduces the available capacity you see on the Gantt, the capacity calendar and the dashboard heatmap.</p>'+
-      '<h3>Assignments</h3>'+
-      '<p>Assignments are non-project time - <b>PTO, Sick, Holiday, Training, Travel, On Call, Maintenance Duty</b> and more. Create them from the <b>Team Calendar</b> (New assignment). Each type has a capacity impact; some are informational only. Assignments appear on the calendar and quietly reduce the owner’s effective capacity for those days. A hover breakdown on capacity cells shows base, each impact, and the effective result.</p>'+
+      '<p>What a pool can actually deliver on a day is: <code>(override or base) minus entry impacts</code>, never below zero. So a person on PTO or a pod on maintenance duty reduces the available capacity you see on the Gantt, the capacity calendar and the dashboard heatmap.</p>'+
+      '<h3>Availability</h3>'+
+      '<p>Availability entries are non-work time - <b>PTO, Sick, Holiday, Training, Travel, On Call, Maintenance Duty</b> and more. Create them from the <b>Calendar</b> (New entry). Each type has a capacity impact; some are informational only. Entries appear on the calendar and quietly reduce the owner’s effective capacity for those days. A hover breakdown on capacity cells shows base, each impact, and the effective result.</p>'+
       '<h3>Conflicts</h3>'+
       '<p>When scheduled work exceeds effective capacity, Flow surfaces an <b>advisory warning</b> (never a hard block) so you can decide. Some item types and statuses can be configured to be ignored for conflict purposes.</p>'+
     '</div>'+
