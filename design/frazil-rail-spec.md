@@ -92,7 +92,7 @@ active); rail section headings 11px/700, letter-spacing .07em, `--text-muted`
 │  RAIL    │ TOP BAR  [⟨⟩][View title · crumbs]   [search][+ New item][JR] │
 │          ├──────────────────────────────────────────────────┤
 │ Views    │ FILTER ROW  [chips…][+ Filter][Save]      [view-specific] │
-│ Projects ├──────────────────────────────────────────────────┤
+│ Spaces   ├──────────────────────────────────────────────────┤
 │ Saved    │                                                  │
 │ filters  │                VIEW CONTENT                      │
 │          │                                                  │

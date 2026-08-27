@@ -1637,7 +1637,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.20.0"
+APP_VERSION = "6.21.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2437,7 +2437,7 @@ def _intake_send_emails(team, item, pid):
     prio  = _PRIO_LABEL.get(str(item.get("priority") or ""), "")
     base_rows = [("Ticket", key), ("Status", item.get("status") or ""),
                  ("Type", item.get("type") or ""), ("Priority", prio),
-                 ("Project", item.get("product") or "")]
+                 ("Regarding", item.get("product") or "")]
     reporter_email = (item.get("reporterEmail") or "").strip()
     if reporter_email:
         url = f"{APP_BASE_URL}/ticket?team={team}&id={pid}&t={_ticket_token(team, pid)}"
@@ -2560,7 +2560,7 @@ _PORTAL_LOCALTS_JS = """<script>
 def _ticket_status_page(p, comments):
     esc = html.escape
     prio = _PRIO_LABEL.get(str(p.get("priority") or ""), "")
-    rows = [("Type", p.get("type")), ("Priority", prio), ("Project", p.get("product"))]
+    rows = [("Type", p.get("type")), ("Priority", prio), ("Regarding", p.get("product"))]
     row_html = "".join(
         f'<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f0f3f6;font-size:14px">'
         f'<span style="color:#6b7280">{esc(k)}</span><span style="color:#1f2733;font-weight:600">{esc(v)}</span></div>'
@@ -2651,7 +2651,7 @@ _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
   <div class="hd" style="display:flex;align-items:center;gap:12px"><!--FLOWMARK_HD--><div><h1>Submit a ticket</h1><p>File a request or report an issue. The team will follow up by email.</p></div></div>
   <form id="form" onsubmit="return submitForm(event)">
     <div class="msg" id="msg"></div>
-    <div><label class="req">Project</label><select id="project"><option value="">Loading…</option></select></div>
+    <div><label class="req">What is this about?</label><select id="project"><option value="">Loading…</option></select></div>
     <div class="row">
       <div><label>Type</label><select id="type"><option value="">-</option></select></div>
       <div><label>Priority</label><select id="priority">
@@ -6161,7 +6161,7 @@ def _transfer_send_email(team: str, item: dict, pid: int, key: str, status: str)
     prio = _PRIO_LABEL.get(str(item.get("priority") or ""), "")
     rows = [("Ticket", key or f"#{pid}"), ("Status", status or ""),
             ("Type", item.get("type") or ""), ("Priority", prio),
-            ("Project", item.get("product") or "")]
+            ("Regarding", item.get("product") or "")]
     intro = ("Thanks for your report. We've moved your ticket to the team that handles this kind "
              "of request, so it reaches the right people faster - there's nothing you need to do. "
              "Your new reference is below; you can check its status any time with the button. For "
@@ -6395,7 +6395,7 @@ def _duplicate_send_email(team: str, item: dict, pid: int):
     key = item.get("itemKey") or f"#{pid}"
     prio = _PRIO_LABEL.get(str(item.get("priority") or ""), "")
     rows = [("Ticket", key), ("Type", item.get("type") or ""), ("Priority", prio),
-            ("Project", item.get("product") or "")]
+            ("Regarding", item.get("product") or "")]
     intro = ("Thanks for your report. This has already been reported and is being tracked, so we have "
              "closed this copy to keep things tidy - there is nothing more you need to do. If you have "
              "details to add, contact the team.")
@@ -6839,7 +6839,7 @@ def _reporter_email(team, item, pid, heading, intro, note=None):
     prio = _PRIO_LABEL.get(str(item.get("priority") or ""), "")
     rows = [("Ticket", key), ("Status", item.get("status") or ""),
             ("Type", item.get("type") or ""), ("Priority", prio),
-            ("Project", item.get("product") or "")]
+            ("Regarding", item.get("product") or "")]
     url = f"{APP_BASE_URL}/ticket?team={team}&id={pid}&t={_ticket_token(team, pid)}"
     body = _intake_email_html(item, rows, heading, intro, "View ticket status", url, note=note,
                               secondary=("View all your tickets", _my_tickets_url(email)))
@@ -6866,7 +6866,7 @@ def _cc_notify(team, item, pid, heading, intro, note=None):
     prio = _PRIO_LABEL.get(str(item.get("priority") or ""), "")
     rows = [("Ticket", key), ("Status", item.get("status") or ""),
             ("Type", item.get("type") or ""), ("Priority", prio),
-            ("Project", item.get("product") or "")]
+            ("Regarding", item.get("product") or "")]
     url = f"{APP_BASE_URL}/ticket?team={team}&id={pid}&t={_ticket_token(team, pid)}"
     for addr in cc:
         unsub = (f"{APP_BASE_URL}/cc-unsubscribe?team={team}&id={pid}"

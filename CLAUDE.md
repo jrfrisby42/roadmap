@@ -265,7 +265,7 @@ The `projects` table is literally `id INTEGER PRIMARY KEY, data TEXT`. The full 
 
 - You cannot SQL-index individual fields.
 - `get_all` (`GET /api/all`) returns everything for the team in one shot; the frontend keeps it in memory in `projects[]`.
-- "Items" and "projects" are the same thing in this codebase — historical naming. The actual project/product (Fraznet, HubSpot, etc.) is a separate config key called `products`.
+- "Items" and "projects" are the same thing in this codebase — historical naming. The actual project/product (Fraznet, HubSpot, etc.) is a separate config key called `products`, **displayed in the UI as "Space"** (TERM-1 renamed the label "Project" → "Space"; the stored field/key stay `product`/`products`). The tenant (config/DB `team`, `X-Team`) is **displayed as "Organization"** (TERM-1); the identifier stays `team`.
 
 ### 5. The Jira sync is forward-only and change-gated
 
