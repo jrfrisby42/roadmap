@@ -11146,7 +11146,7 @@ function _attachLinkIndicator(p){
     + '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3 3 0 0 1 4.24 4.24l-9.2 9.19a1 1 0 0 1-1.41-1.41l8.49-8.49"/></svg>'
     + '</span>';
 }
-const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','reporter','blockedReason','location','resolutionType','points','sprint','project','created'];   // UI-POLISH-1: +reporter, +created (both default hidden via _optin2). BLOCK-REASON-1: +blockedReason (_optin3). FIELDS-1: +location, +resolutionType (default hidden via _optin4; gated OUT entirely when the list is empty)
+const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','reporter','blockedReason','location','resolutionType','points','sprint','project','due','created'];   // UI-POLISH-1: +reporter, +created (both default hidden via _optin2). BLOCK-REASON-1: +blockedReason (_optin3). FIELDS-1: +location, +resolutionType (default hidden via _optin4; gated OUT entirely when the list is empty). ADOPT-2: +due (default hidden via _optin5)
 // SCROLL-CARET-1: one shared caret asset for every expand/collapse indicator (replaces the ▶/▾/▼ text
 // glyphs, which Unicode ships at different sizes). Reuses the IC.caret glyph - the same path + the (now
 // mode-safe) .frz-chip-caret class. 12px SVG; the caller keeps its own fixed-width box, so collapsed and
@@ -11232,6 +11232,20 @@ const _LIST_COL_DEF = {
   // UI-POLISH-1: optional, default-hidden. data-col (LIST-CELL-1), _listCell for the '-' placeholder.
   // created sorts server-side via json_extract($.createdAt); createdAt renders through fmtTSDate
   // (the app's date helper, MT-consistent) - never a raw Date. reporter is an indexed sort column.
+  // ADOPT-2: optional, default-hidden (via _optin5). Relative due-date label (Today / Tomorrow /
+  // weekday / "N days ago" / absolute) with the absolute date in `title`; a missing due shows the
+  // "-" placeholder so rows stay aligned (the Kanban card omits it instead). Overdue = past AND not
+  // a terminal/reserved status (a Released or duplicated item never reads overdue), coloured with
+  // the SAME red token .sched-date.overdue uses (var(--accent2), theme-aware) WITHOUT importing that
+  // class's 90px centred schedule-chip layout. Sorts on `due` (server json_extract; undated rows
+  // last in both directions). The relative label is display-only - sort + CSV export use raw dates.
+  due:        { label:'Due',         sort:'due',
+                td:(it)=>{ var f=(typeof window!=='undefined'&&window._frzRelDue)?window._frzRelDue:null;
+                  if(!f) return `<td data-col="due" style="padding:7px 10px;white-space:nowrap">${_listCell(it.due||'')}</td>`;   // no shell (classic): absolute ISO, no relative label
+                  var r=f(it.due);
+                  if(!r.label) return `<td data-col="due" style="padding:7px 10px;white-space:nowrap">${_listCell('')}</td>`;
+                  var od=r.past && !isTerminalStatus(it.status);
+                  return `<td data-col="due" style="padding:7px 10px;white-space:nowrap"><span title="${escA(r.title)}"${od?' style="color:var(--accent2);font-weight:600"':''}>${esc(r.label)}</span></td>`; } },
   created:    { label:'Created',     sort:'created_at',
                 td:(it)=>`<td data-col="created" style="padding:7px 10px;white-space:nowrap">${_listCell(it.createdAt ? fmtTSDate(it.createdAt) : '')}</td>` },
   reporter:   { label:'Reporter',    sort:'reporter',
@@ -21620,6 +21634,37 @@ if ('serviceWorker' in navigator) {
     return d.getFullYear()+'-'+(m<10?'0':'')+m+'-'+(day<10?'0':'')+day;
   }
   var _FRZ_WD=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+  // ADOPT-2: relative due-date label from a YYYY-MM-DD string. Reuses the to-do list's MT
+  // day-key primitives (_frzTodayMTKey / _frzDateFromMT / _FRZ_WD) - it composes them, it does
+  // NOT re-derive day maths (there was no existing relative-LABEL formatter to share; the to-do
+  // list only formats absolute via _frzFmtDue). Returns { label, title(=absolute), past }.
+  // `past` is status-UNAWARE (just due < today); the caller ANDs it with !isTerminalStatus so a
+  // Released/duplicated item never reads overdue, keeping this formatter reusable by both views.
+  // Thresholds: Today / Tomorrow / Yesterday by name; +2..+6 days = the weekday name; -2..-6
+  // days = "N days ago"; beyond either = the absolute date. All comparisons are MT day-key
+  // STRINGS (never Date objects) so the Today/Tomorrow boundary is right at MT midnight.
+  function _frzRelDue(iso){
+    var s=(iso||'').trim();
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(s)) return { label:'', title:'', past:false };
+    var abs=_frzFmtDue(s)+', '+s.slice(0,4);   // "Aug 16, 2026" (reuses _frzFmtDue for the month/day)
+    var today=_frzTodayMTKey();
+    var label;
+    if(s===today)                  label='Today';
+    else if(s===_frzDateFromMT(1))  label='Tomorrow';
+    else if(s===_frzDateFromMT(-1)) label='Yesterday';
+    else {
+      var fwd=null, back=null, i;
+      for(i=2;i<=6;i++){ if(s===_frzDateFromMT(i)){ fwd=i; break; } }
+      if(fwd!=null){
+        var wd=_FRZ_WD[(todayMT().getDay()+fwd)%7];   // DOW = todayDOW + offset (string-matched above), no raw-Date compare
+        label=wd.charAt(0).toUpperCase()+wd.slice(1);
+      } else {
+        for(i=2;i<=6;i++){ if(s===_frzDateFromMT(-i)){ back=i; break; } }
+        label=(back!=null) ? (back+' days ago') : abs;
+      }
+    }
+    return { label:label, title:abs, past:(s<today) };
+  }
   function _frzParseTrailingDate(title){
     // Only the TRAILING token(s) are matched, so "Friday deployment checklist" keeps its title intact.
     // Vocabulary: today | tomorrow | <weekday> | next <weekday> | in N days. Returns {title, due_date} or
@@ -24756,6 +24801,7 @@ if ('serviceWorker' in navigator) {
     document.getElementById('frzSettings').addEventListener('click', openSettings);   // Stage 4a: tabbed Settings
     window._frzNav = navigate;   // bridge so classic-scope code (openAdminPanel) can route into the Flow shell
     window._frzSyncURL = syncURL;   // ADOPT-1: bridge so the List sort (block-B _listSetSort) can push its state into the URL
+    window._frzRelDue = _frzRelDue;   // ADOPT-2: bridge so the block-B List `due` column can share the one relative-date formatter with the Kanban card
     window._frzRefreshCalendar = function(){ try { if(state.view==='team-calendar') renderCalendar(); } catch(e){} };   // re-render after async assignment data loads
     // M2: expose the sprint-duty dashboard hook + its links to the production renderDashboard scope.
     window._frzDashboardMO = _frzDashboardMO;
@@ -24918,6 +24964,7 @@ if ('serviceWorker' in navigator) {
       if(!ls(key+'_optin2')){ set.add('created');  set.add('reporter');    lset(key+'_optin2','1'); changed=true; }   // UI-POLISH-1
       if(!ls(key+'_optin3')){ set.add('blockedReason');                     lset(key+'_optin3','1'); changed=true; }   // BLOCK-REASON-1
       if(!ls(key+'_optin4')){ set.add('location'); set.add('resolutionType'); lset(key+'_optin4','1'); changed=true; }   // FIELDS-1: default hidden (when configured; gated out entirely when the list is empty)
+      if(!ls(key+'_optin5')){ set.add('due');                                lset(key+'_optin5','1'); changed=true; }   // ADOPT-2: Due column default hidden
       if(changed) lset(key, JSON.stringify(Array.from(set)));
     } catch(e){}
   }
@@ -24985,6 +25032,7 @@ if ('serviceWorker' in navigator) {
       sprint:     {label:'Sprint',      get:function(it){ var s=sprintById(it.sprintId); return s?(s.name||''):(it.sprintId||''); }},
       project:    {label:'Project',     get:function(it){ return it.product||''; }},
       description:{label:'Description', get:function(it){ return _call('descToPlainText', it.description)||''; }},
+      due:        {label:'Due',         get:function(it){ return it.due||''; }},   // ADOPT-2: ABSOLUTE raw YYYY-MM-DD (never the relative label - a spreadsheet cannot read "Tomorrow")
       created:    {label:'Created',     get:function(it){ return it.createdAt ? fmtTSDate(it.createdAt) : ''; }},   // UI-POLISH-1
       reporter:   {label:'Reporter',    get:function(it){ return it.reporter||''; }},
       blockedReason:{label:'Blocked Reason', get:function(it){ return it.blockedReason||''; }},   // BLOCK-REASON-1
@@ -24996,7 +25044,7 @@ if ('serviceWorker' in navigator) {
   function _exportCols(mode){
     var D=_exportColDefs();
     if(mode==='all'){
-      var allCols=['key','name','type','status','priority','owner','assignee','reporter','blockedReason','location','resolutionType','points','sprint','project','created','description'];   // UI-POLISH-1: +reporter,+created. BLOCK-REASON-1: +blockedReason. FIELDS-1: +location,+resolutionType (gated below)
+      var allCols=['key','name','type','status','priority','owner','assignee','reporter','blockedReason','location','resolutionType','points','sprint','project','due','created','description'];   // UI-POLISH-1: +reporter,+created. BLOCK-REASON-1: +blockedReason. FIELDS-1: +location,+resolutionType (gated below). ADOPT-2: +due (absolute)
       if(!(Array.isArray(locations)&&locations.length)) allCols=allCols.filter(function(k){ return k!=='location'; });                     // FIELDS-1: empty list -> absent from export
       if(!(Array.isArray(resolutionTypes)&&resolutionTypes.length)) allCols=allCols.filter(function(k){ return k!=='resolutionType'; });  // FIELDS-1
       if(!_sprintFieldOn()) allCols=allCols.filter(function(k){ return k!=='sprint'; });   // FIELDS-2: Sprint absent from export unless team has sprints + Planning on
@@ -25217,7 +25265,11 @@ if ('serviceWorker' in navigator) {
                   + (_clip?'<span style="flex:0 0 auto;margin-left:4px;display:inline-flex;align-items:center">'+_clip+'</span>':'')
                   + (_ind?'<span style="flex:0 0 auto;margin-left:4px;display:inline-flex;align-items:center">'+_ind+'</span>':'')
                   + '</div>'; })()
-            + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+(function(){ var s=_call('slaBadgeHtml',p,true); return s?' '+s:''; })()+'</div>'
+            + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+(function(){ var s=_call('slaBadgeHtml',p,true); return s?' '+s:''; })()
+              // ADOPT-2: relative due date, ONLY when one exists (no dash/placeholder on a dense card, so
+              // cards without a due date get no new node and are height-identical). Overdue = past AND
+              // positively non-terminal (Released/duplicated never reads overdue); same red token as the List.
+              + (function(){ var r=_frzRelDue(p.due); if(!r.label) return ''; var od=r.past && typeof isTerminalStatus==='function' && !isTerminalStatus(p.status); return ' <span class="frz-bcard-due" title="'+escA(r.title)+'"'+(od?' style="color:var(--accent2);font-weight:600"':'')+'>'+esc(r.label)+'</span>'; })()+'</div>'
           + '</div>'
         + '</div>'
       + '</div>'
