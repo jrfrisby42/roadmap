@@ -196,3 +196,37 @@ def test_sort_by_created_at_and_reporter(client, team, admin_headers):
     assert ids("sort=created_at:desc") == [a, d, b]
     assert ids("sort=reporter:asc") == [b, d, a]       # amy, mia, zoe
     assert ids("sort=reporter:desc") == [a, d, b]
+
+
+def test_sort_by_due_nulls_last(client, team, admin_headers):
+    """ADOPT-2: `due` is a JSON-blob field (not indexed), sorted via json_extract. Items with NO
+    due date sort LAST in BOTH directions (an undated item is not 'the earliest')."""
+    a = _mk(client, admin_headers, name="A", due="2026-08-22")
+    b = _mk(client, admin_headers, name="B", due="2026-08-25")
+    n = _mk(client, admin_headers, name="N")            # no due date
+
+    def ids(q):
+        return [i["id"] for i in client.get("/api/items?" + q, headers=admin_headers).json()["items"]]
+
+    assert ids("sort=due:asc")  == [a, b, n]            # earliest date first, undated LAST
+    assert ids("sort=due:desc") == [b, a, n]            # latest date first, undated STILL last
+
+
+def test_multi_column_and_blob_ignored_sort(client, team, admin_headers):
+    """ADOPT-1: ordered primary+secondary sort. A shared primary (type) breaks ties on the
+    secondary (name). The single-value form still parses (backward compat), and a JSON-blob
+    column passed as a sort is ignored, not errored (blob sorting is out of scope)."""
+    t1 = _mk(client, admin_headers, name="Zeta",  type="Task")
+    t2 = _mk(client, admin_headers, name="Alpha", type="Task")
+    f1 = _mk(client, admin_headers, name="Mid",   type="Feature")
+
+    def ids(q):
+        return [i["id"] for i in client.get("/api/items?" + q, headers=admin_headers).json()["items"]]
+
+    # Feature < Task (type asc); within Task, name asc -> Alpha before Zeta.
+    assert ids("sort=type:asc,name:asc") == [f1, t2, t1]
+    # Single-value form still works (a stale saved/URL sort must keep loading).
+    assert ids("sort=name:asc") == [t2, f1, t1]         # Alpha, Mid, Zeta
+    # A blob column as the sort is ignored (falls back to a stable default), never a 500.
+    r = client.get("/api/items?sort=blockedReason:asc", headers=admin_headers)
+    assert r.status_code == 200 and r.json()["total"] == 3

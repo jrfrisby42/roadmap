@@ -1637,7 +1637,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.19.0"
+APP_VERSION = "6.20.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -4980,6 +4980,14 @@ def list_items(
             # `name`. ISO-8601 strings sort lexically = chronologically; NULL (missing) sorts
             # first ASC (blanks first, consistent with the column's "-" cell).
             return f"json_extract(projects.data,'$.createdAt') {d}"
+        if col == "due":
+            # ADOPT-2: `due` is NOT an indexed column, so sort from the blob via json_extract.
+            # `due` is a YYYY-MM-DD string -> lexical sort is chronological. Unlike created_at,
+            # items with NO due date sort LAST in BOTH directions (an undated item is not "the
+            # earliest"): the leading blanks-first term is always ASC, so present dates precede
+            # NULL/'' regardless of `d`.
+            _due = "json_extract(projects.data,'$.due')"
+            return f"({_due} IS NULL OR {_due} = '') ASC, {_due} {d}"
         if col == "priority":
             # One priority order everywhere: Urgent(1), High(2), Medium(3), Low(4), with
             # blank/none (NULL or <1) ALWAYS last regardless of direction.
