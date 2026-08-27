@@ -2267,7 +2267,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.16.2';
+const APP_VERSION = '6.16.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -24586,11 +24586,20 @@ if ('serviceWorker' in navigator) {
     // IS the declaration of intent, so new open-item controls never need to be added to an
     // allowlist here; conversely, a link that must stay in-app simply carries no target (the
     // planning card name and the ⤢ had a stray target="_blank" removed for exactly this reason).
+    // ADDENDUM A: the exemption applies ONLY in a real browser tab (display-mode: browser). Flow's
+    // manifest is scope:"/" + display:standalone, so in the INSTALLED app Chrome captures every
+    // in-scope navigation into the app window - a target="_blank" there would launch the app / a
+    // browser instead of opening a tab (an app window has no tab strip, so "new tab" is meaningless).
+    // In every non-browser mode (standalone / minimal-ui / window-controls-overlay / fullscreen) we
+    // fall through and navigate IN-APP, exactly as before NEWTAB-FIX-1. Testing FOR `browser` (not
+    // against `standalone`) is deliberate - it keeps all the other installed modes in-window.
+    // Evaluated per click (matchMedia is cheap) so a mid-session mode change is always honoured.
     document.addEventListener('click', function(e){
       if (!root) return;
       var a = e.target.closest && e.target.closest('a[href]');
       if (!a) return;
-      if (a.getAttribute('target') === '_blank') return;   // NEWTAB-FIX-1: deliberate new-tab anchor - do not intercept
+      if (a.getAttribute('target') === '_blank'
+          && window.matchMedia && window.matchMedia('(display-mode: browser)').matches) return;   // NEWTAB-FIX-1 + ADDENDUM A: a deliberate new-tab anchor, only in a genuine browser tab
       var href = a.getAttribute('href') || '';
       var mm = href.match(/[?&]item=(\d+)/) || href.match(/\/item\/(\d+)(?:[?#]|$)/);
       if (!mm) return;
