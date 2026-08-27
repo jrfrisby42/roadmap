@@ -1637,7 +1637,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.17.2"
+APP_VERSION = "6.18.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3604,6 +3604,11 @@ def get_all(auth: dict = Depends(require_auth)):
             "assethubCredentialPresent": bool(_assethub_api_key(team)),   # Team Admin: presence bool (NOT the key) so the page can say WHICH half is missing
             "assethubBaseUrl": ASSETHUB_BASE_URL,   # FLOW-1 item B: non-secret host for the asset-tag deep link (credential stays in .env)
             "enabledViews": cfg_map.get("enabledViews"),   # Team Admin: per-team view allowlist (null = all enabled)
+            # FIELDS-2: presence of the two Planning ENTITY collections, known at BOOT so the Sprint /
+            # Release field gate (which renders on the List + item page, before Planning is ever opened)
+            # never flashes. Booleans, not the collections - the gate only needs "does the team have any".
+            "hasSprints": bool(_read_sprints(auth["team"])),
+            "hasReleases": bool(_read_releases(auth["team"])),
             "slackNotify": cfg_map.get("slackNotify") or {},   # Slack notifications (non-secret {enabled,types,mode})
             "slackWebhookPresent": bool(_slack_webhook(team)),   # channel transport present (presence bool only)
             "slackBotTokenPresent": bool(_slack_bot_token(team)),   # DM transport present (presence bool only - NEVER the token)
@@ -4827,6 +4832,7 @@ def list_items(
     department: Optional[str] = None,
     location: Optional[str] = None,          # FIELDS-1: group-by row-fetch filter (JSON-blob field, __none__ = unset)
     resolutionType: Optional[str] = None,    # FIELDS-1
+    blockedReason: Optional[str] = None,     # FIELDS-2: row filter (JSON-blob) - was MISSING, so blockedReason=X returned every row (chip + group-expansion defect fix)
     flag: Optional[str] = None,        # FN5: '1' -> only items with an unresolved flag (server-side, uncapped)
     sort: Optional[str] = None,
     page: int = 1,
@@ -4874,6 +4880,7 @@ def list_items(
     # (unset bucket). The `col` here is our own literal expression, so the interpolation stays safe.
     eq("json_extract(data, '$.location')", location)
     eq("json_extract(data, '$.resolutionType')", resolutionType)
+    eq("json_extract(data, '$.blockedReason')", blockedReason)   # FIELDS-2: the missing filter - powers the Blocked Reason chip AND fixes group-expansion
 
     # Priority: an indexed column, but "no priority" items store NULL (the '' -> None mapping in
     # _project_index_cols), so eq() cannot express the "(No priority)" option. A '__none__' member in

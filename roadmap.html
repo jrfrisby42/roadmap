@@ -905,6 +905,20 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
       </div>
     </div>
+    <!-- FIELDS-2: option sources for the coded-field filter chips (shell opt-in via "+ Filter"). The
+         shell's chipMenu reads .ms-opt rows from these panels; populated at boot from the config lists. -->
+    <div class="ms-wrap" id="locationDropWrap" style="display:none">
+      <button class="ms-btn" id="locationDropBtn" type="button">All ▾</button>
+      <div class="ms-panel" id="locationDropPanel"><label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label></div>
+    </div>
+    <div class="ms-wrap" id="resolutionTypeDropWrap" style="display:none">
+      <button class="ms-btn" id="resolutionTypeDropBtn" type="button">All ▾</button>
+      <div class="ms-panel" id="resolutionTypeDropPanel"><label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label></div>
+    </div>
+    <div class="ms-wrap" id="blockedReasonDropWrap" style="display:none">
+      <button class="ms-btn" id="blockedReasonDropBtn" type="button">All ▾</button>
+      <div class="ms-panel" id="blockedReasonDropPanel"><label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label></div>
+    </div>
     <span class="ctrl-lbl" id="dateRangeLbl" style="display:none">From</span>
     <input type="date" id="filterFrom" style="display:none;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none">
     <span class="ctrl-lbl" id="dateRangeLbl2" style="display:none">To</span>
@@ -2291,7 +2305,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.17.2';
+const APP_VERSION = '6.18.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2972,6 +2986,14 @@ let assethubConnection = {};    // Team Admin: the AssetHub mapping ({providerEn
 let externalRequestCategories = {}; // WRITE-2: curated per-system request categories {assethub:[{id,label}]}. Feeds the Create-request form. No secret.
 let assethubCredentialPresent = false;   // Team Admin: whether a .env credential exists for this team (presence bool, never the key).
 let enabledViews = null;        // Team Admin: per-team view allowlist (null = all enabled). admin + my-home always on.
+let hasSprints = false;         // FIELDS-2: team has >=1 sprint (from /api/all, known at boot)
+let hasReleases = false;        // FIELDS-2: team has >=1 release
+// FIELDS-2: the Sprint / Release fields hide unless the team HAS the entity AND the Planning view is
+// enabled (J.R.'s call - a Planning-off team never shows them, even with stray legacy data). Reads the
+// existing enabledViews source (no parallel mechanism); mirrors _viewEnabled('planning') - null/absent = on.
+function _planningViewEnabled(){ return !Array.isArray(enabledViews) || enabledViews.indexOf('planning') >= 0; }
+function _sprintFieldOn(){  return !!hasSprints  && _planningViewEnabled(); }
+function _releaseFieldOn(){ return !!hasReleases && _planningViewEnabled(); }
 let slackNotify = {};           // Team Admin (Slack): {enabled, types}. Default {} = OFF. Webhook URL is server-side only.
 let slackWebhookPresent = false;// Team Admin (Slack): whether a SLACK_WEBHOOK_<TEAM> .env value exists (presence bool, never the URL).
 let slackBotTokenPresent = false;// Team Admin (Slack): whether a SLACK_BOT_TOKEN_<TEAM> .env value exists (DM transport; presence bool, never the token).
@@ -3317,6 +3339,28 @@ function getSelectedDepartments(){
     .filter(c => c.value !== 'all' && c.checked).map(c => c.value);
   return chosen.length ? chosen : null;
 }
+// FIELDS-2: the three coded-field filter chips. Same ms-opt structure as Department, +"No X" (__none__,
+// server-supported unset bucket). Options come from the per-team config lists; empty list -> only the
+// "All" row, and the chip is never offered (gated in the "+ Filter" menu), so the panel stays inert.
+function _msCodedPanel(panelId, arr, noneLabel){
+  const panel=document.getElementById(panelId); if(!panel) return;
+  const prev=_msPrevChecked(panelId);
+  panel.innerHTML = `<label class="ms-opt" data-val="all"><input type="checkbox" value="all" ${prev.length===0?'checked':''}> All</label>` +
+    (arr||[]).filter(v=>v).map(v=>`<label class="ms-opt" data-val="${escA(v)}"><input type="checkbox" value="${escA(v)}"${prev.includes(v)?' checked':''}> ${esc(v)}</label>`).join('') +
+    `<label class="ms-opt" data-val="__none__"><input type="checkbox" value="__none__"${prev.includes('__none__')?' checked':''}> ${esc(noneLabel)}</label>`;
+}
+function populateLocationFilter(){ _msCodedPanel('locationDropPanel', locations, 'No location'); }
+function populateResolutionTypeFilter(){ _msCodedPanel('resolutionTypeDropPanel', resolutionTypes, 'No resolution type'); }
+function populateBlockedReasonFilter(){ _msCodedPanel('blockedReasonDropPanel', blockedReasons, 'No blocked reason'); }
+function _msGetSelected(panelId){
+  const allCk=document.querySelector('#'+panelId+' input[value="all"]');
+  if(allCk?.checked) return null;
+  const chosen=[...document.querySelectorAll('#'+panelId+' input[type=checkbox]')].filter(c=>c.value!=='all'&&c.checked).map(c=>c.value);
+  return chosen.length ? chosen : null;
+}
+function getSelectedLocations(){ return _msGetSelected('locationDropPanel'); }
+function getSelectedResolutionTypes(){ return _msGetSelected('resolutionTypeDropPanel'); }
+function getSelectedBlockedReasons(){ return _msGetSelected('blockedReasonDropPanel'); }
 // Shared match predicates for the optional Priority/Department filters. Defined once as globals so
 // the classic renders (Gantt/Kanban/Planning) AND the Flow shell pill predicate use identical
 // semantics (no drift). sel null/empty = no filter. '__none__' = the item has no priority/department.
@@ -5418,6 +5462,7 @@ function openProjectModal(id){
   populateStatusSelects();
   populatePriorityFilter();
   populateDeptFilter();
+  populateLocationFilter(); populateResolutionTypeFilter(); populateBlockedReasonFilter();   // FIELDS-2
   populateDelaySelect();
   populateProductSelect();
   populateTypeSelect();
@@ -7882,6 +7927,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
     blockedReasons = Array.isArray(data.blockedReasons) ? data.blockedReasons : [];   // BLOCK-REASON-1
     locations = Array.isArray(data.locations) ? data.locations : [];                   // FIELDS-1 (secondary data-apply path)
     resolutionTypes = Array.isArray(data.resolutionTypes) ? data.resolutionTypes : [];  // FIELDS-1
+    hasSprints = !!data.hasSprints; hasReleases = !!data.hasReleases;   // FIELDS-2 (secondary data-apply)
     metricLabel   = data.metricLabel   || metricLabel;   // METRIC-LABEL-1 (secondary data-apply path)
     departments   = data.departments   || departments;
       products     = data.products     || products;
@@ -7945,6 +7991,8 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       populateStatusSelects();
       populatePriorityFilter();
       populateDeptFilter();
+      populateLocationFilter(); populateResolutionTypeFilter(); populateBlockedReasonFilter();   // FIELDS-2
+  populateLocationFilter(); populateResolutionTypeFilter(); populateBlockedReasonFilter();   // FIELDS-2
         populateProductSelect();
       render();
       // Re-render admin lists
@@ -11035,6 +11083,9 @@ function _listQuery(){
   setMulti('assignee', getSelectedAssignees());   // top-bar multi-select (List only)
   setMulti('priority',   getSelectedPriorities());   // opt-in Priority chip (server /api/items)
   setMulti('department', getSelectedDepartments());  // opt-in Department chip (server item_departments index)
+  setMulti('location',       getSelectedLocations());       // FIELDS-2: coded-field chips (server json_extract filters)
+  setMulti('resolutionType', getSelectedResolutionTypes()); // FIELDS-2
+  setMulti('blockedReason',  getSelectedBlockedReasons());  // FIELDS-2 (also the live blockedReason-filter fix)
   if(_betaFlagged) params.set('flag','1');   // FN5: server-side flagged filter (correct across pagination)
   const q = v('itemSearch'); if(q) params.set('q', q);   // shared header search box
   if(_listState.sort) params.set('sort', _listState.sort);
@@ -11216,6 +11267,7 @@ function _listColOrderAll(){
   if(!(slaTargets && slaTargets.enabled)) saved = saved.filter(id => id!=='sla');   // SLA column is team-aware: absent (order/header/picker/render) unless enabled
   if(!(Array.isArray(locations) && locations.length)) saved = saved.filter(id => id!=='location');                   // FIELDS-1: absent everywhere (order/picker/render) when unconfigured
   if(!(Array.isArray(resolutionTypes) && resolutionTypes.length)) saved = saved.filter(id => id!=='resolutionType'); // FIELDS-1
+  if(!_sprintFieldOn()) saved = saved.filter(id => id!=='sprint');   // FIELDS-2: Sprint column absent unless team has sprints AND Planning is enabled
   return saved;
 }
 let _listColsRenderCache = null;
@@ -16419,7 +16471,7 @@ function renderItemPage(p){
     ipEditField('type',       'Type',         esc(p.type||''),   'select'),
     ipEditField('priority',   'Priority',     p.priority ? `<span style="background:${PRIO_COLORS[p.priority]}22;color:${PRIO_COLORS[p.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[p.priority])}</span>` : '', 'select'),   // pill treatment: reuse the production priority badge from List view (canonical) - same PRIO_COLORS, unmodified
     ipEditField('storyPoints',metricLabel, (p.storyPoints==null||p.storyPoints==='') ? '' : String(p.storyPoints), 'number'),   // METRIC-LABEL-1: team label
-    ipField('Sprint', p.sprintId ? esc(p.sprintId) : '', {always:true}),
+    _sprintFieldOn() ? ipField('Sprint', p.sprintId ? esc(p.sprintId) : '', {always:true}) : '',   // FIELDS-2: gated on team-has-sprints + Planning enabled
     ipField('Key', p.itemKey ? `<span style="font-family:monospace">${esc(p.itemKey)}</span>` : '-', {bold:true}),
     ipEditField('product',    'Project',       esc(p.product||''), 'select'),
     ipField('Reporter',      esc(p.reporter||'-')),
@@ -17989,6 +18041,7 @@ async function boot(){
     blockedReasons = Array.isArray(data.blockedReasons) ? data.blockedReasons : [];   // BLOCK-REASON-1 fix: this is the boot loader; the earlier load site was a non-boot path
     locations = Array.isArray(data.locations) ? data.locations : [];                   // FIELDS-1 (boot loader)
     resolutionTypes = Array.isArray(data.resolutionTypes) ? data.resolutionTypes : [];  // FIELDS-1 (boot loader)
+    hasSprints = !!data.hasSprints; hasReleases = !!data.hasReleases;   // FIELDS-2 (boot loader)
     metricLabel   = data.metricLabel   || 'Story Points';   // METRIC-LABEL-1: boot loader (the RIGHT block - see the 6.15.2 fix)
     // METRIC-LABEL-1: the ONE static label site is the classic List <th> (the shell List rebuilds its
     // header from _LIST_COL_DEF, which reads metricLabel live). Set it once post-load so classic follows too.
@@ -18131,6 +18184,7 @@ async function boot(){
   populateAssigneeDrop();
   populatePriorityFilter();
   populateDeptFilter();
+  populateLocationFilter(); populateResolutionTypeFilter(); populateBlockedReasonFilter();   // FIELDS-2
   if (new URLSearchParams(location.search).get('classic') !== '1') {
     // The /beta Flow shell drives ALL rendering + routing. Skip classic's initial
     // view render (and default-view / ?item= handling) so it can't flash a classic
@@ -20087,12 +20141,20 @@ if ('serviceWorker' in navigator) {
     assignee:{ label:'Assignee', panel:'assigneeDropPanel', get:function(){ return _g('getSelectedAssignees'); }, param:'assignee' },
     // Opt-in only (in each view's CFG.extra, never chips): revealed via the "+ Filter" pill.
     priority:{ label:'Priority',   panel:'priorityDropPanel', get:function(){ return _g('getSelectedPriorities'); },  param:'priority' },
-    dept:    { label:'Department', panel:'deptDropPanel',     get:function(){ return _g('getSelectedDepartments'); }, param:'dept' }
+    dept:    { label:'Department', panel:'deptDropPanel',     get:function(){ return _g('getSelectedDepartments'); }, param:'dept' },
+    // FIELDS-2: coded-field chips (List only). param maps to the list_items json_extract server filter.
+    location:      { label:'Location',        panel:'locationDropPanel',       get:function(){ return _g('getSelectedLocations'); },       param:'location' },
+    resolutionType:{ label:'Resolution Type', panel:'resolutionTypeDropPanel', get:function(){ return _g('getSelectedResolutionTypes'); }, param:'resolutionType' },
+    blockedReason: { label:'Blocked Reason',  panel:'blockedReasonDropPanel',  get:function(){ return _g('getSelectedBlockedReasons'); },  param:'blockedReason' }
   };
+  // FIELDS-2: the opt-in ("+ Filter") extra keys the shell's chip loops iterate. Adding the coded
+  // fields here (not to each CFG.extra) means the loops PROCESS them, but a view only SHOWS them if they
+  // are in that view's CFG.extra - so they render on the List alone. Empty-list gating is in the offer menu.
+  var _XCHIP = ['priority','dept','location','resolutionType','blockedReason'];
   var CFG = {
     gantt:    { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['groupby','legend','capacity'] },   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
     kanban:   { chips:['owner','assignee','type','status'], extra:['sprint','priority','dept'], opts:['flagged','hideEmpty'] },   // FN5: +Flagged toggle
-    list:     { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['listgroup','flagged','columns','export'] },     // FN5: +Flagged toggle; GROUPBY-2: +Group by (leftmost, discoverable)
+    list:     { chips:['owner','assignee','type','status'], extra:['priority','dept','location','resolutionType','blockedReason'], opts:['listgroup','flagged','columns','export'] },     // FN5: +Flagged; GROUPBY-2: +Group by. FIELDS-2: +location/resolutionType/blockedReason chips (List only; server-filtered; gated on non-empty list)
     planning: { chips:['owner','status'],                   extra:['type','assignee','priority','dept'], opts:['whatif'] },   // What-if (Phase 0)
     dashboard:{ chips:['owner','range'],                    extra:[], opts:[] },
     'my-home':{ chips:[],                                   extra:[], opts:[] },  // Stage 5: personal landing, no chips
@@ -21133,7 +21195,7 @@ if ('serviceWorker' in navigator) {
     return { active:true, value: fmt(f)+' – '+fmt(t) };
   }
   function sprintState(){
-    if(!state.sprintFilter) return { active:false, value:'All' };
+    if(!state.sprintFilter || !_sprintFieldOn()) return { active:false, value:'All' };   // FIELDS-2 A3: Sprint off (no sprints / Planning hidden) -> inert, so no chip, no anyActive, no serialize
     var s=_sprintFilterObj();
     return { active:true, value: s ? s.name : 'unknown' };
   }
@@ -21149,7 +21211,7 @@ if ('serviceWorker' in navigator) {
     if(view==='kanban' && sprintState().active) return true;   // Stage 3: sprint scope counts even when active only via URL (not added via + Filter)
     var keys = CFG[view].chips.concat(_extraActive(view));
     // Opt-in priority/dept count as active even when only auto-revealed (not added via + Filter).
-    ['priority','dept'].forEach(function(k){ if(CFG[view].extra.indexOf(k)>=0 && keys.indexOf(k)<0) keys.push(k); });
+    _XCHIP.forEach(function(k){ if(CFG[view].extra.indexOf(k)>=0 && keys.indexOf(k)<0) keys.push(k); });
     return keys.some(function(k){
       return (k==='range'? rangeState().active : k==='sprint'? sprintState().active : chipState(k).active);
     });
@@ -21177,10 +21239,10 @@ if ('serviceWorker' in navigator) {
     var keys = cfg.chips.concat(_added[view]||[]);
     // Stage 3: the sprint filter is an optional (+ Filter) chip, but it must also appear when
     // active from a cold-loaded ?sprint= URL even if the user never clicked + Filter.
-    if (view==='kanban' && state.sprintFilter && keys.indexOf('sprint')<0) keys.push('sprint');
+    if (view==='kanban' && state.sprintFilter && _sprintFieldOn() && keys.indexOf('sprint')<0) keys.push('sprint');   // FIELDS-2 A3: don't auto-reveal an orphan Sprint chip from a stale ?sprint= when the Sprint field is off (no sprints / Planning hidden)
     // Priority/Department (opt-in): same auto-reveal - if the filter is active on a view that offers
     // it, show its chip even when it was never added via "+ Filter" (cold load, saved view, carry).
-    ['priority','dept'].forEach(function(k){
+    _XCHIP.forEach(function(k){
       if (cfg.extra.indexOf(k)>=0 && keys.indexOf(k)<0 && (CHIPS[k].get()||[]).length) keys.push(k);
     });
     var html = _frzTopViewControl() + keys.map(chipHTML).join('');   // Stage 3: segmented view switcher (shared views only)
@@ -21201,7 +21263,7 @@ if ('serviceWorker' in navigator) {
     var view=state.view;
     // Include auto-revealed opt-in priority/dept so Clear resets them too (not just _added ones).
     var keys=CFG[view].chips.concat(_added[view]||[]);
-    ['priority','dept'].forEach(function(k){ if(CFG[view].extra.indexOf(k)>=0 && keys.indexOf(k)<0) keys.push(k); });
+    _XCHIP.forEach(function(k){ if(CFG[view].extra.indexOf(k)>=0 && keys.indexOf(k)<0) keys.push(k); });
     keys.forEach(function(k){
       if(k==='range'){ var ff=document.getElementById('filterFrom'), ft=document.getElementById('filterTo'); if(ff){ff.value='';} if(ft){ft.value='';} }
       else if(k==='sprint'){ state.sprintFilter=''; }
@@ -21315,7 +21377,7 @@ if ('serviceWorker' in navigator) {
     });
     // Priority/Department are opt-in (CFG.extra) - self-serialize when active even if not added via
     // "+ Filter" (mirrors sprint), so a cold-load / auto-revealed filter survives a round-trip.
-    ['priority','dept'].forEach(function(k){
+    _XCHIP.forEach(function(k){
       if (params.has(CHIPS[k].param)) return;   // already emitted by the opted-in chips loop above
       if (CFG[view].chips.indexOf(k)<0 && CFG[view].extra.indexOf(k)<0) return;   // only where offered
       var sel = CHIPS[k].get();
@@ -21381,7 +21443,9 @@ if ('serviceWorker' in navigator) {
     if (view==='kanban') state.board = qp.get('board') || _defaultBoard();   // Stage 4: fall back to the user's default board
     // Stage 3: sprint scope (seed BEFORE syncURL so a cold-loaded ?sprint= isn't stripped).
     // Seed on any view so it survives a round-trip; only Kanban applies + emits it today.
-    state.sprintFilter = qp.get('sprint') || '';
+    // FIELDS-2 A3: drop a stale ?sprint= when the Sprint field is off (no sprints / Planning hidden), so
+    // a pasted URL cannot apply an invisible sprint scope or re-serialize it on a team that hides Sprint.
+    state.sprintFilter = _sprintFieldOn() ? (qp.get('sprint') || '') : '';
     // Stage 1: apply ONLY the shared chips this view EXPOSES; an un-exposed shared param
     // rides along in the URL (no chip shown, no filter) until Stage 2 adds its chip+renderer.
     // (The prior auto-add-extra-chip is intentionally gated here for Stage 1.)
@@ -21392,7 +21456,7 @@ if ('serviceWorker' in navigator) {
     });
     // Priority/Department are opt-in (CFG.extra): restore from the URL on any view that OFFERS them
     // (auto-reveal then shows the chip). Absent param -> cleared to All. Ignored on views without them.
-    ['priority','dept'].forEach(function(k){
+    _XCHIP.forEach(function(k){
       if (CFG[view].extra.indexOf(k)<0 && CFG[view].chips.indexOf(k)<0) return;
       var v = qp.get(CHIPS[k].param);
       applyPanel(CHIPS[k].panel, v ? v.split(',') : null);
@@ -23508,7 +23572,7 @@ if ('serviceWorker' in navigator) {
     _frzEnsureRailGroups(rightCol);
     var dBody=document.getElementById('frzRailDetailsBody'), cBody=document.getElementById('frzRailScheduleBody');
     if(dBody) dBody.innerHTML=''; if(cBody) cBody.innerHTML='';
-    if(p){ injectReleaseField(p); injectDepartments(p); injectNotify(p); }   // (re)create the beta-only Release + Departments + Notify (CC) controls in ipFields
+    if(p){ if(_releaseFieldOn()) injectReleaseField(p); injectDepartments(p); injectNotify(p); }   // (re)create the beta-only Release + Departments + Notify (CC) controls in ipFields. FIELDS-2: Release only when the team has releases + Planning enabled (rail rebuilds each render, so skipping = absent)
     function mv(body, node){ if(body && node) body.appendChild(node); }
     var _DETAIL_AFTER_TYPE=[metricLabel,'Sprint','Reporter','Location','Key','Project','Resolution Type'];   // METRIC-LABEL-1: matches the item-page field by DISPLAY label (must track metricLabel). FIELDS-1: +Location/+Resolution Type - mv() no-ops when the gated field is absent (empty list), so they only appear when configured.
     // Status = the FIRST row of the Details card (it used to sit in a bare #frzRailStatus
@@ -24439,8 +24503,17 @@ if ('serviceWorker' in navigator) {
       list.forEach(function(s){ pop.appendChild(opt(s.name+(s.state==='Active'?' · Active':''), s.id)); });
     });
   }
+  // FIELDS-2: a coded field is offered in "+ Filter" only when its list is non-empty (the seventh
+  // surface of the empty-list rule); sprint only when the Sprint field is on (has sprints + Planning).
+  function _extraOffered(k){
+    if(k==='location')       return Array.isArray(locations) && locations.length>0;
+    if(k==='resolutionType') return Array.isArray(resolutionTypes) && resolutionTypes.length>0;
+    if(k==='blockedReason')  return Array.isArray(blockedReasons) && blockedReasons.length>0;
+    if(k==='sprint')         return _sprintFieldOn();
+    return true;
+  }
   function addFilterMenu(anchor){
-    var view=state.view; var avail = CFG[view].extra.filter(function(k){ return (CFG[view].chips.concat(_added[view]||[])).indexOf(k)<0; });
+    var view=state.view; var avail = CFG[view].extra.filter(function(k){ return _extraOffered(k) && (CFG[view].chips.concat(_added[view]||[])).indexOf(k)<0; });
     openPop(anchor, function(pop){
       if (!avail.length){ var d=document.createElement('div'); d.className='frz-pop-opt'; d.textContent='No more filters for this view'; pop.appendChild(d); return; }
       avail.forEach(function(k){
@@ -24744,10 +24817,9 @@ if ('serviceWorker' in navigator) {
   // Gantt's groupByMenu. Independent of the Gantt's #groupBy (different element, different options).
   // Drives the classic List's grouping via the cross-block bridge (_listSetGroup); options + persistence
   // are LIST-GROUPBY-1's, unchanged - only the control's home + shape changed from the pager <select>.
-  var _FRZ_GROUP_LABELS = { '':'None', status:'Status', assignee:'Assignee', priority:'Priority', product:'Project', owner:'Owner', type:'Type', blockedReason:'Blocked Reason', location:'Location', resolutionType:'Resolution Type' };   // BLOCK-REASON-1; FIELDS-1
-  var _FRZ_GROUP_ORDER = ['', 'status', 'assignee', 'priority', 'product', 'owner', 'type', 'blockedReason', 'location', 'resolutionType'];   // BLOCK-REASON-1: unset bucket sorts last. FIELDS-1: location/resolutionType offered only when configured (gated in the picker)
-  // FIELDS-1: a group-by option is offered only when its team list is non-empty (empty = field hidden everywhere).
-  function _frzGroupOffered(v){ if(v==='location') return Array.isArray(locations)&&locations.length>0; if(v==='resolutionType') return Array.isArray(resolutionTypes)&&resolutionTypes.length>0; return true; }
+  var _FRZ_GROUP_LABELS = { '':'None', status:'Status', assignee:'Assignee', priority:'Priority', product:'Project', owner:'Owner', type:'Type' };   // FIELDS-2: dropped location/resolutionType/blockedReason - they are FILTER CHIPS now, not group-by (grouping dumped everything into the unset bucket; Reports answers the breakdown)
+  var _FRZ_GROUP_ORDER = ['', 'status', 'assignee', 'priority', 'product', 'owner', 'type'];   // FIELDS-2
+  function _frzGroupOffered(v){ return true; }   // FIELDS-2: no coded fields in group-by any more, so nothing to gate here (server _GROUP_COLS entries left intact - Reports does not read them; harmless)
   function openListGroupPop(anchor){
     var cur = _call('_listGetGroup') || '';
     openPop(anchor, function(pop){
@@ -24872,6 +24944,7 @@ if ('serviceWorker' in navigator) {
       var allCols=['key','name','type','status','priority','owner','assignee','reporter','blockedReason','location','resolutionType','points','sprint','project','created','description'];   // UI-POLISH-1: +reporter,+created. BLOCK-REASON-1: +blockedReason. FIELDS-1: +location,+resolutionType (gated below)
       if(!(Array.isArray(locations)&&locations.length)) allCols=allCols.filter(function(k){ return k!=='location'; });                     // FIELDS-1: empty list -> absent from export
       if(!(Array.isArray(resolutionTypes)&&resolutionTypes.length)) allCols=allCols.filter(function(k){ return k!=='resolutionType'; });  // FIELDS-1
+      if(!_sprintFieldOn()) allCols=allCols.filter(function(k){ return k!=='sprint'; });   // FIELDS-2: Sprint absent from export unless team has sprints + Planning on
       return allCols.map(function(k){ return D[k]; });
     }
     var hidden=hiddenListCols();
@@ -28651,8 +28724,10 @@ if ('serviceWorker' in navigator) {
       prioRow, _frzPanelRow('Department',dept),
       (locations.length ? _frzPanelRow('Location', p.location) : ''),                       // FIELDS-1: gated on the list being configured
       (resolutionTypes.length ? _frzPanelRow('Resolution Type', p.resolutionType) : ''),    // FIELDS-1
-      _frzPanelRow(metricLabel,(p.storyPoints!=null&&p.storyPoints!=='')?p.storyPoints:null), _frzPanelRow('Sprint',sprint),   // METRIC-LABEL-1
-      _frzPanelRow('Release',rel), _frzPanelRow('Start',p.start), _frzPanelRow('Due',p.due), _frzPanelRow('Expected',p.revised) ].join('');
+      _frzPanelRow(metricLabel,(p.storyPoints!=null&&p.storyPoints!=='')?p.storyPoints:null),
+      (_sprintFieldOn() ? _frzPanelRow('Sprint',sprint) : ''),     // FIELDS-2: gated on team-has-sprints + Planning enabled
+      (_releaseFieldOn() ? _frzPanelRow('Release',rel) : ''),      // FIELDS-2
+      _frzPanelRow('Start',p.start), _frzPanelRow('Due',p.due), _frzPanelRow('Expected',p.revised) ].join('');
     // REM-1b: header top row is a 3-zone flex - [ key ] [ Flag + status ] [ ⤢ ✕ ]. The two SIDE zones are
     // flex:1 1 0 (always equal width regardless of their content), so the middle group is centred on the
     // row's TRUE midpoint and does not wobble as the item key varies in width (IT-43 vs FRZ-792). Middle
