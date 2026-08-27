@@ -1609,7 +1609,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         <label>Item Name</label>
         <div style="position:relative;display:flex;align-items:center;gap:6px">
           <input type="text" id="fName" placeholder="Enter item name…" style="flex:1;padding-right:32px">
-          <a id="itemPageLink" href="#" target="_blank" title="Open Item Page"
+          <a id="itemPageLink" href="#" target="_blank" rel="noopener" title="Open Item Page"
             style="position:absolute;right:8px;top:50%;transform:translateY(-50%);color:var(--frz-accent,#0059A9);opacity:0.7;line-height:1;display:none">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           </a>
@@ -2267,7 +2267,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.16.1';
+const APP_VERSION = '6.16.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -13820,7 +13820,7 @@ function planningCard(p, rank, isDeferred, isApproved=false, isSprint=false, isA
       ${rankBadge}
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
-          <a href="/?item=${p.id}" target="_blank" rel="noopener"
+          <a href="/?item=${p.id}"
             onclick="event.stopPropagation()"
             style="font-size:12px;font-weight:700;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:none"
             onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text)'"
@@ -16019,6 +16019,13 @@ function ipToggleMenu(e){
   if(e) e.stopPropagation();
   const m = document.getElementById('ipMenu');
   if(m) m.style.display = (!m.style.display || m.style.display==='none') ? 'block' : 'none';
+  // NEWTAB-FIX-1: refresh the "Open in new tab" anchor's href for the current item each time the
+  // menu opens (the id changes as you navigate; the anchor is static markup). Uses the same
+  // team-explicit /item/{id}?team= URL as the other new-tab controls (_frzItemPageUrl), not the old
+  // window.open's redundant location.pathname+'?item='; target="_blank" carries it past the
+  // interceptor exemption into a real tab.
+  const _ot = document.getElementById('ipMenuOpenTab');
+  if(_ot && _itemPageId != null) _ot.href = _frzItemPageUrl(_itemPageId);
 }
 function closeIpMenu(){ const m = document.getElementById('ipMenu'); if(m) m.style.display='none'; }
 function ipCopyLink(){
@@ -18292,7 +18299,7 @@ if ('serviceWorker' in navigator) {
             <button onclick="closeIpMenu();openMyAccount()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--row-sep);cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">My Account</button>
             <button id="ipMenuAdmin" onclick="closeIpMenu();openAdminPanel('devTab')" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:none;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--row-sep);cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Admin</button>
             <button onclick="closeIpMenu();ipCopyLink()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Copy link</button>
-            <button onclick="closeIpMenu();window.open(location.pathname+'?item='+_itemPageId,'_blank')" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Open in new tab</button>
+            <a id="ipMenuOpenTab" href="#" target="_blank" rel="noopener" onclick="closeIpMenu()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text);text-decoration:none">Open in new tab</a><!-- NEWTAB-FIX-1: was window.open; now a target=_blank anchor (href set on menu open) - middle-clickable, routes through the interceptor exemption -->
             <button id="ipMenuDelete" onclick="closeIpMenu();ipDeleteItem()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:none;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;border-bottom:1px solid var(--row-sep);cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent2)">Delete item</button>
             <button onclick="closeIpMenu();doLogout()" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='none'" style="display:flex;align-items:center;width:100%;text-align:left;padding:10px 14px;background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text)">Log Out</button>
           </div>
@@ -24574,10 +24581,16 @@ if ('serviceWorker' in navigator) {
     // Open-item links that would open a new tab (item-edit modal's "Open item page",
     // planning card name → /?item=N) should navigate IN-APP in beta so Back returns
     // to the previous page. Capture phase so we beat the anchor's default + onclick.
+    // NEWTAB-FIX-1 EXEMPTION (bounded): an anchor that explicitly declares target="_blank"
+    // is the browser's to handle - return immediately and let the new tab open. The attribute
+    // IS the declaration of intent, so new open-item controls never need to be added to an
+    // allowlist here; conversely, a link that must stay in-app simply carries no target (the
+    // planning card name and the ⤢ had a stray target="_blank" removed for exactly this reason).
     document.addEventListener('click', function(e){
       if (!root) return;
       var a = e.target.closest && e.target.closest('a[href]');
       if (!a) return;
+      if (a.getAttribute('target') === '_blank') return;   // NEWTAB-FIX-1: deliberate new-tab anchor - do not intercept
       var href = a.getAttribute('href') || '';
       var mm = href.match(/[?&]item=(\d+)/) || href.match(/\/item\/(\d+)(?:[?#]|$)/);
       if (!mm) return;
@@ -24995,7 +25008,7 @@ if ('serviceWorker' in navigator) {
     inner.innerHTML = shown.map(function(s){
       var col=s.col, multi=(col.statuses||[]).length>1;
       var cards=s.items.map(function(p){ return _betaCardHtml(p, multi); }).join('');
-      return '<div class="kanban-col" style="width:'+colW+'px;min-width:160px;flex:1;background:var(--frz-kanban-lane);border-radius:10px;padding:10px">'
+      return '<div class="kanban-col" style="width:'+colW+'px;min-width:220px;flex:1;background:var(--frz-kanban-lane);border-radius:10px;padding:10px">'   // COUNTER-ALIGN-1 Addendum A: floor raised 160->220 (flex:1 retained); 7 readable columns beat 11 clipped ones, board h-scrolls for the rest
         + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;padding-bottom:8px;border-bottom:2px solid var(--frz-border-strong)">'
         + '<span title="'+escA(col.name)+'" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:900;color:var(--frz-text)">'+esc(col.name)+'</span>'   // COUNTER-ALIGN-1: name flexes/truncates
         + '<span style="margin-left:auto;flex-shrink:0;box-sizing:border-box;min-width:24px;text-align:center;font-size:10px;color:var(--frz-text-muted);background:rgba(128,128,128,0.15);padding:1px 6px;border-radius:8px">'+s.items.length+'</span>'   // COUNTER-ALIGN-1: count right-pinned + 2-digit box
@@ -28525,7 +28538,7 @@ if ('serviceWorker' in navigator) {
       + '<div class="frz-lp-hd-top">'
         + '<div class="frz-lp-hdside">'+(p.itemKey?'<span class="frz-bcard-key" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></span>':'')+'</div>'
         + '<div class="frz-lp-hdmid">'+statusCtl+flagBtn+'</div>'   // REM-2 (7.1): status then Flag, Flag RIGHTMOST - matches the item page (#frzBadges builds Watch then Flag, Flag rightmost) and the modal (primary Flag button bottom-right). If a Watch button is ever added here it belongs LEFT of Flag, so the relative order still matches the item page. Flag's right edge sits ~8px from ⤢ and ~61px from ✕, so no mis-click concern.
-        + '<div class="frz-lp-actions"><a class="frz-lp-full" href="'+_frzItemPageUrl(p.id)+'" target="_blank" rel="noopener" title="Open full page in a new tab" aria-label="Open full page in a new tab" style="text-decoration:none">⤢</a>'
+        + '<div class="frz-lp-actions"><a class="frz-lp-full" href="'+_frzItemPageUrl(p.id)+'" title="Open the full item page" aria-label="Open the full item page" style="text-decoration:none">⤢</a>'   // NEWTAB-FIX-1: no target/rel -> the interceptor opens it IN-APP (J.R.'s decision)
         + '<button type="button" class="frz-lp-close" title="Close" aria-label="Close">✕</button></div>'
       + '</div>'
       + '<div class="frz-lp-name">'+esc(p.name||'')+'</div></div>'
@@ -28554,10 +28567,11 @@ if ('serviceWorker' in navigator) {
       + '<div class="frz-lp-footer"><a class="frz-lp-openbtn" href="'+_frzItemPageUrl(id)+'" target="_blank" rel="noopener" title="Open the full item page in a new tab (schedule, activity, comments)" style="text-decoration:none"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open Item Page</a></div>';
     var _sc=_frzPanelEl.querySelector('.frz-lp-scroll'); if(_sc) _sc.scrollTop=0;
     _frzPanelEl.querySelector('.frz-lp-close').addEventListener('click', function(){ frzClosePanel(); });
-    // UI-TRIO-1 P1: .frz-lp-full and .frz-lp-openbtn are now real new-tab <a> anchors (href set above);
-    // no click handler - the panel stays open in this tab and the item opens in a new tab. This gives
-    // middle-click / cmd-click / open-in-new-window for free. _frzPanelOpenFull is retained for any
-    // other caller but is no longer invoked from these two controls.
+    // UI-TRIO-1 P1: .frz-lp-openbtn is a real new-tab <a> anchor (href set above); no click handler,
+    // so the panel stays open in this tab and the item opens in a new tab (middle-click / cmd-click /
+    // open-in-new-window for free). NEWTAB-FIX-1: .frz-lp-full (the ⤢) LOST its target so it now opens
+    // IN-APP - the capture-phase interceptor (~24577) catches its /item/N href and navigates in place
+    // (J.R.'s decision). _frzPanelOpenFull is retained for any other caller but not invoked from these.
     var desc=_frzPanelEl.querySelector('#frzLpDesc');
     if(desc){
       if(p.description){ var _openedFor=id; renderRichInto(desc, p.description, id, function(){ return state.panelId===_openedFor; }); }   // async-race guard: bail if a newer row opened
