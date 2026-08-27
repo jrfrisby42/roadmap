@@ -846,13 +846,13 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       <option value="assignee">Assignee</option>
       <option value="status">Status</option>
       <option value="priority">Priority</option>
-      <option value="product">Project</option>
+      <option value="product">Space</option>
       <option value="type">Type</option>
       <option value="none">None</option>
     </select>
-    <span class="ctrl-lbl">Project</span>
+    <span class="ctrl-lbl">Space</span>
     <div class="ms-wrap" id="productDropWrap">
-      <button class="ms-btn" id="productDropBtn" type="button">All Projects ▾</button>
+      <button class="ms-btn" id="productDropBtn" type="button">All Spaces ▾</button>
       <div class="ms-panel" id="productDropPanel">
         <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
       </div>
@@ -1049,7 +1049,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       <div style="font-size:12px;color:var(--muted);margin-top:4px">Sign in to continue</div>
     </div>
     <div class="form-row">
-      <label>Team</label>
+      <label>Organization</label>
       <select id="loginTeam" style="text-transform:capitalize">
         <option value="technology">Technology</option>
       </select>
@@ -1208,7 +1208,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
           <th class="list-sort" data-sort="assignee" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Assignee<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="story_points" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap;text-align:center">Points<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="sprint_id" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Sprint<span class="sort-arrow"></span></th>
-          <th class="list-sort" data-sort="product" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Project<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="product" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Space<span class="sort-arrow"></span></th>
         </tr>
       </thead>
       <tbody id="listBody"></tbody>
@@ -1648,7 +1648,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         <!-- Project + Required Item -->
         <div class="form-grid">
           <div class="form-row">
-            <label id="fProductLbl">Project</label>
+            <label id="fProductLbl">Space</label>
             <select id="fProduct"></select>
           </div>
           <div class="form-row">
@@ -1920,7 +1920,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     </div>
     <div class="admin-tabs">
       <button class="admin-tab active" data-tab="devTab">Owners</button>
-      <button class="admin-tab" data-tab="productTab">Projects</button>
+      <button class="admin-tab" data-tab="productTab">Spaces</button>
       <button class="admin-tab" data-tab="typesTab">Types</button>
       <button class="admin-tab" data-tab="statusTab">Statuses</button>
       <button class="admin-tab" data-tab="delayTab">Reasons</button>
@@ -1928,7 +1928,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       <button class="admin-tab" data-tab="usersTab">Users</button>
       <button class="admin-tab" data-tab="assignmentsTab">Assignments</button>
       <button class="admin-tab" data-tab="dataTab">Data</button>
-      <button class="admin-tab" data-tab="teamSettingsTab">⚙ Team Settings</button>
+      <button class="admin-tab" data-tab="teamSettingsTab">⚙ Organization Settings</button>
     </div>
 
     <!-- DEVELOPERS TAB -->
@@ -2200,7 +2200,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
               Show this team on the combined request portal
             </label>
             <div style="font-size:11px;color:var(--muted);margin:-4px 0 2px">When off, this team is left off the shared <b>/report</b> list, but its own link above keeps working and it stays available as a transfer target.</div>
-            <div style="font-size:12px;font-weight:700;color:var(--text);margin:8px 0 6px">Projects offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all; optional per-project email overrides the team address for that project's tickets)</span></div>
+            <div style="font-size:12px;font-weight:700;color:var(--text);margin:8px 0 6px">Spaces offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all; optional per-space email overrides the Organization address for that space's tickets)</span></div>
             <div id="tsIntakeProjects" style="display:flex;flex-direction:column;gap:6px;max-width:520px"></div>
             <div style="font-size:12px;font-weight:700;color:var(--text);margin:12px 0 6px">Types offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all)</span></div>
             <div id="tsIntakeTypes" style="display:flex;flex-wrap:wrap;gap:8px 16px"></div>
@@ -2289,7 +2289,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 
       <!-- Save button -->
       <div style="display:flex;align-items:center;gap:10px">
-        <button onclick="saveTeamSettings()" style="background:var(--accent);color:#fff;border:none;padding:8px 20px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:13px;cursor:pointer">Save Team Settings</button>
+        <button onclick="saveTeamSettings()" style="background:var(--accent);color:#fff;border:none;padding:8px 20px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:13px;cursor:pointer">Save Organization Settings</button>
         <span id="tsStatus" style="font-size:12px;color:var(--muted)"></span>
       </div>
     </div>
@@ -2547,7 +2547,7 @@ function _frzShowTeamDesyncBanner(liveTeam){
       + 'box-shadow:0 2px 10px rgba(0,0,0,.35);';
     const msg = document.createElement('span');
     msg.style.cssText = 'flex:1 1 auto;';
-    msg.textContent = 'The active team changed to "' + (liveTeam || 'another team') + '" in another '
+    msg.textContent = 'The active Organization changed to "' + (liveTeam || 'another Organization') + '" in another '
       + 'tab. This tab is now out of date - reload before making any changes.';
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -5713,7 +5713,7 @@ function openProjectModal(id){
       <!-- Row 1: Project + Status -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-row" style="margin-bottom:0">
-          <label id="fProductEditorLbl">Project</label>
+          <label id="fProductEditorLbl">Space</label>
           <select id="fProductEditor" style="width:100%"></select>
         </div>
         <div class="form-row" style="margin-bottom:0">
@@ -6215,7 +6215,7 @@ async function createJiraIssueFromModalForItem(p){
   const desc = [
     `Flow Item: ${p.name}`,
     p.dev     ? `Owner: ${p.dev}` : '',
-    p.product ? `Project: ${p.product}` : '',
+    p.product ? `Space: ${p.product}` : '',
     p.type    ? `Type: ${p.type}` : '',
     p.dueWeeks? `Estimate: ${fmtEstimate(p.dueWeeks)}` : '',
     p.due     ? `Due: ${p.due}` : '',
@@ -6635,7 +6635,7 @@ function openCapacityConflictsScreen(){
           <thead><tr style="background:var(--surface)">
             <th style="text-align:left;padding:6px 10px;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;border-bottom:1px solid var(--border)">Item</th>
             <th style="text-align:left;padding:6px 10px;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;border-bottom:1px solid var(--border)">Status</th>
-            <th style="text-align:left;padding:6px 10px;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;border-bottom:1px solid var(--border)">Project</th>
+            <th style="text-align:left;padding:6px 10px;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;border-bottom:1px solid var(--border)">Space</th>
             <th style="text-align:left;padding:6px 10px;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;border-bottom:1px solid var(--border)">Start</th>
             <th style="text-align:left;padding:6px 10px;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;border-bottom:1px solid var(--border)">Units</th>
             <th style="text-align:left;padding:6px 10px;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;border-bottom:1px solid var(--border)">Actions</th>
@@ -7913,7 +7913,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
         status.style.color = 'var(--accent2)';
         return;
       }
-      if(!confirm(`Import data from "${file.name}"?\n\nThis will replace ALL current data including projects, developers, statuses, products, and users.\n\nThis cannot be undone.`)){
+      if(!confirm(`Import data from "${file.name}"?\n\nThis will replace ALL current data including projects, developers, statuses, Spaces, and users.\n\nThis cannot be undone.`)){
         e.target.value = '';
         return;
       }
@@ -9122,7 +9122,7 @@ function renderProductList(){
       ${p.keyPrefix ? `<span style="font-size:10px;font-family:monospace;background:rgba(0,89,169,0.1);color:var(--accent);padding:1px 6px;border-radius:6px;flex-shrink:0">${esc(p.keyPrefix)}</span>` : ''}
       <span style="font-size:11px;color:var(--muted);flex-shrink:0">${cnt} item${cnt!==1?'s':''}</span>
       <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;flex:2">${statusPills}</div>
-      <label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;flex-shrink:0" title="Ignore capacity conflicts for every item in this project (useful for small projects with a single assignee)">
+      <label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;flex-shrink:0" title="Ignore capacity conflicts for every item in this Space (useful for small Spaces with a single assignee)">
         <input type="checkbox" onchange="toggleProductIgnore(${i},this.checked)" ${ignored?'checked':''} style="accent-color:var(--accent);cursor:pointer">
         Ignore Conflicts
       </label>
@@ -9152,7 +9152,7 @@ function startEditProduct(i){
   item.innerHTML = `
     <div style="width:100%;display:flex;flex-direction:column;gap:8px">
       <div style="display:flex;align-items:center;gap:6px">
-        <input class="dev-edit-inp" id="pei_${i}" value="${escA(p.name)}" style="flex:1" placeholder="Project name">
+        <input class="dev-edit-inp" id="pei_${i}" value="${escA(p.name)}" style="flex:1" placeholder="Space name">
         <button class="btn-ic" onclick="saveEditProduct(${i})" style="color:var(--accent)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="20 6 9 17 4 12"/></svg></button>
         <button class="btn-ic" onclick="renderProductList()"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
@@ -9580,8 +9580,8 @@ function renderTeamSwitch(){
     return '<button type="button" class="frz-team-opt'+(isA?' is-active':'')+'" data-team="'+escA(t)+'">'
       + '<span>'+esc(teamLabel(t))+'</span>'+(isA?'<span class="frz-team-check">✓</span>':'')+'</button>';
   }).join('');
-  host.innerHTML='<div class="frz-acct-label">Teams</div>'+rows
-    + '<button type="button" class="frz-team-add" id="frzAddTeam">+ Add a team…</button>';
+  host.innerHTML='<div class="frz-acct-label">Organizations</div>'+rows
+    + '<button type="button" class="frz-team-add" id="frzAddTeam">+ Add an Organization…</button>';
   host.querySelectorAll('.frz-team-opt').forEach(function(b){
     b.addEventListener('click', function(){ switchTeam(b.getAttribute('data-team')); });
   });
@@ -11224,7 +11224,7 @@ const _LIST_COL_DEF = {
                 // Display resolves sprint id -> name via the beta resolver (raw id fallback when unknown/
                 // closed/classic); sort still keys on 'sprint_id'. Empty id -> the column's "-" convention.
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.sprintId ? _frzSprintLabel(it.sprintId) : '')}</td>` },
-  project:    { label:'Project',     sort:'product',
+  project:    { label:'Space',       sort:'product',
                 // LIST-VISUAL-1: project colour dot + name (dot suppressed under single-project scope).
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listProjectDot(it.product)}${_listCell(it.product)}</td>` },
   sla:        { label:'SLA',         sort:null,   // IT/Ops SLA (Stage A); absent unless slaTargets.enabled (gated in _listColOrderAll)
@@ -16532,14 +16532,14 @@ function renderItemPage(p){
 
   document.getElementById('ipFields').innerHTML = [
     ipEditField('status',     'Status',       p.status ? `<span class="${statusCls(p.status)}" style="background:none;border:none;padding:0">${esc(p.status)}</span>` : '', 'select', {bold:true, readonly: RESERVED_TERMINAL_STATUSES.has(p.status)}),   // POLISH-2: reserved statuses (Transferred/Duplicate) are locked - no inline picker (server-enforced; use "Not a duplicate" to reopen)
-    ipEditField('dev',        'Owner (Pod)',  esc(p.dev||''),    'select', {bold:true}),
+    ipEditField('dev',        'Owner',        esc(p.dev||''),    'select', {bold:true}),
     ipEditField('assignee',   'Assignee',     esc(p.assignee ? displayName(p.assignee) : ''), 'select'),
     ipEditField('type',       'Type',         esc(p.type||''),   'select'),
     ipEditField('priority',   'Priority',     p.priority ? `<span style="background:${PRIO_COLORS[p.priority]}22;color:${PRIO_COLORS[p.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[p.priority])}</span>` : '', 'select'),   // pill treatment: reuse the production priority badge from List view (canonical) - same PRIO_COLORS, unmodified
     ipEditField('storyPoints',metricLabel, (p.storyPoints==null||p.storyPoints==='') ? '' : String(p.storyPoints), 'number'),   // METRIC-LABEL-1: team label
     _sprintFieldOn() ? ipField('Sprint', p.sprintId ? esc(p.sprintId) : '', {always:true}) : '',   // FIELDS-2: gated on team-has-sprints + Planning enabled
     ipField('Key', p.itemKey ? `<span style="font-family:monospace">${esc(p.itemKey)}</span>` : '-', {bold:true}),
-    ipEditField('product',    'Project',       esc(p.product||''), 'select'),
+    ipEditField('product',    'Space',         esc(p.product||''), 'select'),
     ipField('Reporter',      esc(p.reporter||'-')),
     ipField('Reporter Email', p.reporterEmail ? `<a href="mailto:${escA(p.reporterEmail)}" style="color:var(--accent);text-decoration:none">${esc(p.reporterEmail)}</a>` : ''),
     // FIELDS-1: coded Location / Resolution Type selects, GATED on the team having configured the list.
@@ -16779,7 +16779,7 @@ function _ipTransferSlotInner(p){
   // as an available action, not the card's headline. Caption kept. Behaviour unchanged.
   return `<div>
     <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">Transfer</div>
-    <button onclick="openTransferModal(${p.id})" style="padding:5px 12px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Transfer to another team</button>
+    <button onclick="openTransferModal(${p.id})" style="padding:5px 12px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Transfer to another Organization</button>
     <div style="font-size:10px;color:var(--muted);margin-top:4px">Move a misrouted ticket to the correct team + project</div>
   </div>`;
 }
@@ -16801,12 +16801,12 @@ async function openTransferModal(id){
   ov.id='transferOverlay';
   ov.style.cssText='position:fixed;inset:0;background:rgba(20,40,63,.45);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
   ov.innerHTML=`<div style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;max-width:440px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,.3);overflow:hidden">
-    <div style="padding:14px 18px;border-bottom:1px solid var(--border);font-weight:800;font-size:15px">Transfer to another team</div>
+    <div style="padding:14px 18px;border-bottom:1px solid var(--border);font-weight:800;font-size:15px">Transfer to another Organization</div>
     <div style="padding:16px 18px">
-      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Moves this ticket - summary, description, reporter, priority and attachments - to the chosen team, and closes it here. Comments, history and assignments stay on this team.</div>
-      <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px">TARGET TEAM</label>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Moves this ticket - summary, description, reporter, priority and attachments - to the chosen Organization, and closes it here. Comments, history and assignments stay on this Organization.</div>
+      <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px">TARGET ORGANIZATION</label>
       <select id="trTeam" style="width:100%;padding:8px 10px;font-size:13px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;margin-bottom:12px"></select>
-      <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px">TARGET PROJECT</label>
+      <label style="display:block;font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px">TARGET SPACE</label>
       <select id="trProject" style="width:100%;padding:8px 10px;font-size:13px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px"></select>
       <div id="trMsg" style="display:none;font-size:12px;margin-top:10px"></div>
     </div>
@@ -17271,7 +17271,7 @@ function renderIntakePortalSettings(){
            ${(statuses||[]).map(st=>`<option value="${escA(st)}" ${intakeProjectStatus[n]===st?'selected':''}>${esc(st)}</option>`).join('')}
          </select>
        </div>`
-    ).join('') : '<span style="font-size:12px;color:var(--muted)">No Projects configured - add some in the Projects tab.</span>';
+    ).join('') : '<span style="font-size:12px;color:var(--muted)">No Spaces configured - add some in the Spaces tab.</span>';
     projWrap.querySelectorAll('.ts-intake-proj').forEach(cb => cb.onchange = _saveIntakeProjects);
     projWrap.querySelectorAll('.ts-intake-proj-email').forEach(inp => inp.onchange = _saveIntakeProjectEmails);
     projWrap.querySelectorAll('.ts-intake-proj-status').forEach(sel => sel.onchange = _saveIntakeProjectStatus);
@@ -20636,7 +20636,7 @@ if ('serviceWorker' in navigator) {
         '</div>'+
         '<div class="frz-scroll">'+
           '<nav class="frz-section" id="frzViewNav" aria-label="Views"><div class="frz-heading">VIEWS</div></nav>'+
-          '<nav class="frz-section frz-section--projects" id="frzProjNav" aria-label="Projects"><div class="frz-heading frz-heading--toggle" role="button" tabindex="0" aria-expanded="true" data-railsec="projects"><span class="frz-sec-head-l"><span class="frz-sec-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span><span class="frz-sec-lbl">PROJECTS</span><span class="frz-sec-count" aria-hidden="true"></span></span><button class="frz-add" id="frzAddProj" title="Add project (coming soon)">＋</button></div></nav>'+
+          '<nav class="frz-section frz-section--projects" id="frzProjNav" aria-label="Spaces"><div class="frz-heading frz-heading--toggle" role="button" tabindex="0" aria-expanded="true" data-railsec="projects"><span class="frz-sec-head-l"><span class="frz-sec-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span><span class="frz-sec-lbl">SPACES</span><span class="frz-sec-count" aria-hidden="true"></span></span><button class="frz-add" id="frzAddProj" title="Add space (coming soon)">＋</button></div></nav>'+
           '<nav class="frz-section frz-section--boards" id="frzBoardNav" aria-label="Boards"><div class="frz-heading frz-heading--toggle" role="button" tabindex="0" aria-expanded="true" data-railsec="boards"><span class="frz-sec-head-l"><span class="frz-sec-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span><span class="frz-sec-lbl">BOARDS</span><span class="frz-sec-count" aria-hidden="true"></span></span><button class="frz-add" id="frzAddBoard" title="Create board">＋</button></div></nav>'+
           '<nav class="frz-section frz-section--saved" id="frzSavedNav" aria-label="Saved filters"><div class="frz-heading frz-heading--toggle" role="button" tabindex="0" aria-expanded="true" data-railsec="saved"><span class="frz-sec-head-l"><span class="frz-sec-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span><span class="frz-sec-lbl">SAVED FILTERS</span><span class="frz-sec-count" aria-hidden="true"></span></span><button class="frz-add" id="frzSaveBtn" title="Save current filters">＋</button></div></nav>'+
         '</div>'+
@@ -21091,7 +21091,7 @@ if ('serviceWorker' in navigator) {
     var allBtn = document.createElement('button');
     allBtn.className='frz-item'; allBtn.setAttribute('data-proj','__all__');
     allBtn.setAttribute('aria-current', String(state.project==='__all__'));
-    allBtn.innerHTML = '<span class="frz-dot" style="background:var(--frz-accent)"></span><span class="frz-item-lbl" title="All projects">All projects</span><span class="frz-count">'+_frzScopeCount(null)+'</span>';   // COUNTER-ALIGN-1: label flexes/truncates
+    allBtn.innerHTML = '<span class="frz-dot" style="background:var(--frz-accent)"></span><span class="frz-item-lbl" title="All Spaces">All Spaces</span><span class="frz-count">'+_frzScopeCount(null)+'</span>';   // COUNTER-ALIGN-1: label flexes/truncates
     pn.appendChild(allBtn);
     products.forEach(function(pr, i){
       var name = pr.name || pr;
@@ -22522,7 +22522,7 @@ if ('serviceWorker' in navigator) {
     dept:     {label:'Department', fn:function(r){ return r.dept || '(none)'; }},
     status:   {label:'Status',     fn:function(r){ return r.status || '(none)'; }},
     type:     {label:'Type',       fn:function(r){ return r.type || '(none)'; }},
-    product:  {label:'Project',    fn:function(r){ return r.product || '(none)'; }},
+    product:  {label:'Space',      fn:function(r){ return r.product || '(none)'; }},
     priority: {label:'Priority',   fn:function(r){ return r.priority || '(none)'; }}
   };
   var _RPT_PIVOT_COLS = [
@@ -23673,7 +23673,7 @@ if ('serviceWorker' in navigator) {
     if(dBody) dBody.innerHTML=''; if(cBody) cBody.innerHTML='';
     if(p){ if(_releaseFieldOn()) injectReleaseField(p); injectDepartments(p); injectNotify(p); }   // (re)create the beta-only Release + Departments + Notify (CC) controls in ipFields. FIELDS-2: Release only when the team has releases + Planning enabled (rail rebuilds each render, so skipping = absent)
     function mv(body, node){ if(body && node) body.appendChild(node); }
-    var _DETAIL_AFTER_TYPE=[metricLabel,'Sprint','Reporter','Location','Key','Project','Resolution Type'];   // METRIC-LABEL-1: matches the item-page field by DISPLAY label (must track metricLabel). FIELDS-1: +Location/+Resolution Type - mv() no-ops when the gated field is absent (empty list), so they only appear when configured.
+    var _DETAIL_AFTER_TYPE=[metricLabel,'Sprint','Reporter','Location','Key','Space','Resolution Type'];   // METRIC-LABEL-1: matches the item-page field by DISPLAY label (must track metricLabel). FIELDS-1: +Location/+Resolution Type - mv() no-ops when the gated field is absent (empty list), so they only appear when configured. TERM-1: 'Project'->'Space' in lockstep with ipEditField('product','Space').
     // Status = the FIRST row of the Details card (it used to sit in a bare #frzRailStatus
     // group floating ABOVE Details; that group is gone). Keep the uppercase STATUS label like
     // every other Details row; the VALUE stays the production status pill (statusCls, untouched)
@@ -23693,7 +23693,7 @@ if ('serviceWorker' in navigator) {
         }
       }
     }
-    ['Assignee','Owner (Pod)','Priority','Type'].forEach(function(l){ mv(dBody, _frzFieldByLabel(fields,l)); });
+    ['Assignee','Owner','Priority','Type'].forEach(function(l){ mv(dBody, _frzFieldByLabel(fields,l)); });   // TERM-1: 'Owner (Pod)'->'Owner' in lockstep with ipEditField('dev','Owner')
     // Priority: converge its pill GEOMETRY on the status pill (same height/padding/radius/caret)
     // so the two triage fields read alike. COLORS are untouched - the badge keeps its own
     // PRIO_COLORS from the ipEditField display; only size + the editable-caret change here. The
@@ -24487,7 +24487,7 @@ if ('serviceWorker' in navigator) {
   function _frzActiveSavedName(){ var a=_frzActiveSaved(); return a ? a.name : ''; }
   // Crumb text: project always, + the active saved-filter name when one is anchored & matching.
   function _frzCrumbText(){
-    var proj = (!state.project || state.project==='__all__') ? 'All projects' : state.project;
+    var proj = (!state.project || state.project==='__all__') ? 'All Spaces' : state.project;
     var sn = _frzActiveSavedName();
     return '· '+proj + (sn ? ' · '+sn : '');
   }
@@ -24764,7 +24764,7 @@ if ('serviceWorker' in navigator) {
       else if (e.key==='Escape' && state.pop){ closePop(); }
     });
     document.getElementById('frzSaveBtn').addEventListener('click', function(e){ e.stopPropagation(); saveCurrent(this); });
-    document.getElementById('frzAddProj').addEventListener('click', function(e){ e.stopPropagation(); _call('showToast','Add project - coming soon'); });
+    document.getElementById('frzAddProj').addEventListener('click', function(e){ e.stopPropagation(); _call('showToast','Add space - coming soon'); });
     document.getElementById('frzAddBoard').addEventListener('click', function(e){ e.stopPropagation(); openBoardEditor(null); });
     document.getElementById('frzNewItem').addEventListener('click', function(){ _call('openProjectModal', null); });
     // Mobile companion (Phase 1): FAB → same capture flow as New item.
@@ -24918,7 +24918,7 @@ if ('serviceWorker' in navigator) {
   // Gantt's groupByMenu. Independent of the Gantt's #groupBy (different element, different options).
   // Drives the classic List's grouping via the cross-block bridge (_listSetGroup); options + persistence
   // are LIST-GROUPBY-1's, unchanged - only the control's home + shape changed from the pager <select>.
-  var _FRZ_GROUP_LABELS = { '':'None', status:'Status', assignee:'Assignee', priority:'Priority', product:'Project', owner:'Owner', type:'Type' };   // FIELDS-2: dropped location/resolutionType/blockedReason - they are FILTER CHIPS now, not group-by (grouping dumped everything into the unset bucket; Reports answers the breakdown)
+  var _FRZ_GROUP_LABELS = { '':'None', status:'Status', assignee:'Assignee', priority:'Priority', product:'Space', owner:'Owner', type:'Type' };   // FIELDS-2: dropped location/resolutionType/blockedReason - they are FILTER CHIPS now, not group-by (grouping dumped everything into the unset bucket; Reports answers the breakdown)
   var _FRZ_GROUP_ORDER = ['', 'status', 'assignee', 'priority', 'product', 'owner', 'type'];   // FIELDS-2
   function _frzGroupOffered(v){ return true; }   // FIELDS-2: no coded fields in group-by any more, so nothing to gate here (server _GROUP_COLS entries left intact - Reports does not read them; harmless)
   function openListGroupPop(anchor){
@@ -24946,7 +24946,7 @@ if ('serviceWorker' in navigator) {
     {key:'status', idx:6, label:'Status'}, {key:'priority', idx:7, label:'Priority'},
     {key:'owner', idx:8, label:'Owner'}, {key:'assignee', idx:9, label:'Assignee'},
     {key:'points', idx:10, label:'Points'}, {key:'sprint', idx:11, label:'Sprint'},
-    {key:'project', idx:12, label:'Project'}
+    {key:'project', idx:12, label:'Space'}
   ];
   function _listColsKey(){ return 'frazil_beta_listcols_'+uname(); }
   function hiddenListCols(){ try { return new Set(JSON.parse(ls(_listColsKey())||'[]')); } catch(e){ return new Set(); } }
@@ -25030,7 +25030,7 @@ if ('serviceWorker' in navigator) {
       assignee:   {label:'Assignee',    get:function(it){ return it.assignee||''; }},
       points:     {label:metricLabel,    get:function(it){ return (it.storyPoints!=null&&it.storyPoints!=='')?String(it.storyPoints):''; }},   // METRIC-LABEL-1: CSV header follows the team label
       sprint:     {label:'Sprint',      get:function(it){ var s=sprintById(it.sprintId); return s?(s.name||''):(it.sprintId||''); }},
-      project:    {label:'Project',     get:function(it){ return it.product||''; }},
+      project:    {label:'Space',       get:function(it){ return it.product||''; }},
       description:{label:'Description', get:function(it){ return _call('descToPlainText', it.description)||''; }},
       due:        {label:'Due',         get:function(it){ return it.due||''; }},   // ADOPT-2: ABSOLUTE raw YYYY-MM-DD (never the relative label - a spreadsheet cannot read "Tomorrow")
       created:    {label:'Created',     get:function(it){ return it.createdAt ? fmtTSDate(it.createdAt) : ''; }},   // UI-POLISH-1
@@ -28827,7 +28827,7 @@ if ('serviceWorker' in navigator) {
       ? '<div class="frz-lp-row"><span class="frz-lp-k">Priority</span><span class="frz-lp-v" style="color:'+PRIO_CLR[p.priority]+';font-weight:700">'+esc(PRIO_LBL[p.priority])+'</span></div>'
       : '<div class="frz-lp-row"><span class="frz-lp-k">Priority</span><span class="frz-lp-v" style="color:var(--frz-text-muted)">-</span></div>';
     // Read-only details - the right-rail set (display-only v1; blanks auto-skip, EXCEPT the forced prioRow).
-    var details=[ _frzPanelRow('Key',p.itemKey), _frzPanelRow('Project',p.product), _frzPanelRow('Type',p.type),
+    var details=[ _frzPanelRow('Key',p.itemKey), _frzPanelRow('Space',p.product), _frzPanelRow('Type',p.type),
       _frzPanelRow('Owner',p.dev), _frzPanelRow('Assignee',p.assignee ? displayName(p.assignee) : p.assignee), _frzPanelRow('Reporter',p.reporter),
       (p.reporterEmail ? '<div class="frz-lp-row"><span class="frz-lp-k">Reporter Email</span><span class="frz-lp-v"><a href="mailto:'+escA(p.reporterEmail)+'" style="color:var(--frz-accent)">'+esc(p.reporterEmail)+'</a></span></div>' : ''),
       prioRow, _frzPanelRow('Department',dept),
@@ -29636,7 +29636,7 @@ if ('serviceWorker' in navigator) {
       '<h3>The workspace</h3>'+
       '<p>Flow has three regions:</p>'+
       '<ul>'+
-        '<li><b>Left rail</b> - navigation. <b>Views</b> (My Home, Gantt, Kanban, List, Planning, Calendar, Dashboard, Reports), <b>Projects</b> (scope to one product or all), <b>Boards</b> (Kanban layouts), <b>Saved filters</b>, and <b>Settings</b> / <b>Admin</b>. Collapse the rail with the toggle to widen the workspace.</li>'+
+        '<li><b>Left rail</b> - navigation. <b>Views</b> (My Home, Gantt, Kanban, List, Planning, Calendar, Dashboard, Reports), <b>Spaces</b> (scope to one Space or all), <b>Boards</b> (Kanban layouts), <b>Saved filters</b>, and <b>Settings</b> / <b>Admin</b>. Collapse the rail with the toggle to widen the workspace.</li>'+
         '<li><b>Top bar</b> - search, the notifications bell '+_mi('bell')+', the <b>New item</b> button '+_mi('plus')+', and your <b>account</b> menu (top right).</li>'+
         '<li><b>Main content</b> - the current view.</li>'+
       '</ul>'+
@@ -29667,7 +29667,7 @@ if ('serviceWorker' in navigator) {
       '<div class="frz-man-note"><b>The two editor guardrails to remember:</b> (1) an active item’s dates are locked - adjust them through <b>Delay</b>; and (2) an editor’s delay change waits for <b>admin approval</b>. Everything else an editor changes saves immediately.</div>'+
 
       '<h3>Working across teams</h3>'+
-      '<p>Flow is multi-team. If you belong to more than one team, use <b>Add a team</b> in your account menu to sign into another, then switch between them from the same menu - your other sessions stay signed in. Each team is fully separate: its own items, boards, and saved filters.</p>'+
+      '<p>Flow is multi-Organization. If you belong to more than one Organization, use <b>Add an Organization</b> in your account menu to sign into another, then switch between them from the same menu - your other sessions stay signed in. Each Organization is fully separate: its own items, boards, and saved filters.</p>'+
       '<p>Item links carry their team, so opening a link to an item on a team you are not currently viewing - a <b>Slack</b> notification, an email, or a link a teammate shared - offers to <b>switch to that team</b> and then opens the correct item, instead of showing a same-numbered item on your current team. If you are not signed into that team yet, Flow tells you to sign in first.</p>'+
 
       '<h3>Dark mode, mobile &amp; installing</h3>'+
@@ -29728,7 +29728,7 @@ if ('serviceWorker' in navigator) {
       '<table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>'+
         '<tr><td><b>Name</b></td><td>Required. What the work is.</td></tr>'+
         '<tr><td><b>Type</b></td><td>Feature, Bug Fix, Task, and so on (configurable).</td></tr>'+
-        '<tr><td><b>Owner (Pod)</b></td><td>The capacity pool responsible. Required before an item can move to an active status.</td></tr>'+
+        '<tr><td><b>Owner</b></td><td>The capacity pool responsible. Required before an item can move to an active status.</td></tr>'+
         '<tr><td><b>Assignee</b></td><td>The person doing the work. Setting an assignee can fill the owner automatically from that person’s pod.</td></tr>'+
         '<tr><td><b>Status</b></td><td>Where it is in the workflow. Its meaning (active, done, and so on) comes from the status <b>modes</b> an admin configures, never from the name - see <b>Status modes</b> under Admin &amp; setup.</td></tr>'+
         '<tr><td><b>Priority</b></td><td>Urgent / High / Medium / Low.</td></tr>'+
@@ -29799,7 +29799,7 @@ if ('serviceWorker' in navigator) {
       '<ul>'+
         '<li><b>Statuses</b> - the workflow. Each status carries <b>modes</b> that drive behavior (which one is the <b>default</b> for new items, which count as <b>active</b>, which is <b>terminal</b>/done, and so on), so you can name statuses however you like. See <b>Status modes</b> below.</li>'+
         '<li><b>Types</b> - item types; a type can be flagged as <b>maintenance</b> (used by duty reporting).</li>'+
-        '<li><b>Projects</b>, <b>Owners</b>, <b>Departments</b>, and the reason lists (delay/change/defer).</li>'+
+        '<li><b>Spaces</b>, <b>Owners</b>, <b>Departments</b>, and the reason lists (delay/change/defer).</li>'+
       '</ul>'+
       '<h3>Status modes</h3>'+
       '<p>A status is just a <b>name you choose</b> - Flow never hard-codes a particular status like <i>In Progress</i> or <i>Done</i>. What drives behavior is the set of <b>modes</b> (flags) attached to each status, so you can name your workflow however you like and Flow still knows which status is active, which is finished, and so on. Set these in the status editor.</p>'+

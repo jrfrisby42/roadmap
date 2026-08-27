@@ -27,7 +27,7 @@ launched from another tool."
 |------------|--------------------|-------|
 | `email`    | Your email + the "Email my tickets" box | Prefilled but **editable** by the user (not locked). |
 | `name`     | Your name          | Free text. |
-| `product`  | Project dropdown   | Must **exactly match** (case-sensitive) a project the team exposes, or it won't preselect. |
+| `product`  | Space selector (labeled "What is this about?") | Must **exactly match** (case-sensitive) a Space the Organization exposes, or it won't preselect. |
 | `team`     | (disambiguates `product`) | Team slug. Only needed if the same project name is exposed by more than one team. |
 | `type`     | Type dropdown      | Must match one of the team's offered types. |
 | `dept`     | Department dropdown | Must match one of the team/project's departments. |
@@ -125,11 +125,11 @@ logs and continues). To watch what *would* send, check the server log for
 ### Test checklist
 
 **A. Submission happy path**
-- [ ] Open `/report`, pick a Project, fill Summary + a valid email, complete the
+- [ ] Open `/report`, pick a Space, fill Summary + a valid email, complete the
       CAPTCHA, Submit → success panel shows a reference key + a "View your ticket →"
       button that opens the status page.
 - [ ] The new item appears in the app for that team with `source=portal`, the chosen
-      Project/Type/Priority/Department, and the reporter's name/email.
+      Space/Type/Priority/Department, and the reporter's name/email.
 
 **B. CAPTCHA (Turnstile)**
 - [ ] With Turnstile enabled, Submit **without** completing the widget → blocked with
@@ -178,7 +178,7 @@ logs and continues). To watch what *would* send, check the server log for
 
 **I. Admin config persistence**
 - [ ] In Team Settings → Public Ticket Portal, toggle the portal on/off, set the
-      notify email, choose offered Projects/Types, set per-project emails and the
+      notify email, choose offered Spaces/Types, set per-Space emails and the
       domain allowlist → **refresh the browser** → every setting persists.
 
 ### Production smoke test (after a deploy)
