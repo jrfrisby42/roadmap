@@ -1910,7 +1910,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       <button class="admin-tab" data-tab="typesTab">Types</button>
       <button class="admin-tab" data-tab="statusTab">Statuses</button>
       <button class="admin-tab" data-tab="delayTab">Reasons</button>
-      <button class="admin-tab" data-tab="deptTab">Departments</button>
+      <button class="admin-tab" data-tab="deptTab">Departments &amp; Locations</button>
       <button class="admin-tab" data-tab="usersTab">Users</button>
       <button class="admin-tab" data-tab="assignmentsTab">Assignments</button>
       <button class="admin-tab" data-tab="dataTab">Data</button>
@@ -2028,9 +2028,22 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         </div>
       </div>
 
+      <!-- Section 4: Resolution Types (FIELDS-1) -->
+      <div>
+        <div style="font-size:11px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;padding-bottom:6px;border-bottom:2px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+          <span>Resolution Types <span style="font-size:10px;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0"> - how a ticket concluded, chosen on the item; leave empty to hide the field entirely</span></span>
+          <button id="saveResolutionTypesBtn" onclick="saveReasonList('resolutionTypes')" style="font-size:11px;font-weight:700;background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:5px;cursor:pointer;font-family:'Lato',sans-serif">Save</button>
+        </div>
+        <div class="dev-list" id="resolutionTypeList" style="margin-bottom:8px"></div>
+        <div class="add-dev-row">
+          <input type="text" id="newResolutionTypeName" placeholder="New resolution type…">
+          <button class="btn-add-dev" id="addResolutionTypeBtn">+ Add</button>
+        </div>
+      </div>
+
     </div>
 
-    <!-- DEPARTMENTS TAB -->
+    <!-- DEPARTMENTS TAB (FIELDS-1: also holds Locations) -->
     <div class="admin-pane" id="deptTab">
       <div style="font-size:11px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;padding-bottom:6px;border-bottom:2px solid var(--border)">
         <span>Departments <span style="font-size:10px;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0"> - pill color and the emails notified when a ticket is submitted for the department</span></span>
@@ -2039,6 +2052,17 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       <div class="add-dev-row">
         <input type="text" id="newDeptName" placeholder="New department name…">
         <button class="btn-add-dev" id="addDeptBtn">+ Add</button>
+      </div>
+
+      <!-- Locations (FIELDS-1): a plain per-team value list, no metadata this stage -->
+      <div style="font-size:11px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;margin:18px 0 6px;padding-bottom:6px;border-bottom:2px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+        <span>Locations <span style="font-size:10px;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0"> - where the issue is, chosen on the item; leave empty to hide the field entirely</span></span>
+        <button id="saveLocationsBtn" onclick="saveReasonList('locations')" style="font-size:11px;font-weight:700;background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:5px;cursor:pointer;font-family:'Lato',sans-serif">Save</button>
+      </div>
+      <div class="dev-list" id="locationList" style="margin-bottom:8px"></div>
+      <div class="add-dev-row">
+        <input type="text" id="newLocationName" placeholder="New location…">
+        <button class="btn-add-dev" id="addLocationBtn">+ Add</button>
       </div>
     </div>
 
@@ -2267,7 +2291,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.16.3';
+const APP_VERSION = '6.17.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2918,6 +2942,8 @@ let _relatedStubs = {};
 let changeReasons = []; // admin-managed timeline change reasons
 let deferReasons  = []; // admin-managed defer reasons
 let blockedReasons = []; // BLOCK-REASON-1: admin-managed coded Blocked reasons (empty = free-text Blocked, feature off)
+let locations = [];       // FIELDS-1: per-team Location value list. EMPTY = the Location field is hidden EVERYWHERE.
+let resolutionTypes = []; // FIELDS-1: per-team Resolution Type value list. EMPTY = the field is hidden EVERYWHERE.
 let metricLabel = 'Story Points'; // METRIC-LABEL-1: team-defined display label for the storyPoints metric (field key unchanged; only the label is configurable)
 let departments   = []; // shared master list of departments (free-text, grows on item save)
 // Capacity & conflict config (side-data, doesn't restructure core arrays)
@@ -7731,6 +7757,7 @@ function renderAdminPanes(tabId){
   renderChangeReasonList();
   renderDeferReasonList();
   renderBlockedReasonList();
+  renderResolutionTypeList();
   renderUserList();
   renderTypeList();
   renderAssignmentTypesList();
@@ -7750,7 +7777,7 @@ function renderAdminPanes(tabId){
   document.querySelectorAll('.admin-pane').forEach(p => p.classList.toggle('active', p.id===targetTab));
   // Tab-specific init
   if(targetTab==='teamSettingsTab') openTeamSettingsTab();
-  if(targetTab==='deptTab') renderDepartments();
+  if(targetTab==='deptTab'){ renderDepartments(); renderLocationList(); }
 }
 function openAdminPanel(tabId){
   if(!isAdmin) return;
@@ -7771,7 +7798,7 @@ document.querySelectorAll('.admin-tab').forEach(tab => {
     const pane = document.getElementById(tab.dataset.tab);
     if(pane) pane.classList.add('active');
     if(tab.dataset.tab === 'teamSettingsTab') openTeamSettingsTab();
-    if(tab.dataset.tab === 'deptTab') renderDepartments();
+    if(tab.dataset.tab === 'deptTab'){ renderDepartments(); renderLocationList(); }
     if(tab.dataset.tab === 'assignmentsTab') renderAssignmentTypesList();
     // ADMIN-URL-1: reflect the sub-tab in the URL, but ONLY in the Flow shell. This handler runs on the
     // SHARED .admin-modal DOM, which is ALSO the classic modal (frz-beta-active absent there) - the
@@ -7853,6 +7880,8 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
     changeReasons = data.changeReasons || changeReasons;
     deferReasons  = data.deferReasons  || deferReasons;
     blockedReasons = Array.isArray(data.blockedReasons) ? data.blockedReasons : [];   // BLOCK-REASON-1
+    locations = Array.isArray(data.locations) ? data.locations : [];                   // FIELDS-1 (secondary data-apply path)
+    resolutionTypes = Array.isArray(data.resolutionTypes) ? data.resolutionTypes : [];  // FIELDS-1
     metricLabel   = data.metricLabel   || metricLabel;   // METRIC-LABEL-1 (secondary data-apply path)
     departments   = data.departments   || departments;
       products     = data.products     || products;
@@ -7919,7 +7948,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
         populateProductSelect();
       render();
       // Re-render admin lists
-      renderDevList(); renderProductList(); renderStatusList(); renderDelayList(); renderChangeReasonList(); renderDeferReasonList(); renderBlockedReasonList(); renderUserList();
+      renderDevList(); renderProductList(); renderStatusList(); renderDelayList(); renderChangeReasonList(); renderDeferReasonList(); renderBlockedReasonList(); renderResolutionTypeList(); renderUserList();
 
       status.textContent = `Imported ${projects.length} projects successfully.`;
       status.style.color = 'var(--bar-green, #22b96e)';
@@ -8519,8 +8548,8 @@ function populateDeferReasonSelect(){
 // Generic list renderer for a simple string array
 // BLOCK-REASON-1: generic configKey -> array / save-button resolvers (was a hardcoded
 // changeReasons-else-deferReasons ternary in four places; now covers blockedReasons too).
-function _reasonArr(k){ return k==='changeReasons'?changeReasons : k==='blockedReasons'?blockedReasons : deferReasons; }
-function _reasonBtn(k){ return k==='changeReasons'?'saveChangeReasonsBtn' : k==='blockedReasons'?'saveBlockedReasonsBtn' : 'saveDeferReasonsBtn'; }
+function _reasonArr(k){ return k==='changeReasons'?changeReasons : k==='blockedReasons'?blockedReasons : k==='locations'?locations : k==='resolutionTypes'?resolutionTypes : deferReasons; }   // FIELDS-1: +locations, +resolutionTypes
+function _reasonBtn(k){ return k==='changeReasons'?'saveChangeReasonsBtn' : k==='blockedReasons'?'saveBlockedReasonsBtn' : k==='locations'?'saveLocationsBtn' : k==='resolutionTypes'?'saveResolutionTypesBtn' : 'saveDeferReasonsBtn'; }   // FIELDS-1
 function renderReasonList(listId, arr, configKey, repopulateFn){
   const list = document.getElementById(listId);
   if(!list) return;
@@ -8545,6 +8574,10 @@ function renderChangeReasonList(){ renderReasonList('changeReasonList', changeRe
 function renderDeferReasonList(){  renderReasonList('deferReasonList',  deferReasons,  'deferReasons',  'populateDeferReasonSelect'); }
 function renderBlockedReasonList(){ renderReasonList('blockedReasonList', blockedReasons, 'blockedReasons', 'populateBlockedReasonSelect'); }   // BLOCK-REASON-1
 function populateBlockedReasonSelect(){}   // BLOCK-REASON-1: the flag modal's Blocked select is built fresh each open (_flagTypeChanged); nothing to repopulate live
+function renderLocationList(){ renderReasonList('locationList', locations, 'locations', 'populateLocationSelect'); }   // FIELDS-1
+function renderResolutionTypeList(){ renderReasonList('resolutionTypeList', resolutionTypes, 'resolutionTypes', 'populateResolutionTypeSelect'); }   // FIELDS-1
+function populateLocationSelect(){}       // FIELDS-1: item-page selects are rebuilt on each render (_ipFieldOptions); nothing to repopulate live
+function populateResolutionTypeSelect(){} // FIELDS-1
 
 function startEditReason(listId, i, configKey, repopulateFn){
   const arr = _reasonArr(configKey);
@@ -8555,7 +8588,7 @@ function startEditReason(listId, i, configKey, repopulateFn){
     <button class="btn-ic" onclick="saveEditReason('${listId}',${i},'${configKey}','${repopulateFn}')" style="color:var(--accent)">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="20 6 9 17 4 12"/></svg>
     </button>
-    <button class="btn-ic" onclick="renderChangeReasonList();renderDeferReasonList();renderBlockedReasonList()">
+    <button class="btn-ic" onclick="renderChangeReasonList();renderDeferReasonList();renderBlockedReasonList();renderResolutionTypeList()">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>`;
   document.getElementById(`reason_edit_${i}`)?.focus();
@@ -8567,7 +8600,7 @@ function saveEditReason(listId, i, configKey, repopulateFn){
   const val  = inp?.value.trim();
   if(!val) return;
   arr[i] = val;
-  renderChangeReasonList(); renderDeferReasonList(); renderBlockedReasonList();
+  renderChangeReasonList(); renderDeferReasonList(); renderBlockedReasonList(); renderResolutionTypeList();
   window[repopulateFn]?.();
   const btnId = _reasonBtn(configKey);
   const btn = document.getElementById(btnId);
@@ -8578,7 +8611,7 @@ function deleteReason(configKey, i, listId, repopulateFn){
   const arr = _reasonArr(configKey);
   if(!confirm(`Delete "${arr[i]}"?`)) return;
   arr.splice(i, 1);
-  renderChangeReasonList(); renderDeferReasonList(); renderBlockedReasonList();
+  renderChangeReasonList(); renderDeferReasonList(); renderBlockedReasonList(); renderResolutionTypeList();
   window[repopulateFn]?.();
   const btnId = _reasonBtn(configKey);
   const btn = document.getElementById(btnId);
@@ -8709,11 +8742,42 @@ document.getElementById('addBlockedReasonBtn')?.addEventListener('click', ()=>{ 
   blockedReasons.push(val);
   inp.value = '';
   renderBlockedReasonList();
+  renderResolutionTypeList();
   const btn = document.getElementById('saveBlockedReasonsBtn');
   if(btn){ btn.style.background='#e8a000'; btn.textContent='Save ●'; }
 });
 document.getElementById('newBlockedReasonName')?.addEventListener('keydown', e=>{
   if(e.key==='Enter'){ e.preventDefault(); document.getElementById('addBlockedReasonBtn')?.click(); }
+});
+
+document.getElementById('addLocationBtn')?.addEventListener('click', ()=>{   // FIELDS-1
+  const inp = document.getElementById('newLocationName');
+  const val = inp?.value.trim();
+  if(!val) return;
+  if(locations.includes(val)){ inp.value=''; return; }
+  locations.push(val);
+  inp.value = '';
+  renderLocationList();
+  const btn = document.getElementById('saveLocationsBtn');
+  if(btn){ btn.style.background='#e8a000'; btn.textContent='Save ●'; }
+});
+document.getElementById('newLocationName')?.addEventListener('keydown', e=>{
+  if(e.key==='Enter'){ e.preventDefault(); document.getElementById('addLocationBtn')?.click(); }
+});
+
+document.getElementById('addResolutionTypeBtn')?.addEventListener('click', ()=>{   // FIELDS-1
+  const inp = document.getElementById('newResolutionTypeName');
+  const val = inp?.value.trim();
+  if(!val) return;
+  if(resolutionTypes.includes(val)){ inp.value=''; return; }
+  resolutionTypes.push(val);
+  inp.value = '';
+  renderResolutionTypeList();
+  const btn = document.getElementById('saveResolutionTypesBtn');
+  if(btn){ btn.style.background='#e8a000'; btn.textContent='Save ●'; }
+});
+document.getElementById('newResolutionTypeName')?.addEventListener('keydown', e=>{
+  if(e.key==='Enter'){ e.preventDefault(); document.getElementById('addResolutionTypeBtn')?.click(); }
 });
 
 // ── OLD DELAY REASONS (kept for backward compat - data field p.delay still used for tooltips/dashboard) ──
@@ -11016,7 +11080,7 @@ function _frzSprintLabel(id){
 // Single source of truth for the main #listView table. Each column is a self-contained
 // unit (label + sort key + cell renderer) so its behavior travels when reordered. The
 // multi-select checkbox column is pinned at position 0 and is NOT part of this model.
-const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','reporter','blockedReason','points','sprint','project','created'];   // UI-POLISH-1: +reporter, +created (both default hidden via _optin2). BLOCK-REASON-1: +blockedReason (default hidden via _optin3)
+const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','reporter','blockedReason','location','resolutionType','points','sprint','project','created'];   // UI-POLISH-1: +reporter, +created (both default hidden via _optin2). BLOCK-REASON-1: +blockedReason (_optin3). FIELDS-1: +location, +resolutionType (default hidden via _optin4; gated OUT entirely when the list is empty)
 // SCROLL-CARET-1: one shared caret asset for every expand/collapse indicator (replaces the ▶/▾/▼ text
 // glyphs, which Unicode ships at different sizes). Reuses the IC.caret glyph - the same path + the (now
 // mode-safe) .frz-chip-caret class. 12px SVG; the caller keeps its own fixed-width box, so collapsed and
@@ -11108,6 +11172,12 @@ const _LIST_COL_DEF = {
   // the column is for aggregation/scan). No server sort column exists for it (JSON-blob field), so sort:null.
   blockedReason:{ label:'Blocked Reason', sort:null,
                 td:(it)=>`<td data-col="blockedReason" style="padding:7px 10px;white-space:nowrap">${_listCell(it.blockedReason)}</td>` },
+  // FIELDS-1: coded Location / Resolution Type columns. JSON-blob fields (sort:null). Gated OUT of the
+  // order entirely (not just default-hidden) when the team's list is empty - see _listColOrderAll.
+  location:{ label:'Location', sort:null,
+                td:(it)=>`<td data-col="location" style="padding:7px 10px;white-space:nowrap">${_listCell(it.location)}</td>` },
+  resolutionType:{ label:'Resolution Type', sort:null,
+                td:(it)=>`<td data-col="resolutionType" style="padding:7px 10px;white-space:nowrap">${_listCell(it.resolutionType)}</td>` },
 };
 function _listColUser(){ try { return (typeof uname==='function'?uname():'') || localStorage.getItem('frazil_rm_user') || ''; } catch(e){ return ''; } }
 function _listOrderKey(){ return 'frazil_beta_listorder_' + _listColUser(); }   // NEW key, separate from the visibility key
@@ -11144,6 +11214,8 @@ function _listColOrderAll(){
     saved.splice(pos,0,id);                                            // insert at default index
   });
   if(!(slaTargets && slaTargets.enabled)) saved = saved.filter(id => id!=='sla');   // SLA column is team-aware: absent (order/header/picker/render) unless enabled
+  if(!(Array.isArray(locations) && locations.length)) saved = saved.filter(id => id!=='location');                   // FIELDS-1: absent everywhere (order/picker/render) when unconfigured
+  if(!(Array.isArray(resolutionTypes) && resolutionTypes.length)) saved = saved.filter(id => id!=='resolutionType'); // FIELDS-1
   return saved;
 }
 let _listColsRenderCache = null;
@@ -15731,6 +15803,8 @@ function _ipFieldOptions(field){
   if(field==='assignee') return [o('','- Unassigned -'), ...users.map(u=>o(u.username, displayName(u.username)))];   // label=name, value=username
   if(field==='priority') return [o('','- None -'), o(1,'Urgent'), o(2,'High'), o(3,'Medium'), o(4,'Low')];
   if(field==='recurrence') return [o('none','None'), o('weekly','Weekly'), o('biweekly','Biweekly'), o('monthly','Monthly')];   // IP1
+  if(field==='location')       return [o('','- None -'), ...locations.map(l=>o(l,l))];         // FIELDS-1
+  if(field==='resolutionType') return [o('','- None -'), ...resolutionTypes.map(r=>o(r,r))];  // FIELDS-1
   return [];
 }
 function _ipBeginEdit(cell){
@@ -16329,6 +16403,11 @@ function renderItemPage(p){
     ipEditField('product',    'Project',       esc(p.product||''), 'select'),
     ipField('Reporter',      esc(p.reporter||'-')),
     ipField('Reporter Email', p.reporterEmail ? `<a href="mailto:${escA(p.reporterEmail)}" style="color:var(--accent);text-decoration:none">${esc(p.reporterEmail)}</a>` : ''),
+    // FIELDS-1: coded Location / Resolution Type selects, GATED on the team having configured the list.
+    // Empty list -> '' -> the row is never rendered (and so never moved into the rail) -> the field is
+    // absent everywhere, per the defining rule. _ipFieldOptions supplies the choices.
+    locations.length ? ipEditField('location', 'Location', esc(p.location||''), 'select') : '',
+    resolutionTypes.length ? ipEditField('resolutionType', 'Resolution Type', esc(p.resolutionType||''), 'select') : '',
     ipEditField('dueWeeks',          'Time Estimate',      p.dueWeeks ? fmtEstimate(p.dueWeeks) : '', 'number', {readonly:timeRO}),
     ipEditField('testWeeks',         'Test Period',        (p.testWeeks!==undefined && p.testWeeks!=='') ? fmtEstimate(p.testWeeks) : '', 'number', {readonly:timeRO}),
     ipEditField('parallelResources', 'Parallel Resources', String(p.parallelResources||1), 'number', {readonly:prRO}),
@@ -17887,6 +17966,8 @@ async function boot(){
     changeReasons = data.changeReasons || [];
     deferReasons  = data.deferReasons  || [];
     blockedReasons = Array.isArray(data.blockedReasons) ? data.blockedReasons : [];   // BLOCK-REASON-1 fix: this is the boot loader; the earlier load site was a non-boot path
+    locations = Array.isArray(data.locations) ? data.locations : [];                   // FIELDS-1 (boot loader)
+    resolutionTypes = Array.isArray(data.resolutionTypes) ? data.resolutionTypes : [];  // FIELDS-1 (boot loader)
     metricLabel   = data.metricLabel   || 'Story Points';   // METRIC-LABEL-1: boot loader (the RIGHT block - see the 6.15.2 fix)
     // METRIC-LABEL-1: the ONE static label site is the classic List <th> (the shell List rebuilds its
     // header from _LIST_COL_DEF, which reads metricLabel live). Set it once post-load so classic follows too.
@@ -21971,6 +22052,9 @@ if ('serviceWorker' in navigator) {
         notes:p.notes||'',
         resolution:p.resolution||'',
         blockedReason:p.blockedReason||'',   // BLOCK-REASON-1: coded stall reason; auto-hidden via _rptHas when no row carries one (dev sees no change)
+        location:p.location||'',               // FIELDS-1: auto-hidden via _rptHas when nothing populates it (empty list -> no values -> absent)
+        resolutionType:p.resolutionType||'',   // FIELDS-1
+
         jira:(p.jiraTickets||[]).join('; '),
         attachCount:(p.attachments||[]).length,
         overdue: !!(due && due < today && !termMap[p.status||'']),
@@ -22045,6 +22129,8 @@ if ('serviceWorker' in navigator) {
     {h:'Notes',          k:'notes',          ft:true},
     {h:'Resolution',     k:'resolution',     ft:true},
     {h:'Blocked Reason', k:'blockedReason'},   // BLOCK-REASON-1: NOT always -> _rptHas auto-hides it on teams with no coded reasons (e.g. development)
+    {h:'Location', k:'location'},               // FIELDS-1: NOT always -> _rptHas auto-hides when nothing populates it
+    {h:'Resolution Type', k:'resolutionType'},  // FIELDS-1
     {h:'Jira',           k:'jira'},
     {h:'Attach',         k:'attachCount',    kind:'num'},
     {h:'Age (d)',        k:'age',            always:true, kind:'num'},
@@ -23403,7 +23489,7 @@ if ('serviceWorker' in navigator) {
     if(dBody) dBody.innerHTML=''; if(cBody) cBody.innerHTML='';
     if(p){ injectReleaseField(p); injectDepartments(p); injectNotify(p); }   // (re)create the beta-only Release + Departments + Notify (CC) controls in ipFields
     function mv(body, node){ if(body && node) body.appendChild(node); }
-    var _DETAIL_AFTER_TYPE=[metricLabel,'Sprint','Reporter','Key','Project'];   // METRIC-LABEL-1: this matches the item-page field by its DISPLAY label (via _frzFieldByLabel), so it must track metricLabel
+    var _DETAIL_AFTER_TYPE=[metricLabel,'Sprint','Reporter','Location','Key','Project','Resolution Type'];   // METRIC-LABEL-1: matches the item-page field by DISPLAY label (must track metricLabel). FIELDS-1: +Location/+Resolution Type - mv() no-ops when the gated field is absent (empty list), so they only appear when configured.
     // Status = the FIRST row of the Details card (it used to sit in a bare #frzRailStatus
     // group floating ABOVE Details; that group is gone). Keep the uppercase STATUS label like
     // every other Details row; the VALUE stays the production status pill (statusCls, untouched)
@@ -24637,12 +24723,15 @@ if ('serviceWorker' in navigator) {
   // Gantt's groupByMenu. Independent of the Gantt's #groupBy (different element, different options).
   // Drives the classic List's grouping via the cross-block bridge (_listSetGroup); options + persistence
   // are LIST-GROUPBY-1's, unchanged - only the control's home + shape changed from the pager <select>.
-  var _FRZ_GROUP_LABELS = { '':'None', status:'Status', assignee:'Assignee', priority:'Priority', product:'Project', owner:'Owner', type:'Type', blockedReason:'Blocked Reason' };   // BLOCK-REASON-1
-  var _FRZ_GROUP_ORDER = ['', 'status', 'assignee', 'priority', 'product', 'owner', 'type', 'blockedReason'];   // BLOCK-REASON-1: unset bucket sorts last (server returns the null bucket; generic ordering parks it at the end)
+  var _FRZ_GROUP_LABELS = { '':'None', status:'Status', assignee:'Assignee', priority:'Priority', product:'Project', owner:'Owner', type:'Type', blockedReason:'Blocked Reason', location:'Location', resolutionType:'Resolution Type' };   // BLOCK-REASON-1; FIELDS-1
+  var _FRZ_GROUP_ORDER = ['', 'status', 'assignee', 'priority', 'product', 'owner', 'type', 'blockedReason', 'location', 'resolutionType'];   // BLOCK-REASON-1: unset bucket sorts last. FIELDS-1: location/resolutionType offered only when configured (gated in the picker)
+  // FIELDS-1: a group-by option is offered only when its team list is non-empty (empty = field hidden everywhere).
+  function _frzGroupOffered(v){ if(v==='location') return Array.isArray(locations)&&locations.length>0; if(v==='resolutionType') return Array.isArray(resolutionTypes)&&resolutionTypes.length>0; return true; }
   function openListGroupPop(anchor){
     var cur = _call('_listGetGroup') || '';
     openPop(anchor, function(pop){
       _FRZ_GROUP_ORDER.forEach(function(v){
+        if(!_frzGroupOffered(v)) return;   // FIELDS-1: skip location/resolutionType when their list is empty
         var b=document.createElement('button'); b.className='frz-pop-opt';
         var sel=(v===cur);
         // VISUAL-1 4.2: leading fixed-width mark - a check on the selected option, an empty spacer on the
@@ -24680,6 +24769,7 @@ if ('serviceWorker' in navigator) {
       if(!ls(key+'_optin1')){ set.add('project'); set.add('description'); lset(key+'_optin1','1'); changed=true; }
       if(!ls(key+'_optin2')){ set.add('created');  set.add('reporter');    lset(key+'_optin2','1'); changed=true; }   // UI-POLISH-1
       if(!ls(key+'_optin3')){ set.add('blockedReason');                     lset(key+'_optin3','1'); changed=true; }   // BLOCK-REASON-1
+      if(!ls(key+'_optin4')){ set.add('location'); set.add('resolutionType'); lset(key+'_optin4','1'); changed=true; }   // FIELDS-1: default hidden (when configured; gated out entirely when the list is empty)
       if(changed) lset(key, JSON.stringify(Array.from(set)));
     } catch(e){}
   }
@@ -24749,14 +24839,19 @@ if ('serviceWorker' in navigator) {
       description:{label:'Description', get:function(it){ return _call('descToPlainText', it.description)||''; }},
       created:    {label:'Created',     get:function(it){ return it.createdAt ? fmtTSDate(it.createdAt) : ''; }},   // UI-POLISH-1
       reporter:   {label:'Reporter',    get:function(it){ return it.reporter||''; }},
-      blockedReason:{label:'Blocked Reason', get:function(it){ return it.blockedReason||''; }}   // BLOCK-REASON-1
+      blockedReason:{label:'Blocked Reason', get:function(it){ return it.blockedReason||''; }},   // BLOCK-REASON-1
+      location:{label:'Location', get:function(it){ return it.location||''; }},                   // FIELDS-1
+      resolutionType:{label:'Resolution Type', get:function(it){ return it.resolutionType||''; }} // FIELDS-1
     };
   }
   // mode 'all' → full set in the prompt's order; 'visible' → only shown cols, in table display order.
   function _exportCols(mode){
     var D=_exportColDefs();
     if(mode==='all'){
-      return ['key','name','type','status','priority','owner','assignee','reporter','blockedReason','points','sprint','project','created','description'].map(function(k){ return D[k]; });   // UI-POLISH-1: +reporter, +created. BLOCK-REASON-1: +blockedReason
+      var allCols=['key','name','type','status','priority','owner','assignee','reporter','blockedReason','location','resolutionType','points','sprint','project','created','description'];   // UI-POLISH-1: +reporter,+created. BLOCK-REASON-1: +blockedReason. FIELDS-1: +location,+resolutionType (gated below)
+      if(!(Array.isArray(locations)&&locations.length)) allCols=allCols.filter(function(k){ return k!=='location'; });                     // FIELDS-1: empty list -> absent from export
+      if(!(Array.isArray(resolutionTypes)&&resolutionTypes.length)) allCols=allCols.filter(function(k){ return k!=='resolutionType'; });  // FIELDS-1
+      return allCols.map(function(k){ return D[k]; });
     }
     var hidden=hiddenListCols();
     // Follow the user's live display order (same source as the table). Fallback to default order.
@@ -28533,6 +28628,8 @@ if ('serviceWorker' in navigator) {
       _frzPanelRow('Owner',p.dev), _frzPanelRow('Assignee',p.assignee ? displayName(p.assignee) : p.assignee), _frzPanelRow('Reporter',p.reporter),
       (p.reporterEmail ? '<div class="frz-lp-row"><span class="frz-lp-k">Reporter Email</span><span class="frz-lp-v"><a href="mailto:'+escA(p.reporterEmail)+'" style="color:var(--frz-accent)">'+esc(p.reporterEmail)+'</a></span></div>' : ''),
       prioRow, _frzPanelRow('Department',dept),
+      (locations.length ? _frzPanelRow('Location', p.location) : ''),                       // FIELDS-1: gated on the list being configured
+      (resolutionTypes.length ? _frzPanelRow('Resolution Type', p.resolutionType) : ''),    // FIELDS-1
       _frzPanelRow(metricLabel,(p.storyPoints!=null&&p.storyPoints!=='')?p.storyPoints:null), _frzPanelRow('Sprint',sprint),   // METRIC-LABEL-1
       _frzPanelRow('Release',rel), _frzPanelRow('Start',p.start), _frzPanelRow('Due',p.due), _frzPanelRow('Expected',p.revised) ].join('');
     // REM-1b: header top row is a 3-zone flex - [ key ] [ Flag + status ] [ ⤢ ✕ ]. The two SIDE zones are
