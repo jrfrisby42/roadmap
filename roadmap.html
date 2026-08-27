@@ -2291,7 +2291,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.17.0';
+const APP_VERSION = '6.17.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -11558,16 +11558,23 @@ function _listSyncHScroll(){
   _listUpdateHScrollVis();
   _listWireHScroll();
 }
-// VISUAL-1 Part 5 (Option 2): show the proxy whenever the table overflows horizontally - full stop, no
-// fold-based hide. The old hide (proxy off once the native bar reached the fold) was geometry-dependent:
-// it fired at small seeded heights but NOT at the real 7,000px+ list, leaving two bars stacked at the
-// bottom anyway. The proxy covers nothing there (a gap sits above the pager), so dropping the hide removes
-// a state transition that could be wrong at some viewport heights, for zero visual cost. On the mobile card
-// layout the table does not overflow, so this stays hidden with no phone special-case.
+// LIST-SCROLL-2: show the proxy only when the table overflows horizontally AND the native bottom
+// scrollbar is NOT already reachable without scrolling. VISUAL-1's "always show while overflowing"
+// (no height gate) was measured only against a 7,000px+ list where the native bar sat far below the
+// fold; on a SHORT list both bars show at once. The reinstated gate is HEIGHT-based, not the original
+// scroll-POSITION test: the native bar (at #listScroll's bottom) is reachable iff the vertical scroller
+// (.frz-content) does not overflow vertically. scrollHeight/clientHeight are SCROLL-INVARIANT, so the
+// answer never changes as the user scrolls a long list - no boundary flicker (the fault that got the
+// original hide dropped). +2 tolerance absorbs the proxy's own 14px of sticky layout at the boundary.
+// A table shorter than the viewport -> scroller fits -> one native bar. A tall table -> one proxy bar.
+// Mobile card layout: the table doesn't overflow horizontally, so this stays hidden with no phone case.
 function _listUpdateHScrollVis(){
   var wrap=document.getElementById('listScroll'), proxy=document.getElementById('listHScroll');
   if(!(wrap&&proxy)) return;
-  var want = (wrap.scrollWidth > wrap.clientWidth + 2) ? '' : 'none';
+  var overflowsX = wrap.scrollWidth > wrap.clientWidth + 2;
+  var scroller = wrap.closest('.frz-content');
+  var fitsVert = scroller ? (scroller.scrollHeight <= scroller.clientHeight + 2) : true;   // scroller fits -> native bar on screen
+  var want = (overflowsX && !fitsVert) ? '' : 'none';
   if(proxy.style.display !== want) proxy.style.display = want;
 }
 function _listWireHScroll(){
@@ -11585,8 +11592,9 @@ function _listWireHScroll(){
     var d = e.deltaX || e.deltaY; if(!d) return;
     wrap.scrollLeft += d; e.preventDefault();
   }, { passive:false });
-  // Option 2: visibility depends only on overflow, so no page-scroll listener is needed (the fold-based
-  // hide is gone). Re-measure on resize (viewport / rail collapse changes the available width).
+  // LIST-SCROLL-2: the visibility gate is SCROLL-INVARIANT (overflow + scroller.scrollHeight vs
+  // clientHeight), so no page-scroll listener is needed - scrolling never changes the answer. Re-measure
+  // on resize (viewport / rail collapse changes both the available width and the scroller's client height).
   window.addEventListener('resize', function(){ if(document.getElementById('listScroll')) _listSyncHScroll(); });
 }
 
