@@ -2305,7 +2305,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.18.0';
+const APP_VERSION = '6.19.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -11131,6 +11131,21 @@ function _frzSprintLabel(id){
 // Single source of truth for the main #listView table. Each column is a self-contained
 // unit (label + sort key + cell renderer) so its behavior travels when reordered. The
 // multi-select checkbox column is pinned at position 0 and is NOT part of this model.
+// ADOPT-1 Part 1: one paperclip indicator when an item carries attachments and/or reference links
+// (both fields already on the blob - render-only, no fetch). One glyph covers both; title names the
+// counts. No paperclip in IC, so a compact inline path. inline-flex + flex-shrink:0 so it rides the
+// existing name-cell / card slot without shifting row height or the count-pill alignment (COUNTER-ALIGN-1).
+// --muted (not --frz-*) because the List row is SHARED classic markup where --frz-* does not resolve (LIST-SCROLL-1).
+function _attachLinkIndicator(p){
+  var na = (p && p.attachments && p.attachments.length) || 0;
+  var nl = (p && p.extLinks && p.extLinks.length) || 0;
+  if(!na && !nl) return '';
+  var parts=[]; if(na) parts.push(na+' attachment'+(na>1?'s':'')); if(nl) parts.push(nl+' link'+(nl>1?'s':''));
+  var ttl = parts.join(', ');
+  return '<span class="frz-attind" title="'+escA(ttl)+'" aria-label="'+escA(ttl)+'" style="display:inline-flex;flex-shrink:0;align-items:center;color:var(--muted)">'
+    + '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3 3 0 0 1 4.24 4.24l-9.2 9.19a1 1 0 0 1-1.41-1.41l8.49-8.49"/></svg>'
+    + '</span>';
+}
 const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','reporter','blockedReason','location','resolutionType','points','sprint','project','created'];   // UI-POLISH-1: +reporter, +created (both default hidden via _optin2). BLOCK-REASON-1: +blockedReason (_optin3). FIELDS-1: +location, +resolutionType (default hidden via _optin4; gated OUT entirely when the list is empty)
 // SCROLL-CARET-1: one shared caret asset for every expand/collapse indicator (replaces the ▶/▾/▼ text
 // glyphs, which Unicode ships at different sizes). Reuses the IC.caret glyph - the same path + the (now
@@ -11181,8 +11196,10 @@ const _LIST_COL_DEF = {
                 td:(it)=>{ const ac=getItemActivityIndicator(it.id); const w=_listColWidth('name');
                   const wcss=w?`width:${w}px;max-width:${w}px;overflow:hidden;`:'';
                   const ttl=it.name?` title="${escA(it.name)}"`:'';   // full name on hover (reveals it when the column is narrow enough to ellipsis-truncate) - mirrors Description
+                  const clip=_attachLinkIndicator(it);   // ADOPT-1: attachment/link paperclip (flex-shrink:0, rides the same slot as the AC dot)
                   return `<td data-col="name" style="padding:7px 10px;${wcss}"${ttl}><span style="display:flex;align-items:center;gap:5px">`
                     + `<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_listCell(it.name)}</span>`
+                    + (clip?`<span style="display:inline-flex;flex-shrink:0">${clip}</span>`:'')
                     + (ac?`<span style="display:inline-flex;flex-shrink:0;transform:translateY(-1.2px)">${ac}</span>`:'')
                     + `</span></td>`; } },
   description:{ label:'Description',  sort:null,
@@ -11665,25 +11682,60 @@ function _listWireHScroll(){
 
 // ── List column sorting ──
 // Click a header to sort by that column; click again to flip direction.
-function _listSetSort(col){
-  const [cur, dir] = (_listState.sort || '').split(':');
-  _listState.sort = (cur === col && dir === 'asc') ? `${col}:desc` : `${col}:asc`;
+// ADOPT-1: multi-column sort (primary + secondary, TWO max). _listState.sort carries an
+// ORDERED, comma-separated list of `col:dir` pairs ("status:asc,story_points:desc"); the
+// single-value form "col:dir" still parses to one pair, so a stale saved/URL sort loads.
+function _parseSort(){
+  return (_listState.sort || '').split(',').map(s => {
+    const [c, d] = s.split(':');
+    return c ? { col: c, dir: (d === 'desc' ? 'desc' : 'asc') } : null;
+  }).filter(Boolean).slice(0, 2);   // primary + secondary only
+}
+function _serializeSort(arr){ _listState.sort = arr.map(e => e.col + ':' + e.dir).join(','); }
+// Primary cycle: asc -> desc -> off. On "off" the primary is dropped and the secondary (if
+// any) PROMOTES to primary - so clearing a two-column sort leaves you with the secondary.
+function _cyclePrimary(arr){
+  if(arr[0].dir === 'asc'){ arr[0].dir = 'desc'; return arr; }
+  return arr.slice(1);
+}
+function _listSetSort(col, shift){
+  let arr = _parseSort();
+  if(shift && arr.length && arr[0].col !== col){
+    // Secondary: shift-click a column that is not the primary. Toggle asc->desc->off (secondary
+    // only), or set it as the secondary (replacing any existing one).
+    if(arr[1] && arr[1].col === col){
+      if(arr[1].dir === 'asc') arr[1].dir = 'desc'; else arr = [arr[0]];
+    } else {
+      arr = [arr[0], { col: col, dir: 'asc' }];
+    }
+  } else if(arr.length && arr[0].col === col){
+    arr = _cyclePrimary(arr);   // plain- OR shift-click on the current primary: cycle it
+  } else {
+    arr = [{ col: col, dir: 'asc' }];   // new primary (plain click, or shift with no primary yet): a fresh single sort
+  }
+  _serializeSort(arr);
   _listState.page = 1;
   renderList();
+  // Push the sort into the browser URL so a two-column sort round-trips (fresh-tab paste).
+  // Bridge is shell-only; classic (unsupported) simply skips it and sorts in-session.
+  try { if(window._frzSyncURL) window._frzSyncURL(true); } catch(e){}
 }
 function _updateSortIndicators(){
-  const [cur, dir] = (_listState.sort || '').split(':');
+  const arr = _parseSort();
+  const byCol = {};
+  arr.forEach((e, i) => { byCol[e.col] = { dir: e.dir, pos: i + 1 }; });
+  const multi = arr.length > 1;   // show the 1/2 position badge only when a secondary is active
   document.querySelectorAll('#listHeadRow .list-sort').forEach(th => {
     const arrow = th.querySelector('.sort-arrow');
-    const active = th.dataset.sort === cur;
-    if(arrow) arrow.textContent = active ? (dir === 'asc' ? ' ▲' : ' ▼') : '';
-    th.style.color = active ? 'var(--accent)' : 'var(--muted)';
+    const e = byCol[th.dataset.sort];
+    if(arrow) arrow.textContent = e ? ((e.dir === 'asc' ? ' ▲' : ' ▼') + (multi ? String(e.pos) : '')) : '';
+    th.style.color = e ? 'var(--accent)' : 'var(--muted)';
   });
 }
 document.getElementById('listHeadRow')?.addEventListener('click', e=>{
   if(e.target.closest('.list-resizer')) return;   // resize grip → never a sort click (guards Name's sortable header)
   const th = e.target.closest('.list-sort');
-  if(th && th.dataset.sort) _listSetSort(th.dataset.sort);
+  if(th && th.dataset.sort) _listSetSort(th.dataset.sort, e.shiftKey);   // ADOPT-1: shift-click sets the secondary
 });
 // Column resize (Name + Description): drag the grip on the th's right edge. Delegated on the
 // stable #listHeadRow so it survives header regeneration. mousedown stops propagation so the
@@ -21386,6 +21438,7 @@ if ('serviceWorker' in navigator) {
     if (view==='kanban' && state.board && state.board!=='__all__') params.set('board', state.board);  // board is URL state
     if (view==='kanban' && state.sprintFilter) params.set('sprint', state.sprintFilter);  // Stage 3: sprint scope (self-serializes even when not added via + Filter, e.g. cold load)
     if (view==='list' && state.panelId!=null) params.set('panel', state.panelId);   // List detail panel is URL state
+    if (view==='list' && typeof _listState!=='undefined' && _listState.sort) params.set('sort', _listState.sort);   // ADOPT-1: List sort (primary[,secondary]) is URL state so it round-trips / shares
     if (view==='planning' && state.planTab==='releases' && state.releaseId) params.set('release', state.releaseId);  // Stage 1b: expanded release is URL state (ids are strings)
     // Stage 1 (+ all-projects fix): project is global URL state, emitted ALWAYS incl
     // '__all__'. Encoding "all" as the ABSENCE of a param was ambiguous with a plain nav
@@ -21467,6 +21520,7 @@ if ('serviceWorker' in navigator) {
     }
     if (view==='reports') _rptSeedURL(qp);   // RPT-DRILL-1 Stage 2: seed report-local controls (+ D4 dims) from the URL; absent -> defaults
     if (view==='list' || view==='kanban') _betaFlagged = (qp.get('flag')==='1');   // FN5: seed the Flagged toggle from the URL (absent -> off)
+    if (view==='list' && typeof _listState!=='undefined') _listState.sort = qp.get('sort') || '';   // ADOPT-1: seed the List sort from the URL (round-trip); absent -> default (empty = server updated_ts:desc)
   }
 
   // ════════ view switching ════════
@@ -24701,6 +24755,7 @@ if ('serviceWorker' in navigator) {
     document.addEventListener('keydown', function(e){ if(e.key==='Escape' && root.classList.contains('frz-search-open')) root.classList.remove('frz-search-open'); });
     document.getElementById('frzSettings').addEventListener('click', openSettings);   // Stage 4a: tabbed Settings
     window._frzNav = navigate;   // bridge so classic-scope code (openAdminPanel) can route into the Flow shell
+    window._frzSyncURL = syncURL;   // ADOPT-1: bridge so the List sort (block-B _listSetSort) can push its state into the URL
     window._frzRefreshCalendar = function(){ try { if(state.view==='team-calendar') renderCalendar(); } catch(e){} };   // re-render after async assignment data loads
     // M2: expose the sprint-duty dashboard hook + its links to the production renderDashboard scope.
     window._frzDashboardMO = _frzDashboardMO;
@@ -25156,8 +25211,10 @@ if ('serviceWorker' in navigator) {
             + (function(){ var _ind=_call('getItemActivityIndicator', p.id)||'';
                 // UI-POLISH-1: clamp ONLY the name text; keep the type icon + activity indicator
                 // outside the clamp; title carries the full name so nothing is lost.
+                var _clip=_call('_attachLinkIndicator', p)||'';   // ADOPT-1: attachment/link paperclip on the card
                 return '<div class="frz-bcard-name" style="padding-right:16px">'+nameIcon
                   + '<span class="frz-bcard-nametext"'+(p.name?(' title="'+escA(p.name)+'"'):'')+'>'+esc(p.name||'')+'</span>'
+                  + (_clip?'<span style="flex:0 0 auto;margin-left:4px;display:inline-flex;align-items:center">'+_clip+'</span>':'')
                   + (_ind?'<span style="flex:0 0 auto;margin-left:4px;display:inline-flex;align-items:center">'+_ind+'</span>':'')
                   + '</div>'; })()
             + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+(function(){ var s=_call('slaBadgeHtml',p,true); return s?' '+s:''; })()+'</div>'

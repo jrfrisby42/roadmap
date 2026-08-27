@@ -1637,7 +1637,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.18.0"
+APP_VERSION = "6.19.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -4960,44 +4960,62 @@ def list_items(
             t = f"%{term}%"
             params += [t, t, t]
 
-    sort_col, _, sort_dir = (sort or "updated_ts:desc").partition(":")
-    sort_dir = "ASC" if sort_dir.lower() == "asc" else "DESC"
-    # `name` lives in the JSON blob (no indexed column) - sort it via json_extract,
-    # case-insensitively. All other sorts must be whitelisted indexed columns.
-    if sort_col == "name":
-        sort_expr = "json_extract(projects.data,'$.name') COLLATE NOCASE"
-    elif sort_col == "created_at":
-        # UI-POLISH-1: createdAt is NOT an indexed column, so sort it from the blob the same way
-        # `name` does. Values are ISO-8601 strings, so a lexical sort is chronological; a missing
-        # value is NULL and sorts first ASC (blanks first, consistent with the column's "-" cell).
-        sort_expr = "json_extract(projects.data,'$.createdAt')"
-    else:
-        if sort_col not in _ITEMS_SORTABLE:
-            sort_col = "updated_ts"
-        sort_expr = f"projects.{sort_col}"
+    # ADOPT-1: ordered multi-column sort. `sort` is a comma-separated list of `col:dir`
+    # pairs, primary first then secondary; the single-value form `col:dir` still parses
+    # to one pair, so a stale saved sort or an old URL keeps working. At most TWO columns
+    # are honoured (the List offers primary + secondary only); extra pairs are ignored.
+    # A blob-backed or unknown column is SKIPPED, never errored - blob sorting is
+    # deliberately out of scope this stage. All SQL below is literal: the column is
+    # whitelisted and the direction is coerced to ASC/DESC, so nothing user-supplied is
+    # interpolated. Each helper returns ORDER BY terms WITHOUT a final id tiebreaker;
+    # `projects.id DESC` is appended once, at the very end, as the stable tiebreaker.
+    def _sort_terms(col, direction):
+        d = "ASC" if str(direction).lower() == "asc" else "DESC"
+        if col == "name":
+            # `name` lives in the JSON blob (no indexed column) - sort via json_extract,
+            # case-insensitively.
+            return f"json_extract(projects.data,'$.name') COLLATE NOCASE {d}"
+        if col == "created_at":
+            # UI-POLISH-1: createdAt is NOT an indexed column, so sort it from the blob like
+            # `name`. ISO-8601 strings sort lexically = chronologically; NULL (missing) sorts
+            # first ASC (blanks first, consistent with the column's "-" cell).
+            return f"json_extract(projects.data,'$.createdAt') {d}"
+        if col == "priority":
+            # One priority order everywhere: Urgent(1), High(2), Medium(3), Low(4), with
+            # blank/none (NULL or <1) ALWAYS last regardless of direction.
+            return f"(projects.priority IS NULL OR projects.priority < 1) ASC, projects.priority {d}"
+        if col == "item_key":
+            # Natural "{PREFIX}-{N}" order, computed over the FULL set (before LIMIT/OFFSET so
+            # it's correct across pagination): blanks (NULL/'') ALWAYS last in both directions;
+            # then the text prefix case-insensitively; then the trailing integer NUMERICALLY.
+            _blank  = "(projects.item_key IS NULL OR projects.item_key = '')"
+            _prefix = "rtrim(projects.item_key, '0123456789')"
+            _num    = f"CAST(substr(projects.item_key, length({_prefix}) + 1) AS INTEGER)"
+            return f"{_blank} ASC, {_prefix} COLLATE NOCASE {d}, {_num} {d}"
+        if col in _ITEMS_SORTABLE:
+            return f"projects.{col} {d}"
+        return None   # blob-backed or unknown column -> ignore (no blob sorting this stage)
+
+    _sort_parts = []
+    for _tok in (sort or "updated_ts:desc").split(","):
+        _tok = _tok.strip()
+        if not _tok:
+            continue
+        _c, _, _d = _tok.partition(":")
+        _term = _sort_terms(_c.strip(), _d)
+        if _term:
+            _sort_parts.append(_term)
+        if len(_sort_parts) >= 2:      # primary + secondary only
+            break
+    if not _sort_parts:                # nothing valid (e.g. only a blob column) - stable default
+        _sort_parts.append(_sort_terms("updated_ts", "desc"))
+    order = ", ".join(_sort_parts) + ", projects.id DESC"
 
     page = max(1, page)
     page_size = max(1, min(500, page_size))
     offset = (page - 1) * page_size
 
     join  = ""
-    if sort_col == "priority":
-        # One priority order everywhere: Urgent(1) → High(2) → Medium(3) → Low(4),
-        # with blank/none (NULL or <1) ALWAYS last regardless of direction.
-        order = f"(projects.priority IS NULL OR projects.priority < 1) ASC, projects.priority {sort_dir}, projects.id DESC"
-    elif sort_col == "item_key":
-        # Natural "{PREFIX}-{N}" order, computed over the FULL set (before LIMIT/OFFSET so
-        # it's correct across pagination): blanks (NULL/'') ALWAYS last in both directions;
-        # then the text prefix case-insensitively; then the trailing integer NUMERICALLY.
-        # rtrim(key,'0..9') strips trailing digits to isolate the prefix; CAST of the
-        # remaining digits → 0 for keys that don't end in digits (graceful fallback, never
-        # crashes). All literal SQL - sort_col is whitelisted, sort_dir is ASC/DESC.
-        _blank  = "(projects.item_key IS NULL OR projects.item_key = '')"
-        _prefix = "rtrim(projects.item_key, '0123456789')"
-        _num    = f"CAST(substr(projects.item_key, length({_prefix}) + 1) AS INTEGER)"
-        order = f"{_blank} ASC, {_prefix} COLLATE NOCASE {sort_dir}, {_num} {sort_dir}, projects.id DESC"
-    else:
-        order = f"{sort_expr} {sort_dir}, projects.id DESC"
     if use_fts:
         join = "JOIN projects_fts ON projects_fts.rowid = projects.id"
         where.append("projects_fts MATCH ?")
