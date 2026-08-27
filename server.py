@@ -1094,6 +1094,13 @@ def init_team_db(team: str):
             # a team opts in by populating it, and empty = today's free-text Blocked message. NOT in
             # _migrate_config_keys new_keys (so it is never re-seeded; an emptied list survives a restart).
             "blockedReasons": [],
+            # FIELDS-1: two per-team coded value lists (blockedReasons shape). Default EMPTY, and a team
+            # with an empty list sees NO trace of the field anywhere (stricter than blockedReason). Both are
+            # absent from _migrate_config_keys so an emptied list survives a restart. `location` = where the
+            # issue is (NOT the asset's registered site); `resolutionType` = how a ticket concluded (a coded
+            # field beside the free-text `resolution`, which is unchanged).
+            "locations": [],
+            "resolutionTypes": [],
             "departments":  [],
             "products":     [{"name":"Fraznet","builtin":True},
                              {"name":"HubSpot","builtin":True}],
@@ -1630,7 +1637,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.16.3"
+APP_VERSION = "6.17.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -3563,6 +3570,8 @@ def get_all(auth: dict = Depends(require_auth)):
             "changeReasons": cfg("changeReasons") or [],
             "deferReasons": cfg("deferReasons") or [],
             "blockedReasons": cfg("blockedReasons") or [],   # BLOCK-REASON-1: empty = free-text Blocked (feature off)
+            "locations": cfg("locations") or [],             # FIELDS-1: empty = field hidden everywhere
+            "resolutionTypes": cfg("resolutionTypes") or [], # FIELDS-1: empty = field hidden everywhere
             "departments": cfg("departments") or [],
             "jiraProjectMapping": cfg("jiraProjectMapping") or {},
             "jiraStatusMapping": cfg("jiraStatusMapping") or {},
@@ -3950,6 +3959,7 @@ RECURRENCE_SKIP_KEYS = {
     "sprintId", "sprintHistory", "release", "releaseNumber", "releaseNotes",
     "deferred", "deferReason", "deferNote", "deferRevisit", "preBlockStatus",
     "blockedReason", "blockedNote",   # BLOCK-REASON-1: a new occurrence is not blocked (follows deferReason; NOT server-owned, NOT inherited)
+    "resolutionType",   # FIELDS-1: a new occurrence is NOT resolved - its disposition doesn't carry. (location IS inherited: NOT in this set, so a recurrence stays at the same site.)
     "externalRefs",   # AssetHub integration (PR1): a new occurrence is a new ticket, no link
     # Stripped AND then explicitly re-set to the spawning parent's id in spawn_recurrence.
     # Belt-and-suspenders on purpose: stripping removes the order dependency on that assignment
@@ -4760,7 +4770,10 @@ _GROUP_COLS = {"status": "status", "assignee": "assignee", "priority": "priority
                # columns above (it needs neither sort nor filter - only group aggregation). Read it
                # straight from the blob via json_extract; the value matches the client's p.blockedReason.
                # gcol is used ONLY in the group query's SELECT/GROUP BY (never in a WHERE), so this is safe.
-               "blockedReason": "json_extract(projects.data, '$.blockedReason')"}
+               "blockedReason": "json_extract(projects.data, '$.blockedReason')",
+               # FIELDS-1: JSON-blob fields (group-only need, no sort/filter) - json_extract, no indexed column.
+               "location": "json_extract(projects.data, '$.location')",
+               "resolutionType": "json_extract(projects.data, '$.resolutionType')"}
 
 # ── FN5: the FLAGGED predicate, single source ──────────────────────────────────────────────────────
 # An item is "flagged" iff it has an activity of a user-raisable FLAG_TYPE whose status is NOT terminal
@@ -4812,6 +4825,8 @@ def list_items(
     q: Optional[str] = None,
     priority: Optional[str] = None,
     department: Optional[str] = None,
+    location: Optional[str] = None,          # FIELDS-1: group-by row-fetch filter (JSON-blob field, __none__ = unset)
+    resolutionType: Optional[str] = None,    # FIELDS-1
     flag: Optional[str] = None,        # FN5: '1' -> only items with an unresolved flag (server-side, uncapped)
     sort: Optional[str] = None,
     page: int = 1,
@@ -4854,6 +4869,11 @@ def list_items(
     eq("owner", owner)
     eq("assignee", assignee)
     eq("sprint_id", sprint)
+    # FIELDS-1: coded Location / Resolution Type are JSON-blob fields (no indexed column), so their
+    # group-by row fetch filters via json_extract. eq() handles single value, comma list, and __none__
+    # (unset bucket). The `col` here is our own literal expression, so the interpolation stays safe.
+    eq("json_extract(data, '$.location')", location)
+    eq("json_extract(data, '$.resolutionType')", resolutionType)
 
     # Priority: an indexed column, but "no priority" items store NULL (the '' -> None mapping in
     # _project_index_cols), so eq() cannot express the "(No priority)" option. A '__none__' member in
@@ -5080,6 +5100,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "statusIsActive","statusIsTerminal",
               "statusIsDefault","statusIsDeferred",
               "changeReasons","deferReasons","blockedReasons","departments",
+              "locations","resolutionTypes",
               "metricLabel",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
@@ -6180,13 +6201,19 @@ def transfer_item(pid: int, body: dict = Body(...), auth: dict = Depends(require
                          if str(t).lower() == src_type.lower()), "") if src_type else ""   # equivalent name, else dropped
         tgt_depts_cfg = _cfg_val(tgt_team, "departments", []) or []
         carried_depts = [d for d in (src.get("departments") or []) if d in tgt_depts_cfg]  # exact match only, else dropped
+        # FIELDS-1: location is a physical fact - carry it only if the exact site exists on the target
+        # (the Department rule). resolutionType is NOT carried at all (deliberately absent from the
+        # whitelist below): a transferred ticket is being rerouted for someone else to work, so the prior
+        # team's disposition is stale, and a value like "Access Granted" has no meaning on another team.
+        tgt_locs_cfg = _cfg_val(tgt_team, "locations", []) or []
+        carried_location = src.get("location") if (src.get("location") in tgt_locs_cfg) else ""
 
         # ── Step 1: create on the target (or find the existing one), under an IMMEDIATE lock so
         # a concurrent request with the same op re-scans after commit and skips the insert. ──
         tgt_item = {
             "name": src.get("name") or "", "description": src.get("description") or "",
             "type": tgt_type, "priority": src.get("priority") or "",
-            "product": tgt_project, "departments": carried_depts, "status": status,
+            "product": tgt_project, "departments": carried_depts, "location": carried_location, "status": status,
             "reporter": src.get("reporter") or "", "reporterEmail": src.get("reporterEmail") or "",
             # ADDENDUM A2: carry the source's `source` through unchanged (do NOT hardcode "portal").
             # An internally created item must not arrive claiming portal origin; the transfer's own
