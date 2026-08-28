@@ -1024,6 +1024,16 @@ def init_team_db(team: str):
                 c.execute(f"ALTER TABLE todos ADD COLUMN {_col} {_defn}")
             except Exception:
                 pass  # column already exists
+        # TODO-RECUR-1: recurrence on a to-do (none/weekly/biweekly/monthly). NULL/absent = none. A plain
+        # try/except ALTER, NOT a schema_meta marker: the marker guards a one-time DATA BACKFILL (REM-3
+        # stamped reminded_ts on existing rows), and recurrence needs no backfill - null already means none.
+        # The bare ALTER is itself two-worker-race-safe: both gunicorn workers run init_team_db concurrently,
+        # both attempt the ALTER, and the loser catches "duplicate column" here. Same pattern as item_id/
+        # item_key directly above; a marker would guard nothing.
+        try:
+            c.execute("ALTER TABLE todos ADD COLUMN recurrence TEXT")
+        except Exception:
+            pass  # column already exists
         # REM-3: reminded_ts is the fire-once guard - NULL = never fired, a timestamp = fired. Without a
         # one-time BACKFILL, the first page load after deploy would find every existing past-due to-do
         # "never reminded" and flood the bell. We stamp rows that are Done OR already PAST in MT (due_date
@@ -7120,6 +7130,39 @@ def my_watching(auth: dict = Depends(require_auth)):
 # Waiting exist so Stage 2's board columns need no migration.
 TODO_STATUSES = ['Backlog', 'Today', 'Waiting', 'Done']
 _TODO_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+# TODO-RECUR-1: same vocabulary as item recurrence (do NOT invent a second scheme). null/absent = 'none'.
+TODO_RECURRENCE = {'none', 'weekly', 'biweekly', 'monthly'}
+
+def _todo_recurrence(v):
+    """Normalize a recurrence value to one of TODO_RECURRENCE; blank/None -> 'none'; anything else 400."""
+    if v is None or v == "":
+        return "none"
+    if isinstance(v, str) and v in TODO_RECURRENCE:
+        return v
+    raise HTTPException(400, "Invalid recurrence")
+
+def _todo_next_due(prev_due, recurrence):
+    """TODO-RECUR-1: the next occurrence's due date = previous_due + period, then SKIP fully-elapsed cycles
+    so a long-overdue chain jumps to the CURRENT window instead of spawning a still-overdue row (addendum
+    A2 - reuse the item spawn_recurrence loop, NOT single-step). Reuses the item PERIOD_DAYS exactly, so
+    'monthly' is 30 DAYS FLAT (day-based, no calendar-month rule needed; a to-do due the 1st drifts ~5 days
+    a year against the calendar - acceptable and consistent with items, A1). Uses date.today() like the item
+    spawn (a UTC/MT day-boundary difference is immaterial for whole-period skips). Returns None when there
+    is no computable date (no due, unknown recurrence, or unparseable) - the caller then does NOT spawn."""
+    from datetime import date, timedelta
+    PERIOD_DAYS = {"weekly": 7, "biweekly": 14, "monthly": 30}
+    pd = PERIOD_DAYS.get(recurrence)
+    if not pd or not prev_due:
+        return None
+    try:
+        d = date.fromisoformat(prev_due)
+    except ValueError:
+        return None
+    nd = d + timedelta(days=pd)
+    today = date.today()
+    while nd + timedelta(days=pd) <= today:   # skip whole elapsed periods -> land in the current window
+        nd += timedelta(days=pd)
+    return nd.isoformat()
 
 def _todo_due(v):
     """Normalize due_date: None to CLEAR (None or empty string), a YYYY-MM-DD string to set. Anything
@@ -7160,6 +7203,7 @@ def create_todo(body: dict = Body(...), auth: dict = Depends(require_auth)):
     if status not in TODO_STATUSES:
         raise HTTPException(400, "Invalid status")
     due = _todo_due(body.get("due_date"))
+    rec = _todo_recurrence(body.get("recurrence"))   # TODO-RECUR-1: honored so undo-after-delete restores a recurring row intact
     now = datetime.now(timezone.utc).isoformat()
     # TODO-3: a Done row is stamped completed NOW on a normal create, but the completed-log delete's UNDO
     # re-POSTs its snapshot and must restore the ORIGINAL completion time - so honor a caller-provided
@@ -7185,9 +7229,9 @@ def create_todo(body: dict = Body(...), auth: dict = Depends(require_auth)):
                 raise HTTPException(400, "Linked item not found on this team")
             item_key = (json.loads(irow["data"]).get("itemKey") or None)   # derived server-side, not trusted
         cur = c.execute(
-            "INSERT INTO todos(username,title,notes,status,due_date,sort_order,created_ts,updated_ts,completed_ts,item_id,item_key)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (auth["username"], title, (body.get("notes") or ""), status, due, 0, now, now, completed, item_id, item_key))
+            "INSERT INTO todos(username,title,notes,status,due_date,sort_order,created_ts,updated_ts,completed_ts,item_id,item_key,recurrence)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (auth["username"], title, (body.get("notes") or ""), status, due, 0, now, now, completed, item_id, item_key, rec))
         row = c.execute("SELECT * FROM todos WHERE id=?", (cur.lastrowid,)).fetchone()
     return {"todo": dict(row)}
 
@@ -7220,6 +7264,7 @@ def update_todo(tid: int, body: dict = Body(...), auth: dict = Depends(require_a
             if due != cur["due_date"]:
                 reminded = None   # value changed -> fire again on the new date
         notes = (body.get("notes") if "notes" in body else cur["notes"]) or ""
+        rec = cur["recurrence"] if "recurrence" not in body else _todo_recurrence(body.get("recurrence"))   # TODO-RECUR-1
         now = datetime.now(timezone.utc).isoformat()
         # completed_ts: stamped on ENTERING Done, cleared on LEAVING it (independent of due_date)
         completed = cur["completed_ts"]
@@ -7227,14 +7272,38 @@ def update_todo(tid: int, body: dict = Body(...), auth: dict = Depends(require_a
             completed = now
         elif status != "Done":
             completed = None
-        c.execute("UPDATE todos SET title=?, notes=?, status=?, due_date=?, updated_ts=?, completed_ts=?, reminded_ts=? "
-                  "WHERE id=? AND username=?", (title, notes, status, due, now, completed, reminded, tid, auth["username"]))
+        c.execute("UPDATE todos SET title=?, notes=?, status=?, due_date=?, updated_ts=?, completed_ts=?, reminded_ts=?, recurrence=? "
+                  "WHERE id=? AND username=?", (title, notes, status, due, now, completed, reminded, rec, tid, auth["username"]))
         # TODO-3: completing a to-do deletes its reminder notification (delete, not mark-read - the completed
         # log is the durable record, and a snooze button on finished work would re-arm the reminder). Fires
         # only on the transition INTO Done. username in the WHERE (privacy rule 2): a crafted todo_id can
         # never reach another user's notification. todo_id is set only on reminder rows, so this is scoped.
         if status == "Done" and cur["status"] != "Done":
             c.execute("DELETE FROM notifications WHERE todo_id=? AND username=?", (tid, auth["username"]))
+            # TODO-RECUR-1: on completion, a recurring to-do SPAWNS its next occurrence. Same vocabulary and
+            # spawn-on-completion model as items (the completed row stays in the log as the record of what
+            # you did; each occurrence gets its own reminder for free since reminded_ts is per-row).
+            #   Date (A1/A2): next due = due + period, skipping fully-elapsed cycles into the current window.
+            #   Fail-quiet (A4): recurrence with a null due has no computable date -> _todo_next_due returns
+            #     None and we simply do NOT spawn (a 500 on a state the UI prevents is worse), logged so
+            #     "why did my weekly reminder stop" is answerable.
+            #   ATOMIC (A5): this INSERT shares update_todo's transaction with the completion UPDATE and the
+            #     notification DELETE above - a spawn failure rolls the WHOLE completion back. This is the
+            #     DELIBERATE OPPOSITE of the best-effort notification hooks: a notification is ancillary to a
+            #     mutation, but the spawn IS the feature; silently losing the successor would break the chain
+            #     with nothing to show why. A failed completion the user retries beats a vanished successor.
+            #   Privacy (rule 2): the new row is owned by auth["username"] (the TOKEN), never cur["username"].
+            if rec and rec != "none":
+                next_due = _todo_next_due(due, rec)
+                if next_due:
+                    c.execute(
+                        "INSERT INTO todos(username,title,notes,status,due_date,sort_order,created_ts,"
+                        "updated_ts,completed_ts,item_id,item_key,recurrence) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (auth["username"], title, notes, "Today", next_due, 0, now, now, None,
+                         cur["item_id"], cur["item_key"], rec))
+                else:
+                    log.info(f"[TODO-RECUR] to-do {tid} is recurring ({rec}) but has no due date - not "
+                             f"spawning (team '{auth['team']}')")
         row2 = c.execute("SELECT * FROM todos WHERE id=?", (tid,)).fetchone()
     return {"todo": dict(row2)}
 

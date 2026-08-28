@@ -19527,6 +19527,16 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-todo-row:hover .frz-todo-del { opacity:1; }
   .frz-beta .frz-todo-logrow:hover .frz-todo-del { opacity:1; }   /* TODO-3: per-row delete in the completed log, same hover-reveal as the open list */
   .frz-beta .frz-todo-del:hover { color:var(--frz-danger); }
+  /* TODO-RECUR-1: recurrence control. The button lives in the row (.frz-beta scope, --frz-* tokens); the
+     menu is body-appended (above the shell) so it is UNSCOPED and uses production tokens, like the mention menu. */
+  .frz-beta .frz-todo-repeat { background:none; border:0; cursor:pointer; color:var(--frz-text-muted); opacity:.5; padding:0 3px; display:inline-flex; align-items:center; line-height:0; flex-shrink:0; }
+  .frz-beta .frz-todo-row:hover .frz-todo-repeat { opacity:.8; }
+  .frz-beta .frz-todo-repeat.on { color:var(--frz-accent); opacity:1; }
+  .frz-beta .frz-todo-repeat svg { display:block; }
+  .frz-todo-rmenu { position:fixed; z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,.18); padding:4px; min-width:124px; }
+  .frz-todo-ropt { display:block; width:100%; text-align:left; background:none; border:0; cursor:pointer; padding:6px 10px; border-radius:5px; font-size:12px; color:var(--text); }
+  .frz-todo-ropt:hover { background:var(--bg); }
+  .frz-todo-ropt.sel { font-weight:700; color:var(--accent); }
   .frz-beta .frz-todo-foot { margin-top:14px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
   /* TODO-2A: read-only completed log */
   .frz-beta .frz-todo-logday { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:var(--frz-text-muted); margin:14px 0 4px; }
@@ -21772,11 +21782,18 @@ if ('serviceWorker' in navigator) {
       var dateHtml = t.due_date
         ? '<span class="frz-todo-datebtn'+(over?' frz-todo-over':'')+'" role="button" tabindex="0" data-tid="'+t.id+'" data-cur="'+escA(t.due_date)+'" title="Change due date">'+esc(_frzFmtDue(t.due_date))+'</span>'
         : '<span class="frz-todo-adddate" role="button" tabindex="0" data-tid="'+t.id+'">Add date</span>';
+      // TODO-RECUR-1: recurrence control - shown ONLY when a due date exists (required-due gating: no date
+      // means no next date to compute, addendum A4). Muted glyph when none; accent + a "Repeats X" title
+      // when set, so the ↻ is not the only signal.
+      var _rec=(t.recurrence && t.recurrence!=='none') ? t.recurrence : '';
+      var repHtml = t.due_date
+        ? '<button type="button" class="frz-todo-repeat'+(_rec?' on':'')+'" data-tid="'+t.id+'" data-rec="'+escA(_rec||'none')+'" title="'+(_rec?'Repeats '+_rec:'Set repeat')+'" aria-label="'+(_rec?'Repeats '+_rec:'Set repeat')+'">'+_frzRepeatSvg+'</button>'
+        : '';
       return '<div class="frz-todo-row" data-tid="'+t.id+'">'+
         '<input type="checkbox" class="frz-todo-cb" data-tid="'+t.id+'" aria-label="Mark done">'+
         _frzTodoKeyHtml(t)+
         '<span class="frz-todo-title" contenteditable="true" spellcheck="false" data-tid="'+t.id+'">'+esc(t.title)+'</span>'+
-        '<span class="frz-todo-datewrap">'+dateHtml+'</span>'+
+        '<span class="frz-todo-datewrap">'+dateHtml+'</span>'+repHtml+
         '<button type="button" class="frz-todo-del" data-tid="'+t.id+'" title="Delete" aria-label="Delete">&times;</button>'+
       '</div>';
     }).join('');
@@ -21841,6 +21858,25 @@ if ('serviceWorker' in navigator) {
       if(d && d.todo){ var i=_frzTodos.findIndex(function(t){ return t.id===id; }); if(i>=0) _frzTodos[i]=d.todo; _frzPaintTodos(); }
     }).catch(function(){ if(typeof showToast==='function') showToast('Could not save the change','error'); _frzRenderTodos(); });
   }
+  // TODO-RECUR-1: the recurrence control. A ↻ glyph per open row (only when a due date exists), opening a
+  // 4-option menu (None/Weekly/Biweekly/Monthly - the SAME labels as item recurrence). The menu is appended
+  // to <body> (above the shell) so it escapes the list's overflow, so it is intentionally UNSCOPED and uses
+  // production tokens - the same treatment as the @mention menu.
+  var _frzRepeatSvg='<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>';
+  function _frzOpenRepeatMenu(btn, tid, cur){
+    _frzCloseRepeatMenu();
+    var opts=[['none','None'],['weekly','Weekly'],['biweekly','Biweekly'],['monthly','Monthly']];
+    var m=document.createElement('div'); m.className='frz-todo-rmenu'; m.id='frzTodoRMenu';
+    m.innerHTML=opts.map(function(o){ return '<button type="button" class="frz-todo-ropt'+(o[0]===cur?' sel':'')+'" data-v="'+o[0]+'">'+esc(o[1])+'</button>'; }).join('');
+    document.body.appendChild(m);
+    var r=btn.getBoundingClientRect();
+    m.style.top=(r.bottom+4)+'px'; m.style.left=Math.max(6, Math.min(r.left, window.innerWidth-m.offsetWidth-6))+'px';
+    m.addEventListener('click', function(e){ var b=e.target.closest('.frz-todo-ropt'); if(!b) return; _frzCloseRepeatMenu(); _frzTodoPut(tid, { recurrence: b.getAttribute('data-v') }); });
+    setTimeout(function(){ document.addEventListener('click', _frzRepeatAway, true); document.addEventListener('keydown', _frzRepeatEsc, true); }, 0);
+  }
+  function _frzCloseRepeatMenu(){ var m=document.getElementById('frzTodoRMenu'); if(m) m.remove(); document.removeEventListener('click', _frzRepeatAway, true); document.removeEventListener('keydown', _frzRepeatEsc, true); }
+  function _frzRepeatAway(e){ if(!e.target.closest('#frzTodoRMenu') && !e.target.closest('.frz-todo-repeat')) _frzCloseRepeatMenu(); }
+  function _frzRepeatEsc(e){ if(e.key==='Escape') _frzCloseRepeatMenu(); }
   function _frzTodoComplete(id, row){
     // Check = complete. Brief strike-through confirmation (Part 0: the convention stays), then the row
     // leaves the open list into the log. Un-completing from the log is out of scope (retype).
@@ -21911,6 +21947,7 @@ if ('serviceWorker' in navigator) {
           inp.addEventListener('change', function(){ _frzTodoPut(tid, { due_date: inp.value||'' }); });   // clearing the input clears the date
           inp.addEventListener('blur', function(){ if(state.homeTab==='todos'&&_frzTodoView==='open') _frzPaintTodos(); });
           return; }
+        var rep=e.target.closest('.frz-todo-repeat'); if(rep){ e.stopPropagation(); _frzOpenRepeatMenu(rep, +rep.getAttribute('data-tid'), rep.getAttribute('data-rec')||'none'); return; }   // TODO-RECUR-1
         var del=e.target.closest('.frz-todo-del'); if(del){ _frzTodoDelete(+del.getAttribute('data-tid')); return; }
       });
       list.addEventListener('keydown', function(e){
