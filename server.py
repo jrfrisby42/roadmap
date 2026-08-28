@@ -1005,6 +1005,15 @@ def init_team_db(team: str):
             c.execute("ALTER TABLE comments ADD COLUMN source TEXT")
         except Exception:
             pass  # column already exists
+        # COMMENT-EDIT-1: edited_ts marks a comment edited by its author. It is ALSO in the
+        # CREATE TABLE above and, as of this stage, a PRAGMA audit found it present on all four
+        # team DBs with zero schema drift (CREATE union ALTER matches every live DB). This ALTER
+        # is therefore INSURANCE - it matches the parent_id/source pattern directly above and
+        # protects a future team spun from an older snapshot - NOT a fix for a live gap.
+        try:
+            c.execute("ALTER TABLE comments ADD COLUMN edited_ts TEXT")
+        except Exception:
+            pass  # column already exists
         # REM-2: optional item link on a to-do (a Reminder created from the Flag modal). Both NULL for every
         # existing row and every quick-add to-do; only reminders populate them. item_id is authoritative;
         # item_key is a denormalised DISPLAY cache derived server-side from the item's blob (mirrors the
@@ -9462,6 +9471,17 @@ def get_comments(item_id: int, auth: dict = Depends(require_auth)):
         rows = c.execute("SELECT * FROM comments WHERE item_id=? ORDER BY id ASC", (item_id,)).fetchall()
     return [dict(r) for r in rows]
 
+def _comment_has_content(html_body: str) -> bool:
+    """COMMENT-EDIT-1: a comment body is non-empty if it has visible text OR an inline image.
+    Mirrors the client's save-time guard (strip tags, ignore &nbsp;, allow an image-only body).
+    Empty is NOT a delete - deletion is a separate, out-of-scope action - so a blank edit is 422."""
+    if not html_body:
+        return False
+    txt = re.sub(r"<[^>]+>", "", html_body).replace("&nbsp;", " ").strip()
+    if txt:
+        return True
+    return bool(re.search(r"<img\b", html_body, re.I))
+
 @app.post("/api/comments")
 def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin", "editor", "contributor"))):
     team = auth["team"]
@@ -9533,6 +9553,51 @@ def delete_comment(cid: int, auth: dict = Depends(require_role("admin", "editor"
     write_audit(team, "comment:delete", auth["username"], row["item_id"],
                 changes={"comment_id": cid, "author": row["author"]})
     return {"deleted": cid}
+
+@app.patch("/api/comments/{cid}")
+def edit_comment(cid: int, body: dict = Body(...),
+                 auth: dict = Depends(require_role("admin", "editor", "contributor"))):
+    """COMMENT-EDIT-1: a user edits their OWN comment.
+
+    Rule 1 (ownership): the token's username must equal the row's author. There is NO admin
+    override - editing another person's words under their name is worse than the typo it fixes.
+    Rule 2 (marked): edited_ts is stamped so the UI can show an 'edited' marker.
+    Rule 3 (silent): editing fires NO notification. This holds STRUCTURALLY, not by a suppression
+      flag: this path never calls _notify_on_comment and contains no firstResponseAt block, so
+      there is nothing to invert later. A 'quiet mode' flag on the hook could be flipped by a
+      future change and nobody would notice until watchers got pinged on a typo fix; an edit path
+      that simply does not call the hook cannot regress that way.
+
+    PATCH, not Flow's usual PUT: this is a genuine PARTIAL update of one row (body + edited_ts),
+    not a wholesale replace. Flow leans on PUT-with-full-replacement (update_project swaps the whole
+    item blob, and hand-built partial PUTs are a documented hazard), so PATCH here is a deliberate
+    departure that names itself correctly - do not 'tidy' it into a PUT.
+
+    Body is stored verbatim (the client sanitizes on save, exactly as add_comment does)."""
+    team = auth["team"]
+    new_body = body.get("body") or ""
+    # Empty is NOT a delete (deletion is out of scope) - reject a blank save.
+    if not _comment_has_content(new_body):
+        raise HTTPException(422, "Comment cannot be empty")
+    with db(team) as c:
+        row = c.execute("SELECT id, item_id, author FROM comments WHERE id=?", (cid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Comment not found")
+        # Contributor scope: may only act on an in-scope item (admin/editor bypass) - same as delete.
+        if auth.get("role") == "contributor":
+            require_item_scope(c, auth, _get_item_blob(c, row["item_id"]))
+        # Ownership - authoritative, no admin override (rule 1).
+        if row["author"] != auth["username"]:
+            raise HTTPException(403, "You can only edit your own comments")
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        c.execute("UPDATE comments SET body=?, edited_ts=? WHERE id=?", (new_body, ts, cid))
+        updated = c.execute("SELECT * FROM comments WHERE id=?", (cid,)).fetchone()
+    # write_audit is the administrative record and an edit is a mutation, so we log one (the
+    # activity feed, a surface people read daily, deliberately gets NOTHING). No _notify_on_comment,
+    # no firstResponseAt touch - rule 3.
+    write_audit(team, "comment:edit", auth["username"], row["item_id"],
+                changes={"comment_id": cid})
+    return dict(updated)
 
 # ── Recurrence: spawn next occurrence ─────────────────────────────────────────
 def _get_jira_children(ticket: str) -> list:
