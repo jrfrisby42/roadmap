@@ -185,11 +185,11 @@ Per-view configuration:
 
 | View      | Shared chips                        | Pinned right                    |
 |-----------|-------------------------------------|---------------------------------|
-| Gantt     | Owner · Type · Status               | Group by · Legend · Capacity    |
-| Kanban    | Owner · Type                        | Hide empty columns (toggle)     |
-| List      | Owner · Assignee · Type · Status    | Columns (picker)                |
-| Planning  | Owner · Statuses                    | New session · History           |
-| Dashboard | Owner · Range (date-range chip)     | —                               |
+| Gantt     | Team · Type · Status               | Group by · Legend · Capacity    |
+| Kanban    | Team · Type                        | Hide empty columns (toggle)     |
+| List      | Team · Assignee · Type · Status    | Columns (picker)                |
+| Planning  | Team · Statuses                    | New session · History           |
+| Dashboard | Team · Range (date-range chip)     | —                               |
 
 Notes:
 - Project is gone from this row (lives in the rail).

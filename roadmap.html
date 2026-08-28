@@ -842,7 +842,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     </select>
     <span class="ctrl-lbl" id="groupByLbl">Group</span>
     <select id="groupBy">
-      <option value="developer">Owner</option>
+      <option value="developer">Team</option>
       <option value="assignee">Assignee</option>
       <option value="status">Status</option>
       <option value="priority">Priority</option>
@@ -857,9 +857,9 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
       </div>
     </div>
-    <span class="ctrl-lbl">Owner</span>
+    <span class="ctrl-lbl">Team</span>
     <div class="ms-wrap" id="devDropWrap">
-      <button class="ms-btn" id="devDropBtn" type="button">All Owners ▾</button>
+      <button class="ms-btn" id="devDropBtn" type="button">All Teams ▾</button>
       <div class="ms-panel" id="devDropPanel">
         <label class="ms-opt" data-val="all"><input type="checkbox" value="all" checked> All</label>
       </div>
@@ -1183,7 +1183,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     <span style="font-size:12px;color:var(--muted)">Set</span>
     <select id="listBulkField" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);outline:none">
       <option value="status">Status</option>
-      <option value="dev">Owner</option>
+      <option value="dev">Team</option>
       <option value="assignee">Assignee</option>
       <option value="sprintId">Sprint</option>
       <option value="priority">Priority</option>
@@ -1204,7 +1204,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
           <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap">Description</th>
           <th class="list-sort" data-sort="status" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Status<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="priority" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Priority<span class="sort-arrow"></span></th>
-          <th class="list-sort" data-sort="owner" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Owner<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="owner" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Team<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="assignee" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Assignee<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="story_points" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap;text-align:center">Points<span class="sort-arrow"></span></th>
           <th class="list-sort" data-sort="sprint_id" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Sprint<span class="sort-arrow"></span></th>
@@ -1630,7 +1630,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         </div>
       </div>
       <div class="form-row" style="margin-bottom:0">
-        <label>Owner</label>
+        <label>Team</label>
         <select id="fDev"></select>
       </div>
       <div class="form-row" style="margin-bottom:0">
@@ -1919,7 +1919,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       </div>
     </div>
     <div class="admin-tabs">
-      <button class="admin-tab active" data-tab="devTab">Owners</button>
+      <button class="admin-tab active" data-tab="devTab">Teams</button>
       <button class="admin-tab" data-tab="productTab">Spaces</button>
       <button class="admin-tab" data-tab="typesTab">Types</button>
       <button class="admin-tab" data-tab="statusTab">Statuses</button>
@@ -1935,7 +1935,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     <div class="admin-pane active" id="devTab">
       <div class="dev-list" id="devList"></div>
       <div class="add-dev-row" style="display:flex;gap:8px;align-items:center">
-        <input type="text" id="newDevName" placeholder="New owner or team name…" style="flex:1">
+        <input type="text" id="newDevName" placeholder="New team name…" style="flex:1">
         <input type="number" min="1" max="20" id="newDevCap" placeholder="Capacity" style="width:80px;padding:7px 8px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none" title="Max concurrent items">
         <button class="btn-add-dev" id="addDevBtn">+ Add</button>
       </div>
@@ -2104,8 +2104,8 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         </select>
       </div>
       <div style="margin-top:8px;display:none" id="newUserOwnerWrap">
-        <select id="newUserOwner" class="dev-edit-inp" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-family:'Lato',sans-serif;outline:none;color:var(--text)"><option value="">- No owner pod -</option></select>
-        <div style="font-size:10px;color:var(--muted);margin-top:3px">Owner pod - buckets this user's items &amp; assignments to an owner. Editors are also limited to that owner's items.</div>
+        <select id="newUserOwner" class="dev-edit-inp" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-family:'Lato',sans-serif;outline:none;color:var(--text)"><option value="">- No team -</option></select>
+        <div style="font-size:10px;color:var(--muted);margin-top:3px">Team - buckets this user's items and assignments to a team. An editor with a team set sees only that team's items; leave it empty to see everything.</div>
       </div>
       <div style="margin-top:8px" id="newUserPassWrap">
         <input type="password" id="newUserPass" placeholder="Password…" class="dev-edit-inp" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-family:'Lato',sans-serif;outline:none">
@@ -2659,7 +2659,7 @@ function _scenarioBuildCommitPlan(){
     try { if(typeof window._frzSprintName === 'function') sname = window._frzSprintName(p.sprintId); } catch(e){}
     var parts = [];
     if(touchedSprint) parts.push(inSprint ? ('sprint ' + (sname || p.sprintId)) : 'removed from sprint');
-    if(touchedOwner)  parts.push('owner -> ' + (p.dev || '(none)'));
+    if(touchedOwner)  parts.push('team -> ' + (p.dev || '(none)'));
     var blob = {...p};                          // full overlay blob; `due` untouched (FRAZ-221 boundary)
     // Phase 2a (discard-only for dates): a committed item (sprint/owner) may also carry an
     // exploratory dateShift in the overlay. Never write those - revert every dateShift-touched
@@ -3838,7 +3838,7 @@ function updateCapacityToggleBtn(){
   if(!available && _showCapacityView) _showCapacityView = false;
   btn.title       = available
     ? (_showCapacityView ? 'Hide capacity graph and echo rows' : 'Show capacity graph and echo rows')
-    : 'Capacity view is only available when grouped by Owner';
+    : 'Capacity view is only available when grouped by Team';
   btn.style.opacity       = available ? '1' : '0.35';
   btn.style.cursor        = available ? 'pointer' : 'not-allowed';
   btn.style.pointerEvents = available ? '' : 'none';
@@ -5206,7 +5206,7 @@ function warnIfActiveWithoutOwner(){
     const hint = document.createElement('div');
     hint.id = 'activeOwnerHint';
     hint.style.cssText = 'font-size:11px;color:var(--accent2);font-weight:700;margin-top:3px';
-    hint.textContent = 'An Owner must be assigned before moving to an Active status.';
+    hint.textContent = 'A Team must be assigned before moving to an Active status.';
     devEl?.parentNode?.appendChild(hint);
     setTimeout(()=> hint.remove(), 4000);
   }
@@ -6745,7 +6745,7 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
     const devEl = document.getElementById('fDev');
     devEl?.classList.add('field-error');
     setTimeout(()=> devEl?.classList.remove('field-error'), 2000);
-    showToast('Cannot move to an Active status - assign an Owner first.', 'error');
+    showToast('Cannot move to an Active status - assign a Team first.', 'error');
     return;
   }
 
@@ -7685,7 +7685,7 @@ function startEditDev(i){
     (memN===0 ? ' <span style="color:var(--accent2)">(no members assigned - capacity is 0)</span>' : '');
   item.innerHTML=`
     <div style="display:flex;flex-direction:column;gap:5px;flex:1">
-      <input class="dev-edit-inp" id="dei_${i}" value="${escA(owner)}" placeholder="Owner name">
+      <input class="dev-edit-inp" id="dei_${i}" value="${escA(owner)}" placeholder="Team name">
       <label style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:var(--muted)">
         <input type="checkbox" id="dei_derive_${i}" ${derived?'checked':''} onchange="_toggleDeriveCap(${i})"> Derive capacity from assigned members
       </label>
@@ -8027,7 +8027,7 @@ function renderUserList(){
       role==='editor' ? 'background:rgba(34,185,110,0.12);color:#22b96e' :
                         'background:rgba(0,0,0,0.06);color:var(--muted)'}">${role}</span>`;
     const ownerPill = role!=='viewer' && ownerFilter
-      ? ` <span style="font-size:10px;padding:1px 6px;border-radius:8px;background:rgba(0,120,180,0.1);color:#0078b4;font-weight:700" title="${role==='editor'?'Scoped to this owner (buckets items &amp; assignments)':'Owner pod (buckets items &amp; assignments; does not limit view)'}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> ${esc(ownerFilter)}</span>` : '';
+      ? ` <span style="font-size:10px;padding:1px 6px;border-radius:8px;background:rgba(0,120,180,0.1);color:#0078b4;font-weight:700" title="${role==='editor'?'Scoped to this team (buckets items &amp; assignments)':'Team (buckets items &amp; assignments; does not limit view)'}"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> ${esc(ownerFilter)}</span>` : '';
     const editBtn   = canEdit  ? `<button class="btn-ic" onclick="startEditUser(${i})" title="Edit"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>` : '';
     const deleteBtn = canDelete ? `<button class="btn-ic del" onclick="deleteUser(${i})" title="Delete"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`
       : isBuiltin ? `<span class="btn-ic" style="opacity:0.35;cursor:default" title="Built-in"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>` : '';
@@ -8061,7 +8061,7 @@ function _syncNewUserOwner(){
   const sel    = document.getElementById('newUserOwner');
   if(!roleEl || !wrap || !sel) return;
   const prev = sel.value;
-  sel.innerHTML = '<option value="">- No owner pod -</option>' +
+  sel.innerHTML = '<option value="">- No team -</option>' +
     (developers||[]).map(d => `<option value="${escA(d)}">${esc(d)}</option>`).join('');
   if(prev) sel.value = prev;
   wrap.style.display = roleEl.value !== 'viewer' ? '' : 'none';
@@ -8087,7 +8087,7 @@ function startEditUser(i){
     `<option value="${escA(d)}" ${ownerFilterVal===d?'selected':''}>${d||'- All owners -'}</option>`).join('');
   const ownerRow = canChangeRole
     ? `<div id="uei_owner_wrap_${i}" style="${role==='viewer'?'display:none':''}">
-         <label style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:3px">Owner Pod <span style="font-weight:400;text-transform:none">(optional - buckets this user's items &amp; assignments to an owner; editors are also limited to that owner's items)</span></label>
+         <label style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:3px">Team <span style="font-weight:400;text-transform:none">(optional - buckets this user's items and assignments to a team; an editor with a team set sees only that team's items)</span></label>
          <select class="dev-edit-inp" id="uei_owner_${i}" style="padding:5px 8px">${ownerOptions}</select>
        </div>`
     : role !== 'viewer' && ownerFilterVal
@@ -8298,7 +8298,7 @@ function renderStatusList(){
   list.innerHTML = orderHint + `<div style="display:flex;align-items:center;padding:6px 13px;border-bottom:2px solid var(--border);font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;gap:8px">
     <span style="width:20px"></span>
     <span style="flex:1">Status</span>
-    <span style="width:56px;text-align:center" title="Drives locking rules when item has an owner">Active</span>
+    <span style="width:56px;text-align:center" title="Drives locking rules when item has a team">Active</span>
     <span style="width:60px;text-align:center" title="Marks completed state - auto-clears activities">Terminal</span>
     <span style="width:80px;text-align:center" title="Excludes from capacity conflict checks">Ignore<br>Conflicts</span>
     <span style="width:60px;text-align:center" title="Default status for new items (one only)">Default</span>
@@ -8491,7 +8491,7 @@ function renderAssignmentTypesList(){
   const list = document.getElementById('assignmentTypesList'); if(!list) return;
   _syncMaintDutyTypeSel();
   const types = _assignmentTypes || [];
-  const hint = `<div style="padding:8px 13px 10px;font-size:11px;color:var(--muted);line-height:1.5">Drag the <b>⠿</b> handle to reorder - display order controls calendar stacking and conflict priority. <b>Blocks Work</b> warns against overlapping tickets; <b>Exclusive</b> warns against another entry overlapping. <b>Capacity Impact</b> is subtracted from the owner's effective capacity.</div>`;
+  const hint = `<div style="padding:8px 13px 10px;font-size:11px;color:var(--muted);line-height:1.5">Drag the <b>⠿</b> handle to reorder - display order controls calendar stacking and conflict priority. <b>Blocks Work</b> warns against overlapping tickets; <b>Exclusive</b> warns against another entry overlapping. <b>Capacity Impact</b> is subtracted from the team's effective capacity.</div>`;
   if(!types.length){ list.innerHTML = hint + '<div class="dev-empty">No entry types yet.</div>'; return; }
   const header = `<div style="display:flex;align-items:center;padding:6px 13px;border-bottom:2px solid var(--border);font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;gap:8px">
     <span style="width:20px"></span>
@@ -8501,7 +8501,7 @@ function renderAssignmentTypesList(){
     <span style="width:52px;text-align:center" title="Default type for new entries (one only)">Default</span>
     <span style="width:60px;text-align:center" title="Warns against overlapping ticket work">Blocks<br>Work</span>
     <span style="width:64px;text-align:center" title="Warns against another exclusive entry overlapping">Exclusive</span>
-    <span style="width:74px;text-align:center" title="Units subtracted from the owner's capacity">Capacity<br>Impact</span>
+    <span style="width:74px;text-align:center" title="Units subtracted from the team's capacity">Capacity<br>Impact</span>
     <span style="width:58px;text-align:center" title="Tickets may overlap this entry">Allow<br>Tickets</span>
     <span style="width:64px;text-align:center" title="Other entries may overlap this one">Allow<br>Entries</span>
     <span style="width:58px;text-align:center" title="Show on the Team Calendar">On<br>Calendar</span>
@@ -10194,7 +10194,7 @@ function populateAcOwnerFilter(){
   const sel = document.getElementById('acFilterOwner');
   if(!sel) return;
   const cur = sel.value;
-  sel.innerHTML = '<option value="">All Owners</option>' +
+  sel.innerHTML = '<option value="">All Teams</option>' +
     developers.map(d=>`<option value="${escA(d)}">${esc(d)}</option>`).join('');
   sel.value = cur;
 }
@@ -10344,7 +10344,7 @@ function renderAcHistoryDiff(a){
 
   const FIELD_LABELS = {
     due:'Due Date', start:'Start Date', dueWeeks:'Estimate',
-    status:'Status', priority:'Priority', owner:'Owner',
+    status:'Status', priority:'Priority', owner:'Team',
     deferReason:'Defer Reason', deferred:'Deferred'
   };
   const PRIO = {1:'Urgent',2:'High',3:'Medium',4:'Low',5:'-'};
@@ -10407,7 +10407,7 @@ function renderAcHistory(){
 
   body.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:11px">
     <thead><tr style="background:var(--surface)">
-      ${['Date','Type','Item','Owner','Changes / Action','By'].map(h=>
+      ${['Date','Type','Item','Team','Changes / Action','By'].map(h=>
         `<th style="text-align:left;padding:7px 10px;border-bottom:2px solid var(--border);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap">${h}</th>`
       ).join('')}
     </tr></thead>
@@ -11212,7 +11212,7 @@ const _LIST_COL_DEF = {
                 td:(it)=>`<td data-col="status" style="padding:7px 10px;white-space:nowrap">${it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(it.status)}</span>` : '-'}</td>` },
   priority:   { label:'Priority',    sort:'priority',
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${(it.priority && PRIO_LABELS[it.priority]) ? `<span style="background:${PRIO_COLORS[it.priority]}22;color:${PRIO_COLORS[it.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[it.priority])}</span>` : '-'}</td>` },
-  owner:      { label:'Owner',       sort:'owner',
+  owner:      { label:'Team',       sort:'owner',
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${_listCell(it.dev)}</td>` },
   assignee:   { label:'Assignee',    sort:'assignee',
                 // LIST-VISUAL-1: render an avatar disc (full name on hover). Sort still keys on the server
@@ -11483,7 +11483,7 @@ function _groupBadge(field, value){
 function _listGroupLabel(field, value){
   if(value===null || value===''){
     return '<span style="color:var(--muted)">' + esc(
-      field==='assignee' ? 'Unassigned' : field==='owner' ? 'No owner' : field==='priority' ? 'No priority'
+      field==='assignee' ? 'Unassigned' : field==='owner' ? 'No team' : field==='priority' ? 'No priority'
       : field==='product' ? 'No project' : field==='type' ? 'No type' : field==='status' ? 'No status' : 'None') + '</span>';
   }
   // GANTT-GROUP-1: status/priority pills now come from the shared _groupBadge (byte-identical to the prior
@@ -12089,7 +12089,7 @@ function renderDashboard(){
   const row2 = dashSection('Release History', `${releasedItems.length} item${releasedItems.length!==1?'s':''} released`) +
     `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden">
       ${releasedItems.length ? `<table style="width:100%;border-collapse:collapse">
-        <thead><tr style="background:var(--surface)">${['Item','Owner','Type','Release Date','Version','Jira Tickets'].map(h=>
+        <thead><tr style="background:var(--surface)">${['Item','Team','Type','Release Date','Version','Jira Tickets'].map(h=>
           `<th style="text-align:left;padding:7px 10px;border-bottom:2px solid var(--border);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap">${h}</th>`).join('')}</tr></thead>
         <tbody>${relRows}</tbody>
       </table>`
@@ -12169,7 +12169,7 @@ function renderDashboard(){
   // still shows it as the section's primary content.
   const legacyMOBody = (recurringParents.length ? `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden">
       <table style="width:100%;border-collapse:collapse">
-        <thead><tr style="background:var(--surface)">${['Item / Cycle','Start','Recurrence','Owner','Children'].map(h=>
+        <thead><tr style="background:var(--surface)">${['Item / Cycle','Start','Recurrence','Team','Children'].map(h=>
           `<th style="text-align:left;padding:7px 10px;border-bottom:2px solid var(--border);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">${h}</th>`).join('')}</tr></thead>
         <tbody>${recurRows}</tbody>
       </table>
@@ -12215,7 +12215,7 @@ function renderDashboard(){
   const row5 = dashSection('Team Execution') +
     `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden">
       <table style="width:100%;border-collapse:collapse">
-        <thead><tr style="background:var(--surface)">${['Owner','Total','Active','Done','At Risk','Eff. Capacity','Utilization','Status'].map(h=>
+        <thead><tr style="background:var(--surface)">${['Team','Total','Active','Done','At Risk','Eff. Capacity','Utilization','Status'].map(h=>
           `<th style="text-align:left;padding:7px 10px;border-bottom:2px solid var(--border);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;white-space:nowrap">${h}</th>`).join('')}</tr></thead>
         <tbody>${ownerRows||'<tr><td colspan="8" style="padding:20px;text-align:center;color:var(--muted)">No owners with items</td></tr>'}</tbody>
       </table>
@@ -12270,7 +12270,7 @@ function renderDashboard(){
   const row8 = withActual.length ? dashSection('Estimate Accuracy', estAccPct!==null?estAccPct+'% within 20%':'') +
     `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden">
       <table style="width:100%;border-collapse:collapse">
-        <thead><tr style="background:var(--surface)">${['Item','Owner','Estimated','Actual','Variance'].map((h,i)=>
+        <thead><tr style="background:var(--surface)">${['Item','Team','Estimated','Actual','Variance'].map((h,i)=>
           `<th style="text-align:${i<2?'left':'center'};padding:7px 10px;border-bottom:2px solid var(--border);font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px">${h}</th>`).join('')}</tr></thead>
         <tbody>${estRows}</tbody>
       </table>
@@ -12471,7 +12471,7 @@ function promptKanbanOwner(p){
     const bg = document.createElement('div');
     bg.style.cssText = 'position:fixed;inset:0;background:rgba(20,40,63,.38);z-index:100002;display:flex;align-items:center;justify-content:center';
     bg.innerHTML = `<div style="background:var(--surface,#fff);border-radius:12px;padding:20px 22px;width:340px;max-width:92vw;box-shadow:0 14px 44px rgba(20,40,63,.28);font-family:'Lato',sans-serif">
-      <div style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:4px">Assign an owner</div>
+      <div style="font-size:15px;font-weight:800;color:var(--text);margin-bottom:4px">Assign a team</div>
       <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Moving &ldquo;<strong>${esc(p.name)}</strong>&rdquo; into an active status. Who&rsquo;s the owner?</div>
       <select id="_kbOwnerSel" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:14px;margin-bottom:16px">
         <option value="">- Select owner -</option>
@@ -13225,7 +13225,7 @@ function buildTooltipHTML(p){
 
   return `<strong>${esc(p.name)}</strong>
     <div class="tip-row"><span>Project</span><span>${esc(p.product||'-')}</span></div>
-    <div class="tip-row"><span>Owner</span><span>${esc(p.dev||'-')}</span></div>
+    <div class="tip-row"><span>Team</span><span>${esc(p.dev||'-')}</span></div>
     <div class="tip-row"><span>Status</span><span>${esc(p.status||'-')}</span></div>
     <div class="tip-row"><span>Start</span><span>${fmtD(parseD(p.start))}</span></div>
     <div class="tip-row"><span>Time Est.</span><span>${estLabel}</span></div>
@@ -15481,7 +15481,7 @@ function openPlanningSessions(){
         ${changeRows ? `<table style="width:100%;border-collapse:collapse">
           <thead><tr style="background:var(--surface)">
             <th style="text-align:left;padding:5px 10px;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;border-bottom:1px solid var(--border)">Item</th>
-            <th style="text-align:left;padding:5px 10px;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;border-bottom:1px solid var(--border)">Owner</th>
+            <th style="text-align:left;padding:5px 10px;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;border-bottom:1px solid var(--border)">Team</th>
             <th style="text-align:left;padding:5px 10px;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;border-bottom:1px solid var(--border)">Change</th>
           </tr></thead>
           <tbody>${changeRows}</tbody>
@@ -15838,7 +15838,7 @@ function renderCapacityHeatmap(items){
 
   return `<table style="border-collapse:collapse;width:100%;font-size:12px">
     <thead><tr>
-      <th style="padding:6px 12px;font-size:10px;font-weight:700;color:var(--muted);text-align:left;border-bottom:2px solid var(--border);white-space:nowrap">Owner / Today</th>
+      <th style="padding:6px 12px;font-size:10px;font-weight:700;color:var(--muted);text-align:left;border-bottom:2px solid var(--border);white-space:nowrap">Team / Today</th>
       ${headerCells}
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -16055,7 +16055,7 @@ async function saveItemPageField(field, value, opts={}){
   if(field==='priority') value = (value===''||value==null) ? '' : parseInt(value);
   // Preserve the rule: can't move to an active status without an owner.
   if(field==='status' && isActiveStatus(value) && !p.dev){
-    if(typeof showToast==='function') showToast('Assign an Owner before moving to an active status.','error');
+    if(typeof showToast==='function') showToast('Assign a Team before moving to an active status.','error');
     refresh(p); return;
   }
   // BLOCK-REASON-2: capture the reason on an interactive block. BOTH the item-page status control
@@ -16532,7 +16532,7 @@ function renderItemPage(p){
 
   document.getElementById('ipFields').innerHTML = [
     ipEditField('status',     'Status',       p.status ? `<span class="${statusCls(p.status)}" style="background:none;border:none;padding:0">${esc(p.status)}</span>` : '', 'select', {bold:true, readonly: RESERVED_TERMINAL_STATUSES.has(p.status)}),   // POLISH-2: reserved statuses (Transferred/Duplicate) are locked - no inline picker (server-enforced; use "Not a duplicate" to reopen)
-    ipEditField('dev',        'Owner',        esc(p.dev||''),    'select', {bold:true}),
+    ipEditField('dev',        'Team',         esc(p.dev||''),    'select', {bold:true}),
     ipEditField('assignee',   'Assignee',     esc(p.assignee ? displayName(p.assignee) : ''), 'select'),
     ipEditField('type',       'Type',         esc(p.type||''),   'select'),
     ipEditField('priority',   'Priority',     p.priority ? `<span style="background:${PRIO_COLORS[p.priority]}22;color:${PRIO_COLORS[p.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[p.priority])}</span>` : '', 'select'),   // pill treatment: reuse the production priority badge from List view (canonical) - same PRIO_COLORS, unmodified
@@ -18345,7 +18345,7 @@ if ('serviceWorker' in navigator) {
         <option value="Admin Override">Admin Override</option>
       </select>
       <select id="acFilterOwner" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:5px;background:var(--surface);font-family:'Lato',sans-serif">
-        <option value="">All Owners</option>
+        <option value="">All Teams</option>
       </select>
       <button onclick="renderAcHistory()" style="padding:5px 10px;font-size:12px;background:var(--accent);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:'Lato',sans-serif;font-weight:700">Filter</button>
     </div>
@@ -20201,7 +20201,7 @@ if ('serviceWorker' in navigator) {
   }
   // chip key -> production panel + selection getter + URL param
   var CHIPS = {
-    owner:   { label:'Owner',    panel:'devDropPanel',      get:function(){ return _g('getSelectedDevs'); },      param:'owner' },
+    owner:   { label:'Team',    panel:'devDropPanel',      get:function(){ return _g('getSelectedDevs'); },      param:'owner' },
     type:    { label:'Type',     panel:'typeDropPanel',     get:function(){ return _g('getSelectedTypes'); },     param:'type' },
     status:  { label:'Status',   panel:'statusDropPanel',   get:function(){ return _g('getSelectedStatuses'); },  param:'status' },
     assignee:{ label:'Assignee', panel:'assigneeDropPanel', get:function(){ return _g('getSelectedAssignees'); }, param:'assignee' },
@@ -20441,7 +20441,7 @@ if ('serviceWorker' in navigator) {
     if(!sprint || !sprint.maintenanceDutyPod) return '';
     if(!_call('isMaintenanceType', p.type)) return '';
     var pod=sprint.maintenanceDutyPod, own=(p.dev||'');
-    if(!own) return '<div class="frz-rd-info frz-duty-note">Owner → <b>'+esc(pod)+'</b> (maintenance duty)</div>';
+    if(!own) return '<div class="frz-rd-info frz-duty-note">Team → <b>'+esc(pod)+'</b> (maintenance duty)</div>';
     if(own!==pod) return '<div class="frz-rd-info frz-duty-note">'+esc(p.itemKey||p.name||'This item')+' is owned by <b>'+esc(own)+'</b> - it will not count as '+esc(pod)+"'s duty work</div>";
     return '';
   }
@@ -20462,12 +20462,12 @@ if ('serviceWorker' in navigator) {
   function _ownerList(){ return (_val('developers',[])||[]); }
   function _dutySelectHtml(id, cur){
     var opts='<option value="">None</option>'+_ownerList().map(function(o){ return '<option value="'+escA(o)+'"'+((cur||'')===o?' selected':'')+'>'+esc(o)+'</option>'; }).join('');
-    return '<div style="margin-bottom:12px"><label class="frz-lbl">Maintenance duty <span style="font-weight:400;text-transform:none;color:var(--frz-text-muted)">(owner pod on call this sprint)</span></label>'+
+    return '<div style="margin-bottom:12px"><label class="frz-lbl">Maintenance duty <span style="font-weight:400;text-transform:none;color:var(--frz-text-muted)">(team on call this sprint)</span></label>'+
       '<select class="frz-fld" id="'+id+'">'+opts+'</select><div class="frz-snap-hint" id="'+id+'Warn" hidden></div></div>';
   }
   function _dutyWarnCheck(selId){
     var sel=document.getElementById(selId), warn=document.getElementById(selId+'Warn'); if(!sel||!warn) return;
-    if(sel.value && !_dutyType()){ warn.hidden=false; warn.textContent='No Maintenance Duty assignment type configured - the field saves, but starting the sprint creates no calendar reservation.'; }
+    if(sel.value && !_dutyType()){ warn.hidden=false; warn.textContent='No Maintenance Duty entry type configured - the field saves, but starting the sprint creates no calendar reservation.'; }
     else warn.hidden=true;
   }
   // Create/update/remove the sprint's duty assignment to match maintenanceDutyPod + dates.
@@ -20716,7 +20716,7 @@ if ('serviceWorker' in navigator) {
         '<div id="frzHomeCount" class="frz-mw-count"></div>'+
         '<table class="frz-mw-table"><thead><tr>'+
           '<th class="frz-mw-cb"></th><th>Key</th><th>Type</th><th>Name</th><th>Status</th>'+
-          '<th>Priority</th><th>Owner</th><th>Assignee</th><th style="text-align:center">Pts</th><th>Sprint</th>'+
+          '<th>Priority</th><th>Team</th><th>Assignee</th><th style="text-align:center">Pts</th><th>Sprint</th>'+
         '</tr></thead><tbody id="frzHomeBody"></tbody></table>'+
         // TODO-1: the To-dos tab is a THIRD sibling in the wrap (never innerHTML-replaces it, never writes
         // #frzHomeCount). It has its OWN count/empty nodes reusing the .frz-mw-count/.frz-mw-empty classes.
@@ -21346,7 +21346,7 @@ if ('serviceWorker' in navigator) {
       listgroup:'Group by'   // GROUPBY-2: List grouping (its own control; independent of the Gantt 'groupby')
     };
     var label = map[o]||o;
-    if (o==='groupby'){ var gb=document.getElementById('groupBy'); var cur=gb?(gb.options[gb.selectedIndex]||{}).text:'Owner'; label='Group by: '+(cur||'Owner'); }
+    if (o==='groupby'){ var gb=document.getElementById('groupBy'); var cur=gb?(gb.options[gb.selectedIndex]||{}).text:'Team'; label='Group by: '+(cur||'Team'); }
     if (o==='listgroup'){ var lg=_call('_listGetGroup')||''; label='Group by'+(lg?': '+(_FRZ_GROUP_LABELS[lg]||lg):''); }
     var activeStyle = (o==='hideEmpty' && _betaHideEmpty) || (o==='flagged' && _betaFlagged) || (o==='whatif' && _val('_scenarioActive',false)) || (o==='listgroup' && _call('_listGetGroup'))
       ? ' style="border-color:var(--frz-accent);color:var(--frz-accent);background:var(--frz-accent-soft)"' : '';
@@ -22300,7 +22300,7 @@ if ('serviceWorker' in navigator) {
     {h:'Project',        k:'product'},   // 'products' config = the app's Projects (Fraznet/HubSpot/...); labelled Project to match the rail
     {h:'Type',           k:'type',           always:true},
     {h:'Priority',       k:'priority'},
-    {h:'Owner',          k:'owner'},
+    {h:'Team',          k:'owner'},
     {h:'Assignee',       k:'assigneeName'},
     {h:'Department',     k:'dept'},
     {h:'Requested By',   k:'requestedBy'},
@@ -22517,7 +22517,7 @@ if ('serviceWorker' in navigator) {
   // ── Group-by pivot. groupKey is one of owner|assignee|dept|status|type|product|priority.
   //    Returns {rows:[{k, count, open, overdue, pctOverdue, avgAge, medRes, avgResp}], total}. ──
   var _RPT_GROUPS = {
-    owner:    {label:'Owner',      fn:function(r){ return r.owner || '(no owner)'; }},
+    owner:    {label:'Team',      fn:function(r){ return r.owner || '(no owner)'; }},
     assignee: {label:'Assignee',   fn:function(r){ return r.assignee ? (r.assigneeName||r.assignee) : '(unassigned)'; }},
     dept:     {label:'Department', fn:function(r){ return r.dept || '(none)'; }},
     status:   {label:'Status',     fn:function(r){ return r.status || '(none)'; }},
@@ -23075,7 +23075,7 @@ if ('serviceWorker' in navigator) {
         '</button>';
     }
     host.innerHTML =
-      chip('owner','Owner')+chip('user','User')+chip('type','Type')+chip('cap','Capacity')+
+      chip('owner','Team')+chip('user','User')+chip('type','Type')+chip('cap','Capacity')+
       ((_calSharedOwner()||f.user||f.type||f.cap) ? '<button class="frz-chip frz-chip--ghost" id="frzCalFClear">Clear</button>' : '');
     host.querySelectorAll('[data-cf]').forEach(function(btn){
       btn.addEventListener('click', function(e){
@@ -23350,8 +23350,8 @@ if ('serviceWorker' in navigator) {
         '<label class="frz-asg-lbl">Type</label><select id="frzAsgType" class="frz-asg-inp"></select>'+
         '<div class="frz-asg-row">'+
           '<div><label class="frz-asg-lbl">User</label><select id="frzAsgUser" class="frz-asg-inp"></select></div>'+
-          // TERM-2-PATCH-1: "Owner (capacity pool)" KEEPS its parenthetical - a deliberate exception to TERM-1's "(Pod)" removal. The row above is USER (a person); this field is the capacity pool the entry draws from, so "Owner" alone would be ambiguous on this one screen. Do not "finish" TERM-1 here.
-          '<div><label class="frz-asg-lbl">Owner (capacity pool)</label><select id="frzAsgOwner" class="frz-asg-inp"></select></div>'+
+          // TERM-3: "Team (capacity pool)" KEEPS its parenthetical - a deliberate exception (was "Owner (capacity pool)" pre-TERM-3, "Owner (Pod)" pre-TERM-1). The row above is USER (a person); this field is the capacity pool the entry draws from, so "Team" alone would be ambiguous on this one screen. Do not remove the clarifier here.
+          '<div><label class="frz-asg-lbl">Team (capacity pool)</label><select id="frzAsgOwner" class="frz-asg-inp"></select></div>'+
         '</div>'+
         '<div class="frz-asg-row">'+
           '<div><label class="frz-asg-lbl">Start</label><input type="date" id="frzAsgStart" class="frz-asg-inp"></div>'+
@@ -23694,7 +23694,7 @@ if ('serviceWorker' in navigator) {
         }
       }
     }
-    ['Assignee','Owner','Priority','Type'].forEach(function(l){ mv(dBody, _frzFieldByLabel(fields,l)); });   // TERM-1: 'Owner (Pod)'->'Owner' in lockstep with ipEditField('dev','Owner')
+    ['Assignee','Team','Priority','Type'].forEach(function(l){ mv(dBody, _frzFieldByLabel(fields,l)); });   // TERM-3: Owner->Team in lockstep with ipEditField('dev','Team') + panel row
     // Priority: converge its pill GEOMETRY on the status pill (same height/padding/radius/caret)
     // so the two triage fields read alike. COLORS are untouched - the badge keeps its own
     // PRIO_COLORS from the ipEditField display; only size + the editable-caret change here. The
@@ -24919,7 +24919,7 @@ if ('serviceWorker' in navigator) {
   // Gantt's groupByMenu. Independent of the Gantt's #groupBy (different element, different options).
   // Drives the classic List's grouping via the cross-block bridge (_listSetGroup); options + persistence
   // are LIST-GROUPBY-1's, unchanged - only the control's home + shape changed from the pager <select>.
-  var _FRZ_GROUP_LABELS = { '':'None', status:'Status', assignee:'Assignee', priority:'Priority', product:'Space', owner:'Owner', type:'Type' };   // FIELDS-2: dropped location/resolutionType/blockedReason - they are FILTER CHIPS now, not group-by (grouping dumped everything into the unset bucket; Reports answers the breakdown)
+  var _FRZ_GROUP_LABELS = { '':'None', status:'Status', assignee:'Assignee', priority:'Priority', product:'Space', owner:'Team', type:'Type' };   // FIELDS-2: dropped location/resolutionType/blockedReason - they are FILTER CHIPS now, not group-by (grouping dumped everything into the unset bucket; Reports answers the breakdown)
   var _FRZ_GROUP_ORDER = ['', 'status', 'assignee', 'priority', 'product', 'owner', 'type'];   // FIELDS-2
   function _frzGroupOffered(v){ return true; }   // FIELDS-2: no coded fields in group-by any more, so nothing to gate here (server _GROUP_COLS entries left intact - Reports does not read them; harmless)
   function openListGroupPop(anchor){
@@ -24945,7 +24945,7 @@ if ('serviceWorker' in navigator) {
   var LIST_COLS = [
     {key:'type', idx:3, label:'Type'}, {key:'description', idx:5, label:'Description'},
     {key:'status', idx:6, label:'Status'}, {key:'priority', idx:7, label:'Priority'},
-    {key:'owner', idx:8, label:'Owner'}, {key:'assignee', idx:9, label:'Assignee'},
+    {key:'owner', idx:8, label:'Team'}, {key:'assignee', idx:9, label:'Assignee'},
     {key:'points', idx:10, label:'Points'}, {key:'sprint', idx:11, label:'Sprint'},
     {key:'project', idx:12, label:'Space'}
   ];
@@ -25027,7 +25027,7 @@ if ('serviceWorker' in navigator) {
       type:       {label:'Type',        get:function(it){ return it.type||''; }},
       status:     {label:'Status',      get:function(it){ return it.status||''; }},
       priority:   {label:'Priority',    get:function(it){ return PRIO_LBL[it.priority]||''; }},
-      owner:      {label:'Owner',       get:function(it){ return it.dev||''; }},
+      owner:      {label:'Team',       get:function(it){ return it.dev||''; }},
       assignee:   {label:'Assignee',    get:function(it){ return it.assignee||''; }},
       points:     {label:metricLabel,    get:function(it){ return (it.storyPoints!=null&&it.storyPoints!=='')?String(it.storyPoints):''; }},   // METRIC-LABEL-1: CSV header follows the team label
       sprint:     {label:'Sprint',      get:function(it){ var s=sprintById(it.sprintId); return s?(s.name||''):(it.sprintId||''); }},
@@ -26004,7 +26004,7 @@ if ('serviceWorker' in navigator) {
       var u=(_val('users',[])||[]).filter(function(x){return x.username===un;})[0];
       var pod=_frzScnUserPod(u) || (panel.querySelector('#frzScnPod')||{}).value || '';
       if(!pod){ _call('showToast','Pick a pod for this person.','error'); return; }
-      var typeId=(panel.querySelector('#frzScnType')||{}).value; if(!typeId){ _call('showToast','No impact assignment type configured.','error'); return; }
+      var typeId=(panel.querySelector('#frzScnType')||{}).value; if(!typeId){ _call('showToast','No impact entry type configured.','error'); return; }
       var from=(panel.querySelector('#frzScnFrom')||{}).value, to=(panel.querySelector('#frzScnTo')||{}).value;
       if(!from||!to){ _call('showToast','Pick a date range.','error'); return; }
       _call('scenarioMutate', {kind:'markOut', owner:pod, username:un, typeId:typeId, from:from, to:to});
@@ -26072,7 +26072,7 @@ if ('serviceWorker' in navigator) {
     // sprint's duty pod, set explicitly so 4.38.0's server bucketing leaves it alone. A set owner
     // is never touched. Logged like any owner change (readiness activities).
     if(sprint.maintenanceDutyPod && !(p.dev||'') && _call('isMaintenanceType', p.type)){
-      logs.push(['Owner','(none)',sprint.maintenanceDutyPod]); patch.dev=sprint.maintenanceDutyPod;
+      logs.push(['Team','(none)',sprint.maintenanceDutyPod]); patch.dev=sprint.maintenanceDutyPod;
     }
     var prevSprint = (p.sprintId && sprintById(p.sprintId)) ? sprintById(p.sprintId).name : (p.sprintId||'(none)');
     logs.push(['Sprint', prevSprint, sprint.name]);
@@ -28829,7 +28829,7 @@ if ('serviceWorker' in navigator) {
       : '<div class="frz-lp-row"><span class="frz-lp-k">Priority</span><span class="frz-lp-v" style="color:var(--frz-text-muted)">-</span></div>';
     // Read-only details - the right-rail set (display-only v1; blanks auto-skip, EXCEPT the forced prioRow).
     var details=[ _frzPanelRow('Key',p.itemKey), _frzPanelRow('Space',p.product), _frzPanelRow('Type',p.type),
-      _frzPanelRow('Owner',p.dev), _frzPanelRow('Assignee',p.assignee ? displayName(p.assignee) : p.assignee), _frzPanelRow('Reporter',p.reporter),
+      _frzPanelRow('Team',p.dev), _frzPanelRow('Assignee',p.assignee ? displayName(p.assignee) : p.assignee), _frzPanelRow('Reporter',p.reporter),
       (p.reporterEmail ? '<div class="frz-lp-row"><span class="frz-lp-k">Reporter Email</span><span class="frz-lp-v"><a href="mailto:'+escA(p.reporterEmail)+'" style="color:var(--frz-accent)">'+esc(p.reporterEmail)+'</a></span></div>' : ''),
       prioRow, _frzPanelRow('Department',dept),
       (locations.length ? _frzPanelRow('Location', p.location) : ''),                       // FIELDS-1: gated on the list being configured
@@ -29660,7 +29660,7 @@ if ('serviceWorker' in navigator) {
         '<li><b>Can:</b> create and update items across Gantt, Kanban, List and Planning; <b>comment</b> (with @mentions) and add/remove <b>attachments</b>; plan - run planning sessions, add/remove items to <b>sprints</b> and <b>releases</b>, set <b>capacity overrides</b>, and create <b>availability entries</b> (PTO, training, on-call) on the Calendar; set an item’s status, owner, assignee, type, start date, time estimate, story points and sprint.</li>'+
         '<li><b>Guardrails:</b> once an item is in an <b>active status, its time and date fields lock</b> - to move dates, use <b>Delay</b>, and an editor’s delay change is <b>sent to an admin for approval</b> rather than applied immediately. An editor also can’t move an item back out of an active status (that’s an admin action). A few fields are <b>admin-only</b> and don’t appear in the editor’s form: Priority, Parallel Resources, Recurrence, Ignore Conflicts, and Gantt visibility.</li>'+
         '<li><b>Cannot:</b> change configuration, manage users, delete items, run Jira admin/imports, or edit another admin’s password.</li>'+
-        '<li><b>Owner-scoped editors:</b> an editor may be limited to one owner pod (a 📌 badge shows this) - their views focus on that pod’s items and the owner field is locked. This is a focus aid for the person, not a hard security boundary.</li>'+
+        '<li><b>Team-scoped editors:</b> an editor may be limited to one team (a 📌 badge shows this) - their views focus on that team’s items and the team field is locked. This is a focus aid for the person, not a hard security boundary.</li>'+
       '</ul>'+
 
       '<p><b><span class="frz-man-role">Admin</span> - full control.</b> Everything an editor can do, plus <b>configuration</b> (statuses and their flags, types, projects, owners, departments, capacity, Jira mapping, the intake portal), <b>user management</b> (add, invite, reset), <b>deletes</b>, and <b>Jira/import</b> tools. Admins’ date changes on active items apply immediately (with a required change reason) instead of going to an approval queue. One special rule: only the original built-in admin can change <b>another admin’s</b> password.</p>'+
@@ -29679,7 +29679,7 @@ if ('serviceWorker' in navigator) {
     '<div class="frz-man-sec" id="man-filters"><h2>2 &nbsp;Filtering &amp; saved views</h2>'+
       '<p>Above the content is a <b>filter bar</b> of chips. Click a chip to narrow what you see:</p>'+
       '<ul>'+
-        '<li><b>Owner</b>, <b>Type</b>, <b>Status</b>, <b>Assignee</b> - pick one or more values.</li>'+
+        '<li><b>Team</b>, <b>Type</b>, <b>Status</b>, <b>Assignee</b> - pick one or more values.</li>'+
         '<li><b>Date range</b> - limit to a window (where the view supports it).</li>'+
         '<li><b>+ Filter</b> - add another chip; <b>Clear</b> removes one; <b>Clear all</b> resets.</li>'+
       '</ul>'+
@@ -29729,7 +29729,7 @@ if ('serviceWorker' in navigator) {
       '<table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>'+
         '<tr><td><b>Name</b></td><td>Required. What the work is.</td></tr>'+
         '<tr><td><b>Type</b></td><td>Feature, Bug Fix, Task, and so on (configurable).</td></tr>'+
-        '<tr><td><b>Owner</b></td><td>The capacity pool responsible. Required before an item can move to an active status.</td></tr>'+
+        '<tr><td><b>Team</b></td><td>The capacity pool responsible. Required before an item can move to an active status.</td></tr>'+
         '<tr><td><b>Assignee</b></td><td>The person doing the work. Setting an assignee can fill the owner automatically from that person’s pod.</td></tr>'+
         '<tr><td><b>Status</b></td><td>Where it is in the workflow. Its meaning (active, done, and so on) comes from the status <b>modes</b> an admin configures, never from the name - see <b>Status modes</b> under Admin &amp; setup.</td></tr>'+
         '<tr><td><b>Priority</b></td><td>Urgent / High / Medium / Low.</td></tr>'+
@@ -29739,7 +29739,7 @@ if ('serviceWorker' in navigator) {
         '<tr><td><b>Delay Date</b> &amp; <b>Delay Reason</b></td><td>A revised due date and why it moved. See <i>Capturing a slip</i> below.</td></tr>'+
       '</tbody></table>'+
       '<h3>Creating an item</h3>'+
-      '<p>Click <b>New item</b> '+_mi('plus')+', fill in at least a <b>Name</b>, and save. An <b>Owner</b> is required only if you set an active status; a <b>Release Date</b> is required only when the status is the released status. If Jira is connected, Flow can offer to create a matching Jira issue.</p>'+
+      '<p>Click <b>New item</b> '+_mi('plus')+', fill in at least a <b>Name</b>, and save. An <b>Team</b> is required only if you set an active status; a <b>Release Date</b> is required only when the status is the released status. If Jira is connected, Flow can offer to create a matching Jira issue.</p>'+
       '<h3>The item page in depth</h3>'+
       '<ul>'+
         '<li><b>Inline editing</b> - click Status, Owner, Assignee, Type, Priority, '+esc(metricLabel)+', Sprint, the schedule dates or Recurrence to edit them in place. Press <b>Esc</b> to cancel.</li>'+   // METRIC-LABEL-1: team label
@@ -29786,7 +29786,7 @@ if ('serviceWorker' in navigator) {
       '<h3>Effective capacity</h3>'+
       '<p>What a pool can actually deliver on a day is: <code>(override or base) minus entry impacts</code>, never below zero. So a person on PTO or a pod on maintenance duty reduces the available capacity you see on the Gantt, the capacity calendar and the dashboard heatmap.</p>'+
       '<h3>Availability</h3>'+
-      '<p>Availability entries are non-work time - <b>PTO, Sick, Holiday, Training, Travel, On Call, Maintenance Duty</b> and more. Create them from the <b>Calendar</b> (New entry). Each type has a capacity impact; some are informational only. Entries appear on the calendar and quietly reduce the owner’s effective capacity for those days. A hover breakdown on capacity cells shows base, each impact, and the effective result.</p>'+
+      '<p>Availability entries are non-work time - <b>PTO, Sick, Holiday, Training, Travel, On Call, Maintenance Duty</b> and more. Create them from the <b>Calendar</b> (New entry). Each type has a capacity impact; some are informational only. Entries appear on the calendar and quietly reduce the team’s effective capacity for those days. A hover breakdown on capacity cells shows base, each impact, and the effective result.</p>'+
       '<h3>Conflicts</h3>'+
       '<p>When scheduled work exceeds effective capacity, Flow surfaces an <b>advisory warning</b> (never a hard block) so you can decide. Some item types and statuses can be configured to be ignored for conflict purposes.</p>'+
     '</div>'+
@@ -29800,7 +29800,7 @@ if ('serviceWorker' in navigator) {
       '<ul>'+
         '<li><b>Statuses</b> - the workflow. Each status carries <b>modes</b> that drive behavior (which one is the <b>default</b> for new items, which count as <b>active</b>, which is <b>terminal</b>/done, and so on), so you can name statuses however you like. See <b>Status modes</b> below.</li>'+
         '<li><b>Types</b> - item types; a type can be flagged as <b>maintenance</b> (used by duty reporting).</li>'+
-        '<li><b>Spaces</b>, <b>Owners</b>, <b>Departments</b>, and the reason lists (delay/change/defer).</li>'+
+        '<li><b>Spaces</b>, <b>Teams</b>, <b>Departments</b>, and the reason lists (delay/change/defer).</li>'+
       '</ul>'+
       '<h3>Status modes</h3>'+
       '<p>A status is just a <b>name you choose</b> - Flow never hard-codes a particular status like <i>In Progress</i> or <i>Done</i>. What drives behavior is the set of <b>modes</b> (flags) attached to each status, so you can name your workflow however you like and Flow still knows which status is active, which is finished, and so on. Set these in the status editor.</p>'+
