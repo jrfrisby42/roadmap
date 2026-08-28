@@ -11146,7 +11146,7 @@ function _attachLinkIndicator(p){
     + '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3 3 0 0 1 4.24 4.24l-9.2 9.19a1 1 0 0 1-1.41-1.41l8.49-8.49"/></svg>'
     + '</span>';
 }
-const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','reporter','blockedReason','location','resolutionType','points','sprint','project','due','created'];   // UI-POLISH-1: +reporter, +created (both default hidden via _optin2). BLOCK-REASON-1: +blockedReason (_optin3). FIELDS-1: +location, +resolutionType (default hidden via _optin4; gated OUT entirely when the list is empty). ADOPT-2: +due (default hidden via _optin5)
+const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','watchers','reporter','blockedReason','location','resolutionType','points','sprint','project','due','created'];   // UI-POLISH-1: +reporter, +created (both default hidden via _optin2). BLOCK-REASON-1: +blockedReason (_optin3). FIELDS-1: +location, +resolutionType (default hidden via _optin4; gated OUT entirely when the list is empty). ADOPT-2: +due (default hidden via _optin5). WATCH-COL-1: +watchers after assignee (default hidden via _optin6)
 // SCROLL-CARET-1: one shared caret asset for every expand/collapse indicator (replaces the ▶/▾/▼ text
 // glyphs, which Unicode ships at different sizes). Reuses the IC.caret glyph - the same path + the (now
 // mode-safe) .frz-chip-caret class. 12px SVG; the caller keeps its own fixed-width box, so collapsed and
@@ -11178,6 +11178,26 @@ function _listProjectDot(product){
   var sel=getSelectedProducts();
   if(sel && sel.length===1) return '';
   return '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0;vertical-align:middle;margin-right:6px;background:'+(projectColor(product)||'var(--accent)')+'"></span>';
+}
+// WATCH-COL-1: stacked watcher avatars from it._watchers (server-provided in ONE grouped query, never
+// per-row). Reuses avatarInitialsFor/avatarColorFor (no second renderer). Discs overlap via a negative
+// margin and carry a ring in var(--surface) - a TOKEN, not white, so dark mode does not glow - to read
+// as separate discs. Capped at 3 + a muted "+N"; the wrapper title lists ALL watchers, incl. those
+// behind the +N. Empty -> the same "-" every other column uses. Discs are 18px (SMALLER than the 20px
+// assignee avatar above), so this cannot increase row height. Fully inline like _listAvatar, so it
+// renders identically in the shell and classic scopes (no --frz-* token that would fail outside .frz-beta).
+function _listWatchers(it){
+  var ws = Array.isArray(it && it._watchers) ? it._watchers : [];
+  if(!ws.length) return _listCell('');
+  var ring='box-shadow:0 0 0 1.5px var(--surface)';
+  var base='display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;color:#fff;font-size:8px;font-weight:700;line-height:1;box-sizing:border-box;';
+  var shown=ws.slice(0,3), extra=ws.length-shown.length;
+  var discs=shown.map(function(u,i){
+    return '<span title="'+escA(displayName(u))+'" style="'+base+'background:'+avatarColorFor(u)+';'+ring+';'+(i>0?'margin-left:-6px;':'')+'">'+esc(avatarInitialsFor(u))+'</span>';
+  }).join('');
+  if(extra>0){ discs+='<span style="'+base+'background:var(--muted);'+ring+';margin-left:-6px">+'+extra+'</span>'; }
+  var titleAll=ws.map(displayName).join(', ');
+  return '<span title="'+escA(titleAll)+'" style="display:inline-flex;align-items:center;vertical-align:middle">'+discs+'</span>';
 }
 const _LIST_COL_DEF = {
   key:        { label:'Key',         sort:'item_key',
@@ -11260,6 +11280,11 @@ const _LIST_COL_DEF = {
                 td:(it)=>`<td data-col="location" style="padding:7px 10px;white-space:nowrap">${_listCell(it.location)}</td>` },
   resolutionType:{ label:'Resolution Type', sort:null,
                 td:(it)=>`<td data-col="resolutionType" style="padding:7px 10px;white-space:nowrap">${_listCell(it.resolutionType)}</td>` },
+  // WATCH-COL-1: optional, default-hidden (via _optin6). Stacked watcher avatars from it._watchers
+  // (server attaches them in ONE query per page). No server sort key (watcher count sort deferred), so
+  // sort:null - consistent with the coded fields. CSV exports usernames as text, not avatars.
+  watchers:   { label:'Watchers',    sort:null,
+                td:(it)=>`<td data-col="watchers" style="padding:7px 10px;white-space:nowrap">${_listWatchers(it)}</td>` },
 };
 function _listColUser(){ try { return (typeof uname==='function'?uname():'') || localStorage.getItem('frazil_rm_user') || ''; } catch(e){ return ''; } }
 function _listOrderKey(){ return 'frazil_beta_listorder_' + _listColUser(); }   // NEW key, separate from the visibility key
@@ -24969,6 +24994,7 @@ if ('serviceWorker' in navigator) {
       if(!ls(key+'_optin3')){ set.add('blockedReason');                     lset(key+'_optin3','1'); changed=true; }   // BLOCK-REASON-1
       if(!ls(key+'_optin4')){ set.add('location'); set.add('resolutionType'); lset(key+'_optin4','1'); changed=true; }   // FIELDS-1: default hidden (when configured; gated out entirely when the list is empty)
       if(!ls(key+'_optin5')){ set.add('due');                                lset(key+'_optin5','1'); changed=true; }   // ADOPT-2: Due column default hidden
+      if(!ls(key+'_optin6')){ set.add('watchers');                           lset(key+'_optin6','1'); changed=true; }   // WATCH-COL-1: Watchers column default hidden
       if(changed) lset(key, JSON.stringify(Array.from(set)));
     } catch(e){}
   }
@@ -25041,14 +25067,15 @@ if ('serviceWorker' in navigator) {
       reporter:   {label:'Reporter',    get:function(it){ return it.reporter||''; }},
       blockedReason:{label:'Blocked Reason', get:function(it){ return it.blockedReason||''; }},   // BLOCK-REASON-1
       location:{label:'Location', get:function(it){ return it.location||''; }},                   // FIELDS-1
-      resolutionType:{label:'Resolution Type', get:function(it){ return it.resolutionType||''; }} // FIELDS-1
+      resolutionType:{label:'Resolution Type', get:function(it){ return it.resolutionType||''; }}, // FIELDS-1
+      watchers:{label:'Watchers', get:function(it){ return (Array.isArray(it._watchers)?it._watchers:[]).join('; '); }}   // WATCH-COL-1: usernames as text (semicolon-joined), never avatars
     };
   }
   // mode 'all' → full set in the prompt's order; 'visible' → only shown cols, in table display order.
   function _exportCols(mode){
     var D=_exportColDefs();
     if(mode==='all'){
-      var allCols=['key','name','type','status','priority','owner','assignee','reporter','blockedReason','location','resolutionType','points','sprint','project','due','created','description'];   // UI-POLISH-1: +reporter,+created. BLOCK-REASON-1: +blockedReason. FIELDS-1: +location,+resolutionType (gated below). ADOPT-2: +due (absolute)
+      var allCols=['key','name','type','status','priority','owner','assignee','watchers','reporter','blockedReason','location','resolutionType','points','sprint','project','due','created','description'];   // UI-POLISH-1: +reporter,+created. BLOCK-REASON-1: +blockedReason. FIELDS-1: +location,+resolutionType (gated below). ADOPT-2: +due (absolute). WATCH-COL-1: +watchers
       if(!(Array.isArray(locations)&&locations.length)) allCols=allCols.filter(function(k){ return k!=='location'; });                     // FIELDS-1: empty list -> absent from export
       if(!(Array.isArray(resolutionTypes)&&resolutionTypes.length)) allCols=allCols.filter(function(k){ return k!=='resolutionType'; });  // FIELDS-1
       if(!_sprintFieldOn()) allCols=allCols.filter(function(k){ return k!=='sprint'; });   // FIELDS-2: Sprint absent from export unless team has sprints + Planning on
