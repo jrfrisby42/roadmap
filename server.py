@@ -736,9 +736,9 @@ def _at(id, name, cat, color, order, *, system=False, default=False, blocks=Fals
             "show_on_calendar": show, "display_order": order}
 
 _DEFAULT_ASSIGNMENT_TYPES = [
-    _at("pto",               "PTO",               "Availability",     "#c0392b", 1,  system=True, blocks=True, excl=True, impact=1.0,  tickets=False, assigns=False),
-    _at("sick",              "Sick",              "Availability",     "#a0508f", 2,  system=True, blocks=True, excl=True, impact=1.0,  tickets=False, assigns=False),
-    _at("holiday",           "Holiday",           "Availability",     "#2e8b6f", 3,  system=True, blocks=True, excl=True, impact=1.0,  tickets=False, assigns=False),
+    _at("pto",               "PTO",               "Time Off",         "#c0392b", 1,  system=True, blocks=True, excl=True, impact=1.0,  tickets=False, assigns=False),
+    _at("sick",              "Sick",              "Time Off",            "#a0508f", 2,  system=True, blocks=True, excl=True, impact=1.0,  tickets=False, assigns=False),
+    _at("holiday",           "Holiday",           "Time Off",            "#2e8b6f", 3,  system=True, blocks=True, excl=True, impact=1.0,  tickets=False, assigns=False),
     _at("training",          "Training",          "Reduced Capacity", "#a07800", 4,  impact=0.5),
     _at("travel",            "Travel",            "Reduced Capacity", "#c06000", 5,  impact=0.25),
     _at("office",            "Office",            "Location",         "#0059A9", 6,  system=True, default=True, excl=True, impact=0.0),
@@ -1637,7 +1637,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.21.0"
+APP_VERSION = "6.22.1"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -2086,7 +2086,7 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     # Project: must be one this team exposes (the portal only offers those).
     exposed = _intake_projects(team)
     if product and product not in exposed:
-        raise HTTPException(422, "Unknown project for this team.")
+        raise HTTPException(422, "That option is not available.")
     # Department: keep only a value the team actually defines.
     departments = [dept] if dept and dept in _intake_departments(team) else []
     allowed = _intake_types(team)
