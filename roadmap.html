@@ -2235,7 +2235,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
           Jira Project Mapping
         </div>
         <div style="padding:14px">
-          <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Map each Flow project to a Jira project key.</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Map each Flow Space to a Jira project key.</div>
           <div id="tsProjectMapping" style="display:flex;flex-direction:column;gap:8px"></div>
         </div>
       </div>
@@ -2305,7 +2305,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.23.0';
+const APP_VERSION = '6.23.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -4463,7 +4463,7 @@ function render(){
       let k;
       if(groupBy==='developer')      k = p.dev || 'Unassigned';
       else if(groupBy==='assignee')  k = p.assignee ? displayName(p.assignee) : 'Unassigned';
-      else if(groupBy==='product')   k = p.product || 'No project';   // GANTT-GROUP-1: align with the List
+      else if(groupBy==='product')   k = p.product || 'No space';   // GANTT-GROUP-1: align with the List
       else if(groupBy==='type')      k = p.type || 'No type';         // GANTT-GROUP-1
       else                           k = p.status || 'Unknown';
       (map[k]=map[k]||[]).push(p);
@@ -4488,7 +4488,7 @@ function render(){
       // GANTT-GROUP-1: config order (like Owner), unset bucket ("No project"/"No type") last. Config entries
       // may be OBJECTS ({name,color}) or bare strings (see projectColor), so match by (x.name||x), not indexOf.
       const cfg = (groupBy==='product') ? (products||[]) : (types||[]);
-      const unset = (groupBy==='product') ? 'No project' : 'No type';
+      const unset = (groupBy==='product') ? 'No space' : 'No type';
       const cfgIdx = lbl => cfg.findIndex(x => ((x && x.name) || x) === lbl);
       groups = Object.entries(map).map(([label,items])=>({label,items:sortByStart(items)}));
       groups.sort((a,b)=>{
@@ -11484,7 +11484,7 @@ function _listGroupLabel(field, value){
   if(value===null || value===''){
     return '<span style="color:var(--muted)">' + esc(
       field==='assignee' ? 'Unassigned' : field==='owner' ? 'No team' : field==='priority' ? 'No priority'
-      : field==='product' ? 'No project' : field==='type' ? 'No type' : field==='status' ? 'No status' : 'None') + '</span>';
+      : field==='product' ? 'No space' : field==='type' ? 'No type' : field==='status' ? 'No status' : 'None') + '</span>';
   }
   // GANTT-GROUP-1: status/priority pills now come from the shared _groupBadge (byte-identical to the prior
   // inline markup - the .s-* class carries colour only, radius/size/weight are inline, matching the rows).
@@ -12936,7 +12936,7 @@ function renderResolveDropdown(a){
         {label:'Flag Item',          fn:`openFlagIssue(${a.item_id})`},
         {label:'Update Expected Date', fn:`inlineUpdateExpected(${a.id})`},
         {label:'Extend Due Date', fn:`inlineDueDateChange(${a.id})`},
-        {label:'Change Owner', fn:`inlineChangeOwner(${a.id})`},
+        {label:'Change Team', fn:`inlineChangeOwner(${a.id})`},
       ];
     }
   } else if(type === 'Needs Date Check'){
@@ -12948,7 +12948,7 @@ function renderResolveDropdown(a){
   } else if(type === 'Capacity Conflict'){
     actions = [
       {label:'View Conflicting Items', fn:`viewConflictingItems(${a.id})`},
-      {label:'Change Owner',           fn:`inlineChangeOwner(${a.id})`},
+      {label:'Change Team',           fn:`inlineChangeOwner(${a.id})`},
       {label:'Adjust Dates',           fn:`inlineDueDateChange(${a.id})`},
       {label:'Ignore Conflict',        fn:`ignoreConflictActivity(${a.id})`},
     ];
@@ -22425,7 +22425,7 @@ if ('serviceWorker' in navigator) {
     if(_rptScope.flag) out.push({dk:'rflag', dv:_rptScope.flag, label:(_RPT_FLAG_LBL[_rptScope.flag]||_rptScope.flag)});
     if(_rptScope.sla)  out.push({dk:'rsla',  dv:_rptScope.sla,  label:'SLA: '+(_RPT_SLA_LBL[_rptScope.sla]||_rptScope.sla)});
     if(_rptScope.age)  out.push({dk:'rage',  dv:_rptScope.age,  label:'Age: '+_rptScope.age});
-    if(state.project && state.project!=='__all__') out.push({dk:'project', dv:state.project, label:'Project: '+state.project});
+    if(state.project && state.project!=='__all__') out.push({dk:'project', dv:state.project, label:'Space: '+state.project});
     ['owner','status','type','assignee','priority','dept'].forEach(function(ck){
       var s=CHIPS[ck]&&CHIPS[ck].get();
       if(s&&s.length) out.push({dk:'chip:'+ck, clearChip:ck, label:CHIPS[ck].label+': '+s.map(function(v){ return ck==='priority'?(_PRPL[v]||v):v; }).join(', ')});
@@ -22517,7 +22517,7 @@ if ('serviceWorker' in navigator) {
   // ── Group-by pivot. groupKey is one of owner|assignee|dept|status|type|product|priority.
   //    Returns {rows:[{k, count, open, overdue, pctOverdue, avgAge, medRes, avgResp}], total}. ──
   var _RPT_GROUPS = {
-    owner:    {label:'Team',      fn:function(r){ return r.owner || '(no owner)'; }},
+    owner:    {label:'Team',      fn:function(r){ return r.owner || '(no team)'; }},
     assignee: {label:'Assignee',   fn:function(r){ return r.assignee ? (r.assigneeName||r.assignee) : '(unassigned)'; }},
     dept:     {label:'Department', fn:function(r){ return r.dept || '(none)'; }},
     status:   {label:'Status',     fn:function(r){ return r.status || '(none)'; }},
@@ -22679,8 +22679,8 @@ if ('serviceWorker' in navigator) {
     // RPT-DRILL-1 Stage 3: every counted panel row is a drill (D5). Owner/status/type/assignee/priority/
     // dept reuse the SHARED chips; project reuses the rail scope; schedule -> rflag; aging -> rage.
     var aggs=[];
-    if(has('product'))      aggs.push(_rptAggHtml('By project', _rptCountBy(rows, function(r){ return r.product; }, function(r,rk){ return rk||'(none)'; }), 'project'));
-    if(has('owner'))        aggs.push(_rptAggHtml('By owner',   _rptCountBy(rows, function(r){ return r.owner; }, function(r,rk){ return rk||'(no owner)'; }), 'chip:owner'));
+    if(has('product'))      aggs.push(_rptAggHtml('By space', _rptCountBy(rows, function(r){ return r.product; }, function(r,rk){ return rk||'(none)'; }), 'project'));
+    if(has('owner'))        aggs.push(_rptAggHtml('By team',   _rptCountBy(rows, function(r){ return r.owner; }, function(r,rk){ return rk||'(no team)'; }), 'chip:owner'));
     if(has('assigneeName')) aggs.push(_rptAggHtml('Volume by technician', _rptCountBy(rows, function(r){ return r.assignee; }, function(r,rk){ return rk ? (r.assigneeName||rk) : '(unassigned)'; }), 'chip:assignee'));
     aggs.push(_rptAggHtml('By status', _rptCount(rows, function(r){ return r.status; }), 'chip:status'));
     aggs.push(_rptAggHtml('By type',   _rptCount(rows, function(r){ return r.type; }), 'chip:type'));
@@ -29711,7 +29711,7 @@ if ('serviceWorker' in navigator) {
       '<h3>'+_mi('planning')+' Planning</h3>'+
       '<p>Three tabs - <b>Plan</b> (backlog + the current sprint), <b>Sprints</b>, and <b>Releases</b>. Covered in detail in section 5.</p>'+
       '<h3>'+_mi('teamCalendar')+' Team Calendar</h3>'+
-      '<p>Who is working on what, and who is out. Switch between <b>Month</b>, <b>Week</b> and <b>Timeline</b>. Rows are grouped by owner then by person, showing availability entries (PTO, Training, On Call, and so on) and scheduled tickets. A <b>Work days / All days</b> toggle controls whether weekends appear. On a phone the calendar shows a compact month agenda.</p>'+
+      '<p>Who is working on what, and who is out. Switch between <b>Month</b>, <b>Week</b> and <b>Timeline</b>. Rows are grouped by team then by person, showing availability entries (PTO, Training, On Call, and so on) and scheduled tickets. A <b>Work days / All days</b> toggle controls whether weekends appear. On a phone the calendar shows a compact month agenda.</p>'+
       '<h3>'+_mi('dashboard')+' Dashboard</h3>'+
       '<p>A management overview: a <b>capacity heatmap</b> per owner and week, <b>at-risk</b> and needs-decision items, estimate-vs-actual <b>variance</b>, and a <b>Maintenance &amp; Operations</b> section that reports each sprint’s maintenance-duty work.</p>'+
       '<h3>'+_mi('reports')+' Reports</h3>'+
