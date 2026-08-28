@@ -1646,7 +1646,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.24.0"
+APP_VERSION = "6.25.0"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -5083,6 +5083,23 @@ def list_items(
             cc = {row["parent_id"]: row["n"] for row in c.execute(ccq, ccp).fetchall()}
             for it in items:
                 it["_childCount"] = cc.get(it["id"], 0)
+        # WATCH-COL-1: attach watchers for the page's items in ONE grouped query (never per-row).
+        # `watchers` is (item_id, username) with a composite PK, so `item_id IN (page ids)` is
+        # index-backed and scales with page size, not item count. Usernames come back sorted so the
+        # stacked avatars keep a stable ALPHABETICAL order (the table carries no watch-time). Watcher
+        # lists are already visible to any reader of the item (GET /api/items/{id}/watchers), so this
+        # widens no privacy boundary. Orphan rows on deleted items never appear (their ids aren't on
+        # the page). Always attached - one small indexed query - so the client column needs no param.
+        if items:
+            wids = [it["id"] for it in items]
+            wqm = ",".join("?" * len(wids))
+            wmap = {}
+            for wr in c.execute(
+                f"SELECT item_id, username FROM watchers WHERE item_id IN ({wqm}) "
+                f"ORDER BY item_id, username COLLATE NOCASE", wids).fetchall():
+                wmap.setdefault(wr["item_id"], []).append(wr["username"])
+            for it in items:
+                it["_watchers"] = wmap.get(it["id"], [])
     return {"items": items, "total": total, "page": page, "page_size": page_size,
             "pages": (total + page_size - 1) // page_size if total else 0}
 
