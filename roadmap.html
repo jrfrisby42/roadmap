@@ -2305,7 +2305,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.25.0';
+const APP_VERSION = '6.25.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -11193,9 +11193,15 @@ function _listWatchers(it){
   var base='display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;color:#fff;font-size:8px;font-weight:700;line-height:1;box-sizing:border-box;';
   var shown=ws.slice(0,3), extra=ws.length-shown.length;
   var discs=shown.map(function(u,i){
-    return '<span title="'+escA(displayName(u))+'" style="'+base+'background:'+avatarColorFor(u)+';'+ring+';'+(i>0?'margin-left:-6px;':'')+'">'+esc(avatarInitialsFor(u))+'</span>';
+    // WATCH-COL-2: overlap -4px (22% of 18px, was 33% at -6px) so a 2-char initial like "JS"
+    // is not clipped to "J". ~14px of each disc stays visible.
+    return '<span title="'+escA(displayName(u))+'" style="'+base+'background:'+avatarColorFor(u)+';'+ring+';'+(i>0?'margin-left:-4px;':'')+'">'+esc(avatarInitialsFor(u))+'</span>';
   }).join('');
-  if(extra>0){ discs+='<span style="'+base+'background:var(--muted);'+ring+';margin-left:-6px">+'+extra+'</span>'; }
+  // WATCH-COL-2: the +N disc RECEDES - outlined (surface2 fill + border ring, muted text), not a
+  // solid --muted disc, so "+3" reads as a count not a person named "+3". Same 18px footprint
+  // (box-sizing:border-box keeps the 1px border inside), same --surface separation ring, legible
+  // in both themes via tokens.
+  if(extra>0){ discs+='<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;font-size:8px;font-weight:700;line-height:1;box-sizing:border-box;background:var(--surface2);color:var(--muted);border:1px solid var(--border);'+ring+';margin-left:-4px">+'+extra+'</span>'; }
   var titleAll=ws.map(displayName).join(', ');
   return '<span title="'+escA(titleAll)+'" style="display:inline-flex;align-items:center;vertical-align:middle">'+discs+'</span>';
 }
