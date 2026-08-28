@@ -8553,7 +8553,7 @@ function saveEditAssignmentType(i){
 function deleteAssignmentType(i){
   const t=_assignmentTypes[i]; if(!t) return;
   if(t.system){ alert(`"${t.name}" is a built-in type and cannot be deleted.`); return; }
-  if(!confirm(`Delete assignment type "${t.name}"?\nExisting assignments of this type remain but no longer affect capacity.`)) return;
+  if(!confirm(`Delete entry type "${t.name}"?\nExisting entries of this type remain but no longer affect capacity.`)) return;
   _assignmentTypes.splice(i,1); _saveAssignmentTypes();
 }
 function _atSlug(name){ return (name||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'') || ('type-'+Date.now()); }
@@ -23298,7 +23298,7 @@ if ('serviceWorker' in navigator) {
           '<button class="frz-cal-dbtn'+(_wd?' is-active':'')+'" data-days="work">Work days</button>'+
           '<button class="frz-cal-dbtn'+(_wd?'':' is-active')+'" data-days="all">All days</button>'+
         '</div>';
-    var _newBtnHtml = canEdit ? '<button class="frz-cal-newbtn" id="frzCalNew">+ New assignment</button>' : '';
+    var _newBtnHtml = canEdit ? '<button class="frz-cal-newbtn" id="frzCalNew">+ New entry</button>' : '';
     // Stage 3.5: Month/Week/Timeline tabs live in the nav row, absolutely centered (stable
     // regardless of whether the day-toggle/right cluster is shown). Same .frz-plan-tab
     // buttons + the delegated [data-caltab] handler on #frzCalendar (build()).
@@ -23345,11 +23345,12 @@ if ('serviceWorker' in navigator) {
     if(document.getElementById('frzAsgModal')) return;
     var bg=document.createElement('div'); bg.className='frz-modal-bg'; bg.id='frzAsgModal'; bg.hidden=true;
     bg.innerHTML='<div class="frz-modal frz-asg-modal">'+
-      '<div class="frz-modal-hd"><span id="frzAsgTitle">New assignment</span><button class="frz-iconbtn" id="frzAsgClose">✕</button></div>'+
+      '<div class="frz-modal-hd"><span id="frzAsgTitle">New entry</span><button class="frz-iconbtn" id="frzAsgClose">✕</button></div>'+
       '<div class="frz-asg-body">'+
         '<label class="frz-asg-lbl">Type</label><select id="frzAsgType" class="frz-asg-inp"></select>'+
         '<div class="frz-asg-row">'+
           '<div><label class="frz-asg-lbl">User</label><select id="frzAsgUser" class="frz-asg-inp"></select></div>'+
+          // TERM-2-PATCH-1: "Owner (capacity pool)" KEEPS its parenthetical - a deliberate exception to TERM-1's "(Pod)" removal. The row above is USER (a person); this field is the capacity pool the entry draws from, so "Owner" alone would be ambiguous on this one screen. Do not "finish" TERM-1 here.
           '<div><label class="frz-asg-lbl">Owner (capacity pool)</label><select id="frzAsgOwner" class="frz-asg-inp"></select></div>'+
         '</div>'+
         '<div class="frz-asg-row">'+
@@ -23362,7 +23363,7 @@ if ('serviceWorker' in navigator) {
         '<label class="frz-asg-lbl">Description</label><input id="frzAsgDesc" class="frz-asg-inp" maxlength="200">'+
         '<label class="frz-asg-lbl">Notes</label><textarea id="frzAsgNotes" class="frz-asg-inp" rows="2" maxlength="2000"></textarea>'+
         '<div id="frzAsgWarnings" class="frz-asg-warnings"></div>'+
-        '<div id="frzAsgOwnerNote" class="frz-asg-warn-info" hidden>No capacity pool selected - this assignment will not affect any owner\'s capacity and will appear under Unassigned.</div>'+
+        '<div id="frzAsgOwnerNote" class="frz-asg-warn-info" hidden>No capacity pool selected - this entry will not affect any owner\'s capacity and will appear under Unassigned.</div>'+
       '</div>'+
       '<div class="frz-asg-foot">'+
         '<button id="frzAsgDelete" class="frz-asg-del" hidden>Delete</button>'+
@@ -23452,7 +23453,7 @@ if ('serviceWorker' in navigator) {
     document.getElementById('frzAsgRecur').value = data.recurrence || 'none';
     document.getElementById('frzAsgDesc').value = data.description || '';
     document.getElementById('frzAsgNotes').value = data.notes || '';
-    document.getElementById('frzAsgTitle').textContent = _asgEditId ? 'Edit assignment' : 'New assignment';
+    document.getElementById('frzAsgTitle').textContent = _asgEditId ? 'Edit entry' : 'New entry';
     var del=document.getElementById('frzAsgDelete'); del.hidden = !_asgEditId;
     // Stage 1a: a pre-seeded owner (from a section "+" or an edited row) counts as chosen,
     // so a later user pick won't clobber it. Stage 1c: reset the Save button each open.
@@ -23476,7 +23477,7 @@ if ('serviceWorker' in navigator) {
   }
   function _asgSave(){
     var b=_asgBody();
-    if(!b.type_id){ _asgRenderWarnings([{level:'blocking',message:'Please choose an assignment type.'}]); return; }
+    if(!b.type_id){ _asgRenderWarnings([{level:'blocking',message:'Please choose an entry type.'}]); return; }
     if(!b.start_date){ _asgRenderWarnings([{level:'blocking',message:'Please choose a start date.'}]); return; }
     var btn=document.getElementById('frzAsgSave');
     if(btn.disabled) return;   // Stage 1c: in-flight guard - ignore rapid repeat clicks
@@ -23487,7 +23488,7 @@ if ('serviceWorker' in navigator) {
   }
   function _asgDelete(){
     if(_asgEditId==null) return;
-    if(!confirm('Delete this assignment?')) return;
+    if(!confirm('Delete this entry?')) return;
     API.del('/api/assignments/'+_asgEditId).then(function(){ _asgAfterWrite([]); }).catch(function(err){ _asgRenderWarnings([{level:'blocking',message:(err&&err.message)||'Delete failed'}]); });
   }
   function setView(view, opts){
