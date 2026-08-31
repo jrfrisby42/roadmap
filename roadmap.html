@@ -791,6 +791,28 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .admin-pane { display: none; }
   .admin-pane.active { display: block; }
 
+  /* SYS-STATUS-1: operator System-status page. --frz-* first (resolves in the Flow shell where
+     this always renders), with production-token fallbacks so nothing hardcodes a light hex. */
+  .frz-sys-status { max-width: 860px; }
+  .frz-sys-status .frz-sys-muted { color: var(--frz-text-muted, var(--muted)); font-size: 13px; padding: 8px 0; }
+  .frz-sys-sec { border: 1px solid var(--frz-border, var(--border)); border-radius: 10px; margin-bottom: 16px; overflow: hidden; }
+  .frz-sys-sec-hd { padding: 10px 14px; background: var(--frz-surface-2, var(--surface)); border-bottom: 1px solid var(--frz-border, var(--border));
+                    font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px; color: var(--frz-text, var(--text)); }
+  .frz-sys-sec-bd { padding: 6px 0; }
+  .frz-sys-row { display: flex; align-items: center; gap: 12px; padding: 9px 14px; font-size: 13px; color: var(--frz-text, var(--text)); border-top: 1px solid var(--frz-border, var(--border)); }
+  .frz-sys-row:first-child { border-top: 0; }
+  .frz-sys-row .frz-sys-k { min-width: 150px; font-weight: 700; color: var(--frz-text, var(--text)); }
+  .frz-sys-row .frz-sys-v { color: var(--frz-text-muted, var(--muted)); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .frz-sys-badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; white-space: nowrap; }
+  .frz-sys-ok   { background: rgba(34,160,80,0.14);  color: #1f8a46; }
+  .frz-sys-red  { background: rgba(200,50,50,0.14);  color: #c33; }
+  .frz-sys-warn { background: rgba(210,140,20,0.16); color: #a76a09; }
+  .frz-sys-info { background: var(--frz-surface-2, var(--surface)); color: var(--frz-text-muted, var(--muted)); border: 1px solid var(--frz-border, var(--border)); }
+  body.dark-mode .frz-sys-ok   { color: #57c982; }
+  body.dark-mode .frz-sys-red  { color: #ff8080; }
+  body.dark-mode .frz-sys-warn { color: #e0a94a; }
+  .frz-sys-stamp { font-size: 11px; color: var(--frz-text-muted, var(--muted)); margin: 2px 0 14px; }
+
   /* Paper plane release marker */
   .plane-marker {
     position: absolute;
@@ -1929,6 +1951,10 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       <button class="admin-tab" data-tab="assignmentsTab">Availability</button>
       <button class="admin-tab" data-tab="dataTab">Data</button>
       <button class="admin-tab" data-tab="teamSettingsTab">⚙ Organization Settings</button>
+      <!-- SYS-STATUS-1: operator-only System tab. Hidden by default (absent, not disabled) and
+           revealed by renderAdminPanes only when window._sysStatusVisible (the per-user boolean
+           from /api/all) is true. -->
+      <button class="admin-tab" data-tab="systemTab" id="frzSystemTabBtn" style="display:none">System</button>
     </div>
 
     <!-- DEVELOPERS TAB -->
@@ -2292,6 +2318,11 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         <button onclick="saveTeamSettings()" style="background:var(--accent);color:#fff;border:none;padding:8px 20px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:13px;cursor:pointer">Save Organization Settings</button>
         <span id="tsStatus" style="font-size:12px;color:var(--muted)"></span>
       </div>
+    </div>
+
+    <!-- SYSTEM STATUS TAB (SYS-STATUS-1) - operator-only; rendered by renderSystemStatus() -->
+    <div class="admin-pane" id="systemTab">
+      <div id="frzSysStatusBody" class="frz-sys-status"><div class="frz-sys-muted">Loading system status…</div></div>
     </div>
 
     <div class="modal-actions" style="margin-top:20px">
@@ -7816,6 +7847,10 @@ function renderAdminPanes(tabId){
     adminBtn.textContent = showHidden ? 'Showing Hidden' : 'Show Hidden';
     adminBtn.classList.toggle('show-hidden-on', showHidden);
   }
+  // SYS-STATUS-1: reveal the operator-only System tab iff the per-user boolean says so (absent,
+  // not disabled, for everyone else). window._sysStatusVisible is set from /api/all in boot().
+  const _sysBtn = document.getElementById('frzSystemTabBtn');
+  if(_sysBtn) _sysBtn.style.display = window._sysStatusVisible ? '' : 'none';
   // Activate the requested tab
   const targetTab = tabId || 'devTab';
   document.querySelectorAll('.admin-tab').forEach(t => t.classList.toggle('active', t.dataset.tab===targetTab));
@@ -7823,6 +7858,119 @@ function renderAdminPanes(tabId){
   // Tab-specific init
   if(targetTab==='teamSettingsTab') openTeamSettingsTab();
   if(targetTab==='deptTab'){ renderDepartments(); renderLocationList(); }
+  if(targetTab==='systemTab') renderSystemStatus();
+}
+// ── SYS-STATUS-1: operator System-status page (renders into #frzSysStatusBody) ──
+function _sysBytes(n){
+  if(n==null) return '-';
+  var u=['B','KB','MB','GB','TB'], i=0, v=n;
+  while(v>=1024 && i<u.length-1){ v/=1024; i++; }
+  return (i===0? v : v.toFixed(1)) + ' ' + u[i];
+}
+function _sysDur(sec){
+  if(sec==null) return '-';
+  var d=Math.floor(sec/86400), h=Math.floor(sec%86400/3600), m=Math.floor(sec%3600/60);
+  if(d) return d+'d '+h+'h'; if(h) return h+'h '+m+'m'; if(m) return m+'m'; return sec+'s';
+}
+function _sysAge(sec){
+  if(sec==null) return 'unknown';
+  if(sec<60) return sec+'s ago'; if(sec<3600) return Math.floor(sec/60)+'m ago';
+  if(sec<86400) return Math.floor(sec/3600)+'h ago'; return Math.floor(sec/86400)+'d ago';
+}
+function _sysBadge(cls, text){ return '<span class="frz-sys-badge frz-sys-'+cls+'">'+esc(text)+'</span>'; }
+function _sysRow(k, vHtml){ return '<div class="frz-sys-row"><div class="frz-sys-k">'+esc(k)+'</div><div class="frz-sys-v">'+vHtml+'</div></div>'; }
+function _sysSection(title, rowsHtml){ return '<div class="frz-sys-sec"><div class="frz-sys-sec-hd">'+esc(title)+'</div><div class="frz-sys-sec-bd">'+rowsHtml+'</div></div>'; }
+function _sysCoverageBadge(cov, team){
+  if(!cov) return _sysBadge('info','unknown');
+  if(cov.status==='not_configured') return _sysBadge('info','Litestream not configured');
+  if(cov.status==='unreadable')     return _sysBadge('warn','config unreadable');
+  if(cov.status!=='configured')     return _sysBadge('info','unknown');
+  return cov.byTeam[team] ? _sysBadge('ok','covered') : _sysBadge('red','NOT backed up');
+}
+function _sysFreshBadge(fr, team){
+  if(!fr) return _sysBadge('info','unknown');
+  if(fr.status==='not_wired')   return _sysBadge('info','freshness not wired');
+  if(fr.status==='unreachable') return _sysBadge('warn','metrics unreachable');
+  if(fr.status!=='reachable')   return _sysBadge('info','unknown');
+  var t=(fr.byTeam||{})[team];
+  if(!t || t.ageSeconds==null) return _sysBadge('info','age unknown');
+  return _sysBadge(t.ageSeconds>3600?'warn':'ok', 'fresh ('+_sysAge(t.ageSeconds)+')');
+}
+function _sysServiceBadge(state){
+  if(state==='active') return _sysBadge('ok','active');
+  if(state==='not_observable') return _sysBadge('info','not observable here');
+  return _sysBadge('red', state||'unknown');
+}
+function _sysStatusHTML(d){
+  var teams=d.teams||[], out='';
+  out += '<div class="frz-sys-stamp">As of '+esc((d.gatheredAt||'').replace('T',' ').replace(/\..*/,'')+' UTC')+'</div>';
+  // ── Backup coverage (the headline) ──
+  var cov='';
+  teams.forEach(function(t){
+    cov += _sysRow(t.team, _sysCoverageBadge(d.coverage, t.team) + _sysFreshBadge(d.freshness, t.team));
+  });
+  if(!teams.length) cov += '<div class="frz-sys-row"><div class="frz-sys-v">No team databases found on disk.</div></div>';
+  var svc=d.services||{};
+  cov += _sysRow('litestream-flow service', _sysServiceBadge(svc['litestream-flow']));
+  cov += _sysRow('litestream (ShareBox)', _sysServiceBadge(svc['litestream']));
+  cov += _sysRow('AWS Backup / EBS', _sysBadge('info','not observable here') + '<span class="frz-sys-muted" style="padding:0">verify in AWS console</span>');
+  var dm=d.dataMount||{};
+  cov += _sysRow('/data mount', dm.isMount===true ? _sysBadge('ok','dedicated mount')
+        : dm.isMount===false ? (_sysBadge('warn','not a separate mount') + '<span class="frz-sys-muted" style="padding:0">/data is a dir on the root volume</span>')
+        : _sysBadge('info','unknown'));
+  out += _sysSection('Backup coverage', cov);
+  // ── Host ──
+  var disk=d.disk||{}, host='';
+  host += _sysRow('Version', esc(d.version||'-'));
+  host += _sysRow('Uptime', esc(_sysDur(d.uptimeSeconds)) + ' <span class="frz-sys-muted" style="padding:0">(since '+esc((d.startedAt||'').replace('T',' ').replace(/\..*/,'')+' UTC')+')</span>');
+  if(disk.status==='ok'){
+    var pct=disk.usedPct;
+    host += _sysRow('Disk (data path)', _sysBadge(pct!=null&&pct>=90?'red':pct!=null&&pct>=80?'warn':'ok', (pct==null?'?':pct+'% used'))
+          + '<span class="frz-sys-muted" style="padding:0">'+_sysBytes(disk.freeBytes)+' free of '+_sysBytes(disk.totalBytes)+'</span>');
+  } else {
+    host += _sysRow('Disk (data path)', _sysBadge('info', disk.status==='not_observable'?'not observable here':'unknown'));
+  }
+  host += _sysRow('Mail (SES)', d.mailConfigured==null?_sysBadge('info','unknown'):(d.mailConfigured?_sysBadge('ok','configured'):_sysBadge('info','off')));
+  host += _sysRow('Jira', d.jiraConfigured==null?_sysBadge('info','unknown'):(d.jiraConfigured?_sysBadge('ok','configured'):_sysBadge('info','off')));
+  out += _sysSection('Host', host);
+  // ── Schema drift ──
+  var sc=d.schema||{}, sch='';
+  if(sc.consistent===true){ sch += _sysRow('Schema', _sysBadge('ok','consistent across '+ (sc.teamsChecked||teams.length) +' team DBs')); }
+  else if(sc.consistent===false){
+    (sc.drift||[]).forEach(function(x){
+      var label = x.note ? x.note : ('missing: '+(x.missing||[]).join(', '));
+      sch += _sysRow(esc(x.team)+(x.table?(' · '+x.table):''), _sysBadge('red','drift') + '<span class="frz-sys-muted" style="padding:0">'+esc(label)+'</span>');
+    });
+    if(!sch) sch = _sysRow('Schema', _sysBadge('red','drift detected'));
+  } else { sch += _sysRow('Schema', _sysBadge('info','unknown')); }
+  out += _sysSection('Schema drift', sch);
+  // ── Teams (secondary) ──
+  var tc=d.teamConfig||{}, trows='';
+  teams.forEach(function(t){
+    var cfg=tc[t.team]||{}, flags=[];
+    if(cfg.intakeEnabled) flags.push('intake');
+    if(cfg.jiraEnabled) flags.push('jira');
+    if(cfg.assethubConfigured) flags.push('assethub');
+    var meta=_sysBytes(t.sizeBytes)+' · '+(cfg.itemCount==null?'?':cfg.itemCount)+' items'
+           + (flags.length?(' · '+flags.join(', ')):'')
+           + (t.mtime?(' · modified '+esc(t.mtime.replace('T',' ').replace(/\..*/,''))+' UTC'):'');
+    trows += _sysRow(t.team, '<span class="frz-sys-muted" style="padding:0">'+meta+'</span>');
+  });
+  if(trows) out += _sysSection('Teams', trows);
+  return out;
+}
+async function renderSystemStatus(){
+  var box=document.getElementById('frzSysStatusBody');
+  if(!box) return;
+  box.innerHTML='<div class="frz-sys-muted">Loading system status…</div>';
+  try {
+    var r=await API.get('/api/system/status');
+    if(r.status===403){ box.innerHTML='<div class="frz-sys-muted">You do not have access to system status.</div>'; return; }
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    box.innerHTML=_sysStatusHTML(await r.json());
+  } catch(e){
+    box.innerHTML='<div class="frz-sys-muted">Could not load system status ('+esc(String(e && e.message || e))+').</div>';
+  }
 }
 function openAdminPanel(tabId){
   if(!isAdmin) return;
@@ -7845,6 +7993,7 @@ document.querySelectorAll('.admin-tab').forEach(tab => {
     if(tab.dataset.tab === 'teamSettingsTab') openTeamSettingsTab();
     if(tab.dataset.tab === 'deptTab'){ renderDepartments(); renderLocationList(); }
     if(tab.dataset.tab === 'assignmentsTab') renderAssignmentTypesList();
+    if(tab.dataset.tab === 'systemTab') renderSystemStatus();
     // ADMIN-URL-1: reflect the sub-tab in the URL, but ONLY in the Flow shell. This handler runs on the
     // SHARED .admin-modal DOM, which is ALSO the classic modal (frz-beta-active absent there) - the
     // classic modal must never push /admin history entries.
@@ -7952,6 +8101,9 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       if(data.typeIgnoreConflicts)   typeIgnoreConflicts   = data.typeIgnoreConflicts;
       if(data.typeScheduled)         typeScheduled         = data.typeScheduled;
       if(data.richTextEditor !== undefined) richTextEditor  = data.richTextEditor !== false;
+      // SYS-STATUS-1 (Addendum B): the per-user gate for the operator System tab. Only this boolean
+      // reaches the client - the SYS_STATUS_USERS allowlist itself never does.
+      window._sysStatusVisible = !!data.sysStatusVisible;
       if(data.maintenanceDutyTypeId !== undefined) maintenanceDutyTypeId = data.maintenanceDutyTypeId || '';
       intakeEnabled = data.intakeEnabled === true;
       assethubConfigured = data.assethubConfigured === true;   // FLOW-1 gate
@@ -22196,6 +22348,7 @@ if ('serviceWorker' in navigator) {
     'reasons':{top:'config',sub:'delayTab'},     'departments':{top:'config',sub:'deptTab'},
     'users':{top:'config',sub:'usersTab'},       'assignments':{top:'config',sub:'assignmentsTab'},
     'data':{top:'config',sub:'dataTab'},         'team-settings':{top:'config',sub:'teamSettingsTab'},
+    'system':{top:'config',sub:'systemTab'},                                       /* SYS-STATUS-1 */
     'integrations':{top:'integrations'},         'views-access':{top:'access'}
   };
   var _ADMIN_SUB_TO_SLUG = {}, _ADMIN_TOP_TO_SLUG = {};
