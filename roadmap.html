@@ -21130,14 +21130,17 @@ if ('serviceWorker' in navigator) {
     // personal landing (always present, unlike the old My Work which hid when
     // empty). The count is the assigned-to-me open count (same single-source
     // query that feeds the Assigned tab); the badge is hidden when it's zero.
-    // addendum-B: My Home badge = assigned items + OVERDUE to-dos, one summed number. Overdue via the
-    // existing _frzTodoOverdue on the page-load cache _frzMyTodos (loaded once, invalidated on any to-do
-    // mutation - NOT the lazy _frzTodos). A null cache -> assigned-only for the brief moment before the
-    // to-do fetch lands (accepted). Zero renders no badge; the title breaks the number down.
+    // addendum-B/C: My Home badge = assigned items + to-dos DUE TODAY OR EARLIER (still open), one summed
+    // number. Its OWN predicate (<=), NOT _frzTodoOverdue: that shared helper uses strict < and also drives
+    // the to-do list's overdue-red styling + reminder indicators, where a to-do due TODAY is due, not late.
+    // Uses _frzTodayMTKey() (string day-key) so the <= boundary lands exactly at MT midnight, not a UTC
+    // offset. Source is the page-load cache _frzMyTodos (loaded once, invalidated on any to-do mutation) -
+    // NOT the lazy _frzTodos; a null cache -> assigned-only for the brief moment before the fetch lands.
+    // Zero renders no badge; the title names what is counted.
     var mwAssigned = myWorkItems().length;
-    var mwOverdue = (_frzMyTodos||[]).filter(_frzTodoOverdue).length;
-    var mwCount = mwAssigned + mwOverdue;
-    var mwTitle = mwCount>0 ? (mwAssigned+' assigned, '+mwOverdue+' overdue to-do'+(mwOverdue===1?'':'s')) : 'My Home';
+    var mwDue = (_frzMyTodos||[]).filter(function(t){ return t.due_date && t.status!=='Done' && t.due_date <= _frzTodayMTKey(); }).length;
+    var mwCount = mwAssigned + mwDue;
+    var mwTitle = mwCount>0 ? (mwAssigned+' assigned, '+mwDue+' to-do'+(mwDue===1?'':'s')+' due today or overdue') : 'My Home';
     var hb = document.createElement('button');
     hb.className='frz-item'; hb.setAttribute('data-nav','view:my-home');
     hb.setAttribute('aria-current', String(state.view==='my-home' && !state.onItem));
