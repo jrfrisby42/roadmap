@@ -97,3 +97,26 @@ def test_sse_kms_emitted_only_when_configured(tmp_path, monkeypatch):
     assert "sse: aws:kms" in t1
     assert "sse-kms-key-id: arn:aws:kms:us-west-2:1:key/abc" in t1
     assert "access-key" not in t1.lower()
+
+
+def test_metrics_addr_emitted_only_when_configured(tmp_path, monkeypatch):
+    """SYS-STATUS-1 (A1): a top-level `addr:` (the Litestream Prometheus endpoint the status page
+    scrapes for freshness) appears iff LITESTREAM_METRICS_ADDR is set, and NEVER collides with dbs."""
+    tenants = tmp_path / "tenants"; tenants.mkdir()
+    _mk_team(str(tenants), "acme")
+    cfg = tmp_path / "ls.yml"
+    monkeypatch.setenv("LITESTREAM_FLOW_CONFIG", str(cfg))
+    monkeypatch.setenv("LITESTREAM_S3_BUCKET", "b")
+
+    # Unset -> no addr line (unchanged behaviour).
+    monkeypatch.delenv("LITESTREAM_METRICS_ADDR", raising=False)
+    assert server.sync_litestream_config(tenants_dir=str(tenants), do_reload=False) is True
+    assert "addr:" not in cfg.read_text()
+
+    # Set -> a single top-level `addr:` line, above `dbs:`.
+    monkeypatch.setenv("LITESTREAM_METRICS_ADDR", ":9091")
+    assert server.sync_litestream_config(tenants_dir=str(tenants), do_reload=False) is True
+    t = cfg.read_text()
+    assert "addr: :9091" in t
+    assert t.index("addr: :9091") < t.index("dbs:")     # top-level, sibling of dbs and before it
+    assert t.count("addr:") == 1
