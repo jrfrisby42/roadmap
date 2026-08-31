@@ -2305,7 +2305,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.28.1';
+const APP_VERSION = '6.28.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -19516,8 +19516,13 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-todo-add { flex:1; padding:9px 12px; border:1px solid var(--frz-border-strong); border-radius:8px; background:var(--frz-bg-surface); color:var(--frz-text); font-size:13px; }
   .frz-beta .frz-todo-add:focus { outline:none; border-color:var(--frz-accent); }
   .frz-beta .frz-todo-add::placeholder { color:var(--frz-text-muted); }
-  .frz-beta .frz-todo-link { background:none; border:0; color:var(--frz-text-muted); font-size:12px; font-weight:700; cursor:pointer; padding:4px 6px; border-radius:6px; white-space:nowrap; }
-  .frz-beta .frz-todo-link:hover { color:var(--frz-accent); }
+  /* TODO-FOOT-FIX-1: the To-dos footer text buttons ("View completed", "Copy all"). Renamed from
+     .frz-todo-link to end a class-name COLLISION: TODO-LINK-1 (6.27.0) added a SECOND .frz-todo-link rule
+     for the per-row ICON button (opacity:0 + line-height:0), which - later in source order - won and
+     rendered these text buttons 0px tall AND transparent, so the completed-log toggle had no route from
+     the UI. Distinct class = the duplicate selector is reconciled (only the icon .frz-todo-link remains). */
+  .frz-beta .frz-todo-footbtn { background:none; border:0; color:var(--frz-text-muted); font-size:12px; font-weight:700; cursor:pointer; padding:4px 6px; border-radius:6px; white-space:nowrap; }
+  .frz-beta .frz-todo-footbtn:hover { color:var(--frz-accent); }
   .frz-beta .frz-todo-row { display:flex; align-items:center; gap:8px; padding:5px 6px; border-bottom:1px solid var(--frz-border); }
   .frz-beta .frz-todo-row:hover { background:var(--frz-bg-app); }
   .frz-beta .frz-todo-cb { width:16px; height:16px; flex-shrink:0; cursor:pointer; accent-color:var(--frz-accent); }
@@ -20809,8 +20814,8 @@ if ('serviceWorker' in navigator) {
           // Footer utility row: the done-log toggle + Copy all. No "Clear completed" - Done rows now go to
           // the log (readable), never a single-click hard delete.
           '<div class="frz-todo-foot">'+
-            '<button id="frzTodoLogToggle" class="frz-todo-link" type="button"></button>'+
-            '<button id="frzTodoCopy" class="frz-todo-link" type="button" title="Copy all your to-dos to the clipboard">Copy all</button>'+
+            '<button id="frzTodoLogToggle" class="frz-todo-footbtn" type="button"></button>'+
+            '<button id="frzTodoCopy" class="frz-todo-footbtn" type="button" title="Copy all your to-dos to the clipboard">Copy all</button>'+
           '</div>'+
         '</div>'+
       '</div>';
