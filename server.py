@@ -1663,7 +1663,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.27.1"
+APP_VERSION = "6.27.2"
 
 app = FastAPI(title="Frazil Flow", version=APP_VERSION)
 
@@ -7749,11 +7749,18 @@ def _insert_activity(body: dict, team: str) -> dict:
     activity_type = body.get("activity_type", "")
     item_id = body.get("item_id")
 
-    # Deduplicate: if an Open activity of the same type already exists for this item, update it
+    # Deduplicate: if an OPEN or READ activity of the same type already exists for this item, update it
+    # instead of inserting a second. Read (not just Open) matters: the client rules engine re-POSTs the
+    # same System alert (At Risk / Needs Decision / Needs Date Check) on every re-evaluation, and opening
+    # the Activity Center flips the row Open -> Read (markActivitiesRead). A guard of only 'Open' stopped
+    # matching the moment the user READ the alert, so each subsequent re-post inserted a fresh duplicate
+    # (the 3-in-an-hour "Needs Decision" bug). 'Open','Read' == the client's own open-queue definition
+    # (renderAcOpen shows both); Dismissed / Auto-Cleared / Resolved stay excluded so a genuinely new
+    # occurrence after the user closes one still creates a fresh alert.
     if activity_type and item_id is not None:
         with db(team) as c:
             existing = c.execute(
-                "SELECT id FROM activities WHERE activity_type=? AND item_id=? AND status='Open' LIMIT 1",
+                "SELECT id FROM activities WHERE activity_type=? AND item_id=? AND status IN ('Open','Read') LIMIT 1",
                 (activity_type, item_id)
             ).fetchone()
         if existing:
