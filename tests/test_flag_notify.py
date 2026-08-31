@@ -85,6 +85,24 @@ def test_reflag_runs_dedupe_and_does_not_notify(client, team, admin_headers):
     assert len(_notifs_for(team, W)) == 1
 
 
+def test_dedupe_matches_a_READ_activity_not_only_open(client, team, admin_headers):
+    # ACT-DEDUP-1 (the 3-in-an-hour "Needs Decision" bug): a System alert is created (Open); opening the
+    # Activity Center flips it to Read (markActivitiesRead); the client rules engine then re-posts the same
+    # alert. The dedup must still match a READ row, not just an Open one - otherwise every re-post after the
+    # user reads it inserts a fresh duplicate. Dismissed/closed rows are deliberately NOT deduped.
+    pid = _mk(client, admin_headers)
+    _flag(client, admin_headers, pid, "Needs Decision", source="System", created_by="System")
+    assert _act_count(team, pid, "Needs Decision") == 1
+    with server.db(team) as c:                                   # user reads it -> Open becomes Read
+        c.execute("UPDATE activities SET status='Read' WHERE item_id=? AND activity_type='Needs Decision'", (pid,))
+    _flag(client, admin_headers, pid, "Needs Decision", source="System", created_by="System")   # rules engine re-posts
+    assert _act_count(team, pid, "Needs Decision") == 1          # STILL one row - deduped against the Read one
+    with server.db(team) as c:                                   # user dismisses it
+        c.execute("UPDATE activities SET status='Dismissed' WHERE item_id=? AND activity_type='Needs Decision'", (pid,))
+    _flag(client, admin_headers, pid, "Needs Decision", source="System", created_by="System")
+    assert _act_count(team, pid, "Needs Decision") == 2          # a NEW occurrence after dismissal is fresh (not deduped)
+
+
 # ── Acceptance 4 (source qualifier) ──────────────────────────────────────────────────────────────────
 def test_system_source_does_not_notify_or_watch(client, team, admin_headers):
     pid = _mk(client, admin_headers)
