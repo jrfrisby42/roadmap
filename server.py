@@ -1034,6 +1034,13 @@ def init_team_db(team: str):
             c.execute("ALTER TABLE todos ADD COLUMN recurrence TEXT")
         except Exception:
             pass  # column already exists
+        # TODO-LINK-1: one optional URL on a to-do (null = no link). Plain try/except ALTER, same as
+        # recurrence/item_id/item_key above and two-worker-race-safe (loser catches "duplicate column");
+        # no schema_meta marker - null means no link and there is no backfill.
+        try:
+            c.execute("ALTER TABLE todos ADD COLUMN url TEXT")
+        except Exception:
+            pass  # column already exists
         # REM-3: reminded_ts is the fire-once guard - NULL = never fired, a timestamp = fired. Without a
         # one-time BACKFILL, the first page load after deploy would find every existing past-due to-do
         # "never reminded" and flood the bell. We stamp rows that are Done OR already PAST in MT (due_date
@@ -7164,6 +7171,20 @@ def _todo_next_due(prev_due, recurrence):
         nd += timedelta(days=pd)
     return nd.isoformat()
 
+def _todo_url(v):
+    """TODO-LINK-1: normalize a to-do's optional URL. Blank/None CLEARS (returns None). Otherwise the
+    scheme is validated by the SHARED LINKS-1 guard `_link_scheme_ok` (http/https + netloc only), so a
+    javascript: URL is a 422 at save. One URL, no label - see the prompt. The render path re-validates
+    (via the client's _frzLinkSchemeOk) for rows that predate this check."""
+    if v is None or v == "":
+        return None
+    v = str(v).strip()
+    if not v:
+        return None
+    if not _link_scheme_ok(v):
+        raise HTTPException(422, "Link URL must start with http:// or https://")
+    return v
+
 def _todo_due(v):
     """Normalize due_date: None to CLEAR (None or empty string), a YYYY-MM-DD string to set. Anything
     else is 400. The clear path is the easiest to omit and the most annoying to lack - explicit here."""
@@ -7204,6 +7225,7 @@ def create_todo(body: dict = Body(...), auth: dict = Depends(require_auth)):
         raise HTTPException(400, "Invalid status")
     due = _todo_due(body.get("due_date"))
     rec = _todo_recurrence(body.get("recurrence"))   # TODO-RECUR-1: honored so undo-after-delete restores a recurring row intact
+    url = _todo_url(body.get("url"))                  # TODO-LINK-1: optional single URL (http/https), null clears
     now = datetime.now(timezone.utc).isoformat()
     # TODO-3: a Done row is stamped completed NOW on a normal create, but the completed-log delete's UNDO
     # re-POSTs its snapshot and must restore the ORIGINAL completion time - so honor a caller-provided
@@ -7229,9 +7251,9 @@ def create_todo(body: dict = Body(...), auth: dict = Depends(require_auth)):
                 raise HTTPException(400, "Linked item not found on this team")
             item_key = (json.loads(irow["data"]).get("itemKey") or None)   # derived server-side, not trusted
         cur = c.execute(
-            "INSERT INTO todos(username,title,notes,status,due_date,sort_order,created_ts,updated_ts,completed_ts,item_id,item_key,recurrence)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-            (auth["username"], title, (body.get("notes") or ""), status, due, 0, now, now, completed, item_id, item_key, rec))
+            "INSERT INTO todos(username,title,notes,status,due_date,sort_order,created_ts,updated_ts,completed_ts,item_id,item_key,recurrence,url)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (auth["username"], title, (body.get("notes") or ""), status, due, 0, now, now, completed, item_id, item_key, rec, url))
         row = c.execute("SELECT * FROM todos WHERE id=?", (cur.lastrowid,)).fetchone()
     return {"todo": dict(row)}
 
@@ -7265,6 +7287,7 @@ def update_todo(tid: int, body: dict = Body(...), auth: dict = Depends(require_a
                 reminded = None   # value changed -> fire again on the new date
         notes = (body.get("notes") if "notes" in body else cur["notes"]) or ""
         rec = cur["recurrence"] if "recurrence" not in body else _todo_recurrence(body.get("recurrence"))   # TODO-RECUR-1
+        url = cur["url"] if "url" not in body else _todo_url(body.get("url"))   # TODO-LINK-1 (blank clears)
         now = datetime.now(timezone.utc).isoformat()
         # completed_ts: stamped on ENTERING Done, cleared on LEAVING it (independent of due_date)
         completed = cur["completed_ts"]
@@ -7272,8 +7295,8 @@ def update_todo(tid: int, body: dict = Body(...), auth: dict = Depends(require_a
             completed = now
         elif status != "Done":
             completed = None
-        c.execute("UPDATE todos SET title=?, notes=?, status=?, due_date=?, updated_ts=?, completed_ts=?, reminded_ts=?, recurrence=? "
-                  "WHERE id=? AND username=?", (title, notes, status, due, now, completed, reminded, rec, tid, auth["username"]))
+        c.execute("UPDATE todos SET title=?, notes=?, status=?, due_date=?, updated_ts=?, completed_ts=?, reminded_ts=?, recurrence=?, url=? "
+                  "WHERE id=? AND username=?", (title, notes, status, due, now, completed, reminded, rec, url, tid, auth["username"]))
         # TODO-3: completing a to-do deletes its reminder notification (delete, not mark-read - the completed
         # log is the durable record, and a snooze button on finished work would re-arm the reminder). Fires
         # only on the transition INTO Done. username in the WHERE (privacy rule 2): a crafted todo_id can
@@ -7298,9 +7321,9 @@ def update_todo(tid: int, body: dict = Body(...), auth: dict = Depends(require_a
                 if next_due:
                     c.execute(
                         "INSERT INTO todos(username,title,notes,status,due_date,sort_order,created_ts,"
-                        "updated_ts,completed_ts,item_id,item_key,recurrence) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "updated_ts,completed_ts,item_id,item_key,recurrence,url) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (auth["username"], title, notes, "Today", next_due, 0, now, now, None,
-                         cur["item_id"], cur["item_key"], rec))
+                         cur["item_id"], cur["item_key"], rec, url))   # TODO-LINK-1: url inherited by the next occurrence
                 else:
                     log.info(f"[TODO-RECUR] to-do {tid} is recurring ({rec}) but has no due date - not "
                              f"spawning (team '{auth['team']}')")

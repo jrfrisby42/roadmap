@@ -19533,6 +19533,15 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-todo-row:hover .frz-todo-repeat { opacity:.8; }
   .frz-beta .frz-todo-repeat.on { color:var(--frz-accent); opacity:1; }
   .frz-beta .frz-todo-repeat svg { display:block; }
+  /* TODO-LINK-1: link button. Hover-revealed + muted when unset (opacity 0 at rest, like delete); accent
+     when set; danger + always-visible when a stored value is refused (never silently dropped). */
+  .frz-beta .frz-todo-link { background:none; border:0; cursor:pointer; color:var(--frz-text-muted); opacity:0; padding:0 3px; display:inline-flex; align-items:center; line-height:0; flex-shrink:0; }
+  .frz-beta .frz-todo-row:hover .frz-todo-link:not(.on):not(.bad) { opacity:.55; }
+  .frz-beta .frz-todo-row:hover .frz-todo-link:not(.on):not(.bad):hover { opacity:.9; }
+  .frz-beta .frz-todo-link.on { color:var(--frz-accent); opacity:1; }
+  .frz-beta .frz-todo-link.bad { color:var(--frz-danger); opacity:1; }
+  .frz-beta .frz-todo-link svg { display:block; }
+  .frz-beta .frz-todo-linkedit { font-size:12px; padding:2px 6px; border:1px solid var(--frz-accent); border-radius:6px; background:var(--frz-bg-surface); color:var(--frz-text); min-width:180px; }
   .frz-todo-rmenu { position:fixed; z-index:10000; background:var(--surface); border:1px solid var(--border); border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,.18); padding:4px; min-width:124px; }
   .frz-todo-ropt { display:block; width:100%; text-align:left; background:none; border:0; cursor:pointer; padding:6px 10px; border-radius:5px; font-size:12px; color:var(--text); }
   .frz-todo-ropt:hover { background:var(--bg); }
@@ -21789,10 +21798,18 @@ if ('serviceWorker' in navigator) {
       var repHtml = t.due_date
         ? '<button type="button" class="frz-todo-repeat'+(_rec?' on':'')+'" data-tid="'+t.id+'" data-rec="'+escA(_rec||'none')+'" title="'+(_rec?'Repeats '+_rec:'Set repeat')+'" aria-label="'+(_rec?'Repeats '+_rec:'Set repeat')+'">'+_frzRepeatSvg+'</button>'
         : '';
+      // TODO-LINK-1: one optional URL, LEFT of the date so date + recurrence stay an adjacent "when" pair.
+      // Rendered INERT (class 'bad', not clickable) if a stored value fails the scheme check - LINKS-1's
+      // rule that a refused value is shown, never silently dropped. Hover-revealed + muted when unset;
+      // accent + always-visible when set; the full URL rides `title` since there is no label.
+      var _lu=t.url||'', _lok=_lu&&_frzLinkSchemeOk(_lu);
+      var _lcls='frz-todo-link'+(_lok?' on':(_lu?' bad':'')), _ltip=_lok?_lu:(_lu?'Link refused (must be http:// or https://)':'Add a link');
+      var linkHtml='<button type="button" class="'+_lcls+'" data-tid="'+t.id+'" data-url="'+escA(_lok?_lu:'')+'" title="'+escA(_ltip)+'" aria-label="'+escA(_ltip)+'">'+_frzLinkSvg+'</button>';
       return '<div class="frz-todo-row" data-tid="'+t.id+'">'+
         '<input type="checkbox" class="frz-todo-cb" data-tid="'+t.id+'" aria-label="Mark done">'+
         _frzTodoKeyHtml(t)+
         '<span class="frz-todo-title" contenteditable="true" spellcheck="false" data-tid="'+t.id+'">'+esc(t.title)+'</span>'+
+        linkHtml+
         '<span class="frz-todo-datewrap">'+dateHtml+'</span>'+repHtml+
         '<button type="button" class="frz-todo-del" data-tid="'+t.id+'" title="Delete" aria-label="Delete">&times;</button>'+
       '</div>';
@@ -21877,6 +21894,25 @@ if ('serviceWorker' in navigator) {
   function _frzCloseRepeatMenu(){ var m=document.getElementById('frzTodoRMenu'); if(m) m.remove(); document.removeEventListener('click', _frzRepeatAway, true); document.removeEventListener('keydown', _frzRepeatEsc, true); }
   function _frzRepeatAway(e){ if(!e.target.closest('#frzTodoRMenu') && !e.target.closest('.frz-todo-repeat')) _frzCloseRepeatMenu(); }
   function _frzRepeatEsc(e){ if(e.key==='Escape') _frzCloseRepeatMenu(); }
+  // TODO-LINK-1: the link button. A set + VALID link opens in a new tab via window.open - a JS control,
+  // NOT an anchor, so the capture-phase in-app nav interceptor (which matches item hrefs / a[href]) never
+  // sees it, in a browser tab or the installed PWA alike, and a URL pointing at Flow itself opens as a
+  // plain new tab. Unset or refused -> swap to an input (the date control's pattern) to set or fix the URL.
+  var _frzLinkSvg='<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+  function _frzTodoLinkClick(btn, tid){
+    var t=_frzTodoById(tid), raw=t?(t.url||''):'';
+    if(btn.classList.contains('on') && _frzLinkSchemeOk(raw)){ window.open(raw, '_blank', 'noopener'); return; }   // valid -> open
+    // unset or refused -> swap to an input to set/fix (reuses the date control's swap-to-input pattern)
+    var inp=document.createElement('input'); inp.type='url'; inp.className='frz-todo-linkedit'; inp.placeholder='https://...'; inp.setAttribute('aria-label','Link URL'); if(raw) inp.value=raw;
+    btn.replaceWith(inp); inp.focus();
+    inp.addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); inp.blur(); } else if(e.key==='Escape'){ e.preventDefault(); if(state.homeTab==='todos'&&_frzTodoView==='open') _frzPaintTodos(); } });
+    inp.addEventListener('change', function(){
+      var v=(inp.value||'').trim();
+      if(v && !_frzLinkSchemeOk(v)){ if(typeof showToast==='function') showToast('Link must start with http:// or https://','error'); return; }   // clear client message; server re-checks
+      _frzTodoPut(tid, { url:v });   // blank clears (server _todo_url -> null); a valid URL saves; re-render reflects it
+    });
+    inp.addEventListener('blur', function(){ if(state.homeTab==='todos'&&_frzTodoView==='open') _frzPaintTodos(); });
+  }
   function _frzTodoComplete(id, row){
     // Check = complete. Brief strike-through confirmation (Part 0: the convention stays), then the row
     // leaves the open list into the log. Un-completing from the log is out of scope (retype).
@@ -21947,6 +21983,7 @@ if ('serviceWorker' in navigator) {
           inp.addEventListener('change', function(){ _frzTodoPut(tid, { due_date: inp.value||'' }); });   // clearing the input clears the date
           inp.addEventListener('blur', function(){ if(state.homeTab==='todos'&&_frzTodoView==='open') _frzPaintTodos(); });
           return; }
+        var lnk=e.target.closest('.frz-todo-link'); if(lnk){ e.stopPropagation(); _frzTodoLinkClick(lnk, +lnk.getAttribute('data-tid')); return; }   // TODO-LINK-1
         var rep=e.target.closest('.frz-todo-repeat'); if(rep){ e.stopPropagation(); _frzOpenRepeatMenu(rep, +rep.getAttribute('data-tid'), rep.getAttribute('data-rec')||'none'); return; }   // TODO-RECUR-1
         var del=e.target.closest('.frz-todo-del'); if(del){ _frzTodoDelete(+del.getAttribute('data-tid')); return; }
       });
