@@ -2305,7 +2305,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.27.0';
+const APP_VERSION = '6.27.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -10285,6 +10285,14 @@ function renderAcOpen(){
     const actionBtns = isDueDateChange
       ? `<button onclick="openDueDateApproval(${a.id})" style="font-size:11px;padding:4px 10px;background:var(--accent);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:'Lato',sans-serif;font-weight:700">Review</button>`
       : renderResolveDropdown(a);
+    // ACT-LINK-1: open the item in a NEW TAB. Gated on a.item_id (absent on Capacity Conflict and any
+    // item-less/system activity, so no dead link). A REAL anchor, NEVER window.open, so middle/cmd/ctrl-
+    // click work; _frzItemPageUrl carries the team (sessions are per-Organization); the capture-phase in-app
+    // nav interceptor's target=_blank exemption opens a browser tab and navigates in-app in the installed
+    // PWA (no tabs there - the correct trade). stopPropagation is defensive: rows have no click handler today.
+    const openLink = a.item_id
+      ? `<a href="${_frzItemPageUrl(a.item_id)}" target="_blank" rel="noopener" title="Open item in a new tab" aria-label="Open item in a new tab" onclick="event.stopPropagation()" style="display:inline-flex;align-items:center;justify-content:center;color:var(--muted);text-decoration:none;padding:2px;line-height:0"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>`
+      : '';
 
     // For system-generated At Risk cards: recalculate projected end live from current item state
     // (stored message may be stale if item dates changed since the alert was created)
@@ -10312,6 +10320,7 @@ function renderAcOpen(){
           ${metaLine}
         </div>
         <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex-shrink:0">
+          ${openLink}
           ${newBadge}
           ${actionBtns}
         </div>
