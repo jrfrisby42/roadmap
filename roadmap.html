@@ -2336,7 +2336,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.29.0';
+const APP_VERSION = '6.29.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -7964,12 +7964,12 @@ async function renderSystemStatus(){
   if(!box) return;
   box.innerHTML='<div class="frz-sys-muted">Loading system status…</div>';
   try {
-    var r=await API.get('/api/system/status');
-    if(r.status===403){ box.innerHTML='<div class="frz-sys-muted">You do not have access to system status.</div>'; return; }
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    box.innerHTML=_sysStatusHTML(await r.json());
+    // API.get resolves to the PARSED body (not a Response) and throws on non-2xx (403 => "Permission denied").
+    var d=await API.get('/api/system/status');
+    box.innerHTML=_sysStatusHTML(d);
   } catch(e){
-    box.innerHTML='<div class="frz-sys-muted">Could not load system status ('+esc(String(e && e.message || e))+').</div>';
+    var m=String(e && e.message || e);
+    box.innerHTML='<div class="frz-sys-muted">'+(/Permission denied/i.test(m)?'You do not have access to system status.':('Could not load system status ('+esc(m)+').'))+'</div>';
   }
 }
 function openAdminPanel(tabId){
@@ -8101,9 +8101,6 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       if(data.typeIgnoreConflicts)   typeIgnoreConflicts   = data.typeIgnoreConflicts;
       if(data.typeScheduled)         typeScheduled         = data.typeScheduled;
       if(data.richTextEditor !== undefined) richTextEditor  = data.richTextEditor !== false;
-      // SYS-STATUS-1 (Addendum B): the per-user gate for the operator System tab. Only this boolean
-      // reaches the client - the SYS_STATUS_USERS allowlist itself never does.
-      window._sysStatusVisible = !!data.sysStatusVisible;
       if(data.maintenanceDutyTypeId !== undefined) maintenanceDutyTypeId = data.maintenanceDutyTypeId || '';
       intakeEnabled = data.intakeEnabled === true;
       assethubConfigured = data.assethubConfigured === true;   // FLOW-1 gate
@@ -18332,6 +18329,7 @@ async function boot(){
     typeIgnoreConflicts   = data.typeIgnoreConflicts   || {};
     typeScheduled         = data.typeScheduled         || {};
     richTextEditor        = data.richTextEditor !== false;   // default ON; only an explicit false reverts to the classic editor
+    window._sysStatusVisible = !!data.sysStatusVisible;      // SYS-STATUS-1 (Addendum B): per-user gate for the operator System tab (allowlist never reaches the client)
     maintenanceDutyTypeId = data.maintenanceDutyTypeId || '';   // M1: Maintenance Duty assignment-type mapping
     intakeEnabled         = data.intakeEnabled === true;                                              // public /report portal exposed?
     intakeNotifyTeam      = data.intakeNotifyTeam === true;                                            // notify the team on a new portal ticket

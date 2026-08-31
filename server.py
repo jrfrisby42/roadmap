@@ -1671,7 +1671,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.29.0"
+APP_VERSION = "6.29.1"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -3866,8 +3866,11 @@ def _sys_schema_drift(team_paths):
             out = {}
             for (t,) in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
                 low = t.lower()
-                if low.startswith("sqlite_") or "fts" in low:
-                    continue   # skip internal + FTS shadow tables
+                if low.startswith("sqlite_") or "fts" in low or low.startswith("_litestream"):
+                    continue   # skip SQLite internal, FTS shadow, and Litestream's own bookkeeping
+                    # tables (_litestream_seq/_litestream_lock). The last exist only in a DB Litestream
+                    # has replicated, so their presence is a BACKUP-state signal (already the coverage
+                    # + service rows), NOT Flow app-schema drift - flagging them here is a false positive.
                 cols = {row[1] for row in con.execute('PRAGMA table_info("%s")' % t.replace('"', '""')).fetchall()}
                 out[t] = cols
             return out

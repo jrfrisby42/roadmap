@@ -127,6 +127,29 @@ def test_schema_drift_flags_missing_column(client, team, allow_admin, monkeypatc
     assert hit and "zzz_probe" in hit[0]["missing"]
 
 
+def test_schema_ignores_litestream_internal_tables(client, team, allow_admin, monkeypatch):
+    # Live prod false-positive: Litestream creates _litestream_seq/_litestream_lock only in a DB it
+    # has replicated, so a not-yet-replicated team "lacks" them - that is a BACKUP signal (coverage
+    # row), NOT app-schema drift. The schema check must skip them and stay consistent.
+    a = f"{team}_lsA"
+    b = f"{team}_lsB"
+    os.makedirs(os.path.join(server.TENANTS_DIR, a), exist_ok=True)
+    os.makedirs(os.path.join(server.TENANTS_DIR, b), exist_ok=True)
+    server.init_team_db(a)
+    server.init_team_db(b)
+    with server.db(a) as c:   # teamA looks "replicated"; teamB does not
+        c.execute("CREATE TABLE IF NOT EXISTS _litestream_seq (id INTEGER)")
+        c.execute("CREATE TABLE IF NOT EXISTS _litestream_lock (id INTEGER)")
+    monkeypatch.setattr(server, "_sys_teams_on_disk", lambda: [
+        {"team": a, "path": os.path.join(server.TENANTS_DIR, a, "roadmap.db"), "sizeBytes": 1, "mtime": None},
+        {"team": b, "path": os.path.join(server.TENANTS_DIR, b, "roadmap.db"), "sizeBytes": 1, "mtime": None},
+    ])
+    r = client.get("/api/system/status", headers=_hdr(team, "admin"))
+    sc = r.json()["schema"]
+    assert sc["consistent"] is True                                   # the _litestream_* diff is ignored
+    assert not any("litestream" in (x.get("table") or "") for x in sc["drift"])
+
+
 def test_schema_consistent_when_uniform(client, team, allow_admin, monkeypatch):
     a = f"{team}_uniA"
     b = f"{team}_uniB"
