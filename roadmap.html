@@ -1912,9 +1912,9 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
          style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--accent);text-decoration:none;background:rgba(0,89,169,0.07);padding:6px 12px;border-radius:7px;border:1px solid rgba(0,89,169,0.2)">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg> Audit Log
       </a>
-      <button id="adminCloseBtn" type="button" title="Close" aria-label="Close"
-         style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;font-size:16px;line-height:1;flex-shrink:0">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      <button id="adminCloseBtn" type="button" title="Back to the previous view" aria-label="Back"
+         style="display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer;font-size:13px;font-weight:600;line-height:1;flex-shrink:0">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg> Back
       </button>
       </div>
     </div>
@@ -7856,7 +7856,10 @@ document.getElementById('adminDoneBtn')?.addEventListener('click', ()=>document.
 // Close (X): in the Flow full-page shell, leave the Admin page and go Home; in the
 // classic modal, just close the overlay.
 document.getElementById('adminCloseBtn')?.addEventListener('click', function(){
-  if(document.body.classList.contains('frz-beta-active') && window._frzNav){ window._frzNav('/my-home'); }
+  // RAIL-TIDY-1: a real Back, not a bare dismiss. In the shell, return to the view we came from
+  // (window._frzAdminBack); fall back to My Home when there is none. Classic modal: just close.
+  if(document.body.classList.contains('frz-beta-active') && window._frzAdminBack){ window._frzAdminBack(); }
+  else if(document.body.classList.contains('frz-beta-active') && window._frzNav){ window._frzNav('/my-home'); }
   else { document.getElementById('adminModalBg').classList.remove('open'); }
 });
 document.getElementById('adminModalBg')?.addEventListener('click', e=>{ if(e.target===e.currentTarget) e.currentTarget.classList.remove('open'); });
@@ -20697,14 +20700,11 @@ if ('serviceWorker' in navigator) {
           '<button class="frz-menu-close" id="frzMenuClose" aria-label="Close menu" title="Close">✕</button>'+
         '</div>'+
         '<div class="frz-scroll">'+
+          '<nav class="frz-section frz-section--home" id="frzHomeNav" aria-label="Home"></nav>'+
           '<nav class="frz-section" id="frzViewNav" aria-label="Views"><div class="frz-heading">VIEWS</div></nav>'+
           '<nav class="frz-section frz-section--projects" id="frzProjNav" aria-label="Spaces"><div class="frz-heading frz-heading--toggle" role="button" tabindex="0" aria-expanded="true" data-railsec="projects"><span class="frz-sec-head-l"><span class="frz-sec-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span><span class="frz-sec-lbl">SPACES</span><span class="frz-sec-count" aria-hidden="true"></span></span><button class="frz-add" id="frzAddProj" title="Add space (coming soon)">＋</button></div></nav>'+
           '<nav class="frz-section frz-section--boards" id="frzBoardNav" aria-label="Boards"><div class="frz-heading frz-heading--toggle" role="button" tabindex="0" aria-expanded="true" data-railsec="boards"><span class="frz-sec-head-l"><span class="frz-sec-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span><span class="frz-sec-lbl">BOARDS</span><span class="frz-sec-count" aria-hidden="true"></span></span><button class="frz-add" id="frzAddBoard" title="Create board">＋</button></div></nav>'+
           '<nav class="frz-section frz-section--saved" id="frzSavedNav" aria-label="Saved filters"><div class="frz-heading frz-heading--toggle" role="button" tabindex="0" aria-expanded="true" data-railsec="saved"><span class="frz-sec-head-l"><span class="frz-sec-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span><span class="frz-sec-lbl">SAVED FILTERS</span><span class="frz-sec-count" aria-hidden="true"></span></span><button class="frz-add" id="frzSaveBtn" title="Save current filters">＋</button></div></nav>'+
-        '</div>'+
-        '<div class="frz-footer">'+
-          '<button class="frz-item" id="frzSettings" title="Settings">'+IC.settings+'<span>Settings</span></button>'+
-          '<button class="frz-item" id="frzAdmin" title="Admin">'+IC.admin+'<span>Admin</span></button>'+
         '</div>'+
       '</aside>'+
       '<div class="frz-main">'+
@@ -20727,6 +20727,9 @@ if ('serviceWorker' in navigator) {
               '<div class="frz-acct-menu" id="frzAcctMenu" hidden>'+
                 '<button id="frzActivity">Activity Center</button>'+
                 '<button id="frzManualBtn">Flow User Manual</button>'+
+                '<div class="frz-acct-label">Workspace</div>'+                 // RAIL-TIDY-1: Settings + Admin move here from the rail footer
+                '<button id="frzSettings">Settings</button>'+                   // ids unchanged - wire() binds them by id (position-independent)
+                '<button id="frzAdmin">Admin</button>'+
                 '<div id="frzTeamSwitch"></div>'+
                 '<button id="frzLogout">Log out</button>'+
               '</div>'+
@@ -21114,6 +21117,8 @@ if ('serviceWorker' in navigator) {
   function renderRail(){
     var nav = document.getElementById('frzViewNav');
     nav.querySelectorAll('.frz-item').forEach(function(b){ b.remove(); });
+    var homeNav = document.getElementById('frzHomeNav');   // RAIL-TIDY-1: My Home lives in its own container ABOVE the VIEWS heading
+    if(homeNav) homeNav.querySelectorAll('.frz-item').forEach(function(b){ b.remove(); });
     var admin = _val('isAdmin', false);
     var viewer = _val('isViewer', false);
     var editor = _val('isEditor', false);   // Reports (Ship C) is admin/editor-only
@@ -21127,7 +21132,7 @@ if ('serviceWorker' in navigator) {
     hb.setAttribute('aria-current', String(state.view==='my-home' && !state.onItem));
     hb.title='My Home';
     hb.innerHTML = IC.home + '<span class="frz-item-lbl" title="My Home">My Home</span>' + (mwCount>0 ? '<span class="frz-count">'+mwCount+'</span>' : '') + '<span class="frz-item-cdot" aria-hidden="true"></span>';   // COUNTER-ALIGN-1: label flexes/truncates
-    nav.appendChild(hb);
+    (homeNav||nav).appendChild(hb);   // RAIL-TIDY-1: standalone above VIEWS (falls back into VIEWS if the container is somehow absent)
     // Ordered VIEWS (My Home is pinned above, always). Each entry is gated by role AND by the
     // per-team enabledViews allowlist (_viewEnabled). admin + my-home are always on and are not in
     // this list. Calendar sits after List, Reports after Planning, Dashboard last - as before, but
@@ -24312,6 +24317,18 @@ if ('serviceWorker' in navigator) {
     return true;   // v1 dead-end (no auto deep-link through login)
   }
   // ════════ routing ════════
+  // RAIL-TIDY-1: Admin's Back button. `_frzAdminReturn` is the URL of the view we entered Admin from
+  // (captured in the account-menu Admin click); Back returns there, mirroring the item page's "return to
+  // where you came from" (itemPageBack is item-specific, so this is a mirror, not a share). No captured
+  // return - a direct /admin URL / bookmark with no in-app history - falls back to /my-home, which is
+  // UNCONDITIONALLY enabled on every Organization (my-home is never gated by enabledViews), so it can never
+  // strand a user (e.g. IT, where Gantt is disabled).
+  var _frzAdminReturn=null;
+  window._frzAdminBack=function(){
+    var r=_frzAdminReturn; _frzAdminReturn=null;
+    if(r && r.indexOf('/admin')!==0){ navigate(r, false); }
+    else { navigate('/my-home', false); }
+  };
   function navigate(url, replace){
     var u = new URL(url, location.origin);
     var path = u.pathname.replace(/\/+$/,'');
@@ -24916,7 +24933,7 @@ if ('serviceWorker' in navigator) {
     }); } catch(e){}
     // Escape closes the phone search overlay.
     document.addEventListener('keydown', function(e){ if(e.key==='Escape' && root.classList.contains('frz-search-open')) root.classList.remove('frz-search-open'); });
-    document.getElementById('frzSettings').addEventListener('click', openSettings);   // Stage 4a: tabbed Settings
+    document.getElementById('frzSettings').addEventListener('click', function(){ var m=document.getElementById('frzAcctMenu'); if(m) m.hidden=true; openSettings(); });   // Stage 4a: tabbed Settings. RAIL-TIDY-1: now in the account menu - close it on click.
     window._frzNav = navigate;   // bridge so classic-scope code (openAdminPanel) can route into the Flow shell
     window._frzSyncURL = syncURL;   // ADOPT-1: bridge so the List sort (block-B _listSetSort) can push its state into the URL
     window._frzRelDue = _frzRelDue;   // ADOPT-2: bridge so the block-B List `due` column can share the one relative-date formatter with the Kanban card
@@ -24935,7 +24952,15 @@ if ('serviceWorker' in navigator) {
       try { if(state.view==='planning' && state.planTab==='plan') refreshPlan(); } catch(e){}
       try { _frzRenderScenarioPanel(); } catch(e){}
     };
-    document.getElementById('frzAdmin').addEventListener('click', function(){ navigate('/admin', false); });
+    document.getElementById('frzAdmin').addEventListener('click', function(){
+      var m=document.getElementById('frzAcctMenu'); if(m) m.hidden=true;   // RAIL-TIDY-1: close the account menu
+      // Capture the view we are leaving so Admin's Back can return to it (NOT history.back(): admin sub-tabs
+      // push their own history via _adminEmitURL, so history.back() would step through admin tabs instead of
+      // leaving). Skip capturing if we are already on admin. A direct /admin cold-load never sets this, so
+      // Back there falls to /my-home.
+      if(state.view!=='admin'){ _frzAdminReturn = location.pathname + location.search; }
+      navigate('/admin', false);
+    });
     var av=document.getElementById('frzAvatar'), am=document.getElementById('frzAcctMenu');
     av.addEventListener('click', function(e){ e.stopPropagation(); am.hidden=!am.hidden; if(!am.hidden){ try { renderTeamSwitch(); } catch(_e){} } });
     document.addEventListener('click', function(){ am.hidden=true; });
