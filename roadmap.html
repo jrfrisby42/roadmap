@@ -19498,6 +19498,10 @@ if ('serviceWorker' in navigator) {
   .frz-beta #frzHomeTabs { padding:10px 20px 0; border-bottom:1px solid var(--frz-border); }
   .frz-beta #frzHome .frz-home-body-wrap { padding:16px 20px; }
   .frz-beta .frz-mw-count { font-size:12px; color:var(--frz-text-muted); margin-bottom:10px; }
+  /* DIGEST-WATCH-1: the "Stop watching finished (N)" action above the Watching list (empty on other tabs). */
+  .frz-beta .frz-watch-clear-btn { display:inline-flex; align-items:center; gap:6px; background:none; border:1px solid var(--frz-border); border-radius:8px; color:var(--frz-text-muted); font:inherit; font-size:12px; font-weight:600; padding:5px 12px; cursor:pointer; margin:0 0 12px; }
+  .frz-beta .frz-watch-clear-btn:hover { color:var(--frz-accent); border-color:var(--frz-accent); }
+  .frz-beta .frz-watch-clear-btn svg { width:13px; height:13px; flex-shrink:0; }
   .frz-beta .frz-mw-table { width:100%; border-collapse:collapse; font-size:13px; }
   .frz-beta .frz-mw-table thead th { text-align:left; padding:7px 10px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); border-bottom:1px solid var(--frz-border); }
   .frz-beta .frz-mw-table .frz-mw-cb, .frz-beta #frzHome .list-cb-cell { display:none; }   /* no bulk-select in My Home */
@@ -20782,6 +20786,7 @@ if ('serviceWorker' in navigator) {
       // _frzHomeTabsHTML(). The body wrap is the whole home content below it.
       '<div class="frz-home-body-wrap">'+
         '<div id="frzHomeCount" class="frz-mw-count"></div>'+
+        '<div id="frzWatchClear" class="frz-mw-clear"></div>'+   // DIGEST-WATCH-1: "Stop watching finished" action slot (Watching tab, when >0 finished; cleared each tab render)
         '<table class="frz-mw-table"><thead><tr>'+
           '<th class="frz-mw-cb"></th><th>Key</th><th>Type</th><th>Name</th><th>Status</th>'+
           '<th>Priority</th><th>Team</th><th>Assignee</th><th style="text-align:center">Pts</th><th>Sprint</th>'+
@@ -22046,6 +22051,7 @@ if ('serviceWorker' in navigator) {
     });
     _frzPaintHomeCounts();   // MYHOME-COUNT: refresh the tab badges from cache (Assigned is recomputed live)
     _frzTodoPaneShow(tab==='todos');   // TODO-1: toggle display between (#frzHomeCount + table) and #frzTodoPane
+    var _wc=document.getElementById('frzWatchClear'); if(_wc) _wc.innerHTML='';   // DIGEST-WATCH-1: cleared on every tab; the Watching branch repopulates it
     if(tab==='todos'){ _frzRenderTodos(); return; }   // the To-dos tab never uses _paintHome/_listRowHtml
     if(tab==='assigned'){
       var items=myWorkItems().slice().sort(myWorkSort);
@@ -22061,6 +22067,7 @@ if ('serviceWorker' in navigator) {
         var items=((d&&d.items)||[]).map(_itemById).filter(Boolean).sort(myWorkSort);
         _paintHome(items, items.length+' item'+(items.length!==1?'s':'')+" you're watching",
           "You're not watching any items yet.");
+        _frzRenderWatchClear(items);   // DIGEST-WATCH-1: "Stop watching finished (N)" above the list when any watched item is terminal
       }).catch(function(){ if(state.view==='my-home'&&state.homeTab==='watching') _paintHome([], '', 'Could not load watched items.'); });
       return;
     }
@@ -22072,6 +22079,34 @@ if ('serviceWorker' in navigator) {
       _paintHome(items, items.length+' recently viewed',
         'Nothing here yet - items you work on will show up.');
     }).catch(function(){ if(state.view==='my-home'&&state.homeTab==='recent') _paintHome([], '', 'Could not load recent items.'); });
+  }
+  // DIGEST-WATCH-1: a single "Stop watching finished (N)" action above the Watching list, shown ONLY when at
+  // least one watched item is in a TERMINAL status. "Finished" is the set word - it is NOT a status on any
+  // team (checked), so it can't be mistaken for one. isTerminalStatus covers the per-team statusIsTerminal
+  // map AND the reserved Transferred/Duplicate set (no second terminality test). Finished items are NOT
+  // auto-hidden (you see them once); this is how you clear them.
+  function _frzRenderWatchClear(items){
+    var slot=document.getElementById('frzWatchClear'); if(!slot) return;
+    var finished=(items||[]).filter(function(it){ return isTerminalStatus(it.status); });
+    if(!finished.length){ slot.innerHTML=''; return; }
+    slot.innerHTML='<button type="button" class="frz-watch-clear-btn">'+IC.bell+'<span>Stop watching finished ('+finished.length+')</span></button>';
+    slot.querySelector('.frz-watch-clear-btn').addEventListener('click', function(){ _frzStopWatchingFinished(finished); });
+  }
+  // Remove the CALLER's watch from each finished item via the existing unwatch path (a SEPARATE watchers
+  // table, never an item-blob write, so other watchers survive; username is the token's, never client-sent).
+  // No notification, no per-item audit. Refresh the tab (re-fetch + _frzWatchCount + badges), then a toast
+  // with Undo that re-watches all of them in one action. No confirm() (the count is in the label + undo exists).
+  function _frzStopWatchingFinished(finished){
+    var ids=(finished||[]).map(function(it){ return it.id; }); if(!ids.length) return;
+    Promise.all(ids.map(function(id){ return API.post('/api/items/'+id+'/unwatch',{}).catch(function(){}); })).then(function(){
+      if(state.view==='my-home' && state.homeTab==='watching') renderHome();   // re-fetch watching -> list, _frzWatchCount, badge, and the action all update
+      var n=ids.length;
+      if(typeof showToast==='function') showToast('Stopped watching '+n+' finished item'+(n!==1?'s':''), 'info', 6000, { label:'Undo', fn:function(){
+        Promise.all(ids.map(function(id){ return API.post('/api/items/'+id+'/watch',{}).catch(function(){}); })).then(function(){
+          if(state.view==='my-home' && state.homeTab==='watching') renderHome();
+        });
+      }});
+    });
   }
   // MYHOME-COUNT: order is a gradient - the three counted, actionable tabs first (Assigned = what the
   // team needs from you and the DEFAULT landing tab; To-dos = your own list; Watching = items you track),

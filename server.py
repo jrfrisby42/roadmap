@@ -11003,11 +11003,21 @@ def _digest_summary(items, term_map, sla, now_dt, waiting_map=None, parked_map=N
     } for age, p in open_rows[:8]]
     return counts
 
-def _render_digest_email(team, scope_label, s, base_url):
+def _render_digest_email(team, scope_label, s, base_url, sla_enabled=True):
     scope = f" - {scope_label}" if scope_label else ""
-    subj = f"[{team}] Queue health{scope}: {s['open']} open, {s['sla_breached']} SLA-breached"
-    metrics = [("Open", s["open"]), ("Overdue", s["overdue"]), ("SLA breached", s["sla_breached"]),
-               ("SLA at risk", s["sla_atrisk"]), ("Aged 30+ days", s["aged_30"]), ("Closed last 7 days", s["closed_7d"])]
+    # DIGEST-WATCH-1: the SLA tiles + the subject's SLA count are OMITTED (absent, not zeroed) when SLA is
+    # off for this team. _maintain_sla_clock keeps writing PAUSED/PARKED regardless of the flag, so a real-
+    # looking breach count on an SLA-off team would mislead a manager reading it. "Past SLA target" replaces
+    # the alarm-toned "SLA breached" - it names what it lists rather than judging it. Only the SLA section
+    # has this "feature off, data still accrues" problem; Open/Overdue/Aged/Closed are universal metrics.
+    if sla_enabled:
+        subj = f"[{team}] Queue health{scope}: {s['open']} open, {s['sla_breached']} past SLA target"
+        metrics = [("Open", s["open"]), ("Overdue", s["overdue"]), ("Past SLA target", s["sla_breached"]),
+                   ("SLA at risk", s["sla_atrisk"]), ("Aged 30+ days", s["aged_30"]), ("Closed last 7 days", s["closed_7d"])]
+    else:
+        subj = f"[{team}] Queue health{scope}: {s['open']} open"
+        metrics = [("Open", s["open"]), ("Overdue", s["overdue"]),
+                   ("Aged 30+ days", s["aged_30"]), ("Closed last 7 days", s["closed_7d"])]
     # Plain text
     lines = [f"Queue health for {team}{scope}", ""]
     lines += [f"  {label}: {val}" for label, val in metrics]
@@ -11022,7 +11032,7 @@ def _render_digest_email(team, scope_label, s, base_url):
     esc = html.escape
     mrows = "".join(
         f'<td style="padding:10px 14px;border:1px solid #e3e8ee;border-radius:10px;text-align:center;min-width:90px">'
-        f'<div style="font-size:24px;font-weight:800;color:{("#c0293b" if (label in ("SLA breached","Overdue") and val) else "#14283f")}">{val}</div>'
+        f'<div style="font-size:24px;font-weight:800;color:{("#c0293b" if (label in ("Past SLA target","Overdue") and val) else "#14283f")}">{val}</div>'
         f'<div style="font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.4px;margin-top:3px">{esc(label)}</div></td>'
         for label, val in metrics)
     oldest_html = ""
@@ -11089,7 +11099,7 @@ def send_team_digests(verbose=False):
             for label, email, subset in targets:
                 try:
                     s = _digest_summary(subset, term_map, sla, now_dt, waiting_map, parked_map)
-                    subj, text, html_body = _render_digest_email(team, label, s, APP_BASE_URL)
+                    subj, text, html_body = _render_digest_email(team, label, s, APP_BASE_URL, bool(sla.get("enabled")))   # DIGEST-WATCH-1: SLA section per-team
                     send_email(email, subj, text, html_body)
                     sent += 1
                     if verbose:
@@ -11126,7 +11136,7 @@ def send_digest_preview(body: dict = Body(default={}), auth: dict = Depends(requ
         if not (p.get("archived") or p.get("hidden")):
             items.append(p)
     s = _digest_summary(items, term_map, sla, now_dt, waiting_map, parked_map)
-    subj, text, html_body = _render_digest_email(team, "", s, APP_BASE_URL)
+    subj, text, html_body = _render_digest_email(team, "", s, APP_BASE_URL, bool(sla.get("enabled")))   # DIGEST-WATCH-1: SLA section per-team
     try:
         send_email(to, "[Preview] " + subj, text, html_body)
     except Exception as e:

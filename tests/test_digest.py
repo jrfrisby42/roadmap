@@ -67,10 +67,34 @@ def test_digest_render_shapes(team):
     with server.db(team) as c:
         items = [json.loads(r["data"]) for r in c.execute("SELECT data FROM projects").fetchall()]
     s = server._digest_summary(items, {"Done": True}, server._cfg_val(team, "slaTargets", {}), datetime.now(timezone.utc))
-    subj, text, html_body = server._render_digest_email(team, "", s, "http://x")
+    subj, text, html_body = server._render_digest_email(team, "", s, "http://x")   # sla_enabled defaults True
     assert "Queue health" in subj and team in subj
-    assert "Open" in text and "SLA breached" in text
+    assert "Open" in text and "Past SLA target" in text   # DIGEST-WATCH-1: "SLA breached" relabelled -> "Past SLA target"
     assert "<table" in html_body
+
+
+# ── DIGEST-WATCH-1: the SLA section is gated on slaTargets.enabled ───────────────────────────────────
+def _sla_sample():
+    return {"open": 10, "overdue": 3, "sla_breached": 5, "sla_atrisk": 2,
+            "aged_30": 4, "closed_7d": 6, "oldest_open": []}
+
+
+def test_digest_omits_sla_section_when_off():
+    s = _sla_sample()
+    subj, text, html_body = server._render_digest_email("acme", "", s, "http://x", sla_enabled=False)
+    assert "SLA" not in subj                                    # subject carries no SLA count
+    assert "Past SLA target" not in html_body and "SLA at risk" not in html_body   # both tiles ABSENT
+    assert "Past SLA target" not in text and "SLA at risk" not in text
+    for label in ("Open", "Overdue", "Aged 30+ days", "Closed last 7 days"):        # universal tiles remain
+        assert label in html_body and label in text
+
+
+def test_digest_includes_sla_section_when_on():
+    s = _sla_sample()
+    subj, text, html_body = server._render_digest_email("acme", "", s, "http://x", sla_enabled=True)
+    assert "past SLA target" in subj                           # relabelled, present
+    assert "Past SLA target" in html_body and "SLA at risk" in html_body
+    assert "SLA breached" not in html_body                     # the old alarm label is gone everywhere
 
 
 # ── the sender ────────────────────────────────────────────────────────────────────
