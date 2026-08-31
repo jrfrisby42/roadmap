@@ -20725,12 +20725,15 @@ if ('serviceWorker' in navigator) {
             '<div class="frz-acct-wrap">'+
               '<button class="frz-avatar" id="frzAvatar" aria-label="Account"></button>'+
               '<div class="frz-acct-menu" id="frzAcctMenu" hidden>'+
+                // addendum-B: grouped by whose things they are - yours (Activity/Settings/Admin), then the
+                // organization list, then reference + exit at the bottom. No "Workspace" heading (a 4th
+                // container-ish word the terminology arc removed); two buttons need no group label. ids
+                // (frzSettings/frzAdmin/frzManualBtn) unchanged - wire() binds them by id, position-independent.
                 '<button id="frzActivity">Activity Center</button>'+
-                '<button id="frzManualBtn">Flow User Manual</button>'+
-                '<div class="frz-acct-label">Workspace</div>'+                 // RAIL-TIDY-1: Settings + Admin move here from the rail footer
-                '<button id="frzSettings">Settings</button>'+                   // ids unchanged - wire() binds them by id (position-independent)
+                '<button id="frzSettings">My Settings</button>'+               // "My Settings": says these are yours without a new term (Admin = org-level)
                 '<button id="frzAdmin">Admin</button>'+
-                '<div id="frzTeamSwitch"></div>'+
+                '<div id="frzTeamSwitch"></div>'+                              // ORGANIZATIONS group (its own frz-acct-label, ~9586)
+                '<button id="frzManualBtn">Flow User Manual</button>'+         // reference + exit last
                 '<button id="frzLogout">Log out</button>'+
               '</div>'+
             '</div>'+
@@ -20984,6 +20987,7 @@ if ('serviceWorker' in navigator) {
     }
     wire();
     renderRail();
+    _frzMyTodosReady(function(){ renderRail(); });   // addendum-B: load the to-do cache once at mount so the My Home badge shows overdue-to-dos on any boot, not only after visiting My Home
     onResize();
     // Stage 3b: notifications - initial load + lightweight 60s poll (no websockets, by design)
     // REM-3: fire any of THIS user's due reminders once per page load (no scheduler; the session is the
@@ -21126,12 +21130,19 @@ if ('serviceWorker' in navigator) {
     // personal landing (always present, unlike the old My Work which hid when
     // empty). The count is the assigned-to-me open count (same single-source
     // query that feeds the Assigned tab); the badge is hidden when it's zero.
-    var mwCount = myWorkItems().length;
+    // addendum-B: My Home badge = assigned items + OVERDUE to-dos, one summed number. Overdue via the
+    // existing _frzTodoOverdue on the page-load cache _frzMyTodos (loaded once, invalidated on any to-do
+    // mutation - NOT the lazy _frzTodos). A null cache -> assigned-only for the brief moment before the
+    // to-do fetch lands (accepted). Zero renders no badge; the title breaks the number down.
+    var mwAssigned = myWorkItems().length;
+    var mwOverdue = (_frzMyTodos||[]).filter(_frzTodoOverdue).length;
+    var mwCount = mwAssigned + mwOverdue;
+    var mwTitle = mwCount>0 ? (mwAssigned+' assigned, '+mwOverdue+' overdue to-do'+(mwOverdue===1?'':'s')) : 'My Home';
     var hb = document.createElement('button');
     hb.className='frz-item'; hb.setAttribute('data-nav','view:my-home');
     hb.setAttribute('aria-current', String(state.view==='my-home' && !state.onItem));
-    hb.title='My Home';
-    hb.innerHTML = IC.home + '<span class="frz-item-lbl" title="My Home">My Home</span>' + (mwCount>0 ? '<span class="frz-count">'+mwCount+'</span>' : '') + '<span class="frz-item-cdot" aria-hidden="true"></span>';   // COUNTER-ALIGN-1: label flexes/truncates
+    hb.title=mwTitle;
+    hb.innerHTML = IC.home + '<span class="frz-item-lbl" title="'+escA(mwTitle)+'">My Home</span>' + (mwCount>0 ? '<span class="frz-count">'+mwCount+'</span>' : '') + '<span class="frz-item-cdot" aria-hidden="true"></span>';   // COUNTER-ALIGN-1: label flexes/truncates
     (homeNav||nav).appendChild(hb);   // RAIL-TIDY-1: standalone above VIEWS (falls back into VIEWS if the container is somehow absent)
     // Ordered VIEWS (My Home is pinned above, always). Each entry is gated by role AND by the
     // per-team enabledViews allowlist (_viewEnabled). admin + my-home are always on and are not in
@@ -22075,6 +22086,11 @@ if ('serviceWorker' in navigator) {
   // (free, always fresh); To-dos reads the live _frzCounts.open; Watching reads _frzWatchCount (fetched
   // on entry). Zero is hidden for To-dos + Watching (noise on unused tabs); Assigned shows (0).
   function _frzPaintHomeCounts(){
+    // addendum-B: keep the My Home RAIL badge (assigned + overdue to-dos) live on the same events this
+    // fires for - to-do add / delete / undo / complete. Ensures the page-load to-do cache is (re)loaded
+    // after a mutation invalidated it, then re-renders the rail (its single count source). Runs BEFORE the
+    // tabs guard so it updates even when you are not on My Home. renderRail never calls back here (no loop).
+    _frzMyTodosReady(function(){ renderRail(); });
     var tabs=document.getElementById('frzHomeTabs'); if(!tabs) return;
     function set(tab, n, showZero){
       var el=tabs.querySelector('.frz-tab-count[data-count-for="'+tab+'"]'); if(!el) return;
