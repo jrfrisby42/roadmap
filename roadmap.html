@@ -19501,6 +19501,7 @@ if ('serviceWorker' in navigator) {
   /* DIGEST-WATCH-1: the "Stop watching finished (N)" action above the Watching list (empty on other tabs). */
   .frz-beta .frz-watch-clear-btn { display:inline-flex; align-items:center; gap:6px; background:none; border:1px solid var(--frz-border); border-radius:8px; color:var(--frz-text-muted); font:inherit; font-size:12px; font-weight:600; padding:5px 12px; cursor:pointer; margin:0 0 12px; }
   .frz-beta .frz-watch-clear-btn:hover { color:var(--frz-accent); border-color:var(--frz-accent); }
+  .frz-beta .frz-watch-clear-btn:disabled { opacity:.55; cursor:default; }   /* WATCH-BATCH-1: pending state while the one batch call is in flight */
   .frz-beta .frz-watch-clear-btn svg { width:13px; height:13px; flex-shrink:0; }
   .frz-beta .frz-mw-table { width:100%; border-collapse:collapse; font-size:13px; }
   .frz-beta .frz-mw-table thead th { text-align:left; padding:7px 10px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); border-bottom:1px solid var(--frz-border); }
@@ -22097,15 +22098,24 @@ if ('serviceWorker' in navigator) {
   // No notification, no per-item audit. Refresh the tab (re-fetch + _frzWatchCount + badges), then a toast
   // with Undo that re-watches all of them in one action. No confirm() (the count is in the label + undo exists).
   function _frzStopWatchingFinished(finished){
+    // WATCH-BATCH-1: ONE atomic call, not a per-item fan-out (the real account has 448 finished watches,
+    // which was 448 concurrent POSTs). No swallowing .catch - a failed batch surfaces as an error and does
+    // NOT run the success path. Undo uses the server's DEFINITIVE removed list, not the hopeful request list.
     var ids=(finished||[]).map(function(it){ return it.id; }); if(!ids.length) return;
-    Promise.all(ids.map(function(id){ return API.post('/api/items/'+id+'/unwatch',{}).catch(function(){}); })).then(function(){
-      if(state.view==='my-home' && state.homeTab==='watching') renderHome();   // re-fetch watching -> list, _frzWatchCount, badge, and the action all update
-      var n=ids.length;
+    var btn=document.querySelector('.frz-watch-clear-btn'), sp=btn&&btn.querySelector('span'), lbl=sp&&sp.textContent;
+    if(btn){ btn.disabled=true; if(sp) sp.textContent='Clearing…'; }   // pending state: one request, but disable to prevent a double-fire
+    API.post('/api/items/unwatch-batch', { ids:ids }).then(function(res){
+      var removed=(res && res.removed) || [];   // the server's actual removed-id list
+      if(state.view==='my-home' && state.homeTab==='watching') renderHome();   // re-fetch -> list, _frzWatchCount, badge, action
+      var n=removed.length; if(!n) return;
       if(typeof showToast==='function') showToast('Stopped watching '+n+' finished item'+(n!==1?'s':''), 'info', 6000, { label:'Undo', fn:function(){
-        Promise.all(ids.map(function(id){ return API.post('/api/items/'+id+'/watch',{}).catch(function(){}); })).then(function(){
+        API.post('/api/items/watch-batch', { ids:removed }).then(function(){   // re-watch exactly what was removed, in one call
           if(state.view==='my-home' && state.homeTab==='watching') renderHome();
-        });
+        }).catch(function(){ if(typeof showToast==='function') showToast('Could not undo','error'); });
       }});
+    }).catch(function(){
+      if(btn){ btn.disabled=false; if(sp) sp.textContent=lbl; }   // restore the button; failure surfaces, no success path
+      if(typeof showToast==='function') showToast('Could not stop watching','error');
     });
   }
   // MYHOME-COUNT: order is a gradient - the three counted, actionable tabs first (Assigned = what the

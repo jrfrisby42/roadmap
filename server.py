@@ -7085,6 +7085,69 @@ def unwatch_item(pid: int, auth: dict = Depends(require_auth)):
         c.execute("DELETE FROM watchers WHERE item_id=? AND username=?", (pid, auth["username"]))
     return {"watching": False}
 
+# WATCH-BATCH-1: bulk watch/unwatch in ONE transaction each (all-or-none), replacing a client fan-out
+# that fired one POST per item (448 concurrent on a real account). The cap comfortably exceeds that; a
+# larger list is a 422, never a silent truncation.
+_WATCH_BATCH_MAX = 2000
+
+def _watch_batch_ids(body: dict):
+    """Coerce body['ids'] to a de-duplicated, order-preserving list of ints, capped at _WATCH_BATCH_MAX."""
+    ids = body.get("ids")
+    if not isinstance(ids, list):
+        raise HTTPException(400, "ids must be a list")
+    seen, out = set(), []
+    for raw in ids:
+        try:
+            i = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if i not in seen:
+            seen.add(i); out.append(i)
+    if len(out) > _WATCH_BATCH_MAX:
+        raise HTTPException(422, f"Too many items ({len(out)}); max {_WATCH_BATCH_MAX} per batch")
+    return out
+
+@app.post("/api/items/unwatch-batch")
+def unwatch_batch(body: dict = Body(...), auth: dict = Depends(require_auth)):
+    """Remove the CALLER's watch from many items in ONE transaction (atomic). Mirrors the single unwatch:
+    NO read gate - it only ever deletes the caller's own rows (WHERE username=token), so there is nothing
+    to gate and no way to affect another user's watches. Returns the ids actually removed (that had a
+    watcher row) so the client's undo re-watches exactly those, not its hopeful request list. Idempotent:
+    an id the caller does not watch is a no-op. No item-blob write, no notification."""
+    me, team = auth["username"], auth["team"]
+    ids = _watch_batch_ids(body)
+    if not ids:
+        return {"removed": []}
+    qm = ",".join("?" * len(ids))
+    with db(team) as c:
+        rows = c.execute(f"SELECT item_id FROM watchers WHERE username=? AND item_id IN ({qm})",
+                         (me, *ids)).fetchall()
+        removed = [r["item_id"] for r in rows]
+        if removed:
+            c.execute(f"DELETE FROM watchers WHERE username=? AND item_id IN ({qm})", (me, *ids))
+    return {"removed": removed}
+
+@app.post("/api/items/watch-batch")
+def watch_batch(body: dict = Body(...), auth: dict = Depends(require_auth)):
+    """Add the CALLER as a watcher on many items in ONE transaction (atomic). Mirrors the single watch's
+    read gate ('cannot watch what you cannot read'): a Contributor is scoped to their read set and an
+    out-of-scope id fails the WHOLE batch (nothing is watched); admin/editor/viewer are unscoped, exactly
+    as require_item_read is a no-op for them. Used by the undo of unwatch-batch (every id was just watched,
+    so readable). Returns the ids now watched. Idempotent via INSERT OR IGNORE. No notification."""
+    me, team = auth["username"], auth["team"]
+    ids = _watch_batch_ids(body)
+    if not ids:
+        return {"watched": []}
+    if auth.get("role") == "contributor":   # batched equivalent of watch_item's per-id require_item_read
+        with db(team) as c:
+            readable = _contributor_readable_ids(c, auth)
+        if any(i not in readable for i in ids):
+            raise HTTPException(403, "Cannot watch items outside your read scope")
+    with db(team) as c:
+        for i in ids:
+            c.execute("INSERT OR IGNORE INTO watchers(item_id,username) VALUES(?,?)", (i, me))
+    return {"watched": ids}
+
 @app.post("/api/items/{pid}/view")
 def record_view(pid: int, auth: dict = Depends(require_auth)):
     """Record that the caller viewed an item (beta shell → My Home Recent trail).
