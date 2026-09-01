@@ -18967,7 +18967,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta.is-collapsed-ui .frz-rowmenu { display:none; }
   .frz-beta.is-collapsed-ui .frz-brand { justify-content:center; padding:0; }
   .frz-beta.is-collapsed-ui .frz-logo { height:auto; max-width:40px; }
-  .frz-beta.is-collapsed-ui .frz-section--saved, .frz-beta.is-collapsed-ui .frz-section--projects, .frz-beta.is-collapsed-ui .frz-section--boards { display:none; }
+  .frz-beta.is-collapsed-ui .frz-section--saved, .frz-beta.is-collapsed-ui .frz-section--projects { display:none; }   /* SHELL-IA-1 Stage 1: --boards section removed */
   /* Collapsed-rail active-filter cue: the SAVED FILTERS section (and its active-filter dot) is
      hidden when the rail is icon-only, so a collapsed-rail user loses the "a filter is on" signal.
      Light a small accent dot on the ACTIVE view's rail icon whenever the current view has an active
@@ -18992,8 +18992,7 @@ if ('serviceWorker' in navigator) {
      sentinel force-hide sits AFTER the keep rule so it wins at equal specificity. */
   .frz-beta .frz-section.frz-sec-collapsed .frz-item { display:none; }
   .frz-beta .frz-section.frz-sec-collapsed .frz-item[aria-current="true"] { display:flex; }
-  .frz-beta .frz-section--projects.frz-sec-collapsed .frz-item[data-proj="__all__"],
-  .frz-beta .frz-section--boards.frz-sec-collapsed .frz-item[data-board="__all__"] { display:none; }
+  .frz-beta .frz-section--projects.frz-sec-collapsed .frz-item[data-proj="__all__"] { display:none; }
   @media (prefers-reduced-motion: reduce) { .frz-beta .frz-sec-chev { transition:none; } }
 
   /* Main column */
@@ -19266,6 +19265,7 @@ if ('serviceWorker' in navigator) {
      the SELECTED option is re-bolded inline by its builder + gets a check (4.2), so colour is never the only cue. */
   .frz-beta .frz-pop-opt { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:6px; cursor:pointer; font-size:13px; font-weight:400; color:var(--frz-text); border:0; background:none; width:100%; text-align:left; }
   .frz-beta .frz-pop-opt:hover { background:var(--frz-bg-app); }
+  .frz-beta .frz-pop-opt.is-active { color:var(--frz-accent); font-weight:700; }   /* SHELL-IA-1: current board row in the board chip menu */
   .frz-beta .frz-pop-opt input { accent-color:var(--frz-accent); }
   .frz-beta .frz-pop-row { display:flex; gap:8px; padding:6px; }
   .frz-beta .frz-pop input[type=date] { font:inherit; font-size:13px; border:1px solid var(--frz-border-strong); border-radius:6px; padding:5px 8px; color:var(--frz-text); }
@@ -20869,7 +20869,8 @@ if ('serviceWorker' in navigator) {
           '<nav class="frz-section frz-section--home" id="frzHomeNav" aria-label="Home"></nav>'+
           '<nav class="frz-section" id="frzViewNav" aria-label="Views"><div class="frz-heading">VIEWS</div></nav>'+
           '<nav class="frz-section frz-section--projects" id="frzProjNav" aria-label="Spaces"><div class="frz-heading frz-heading--toggle" role="button" tabindex="0" aria-expanded="true" data-railsec="projects"><span class="frz-sec-head-l"><span class="frz-sec-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span><span class="frz-sec-lbl">SPACES</span><span class="frz-sec-count" aria-hidden="true"></span></span><button class="frz-add" id="frzAddProj" title="Add space (coming soon)">＋</button></div></nav>'+
-          '<nav class="frz-section frz-section--boards" id="frzBoardNav" aria-label="Boards"><div class="frz-heading frz-heading--toggle" role="button" tabindex="0" aria-expanded="true" data-railsec="boards"><span class="frz-sec-head-l"><span class="frz-sec-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span><span class="frz-sec-lbl">BOARDS</span><span class="frz-sec-count" aria-hidden="true"></span></span><button class="frz-add" id="frzAddBoard" title="Create board">＋</button></div></nav>'+
+          /* SHELL-IA-1 Stage 1: the rail BOARDS section moved to a Kanban filter-row chip (_boardChipHTML).
+             The board picker + management now live there; renderBoardNav()/#frzBoardNav are gone. */
           '<nav class="frz-section frz-section--saved" id="frzSavedNav" aria-label="Saved filters"><div class="frz-heading frz-heading--toggle" role="button" tabindex="0" aria-expanded="true" data-railsec="saved"><span class="frz-sec-head-l"><span class="frz-sec-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span><span class="frz-sec-lbl">SAVED FILTERS</span><span class="frz-sec-count" aria-hidden="true"></span></span><button class="frz-add" id="frzSaveBtn" title="Save current filters">＋</button></div></nav>'+
         '</div>'+
       '</aside>'+
@@ -21232,7 +21233,7 @@ if ('serviceWorker' in navigator) {
   }
   // ════════ RAIL-1: collapsible rail sections (PROJECTS / BOARDS / SAVED FILTERS; never VIEWS) ════════
   var _FRZ_RAIL_SECS=['projects','boards','saved'];
-  var _FRZ_RAIL_SEC_NAV={projects:'frzProjNav', boards:'frzBoardNav', saved:'frzSavedNav'};
+  var _FRZ_RAIL_SEC_NAV={projects:'frzProjNav', saved:'frzSavedNav'};   // SHELL-IA-1 Stage 1: boards section removed (now a Kanban chip)
   // Per-USER key, deliberately NOT <team>_<user> like savedKey(). savedKey() is team-scoped because keying
   // saved FILTERS by user alone LEAKED one team's filters into another - a data bug. This is only a UI
   // PREFERENCE: nothing crosses teams; the sole effect is that a user on two teams shares one collapsed
@@ -21435,6 +21436,9 @@ if ('serviceWorker' in navigator) {
   function releaseItems(rid){ return (_val('projects',[])||[]).filter(function(p){ return !p.archived && p.release===rid; }); }
 
   function renderBoardNav(){
+    // SHELL-IA-1 Stage 1: the rail BOARDS section (#frzBoardNav) was removed - boards are now a
+    // Kanban filter-row chip. This is retained as a guarded no-op (its load/save callers still
+    // invoke it); the element is absent, so it returns immediately. Safe to delete in a later tidy.
     var bn = document.getElementById('frzBoardNav'); if(!bn) return;
     bn.querySelectorAll('.frz-item').forEach(function(b){ b.remove(); });
     var onKanban = (state.view==='kanban' && !state.onItem);
@@ -21559,7 +21563,9 @@ if ('serviceWorker' in navigator) {
     _XCHIP.forEach(function(k){
       if (cfg.extra.indexOf(k)>=0 && keys.indexOf(k)<0 && (CHIPS[k].get()||[]).length) keys.push(k);
     });
-    var html = _frzTopViewControl() + keys.map(chipHTML).join('');   // Stage 3: segmented view switcher (shared views only)
+    // SHELL-IA-1 Stage 1: the Kanban board chip leads the filter row (Stage 3 will slot the Space
+    // chip before it). Kanban-only - a board means nothing in any other view.
+    var html = _frzTopViewControl() + (view==='kanban' ? _boardChipHTML() : '') + keys.map(chipHTML).join('');   // Stage 3: segmented view switcher (shared views only)
     html += '<button class="frz-chip frz-chip--ghost" data-addfilter="1"><svg viewBox="0 0 12 12"><path d="M6 2v8M2 6h8"/></svg> Filter</button>';
     if (anyActive(view)){
       html += '<button class="frz-chip frz-chip--ghost" data-savefilter="1">Save filter</button>';
@@ -24914,7 +24920,66 @@ if ('serviceWorker' in navigator) {
     pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8))+'px';
     setTimeout(function(){ document.addEventListener('mousedown', _popAway, true); },0);
   }
+  // ── SHELL-IA-1 Stage 1: Kanban board chip (replaces the rail BOARDS section) ──
+  // A dropdown chip in the Kanban filter row. Selection reuses navigate(...+_frzCarryQS) exactly
+  // as the removed rail did (chips carried, ?board=/?sprint= unchanged); per-board management
+  // (edit/duplicate/delete/set-default) and Create board reuse boardRowMenu / openBoardEditor.
+  function _selectBoard(id){
+    var qs=new URLSearchParams(_frzCarryQS(true).replace(/^\?/,''));
+    qs.delete('sprint');                                   // a real board clears the Active-Sprint scope
+    if(id!=='__all__') qs.set('board', id); else qs.delete('board');
+    var s=qs.toString(); navigate('/kanban'+(s?('?'+s):''), false);
+  }
+  function _selectActiveSprintBoard(sid){
+    var qs=new URLSearchParams(_frzCarryQS(true).replace(/^\?/,''));
+    qs.delete('board'); qs.set('sprint', sid);            // Active Sprint = Open-work columns scoped to the sprint
+    navigate('/kanban?'+qs.toString(), false);
+  }
+  function _boardActiveId(){
+    var _as=activeSprint();
+    return (state.sprintFilter && _as && state.sprintFilter===_as.id) ? ('sprint:'+_as.id) : (state.board||'__all__');
+  }
+  function _boardChipHTML(){
+    var name, _as=activeSprint();
+    if(state.sprintFilter && _as && state.sprintFilter===_as.id) name='Active Sprint';
+    else { var b=activeBoard(); name = b ? b.name : 'Open work'; }
+    return '<button class="frz-chip frz-chip--board" data-chip="board" title="Switch board">'+
+      '<span class="frz-chip-label">Board</span><span class="frz-chip-value">'+esc(name)+'</span>'+IC.caret+'</button>';
+  }
+  function boardChipMenu(anchor){
+    openPop(anchor, function(pop){
+      var actId=_boardActiveId();
+      function row(label, active, opts){
+        opts=opts||{};
+        var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt'+(active?' is-active':'');
+        b.style.justifyContent='space-between';
+        var l=document.createElement('span'); l.style.cssText='display:flex;align-items:center;gap:8px;flex:1;min-width:0';
+        l.innerHTML = KANBAN_IC + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(label)+'</span>'+(opts.star?' <span style="color:var(--frz-accent)" title="Default board">★</span>':'');
+        b.appendChild(l);
+        b.addEventListener('click', function(){ closePop(); opts.onSelect(); });
+        if(opts.menuId){
+          var m=document.createElement('span'); m.className='frz-rowmenu'; m.setAttribute('role','button'); m.setAttribute('data-boardmenu', opts.menuId);
+          m.title='Edit / Duplicate / Delete'; m.textContent='…'; m.style.cssText='flex-shrink:0;padding:0 4px;opacity:.7';
+          m.addEventListener('click', function(e){ e.stopPropagation(); closePop(); boardRowMenu(opts.menuId, anchor); });   // anchor to the chip (survives closePop)
+          b.appendChild(m);
+        }
+        pop.appendChild(b);
+      }
+      row('Open work', actId==='__all__', { onSelect:function(){ _selectBoard('__all__'); } });
+      var _as=activeSprint();
+      if(_as) row('Active Sprint', actId==='sprint:'+_as.id, { onSelect:function(){ _selectActiveSprintBoard(_as.id); } });
+      _boards.forEach(function(b){
+        row(b.name, actId===b.id, { star:b.id===_defaultBoard(), menuId:b.id, onSelect:function(){ _selectBoard(b.id); } });
+      });
+      var hr=document.createElement('div'); hr.style.cssText='height:1px;background:var(--frz-border);margin:6px 4px'; pop.appendChild(hr);
+      var add=document.createElement('button'); add.type='button'; add.className='frz-pop-opt';
+      add.innerHTML='<span style="font-size:15px;line-height:0;width:16px;text-align:center;flex-shrink:0">＋</span><span>Create board</span>';
+      add.addEventListener('click', function(){ closePop(); openBoardEditor(null); });
+      pop.appendChild(add);
+    });
+  }
   function chipMenu(key, anchor){
+    if (key==='board') return boardChipMenu(anchor);
     if (key==='range') return rangeMenu(anchor);
     if (key==='sprint') return sprintMenu(anchor);
     var def = CHIPS[key];
@@ -25084,7 +25149,7 @@ if ('serviceWorker' in navigator) {
         return;
       }
       var boardMenu = e.target.closest && e.target.closest('[data-boardmenu]');
-      if (boardMenu){ e.stopPropagation(); boardRowMenu(boardMenu); return; }
+      if (boardMenu){ e.stopPropagation(); boardRowMenu(boardMenu.getAttribute('data-boardmenu'), boardMenu); return; }   // SHELL-IA-1: (id, anchor) signature
       var boardBtn = e.target.closest && e.target.closest('[data-board]');
       if (boardBtn){
         // Issue-3: a board click CARRIES the active chips (consistent with view switches; they
@@ -25776,9 +25841,11 @@ if ('serviceWorker' in navigator) {
     }
     commit(null);
   }
-  function boardRowMenu(btn){
-    var id=btn.getAttribute('data-boardmenu'); var b=_boards.filter(function(x){return x.id===id;})[0]; if(!b) return;
-    openPop(btn, function(pop){
+  function boardRowMenu(id, anchor){
+    // SHELL-IA-1 Stage 1: takes an explicit (id, anchor) so the board chip can open it anchored to
+    // the CHIP - the previous single-arg form anchored to the row button, which closePop() detaches.
+    var b=_boards.filter(function(x){return x.id===id;})[0]; if(!b) return;
+    openPop(anchor, function(pop){
       function mk(label,color,fn){ var x=document.createElement('button'); x.className='frz-pop-opt'; if(color)x.style.color=color; x.textContent=label; x.addEventListener('click',fn); return x; }
       var isDef=(_defaultBoard()===id);
       pop.appendChild(mk(isDef?'✓ Default board':'Set as default', isDef?'var(--frz-accent)':null, function(){ closePop(); _setDefaultBoard(isDef?null:id); }));
