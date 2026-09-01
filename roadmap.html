@@ -18957,6 +18957,15 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
   .frz-beta .frz-item .frz-rowmenu { margin-left:auto; opacity:0; border:0; background:none; cursor:pointer; color:var(--frz-text-muted); font-size:15px; line-height:1; padding:0 4px; }
   .frz-beta .frz-item:hover .frz-rowmenu { opacity:1; }
+  /* SHELL-IA-1 Stage 2: Space pin affordance (hover-reveal; pinned = always shown + accent) + expander */
+  .frz-beta .frz-item .frz-pin { opacity:0; border:0; background:none; cursor:pointer; color:var(--frz-text-muted); padding:0 2px; display:inline-flex; align-items:center; flex-shrink:0; }
+  .frz-beta .frz-item:hover .frz-pin, .frz-beta .frz-item .frz-pin.is-pinned { opacity:1; }
+  .frz-beta .frz-item .frz-pin.is-pinned { color:var(--frz-accent); }
+  .frz-beta .frz-item .frz-pin.is-pinned svg { fill:currentColor; }
+  .frz-beta .frz-item .frz-pin svg { display:block; }
+  .frz-beta.is-collapsed-ui .frz-pin { display:none; }
+  .frz-beta .frz-spaces-more .frz-item-lbl { color:var(--frz-text-muted); font-size:12px; font-weight:600; }
+  .frz-beta .frz-spaces-more:hover .frz-item-lbl { color:var(--frz-accent); }
   .frz-beta .frz-footer { border-top:1px solid var(--frz-border); padding:8px; flex-shrink:0; }
 
   /* Collapsed rail */
@@ -21246,14 +21255,14 @@ if ('serviceWorker' in navigator) {
   // Count a section's meaningful rows EXCLUDING the all/default sentinel (All projects / Open work), so
   // PROJECTS reads its project count (13, not 14) and BOARDS excludes "Open work". SAVED has no sentinel.
   function _frzRailSecCount(sec, nav){
+    // SHELL-IA-1 Stage 2: the PROJECTS count is the TOTAL number of Spaces, taken from the products
+    // config - NOT a DOM row count. Pinning now renders only pinned Spaces + a "Show N more" row, so
+    // counting `.frz-item` would undercount (hidden Spaces) and overcount (the "more" row). BOARDS
+    // (removed) and SAVED FILTERS keep the DOM count.
+    if(sec==='projects') return (_val('products', []) || []).length;
     var n=0;
     nav.querySelectorAll('.frz-item').forEach(function(r){
-      // PROJECTS excludes the "All projects" row: it is a scope aggregator, not a project, and projects are
-      // the real countable units (13 projects -> "(13)"). BOARDS counts EVERY row (Open work + Active Sprint
-      // + custom boards): unlike "All projects", "Open work" is itself a real, selectable board, so the
-      // collapsed count should match the number of board rows shown when the section is expanded. SAVED
-      // FILTERS has no sentinel row, so all its rows count too.
-      if(sec==='projects' && r.getAttribute('data-proj')==='__all__') return;
+      // SAVED FILTERS has no sentinel row, so all its rows count.
       n++;
     });
     return n;
@@ -21344,14 +21353,36 @@ if ('serviceWorker' in navigator) {
     allBtn.setAttribute('aria-current', String(state.project==='__all__'));
     allBtn.innerHTML = '<span class="frz-dot" style="background:var(--frz-accent)"></span><span class="frz-item-lbl" title="All Spaces">All Spaces</span><span class="frz-count">'+_frzScopeCount(null)+'</span>';   // COUNTER-ALIGN-1: label flexes/truncates
     pn.appendChild(allBtn);
-    products.forEach(function(pr, i){
-      var name = pr.name || pr;
+    // SHELL-IA-1 Stage 2: pinned Spaces (+ the ACTIVE Space, so the current scope is always visible)
+    // render in the rail; the rest collapse behind "Show N more spaces". No pins -> show all (today's
+    // behaviour). Order is products order (NOT count) - zero-count Spaces stay reachable.
+    function _spaceRow(name){
       var b = document.createElement('button');
-      b.className='frz-item'; b.setAttribute('data-proj', name);
+      b.className='frz-item frz-item--space'; b.setAttribute('data-proj', name);
       b.setAttribute('aria-current', String(state.project===name));
-      b.innerHTML = '<span class="frz-dot" style="background:'+(_call('projectColor',name)||'var(--frz-accent)')+'"></span><span class="frz-item-lbl" title="'+escA(name)+'">'+esc(name)+'</span><span class="frz-count">'+_frzScopeCount(name)+'</span>';   // PALETTE-1: projectColor() is the single source. COUNTER-ALIGN-1: label flexes/truncates + full name on hover
-      pn.appendChild(b);
-    });
+      var pinnedNow=_isSpacePinned(name);
+      b.innerHTML = '<span class="frz-dot" style="background:'+(_call('projectColor',name)||'var(--frz-accent)')+'"></span><span class="frz-item-lbl" title="'+escA(name)+'">'+esc(name)+'</span><span class="frz-count">'+_frzScopeCount(name)+'</span>'+
+        '<span class="frz-pin'+(pinnedNow?' is-pinned':'')+'" role="button" tabindex="0" data-pinspace="'+escA(name)+'" title="'+(pinnedNow?'Unpin':'Pin')+' space" aria-label="'+(pinnedNow?'Unpin':'Pin')+' '+escA(name)+'">'+PIN_IC+'</span>';   // PALETTE-1: projectColor() is the single source. COUNTER-ALIGN-1: label flexes/truncates
+      return b;
+    }
+    var _names = products.map(function(pr){ return pr.name || pr; });
+    var _pinnedSet = {}; _pinnedSpaces().forEach(function(n){ _pinnedSet[n]=1; });
+    var _activeProj = (state.project && state.project!=='__all__') ? state.project : null;
+    var _havePins = _names.some(function(n){ return _pinnedSet[n]; });
+    if(!_havePins){
+      _names.forEach(function(n){ pn.appendChild(_spaceRow(n)); });
+    } else {
+      var _shown=[], _hidden=[];
+      _names.forEach(function(n){ (_pinnedSet[n] || n===_activeProj ? _shown : _hidden).push(n); });
+      _shown.forEach(function(n){ pn.appendChild(_spaceRow(n)); });
+      if(_spacesExpanded) _hidden.forEach(function(n){ pn.appendChild(_spaceRow(n)); });
+      if(_hidden.length){
+        var more=document.createElement('button');
+        more.className='frz-item frz-spaces-more'; more.setAttribute('data-spacesmore','1');
+        more.innerHTML='<span class="frz-item-lbl">'+(_spacesExpanded?'Show fewer':('Show '+_hidden.length+' more space'+(_hidden.length===1?'':'s')))+'</span>';
+        pn.appendChild(more);
+      }
+    }
     // boards + saved filters
     renderBoardNav();
     renderSavedNav();
@@ -21383,6 +21414,22 @@ if ('serviceWorker' in navigator) {
   function activeBoard(){ return _boards.filter(function(b){ return b.id===state.board; })[0] || null; }
   // Stage 4: per-user default Kanban board. Loads when Kanban opens with no explicit
   // ?board=; an explicit board click still overrides for that navigation.
+  // ── SHELL-IA-1 Stage 2: per-user Space pinning ──────────────────────────────
+  // Pinned Spaces stay in the rail; the rest collapse behind "Show N more spaces" (nothing is
+  // hidden permanently). NOTHING is sorted or hidden by item count - zero-count Spaces stay
+  // reachable. Per-user storage (the ls/lset _optin precedent). Default: nobody has pins, so the
+  // rail shows every Space exactly as today (purely additive until a user pins something).
+  var PIN_IC = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M6 17h12l-1.7-4V8a2 2 0 0 0-2-2H9.7a2 2 0 0 0-2 2v5l-1.7 4z"/></svg>';
+  var _spacesExpanded = false;   // session: is "Show N more spaces" expanded
+  function _pinnedKey(){ return 'frazil_beta_pinnedspaces_'+uname(); }
+  function _pinnedSpaces(){ try { var a=JSON.parse(ls(_pinnedKey())||'[]'); return Array.isArray(a)?a:[]; } catch(e){ return []; } }
+  function _isSpacePinned(name){ return _pinnedSpaces().indexOf(name)>=0; }
+  function _toggleSpacePin(name){
+    var p=_pinnedSpaces(), i=p.indexOf(name);
+    if(i>=0) p.splice(i,1); else p.push(name);
+    lset(_pinnedKey(), JSON.stringify(p));
+    renderRail();   // re-render (updates the visible set + the Show-N-more label)
+  }
   function _defaultBoardKey(){ return 'frazil_beta_defaultboard_'+uname(); }
   function _defaultBoard(){ var d=ls(_defaultBoardKey()); return (d && _boards.some(function(b){return b.id===d;})) ? d : '__all__'; }   // validate; deleted board → Open work (id '__all__')
   function _setDefaultBoard(id){ if(id && id!=='__all__') lset(_defaultBoardKey(), id); else { try{ localStorage.removeItem(_defaultBoardKey()); }catch(e){} } renderBoardNav(); }
@@ -25137,6 +25184,12 @@ if ('serviceWorker' in navigator) {
       if (savedMenu){ e.stopPropagation(); savedRowMenu(savedMenu); return; }
       var savedBtn = e.target.closest && e.target.closest('[data-saved]');
       if (savedBtn){ var s=state.saved.filter(function(x){return x.id===savedBtn.getAttribute('data-saved');})[0]; if(s) applySaved(s); return; }
+      // SHELL-IA-1 Stage 2: pin toggle + Show-N-more, handled BEFORE [data-proj] (both are nested in
+      // a data-proj button, so stopPropagation keeps a pin/expander click from also scoping the view).
+      var pinSp = e.target.closest && e.target.closest('[data-pinspace]');
+      if (pinSp){ e.stopPropagation(); e.preventDefault(); _toggleSpacePin(pinSp.getAttribute('data-pinspace')); return; }
+      var spMore = e.target.closest && e.target.closest('[data-spacesmore]');
+      if (spMore){ e.stopPropagation(); _spacesExpanded=!_spacesExpanded; renderRail(); return; }
       var proj = e.target.closest && e.target.closest('[data-proj]');
       if (proj){
         var pn=proj.getAttribute('data-proj');
