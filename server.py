@@ -196,6 +196,21 @@ if "--new-team" in sys.argv:
     _pw_file = os.path.join(team_dir, ".init_password")
     with open(_pw_file, "w") as _f:
         _f.write(_init_pw)
+    # NEWTEAM-BACKUP-1 (Option B): create a valid, empty, WAL-mode roadmap.db NOW - before the
+    # Litestream sync globs for it. init_team_db is lazy (it runs on the team's first HTTP request)
+    # AND is not even defined yet at this import-time point, so without this the new team's DB does
+    # not exist when _litestream_flow_yaml globs `*/roadmap.db`. The team was then silently EXCLUDED
+    # from the backup config until some later unrelated sync (the ~2h unbacked window on `finance`,
+    # 2026-08-31, surfaced by the SYS-STATUS-1 coverage row). This file is a valid empty SQLite DB;
+    # init_team_db adds the schema on first use (all CREATE TABLE IF NOT EXISTS, so it is happy
+    # against a pre-created file) and Litestream captures that schema via the WAL. WAL mode is set
+    # now so the on-disk mode matches what init_team_db opens later.
+    _db_path = os.path.join(team_dir, "roadmap.db")
+    _c0 = sqlite3.connect(_db_path)
+    try:
+        _c0.execute("PRAGMA journal_mode=WAL")
+    finally:
+        _c0.close()
     # Keep the Litestream backup config in sync so the NEW team's DB starts replicating
     # immediately (no-op unless LITESTREAM_FLOW_CONFIG is configured on this host).
     _read_env_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
@@ -204,6 +219,19 @@ if "--new-team" in sys.argv:
             print("Litestream backup now covers this team.")
     except Exception as _e:
         print(f"(Litestream sync skipped: {_e})")
+    # NEWTEAM-BACKUP-1 (1.4): never report "created" while silently unbacked - that silence is half
+    # the bug. When a Litestream config is in use, confirm this team actually landed in it and print
+    # a plain WARNING (not an exception) if not, so the operator sees it and can act.
+    _cfg_path = os.environ.get("LITESTREAM_FLOW_CONFIG", "").strip()
+    if _cfg_path:
+        try:
+            with open(_cfg_path) as _cf:
+                if _db_path not in _cf.read():
+                    print(f"WARNING: '{slug}' was not added to the Litestream config "
+                          f"({_cfg_path}); this team is NOT backed up. Run: "
+                          f"python server.py --sync-litestream")
+        except Exception as _e:
+            print(f"WARNING: could not verify '{slug}' in the Litestream config ({_cfg_path}): {_e}")
     sys.exit(0)
 
 # ── Load .env ─────────────────────────────────────────────────────────────────
