@@ -19266,6 +19266,8 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-pop-opt { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:6px; cursor:pointer; font-size:13px; font-weight:400; color:var(--frz-text); border:0; background:none; width:100%; text-align:left; }
   .frz-beta .frz-pop-opt:hover { background:var(--frz-bg-app); }
   .frz-beta .frz-pop-opt.is-active { color:var(--frz-accent); font-weight:700; }   /* SHELL-IA-1: current board row in the board chip menu */
+  .frz-beta .frz-board-ic { flex-shrink:0; display:inline-flex; }
+  .frz-beta .frz-board-ic svg { width:16px; height:16px; display:block; }   /* SHELL-IA-1: constrain KANBAN_IC in the board menu (no .frz-item size rule here) */
   .frz-beta .frz-pop-opt input { accent-color:var(--frz-accent); }
   .frz-beta .frz-pop-row { display:flex; gap:8px; padding:6px; }
   .frz-beta .frz-pop input[type=date] { font:inherit; font-size:13px; border:1px solid var(--frz-border-strong); border-radius:6px; padding:5px 8px; color:var(--frz-text); }
@@ -24954,7 +24956,7 @@ if ('serviceWorker' in navigator) {
         var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt'+(active?' is-active':'');
         b.style.justifyContent='space-between';
         var l=document.createElement('span'); l.style.cssText='display:flex;align-items:center;gap:8px;flex:1;min-width:0';
-        l.innerHTML = KANBAN_IC + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(label)+'</span>'+(opts.star?' <span style="color:var(--frz-accent)" title="Default board">★</span>':'');
+        l.innerHTML = '<span class="frz-board-ic">'+KANBAN_IC+'</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(label)+'</span>'+(opts.star?' <span style="color:var(--frz-accent)" title="Default board">★</span>':'');
         b.appendChild(l);
         b.addEventListener('click', function(){ closePop(); opts.onSelect(); });
         if(opts.menuId){
@@ -25191,7 +25193,11 @@ if ('serviceWorker' in navigator) {
     });
     document.getElementById('frzSaveBtn').addEventListener('click', function(e){ e.stopPropagation(); saveCurrent(this); });
     document.getElementById('frzAddProj').addEventListener('click', function(e){ e.stopPropagation(); _call('showToast','Add space - coming soon'); });
-    document.getElementById('frzAddBoard').addEventListener('click', function(e){ e.stopPropagation(); openBoardEditor(null); });
+    // SHELL-IA-1 Stage 1: the rail #frzAddBoard button was removed with the BOARDS section - Create
+    // board now lives in the Kanban board chip menu (openBoardEditor(null)). Guarded in case it ever
+    // returns; a bare getElementById(...).addEventListener on the absent node crashed wire()/build().
+    var _addBoardBtn = document.getElementById('frzAddBoard');
+    if(_addBoardBtn) _addBoardBtn.addEventListener('click', function(e){ e.stopPropagation(); openBoardEditor(null); });
     document.getElementById('frzNewItem').addEventListener('click', function(){ _call('openProjectModal', null); });
     // Mobile companion (Phase 1): FAB → same capture flow as New item.
     var fab=document.getElementById('frzFab'); if(fab){ fab.addEventListener('click', function(){ _call('openProjectModal', null); }); }
