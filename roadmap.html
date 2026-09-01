@@ -1645,10 +1645,13 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         <label>Item Name</label>
         <div style="position:relative;display:flex;align-items:center;gap:6px">
           <input type="text" id="fName" placeholder="Enter item name…" style="flex:1;padding-right:32px">
-          <a id="itemPageLink" href="#" target="_blank" rel="noopener" title="Open Item Page"
-            style="position:absolute;right:8px;top:50%;transform:translateY(-50%);color:var(--frz-accent,#0059A9);opacity:0.7;line-height:1;display:none">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-          </a>
+          <!-- ADDENDUM A P2: opens the item page IN THIS TAB. No target -> NEWTAB-FIX-1's interceptor
+               hands the click to the in-app router; it stays a real anchor so cmd/ctrl-click still opens
+               a new tab. The ⤢ glyph is reused from the List detail panel's open-in-current-tab control
+               (.frz-lp-full) - a bare Unicode literal there, no IC entry exists. The new-tab action is
+               the separate #modalOpenPageBtn button. -->
+          <a id="itemPageLink" href="#" title="Open the item page in this tab"
+            style="position:absolute;right:8px;top:50%;transform:translateY(-50%);color:var(--frz-accent,#0059A9);opacity:0.7;line-height:1;font-size:16px;display:none">⤢</a>
         </div>
       </div>
       <div class="form-row" style="margin-bottom:0">
@@ -2336,7 +2339,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.31.1';
+const APP_VERSION = '6.32.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -18336,6 +18339,7 @@ async function boot(){
     typeScheduled         = data.typeScheduled         || {};
     richTextEditor        = data.richTextEditor !== false;   // default ON; only an explicit false reverts to the classic editor
     window._sysStatusVisible = !!data.sysStatusVisible;      // SYS-STATUS-1 (Addendum B): per-user gate for the operator System tab (allowlist never reaches the client)
+    window._topbarViews = !!data.topbarViews;                // SHELL-IA-1 Stage 3: per-user top-bar-views IA opt-in. false = byte-identical to today. REAL boot loader (not the import handler).
     maintenanceDutyTypeId = data.maintenanceDutyTypeId || '';   // M1: Maintenance Duty assignment-type mapping
     intakeEnabled         = data.intakeEnabled === true;                                              // public /report portal exposed?
     intakeNotifyTeam      = data.intakeNotifyTeam === true;                                            // notify the team on a new portal ticket
@@ -18923,6 +18927,53 @@ if ('serviceWorker' in navigator) {
     transition:grid-template-columns var(--frz-anim);
   }
   .frz-beta.is-collapsed { grid-template-columns:var(--frz-rail-w-collapsed) 1fr; }
+  /* ══════ SHELL-IA-1 Stage 3: top-bar-views IA - ALL gated on .frz-ia (flag on). Flag off = none of
+     these apply, so the rail/crumb/segmented/shrink-collapse are byte-identical to today. ══════ */
+  .frz-beta.frz-ia.frz-rail-hidden { grid-template-columns:0 1fr; }   /* 3.4: collapse hides the rail entirely (animates via the existing grid transition) */
+  @media (prefers-reduced-motion: reduce){ .frz-beta { transition:none; } .frz-beta .frz-logo { transition:none; } }
+  /* Stage 3 brand revision + Addendum A 1.1: the brand + collapse toggle belong to the RAIL.
+     Expanded flag-on reuses the rail's OWN .frz-brand (the same element flag-off renders, so the two
+     states cannot drift and the old "hide the rail brand" rule is deleted rather than conditioned).
+     They relocate to the top bar (#frzTopBrand) ONLY when the rail is hidden. The toggle always sits
+     beside the brand, so A/B3's "the toggle must not move" is preserved by adjacency, not by pinning
+     it to a fixed screen position. */
+  .frz-beta .frz-topbar-brand { display:none; }
+  /* The top-bar brand appears only once the rail has finished clipping away (.frz-topbrand-in is
+     added at the END of the collapse in setCollapsed), so there is never a frame with BOTH brands
+     visible (Addendum A 1.3). On expand the class drops immediately and the rail brand widens back in. */
+  .frz-beta.frz-ia.frz-rail-hidden.frz-topbrand-in .frz-topbar-brand { display:flex; align-items:center; gap:6px; flex-shrink:0; margin-right:4px; }
+  .frz-beta.frz-ia #frzViewNav { display:none; }   /* flag-on: VIEWS live in the top-bar tab strip, so the rail VIEWS section is gone (Part 0: recovers the rail rows). My Home (#frzHomeNav) stays. */
+  .frz-beta.frz-ia .frz-topbar-left { flex:1 1 auto; min-width:0; }
+  .frz-beta.frz-ia .frz-topbar-brand .frz-brandlink { display:flex; align-items:center; }
+  .frz-beta.frz-ia .frz-topbar-brand .frz-logo-full { height:24px; display:block; }
+  .frz-beta.frz-ia .frz-topbar-brand .frz-logo-mark { display:none; }
+  .frz-beta.frz-ia.frz-rail-hidden .frz-topbar-brand .frz-logo-full { display:none; }
+  .frz-beta.frz-ia.frz-rail-hidden .frz-topbar-brand .frz-logo-mark { display:block; height:42px; width:auto; max-width:none; }   /* f-mark renders at the SAME 42px height as the expanded wordmark (--frz-logo), so the brand does not shrink on collapse - matches the rail's own is-collapsed-ui f-mark */
+  /* padding:0 overrides the global `select,button{padding:6px 11px}`; without it the 11px side padding
+     shrinks this 32px flex button to a 10px content box and the flex-child svg collapses to 10px wide
+     (the rail #frzCollapse escapes this only because it is display:grid, which does not shrink its child). */
+  .frz-beta.frz-ia .frz-topcollapse { position:static; margin:0; padding:0; width:32px; height:32px; border:0; background:transparent; border-radius:7px; cursor:pointer; color:var(--frz-text-secondary); display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .frz-beta.frz-ia .frz-topcollapse:hover { background:var(--frz-bg-app); color:var(--frz-accent); }
+  /* 3.2: the view TAB STRIP (icon + label; overflow -> More via _frzTabLayout; scrolls if it still overflows) */
+  .frz-beta .frz-tabs { display:flex; align-items:center; gap:2px; min-width:0; overflow-x:auto; scrollbar-width:none; }
+  .frz-beta .frz-tabs::-webkit-scrollbar { display:none; }
+  .frz-beta .frz-tab { display:inline-flex; align-items:center; gap:6px; height:34px; padding:0 11px; border:0; background:transparent; border-radius:8px; cursor:pointer; color:var(--frz-text-secondary); font:inherit; font-size:13px; font-weight:600; white-space:nowrap; flex-shrink:0; position:relative; }
+  .frz-beta .frz-tab:hover { background:var(--frz-bg-app); color:var(--frz-text); }
+  .frz-beta .frz-tab.is-active { color:var(--frz-accent); }
+  .frz-beta .frz-tab.is-active::after { content:''; position:absolute; left:11px; right:11px; bottom:-1px; height:2px; background:var(--frz-accent); border-radius:2px; }
+  .frz-beta .frz-tab-ic { display:inline-flex; align-items:center; flex-shrink:0; }
+  .frz-beta .frz-tab-ic svg { width:16px; height:16px; display:block; }
+  .frz-beta .frz-tabs--icononly .frz-tab-lbl { display:none; }
+  .frz-beta .frz-tabs--icononly .frz-tab { padding:0 8px; }
+  .frz-beta .frz-tab--more { color:var(--frz-text-muted); }
+  .frz-beta .frz-tab--more .frz-chip-caret { width:11px; height:11px; margin-left:1px; }
+  /* 3.3 / B4: scope (Space) chip - accent-filled with the Space colour dot; divider separates scope from
+     filters. NOTE the .frz-chip.frz-chip--scope specificity (3 classes) so it beats the later .frz-chip base. */
+  .frz-beta .frz-chip.frz-chip--scope { background:var(--frz-accent); color:#fff; border-color:var(--frz-accent); }
+  .frz-beta .frz-chip.frz-chip--scope .frz-chip-value { color:#fff; }
+  .frz-beta .frz-chip.frz-chip--scope .frz-chip-caret { stroke:#fff; }
+  .frz-beta .frz-scope-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; box-shadow:0 0 0 1.5px rgba(255,255,255,.5); }
+  .frz-beta .frz-chip-divider { width:1px; height:20px; background:var(--frz-border-strong); margin:0 5px; flex-shrink:0; align-self:center; }
   .frz-beta :focus-visible { outline:2px solid var(--frz-accent); outline-offset:2px; border-radius:4px; }
   .frz-beta svg.frz-ic { stroke:currentColor; fill:none; stroke-width:1.33; stroke-linecap:round; stroke-linejoin:round; }   /* frz-ic set is 16x16 viewBox: 1.33 here = stroke 2 on the 24x24 standard */
 
@@ -20898,6 +20949,17 @@ if ('serviceWorker' in navigator) {
       '</aside>'+
       '<div class="frz-main">'+
         '<header class="frz-topbar">'+
+          /* SHELL-IA-1 Stage 3 brand revision: this top-bar brand shows ONLY when the rail is hidden
+             (.frz-rail-hidden). When the rail is present (expanded) the brand + toggle live in the
+             rail's own .frz-brand instead - see the CSS note above. #frzTopCollapse re-expands the
+             rail from here; it shows the f-mark (rail-hidden), never the wordmark. */
+          '<div class="frz-topbar-brand" id="frzTopBrand">'+
+            '<a class="frz-brandlink" href="/" data-nav="view:gantt" aria-label="Flow home">'+
+              '<img class="frz-logo frz-logo-full" src="'+FLOW_LOGO_FULL+'" alt="Flow">'+
+              '<img class="frz-logo frz-logo-mark" src="'+FLOW_LOGO_MARK+'" alt="Flow">'+
+            '</a>'+
+            '<button class="frz-collapse frz-topcollapse" id="frzTopCollapse" aria-label="Toggle navigation" title="Toggle navigation [">'+IC.collapse+'</button>'+
+          '</div>'+
           '<div class="frz-topbar-left" id="frzLeft"></div>'+
           '<div class="frz-topbar-right">'+
             '<div class="frz-badges" id="frzBadges"></div>'+
@@ -21600,12 +21662,108 @@ if ('serviceWorker' in navigator) {
   }
   var _added = {}; // view -> [extra chip keys added via + Filter]
   function _extraActive(view){ return (_added[view]||[]); }
+  // ══════ SHELL-IA-1 Stage 3: top-bar-views IA (per-user flag; flag OFF = byte-identical) ══════
+  function _frzIA(){ return !!window._topbarViews; }
+  // B2 priority order: Gantt, List, Kanban, Reports, Calendar, Dashboard, Planning. 'team-calendar'
+  // is the calendar view key. My Home is NOT in the strip (RAIL-TIDY-1 standalone rail entry).
+  var _FRZ_VIEW_ORDER = ['gantt','list','kanban','reports','team-calendar','dashboard','planning'];
+  function _frzViewIcon(v){ return (v==='team-calendar') ? IC.teamCalendar : (IC[v]||''); }
+  // THE ONE shared view-list helper (Addendum A3.1): priority order, intersected with enabledViews +
+  // role (same gates as the rail), minus My Home. Feeds the desktop tab strip (and, later, the mobile
+  // bottom bar) - one source so they can never drift. The active-never-in-More rule is the desktop
+  // strip's concern, applied by its consumer, not baked in here.
+  function _frzOrderedViews(){
+    var viewer=_val('isViewer',false), admin=_val('isAdmin',false), editor=_val('isEditor',false);
+    return _FRZ_VIEW_ORDER.filter(function(v){
+      if(!_viewEnabled(v)) return false;
+      if(v==='kanban' && viewer) return false;
+      if(v==='planning' && !admin) return false;
+      if(v==='reports' && !(admin||editor)) return false;
+      return true;
+    });
+  }
+  // Breakpoint slots (Addendum A3.2 / B2) - NOT continuous measurement. Zoom is absorbed because
+  // browser zoom changes effective CSS px. The visible count is min(slots, enabled views).
+  function _frzTabLayout(){
+    var w = window.innerWidth || document.documentElement.clientWidth || 1280;
+    if(w>=1600) return {slots:7, iconOnly:false};
+    if(w>=1280) return {slots:5, iconOnly:false};
+    if(w>=1024) return {slots:3, iconOnly:false};
+    return {slots:3, iconOnly:true};   // <=900 band: icons + title tooltips
+  }
+  // (visibleViews, overflowViews) after the active-never-in-More substitution (B2.2): if the active
+  // view falls outside the visible set, it takes the LAST visible slot and the view it displaces goes
+  // to More - the strip order is otherwise unchanged (substitute into the final slot, do not reorder).
+  function _frzTabSplit(){
+    var order=_frzOrderedViews(), lay=_frzTabLayout();
+    var n=Math.min(lay.slots, order.length);
+    var visible=order.slice(0,n), overflow=order.slice(n), active=state.view;
+    if(overflow.indexOf(active)>=0 && visible.length){
+      var displaced=visible[visible.length-1];
+      visible[visible.length-1]=active;
+      overflow=overflow.filter(function(v){return v!==active;});
+      overflow.unshift(displaced);
+    }
+    return {visible:visible, overflow:overflow, iconOnly:lay.iconOnly};
+  }
+  function _frzTabStrip(){
+    var s=_frzTabSplit(), active=state.view;
+    var html='<div class="frz-tabs'+(s.iconOnly?' frz-tabs--icononly':'')+'" role="tablist" aria-label="Views">';
+    s.visible.forEach(function(v){
+      var on=(v===active);
+      html+='<button class="frz-tab'+(on?' is-active':'')+'" role="tab" data-nav="view:'+v+'"'+(on?' aria-current="true"':'')+' title="'+escA(VIEW_LABEL[v])+'"><span class="frz-tab-ic">'+_frzViewIcon(v)+'</span><span class="frz-tab-lbl">'+esc(VIEW_LABEL[v])+'</span></button>';
+    });
+    if(s.overflow.length){
+      html+='<button class="frz-tab frz-tab--more" data-frzmore="1" aria-haspopup="true" title="More views"><span class="frz-tab-lbl">More</span>'+IC.caret+'</button>';
+    }
+    html+='</div>';
+    return html;
+  }
+  function _frzNavView(v){   // reuses the data-nav view navigation (carry chips; keep active board for Kanban)
+    var qs=_frzCarryQS(true);
+    if(v==='kanban' && state.board && state.board!=='__all__'){ var bu=new URLSearchParams(qs.replace(/^\?/,'')); bu.set('board', state.board); qs='?'+bu.toString(); }
+    navigate('/'+v+qs, false);
+  }
+  function _frzMoreMenu(anchor){   // B2.1: More is a MENU (icon + label rows), not a strip
+    var overflow=_frzTabSplit().overflow;
+    openPop(anchor, function(pop){
+      overflow.forEach(function(v){
+        var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt'+(v===state.view?' is-active':'');
+        b.innerHTML='<span class="frz-board-ic">'+_frzViewIcon(v)+'</span><span>'+esc(VIEW_LABEL[v])+'</span>';
+        b.addEventListener('click', function(){ closePop(); _frzNavView(v); });
+        pop.appendChild(b);
+      });
+    });
+  }
+  // 3.3: the scope (Space) chip - the `· All Spaces` crumb becomes the first filter chip when the flag
+  // is on. Accent-filled with the Space's colour dot; the board chip (Stage 1) follows it, then a divider.
+  function _frzScopeChipHTML(){
+    var proj=state.project, isAll=(!proj || proj==='__all__');
+    var name=isAll?'All Spaces':proj;
+    var dot=isAll?'rgba(255,255,255,.9)':(_call('projectColor',name)||'rgba(255,255,255,.9)');   // white on the accent fill for the unscoped state
+    return '<button class="frz-chip frz-chip--scope" data-chip="scope" title="Scope to a Space"><span class="frz-scope-dot" style="background:'+dot+'"></span><span class="frz-chip-value">'+esc(name)+'</span>'+IC.caret+'</button>';
+  }
+  function _frzScopeMenu(anchor){
+    openPop(anchor, function(pop){
+      function row(name,label){
+        var isAll=(name==='__all__');
+        var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt'+((state.project||'__all__')===name?' is-active':'');
+        var dot=isAll?'var(--frz-accent)':(_call('projectColor',label)||'var(--frz-accent)');
+        b.innerHTML='<span class="frz-scope-dot" style="background:'+dot+';flex-shrink:0"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(label)+'</span>';
+        b.addEventListener('click', function(){ closePop(); setProject(name); });
+        pop.appendChild(b);
+      }
+      row('__all__','All Spaces');
+      (_val('products',[])||[]).forEach(function(pr){ var n=pr.name||pr; row(n,n); });
+    });
+  }
   // Stage 3: top view control - a segmented Gantt·Kanban·List switcher at the left of the
   // filter bar (rail order, for visual sync with the rail). Shown only on the shared views;
   // reflects state.view; each segment carries data-nav="view:X" so the EXISTING delegated
   // rail handler routes it through navigate(...+_frzCarryQS) - filter+project carried, zero new wiring.
   var _FRZ_TOPVIEWS = ['gantt','kanban','list'];
   function _frzTopViewControl(){
+    if (_frzIA()) return '';   // SHELL-IA-1 Stage 3 (A1): flag ON replaces the segmented control with the top-bar tab strip (+ 3.4 hides the rail entirely), so it never renders. Flag OFF = unchanged.
     if (!_FRZ_SHARED_VIEWS[state.view]) return '';
     var viewer = _val('isViewer', false);
     var segs = _FRZ_TOPVIEWS.filter(function(v){ return v!=='kanban' || !viewer; }).map(function(v){
@@ -21627,9 +21785,13 @@ if ('serviceWorker' in navigator) {
     _XCHIP.forEach(function(k){
       if (cfg.extra.indexOf(k)>=0 && keys.indexOf(k)<0 && (CHIPS[k].get()||[]).length) keys.push(k);
     });
-    // SHELL-IA-1 Stage 1: the Kanban board chip leads the filter row (Stage 3 will slot the Space
-    // chip before it). Kanban-only - a board means nothing in any other view.
-    var html = _frzTopViewControl() + (view==='kanban' ? _boardChipHTML() : '') + keys.map(chipHTML).join('');   // Stage 3: segmented view switcher (shared views only)
+    // SHELL-IA-1: the Kanban board chip leads the filter row (Stage 1). Stage 3 (flag ON) slots the
+    // SCOPE (Space) chip before it, then a divider, then the filter chips (B4). Flag OFF is unchanged
+    // (no scope chip, no divider; the segmented control appears only when the rail is collapsed).
+    var _scopeChip = _frzIA() ? _frzScopeChipHTML() : '';
+    var _boardChip = (view==='kanban') ? _boardChipHTML() : '';
+    var _scopeDivider = (_frzIA() && (_scopeChip || _boardChip)) ? '<span class="frz-chip-divider" aria-hidden="true"></span>' : '';
+    var html = _frzTopViewControl() + _scopeChip + _boardChip + _scopeDivider + keys.map(chipHTML).join('');
     html += '<button class="frz-chip frz-chip--ghost" data-addfilter="1"><svg viewBox="0 0 12 12"><path d="M6 2v8M2 6h8"/></svg> Filter</button>';
     if (anyActive(view)){
       html += '<button class="frz-chip frz-chip--ghost" data-savefilter="1">Save filter</button>';
@@ -23936,9 +24098,14 @@ if ('serviceWorker' in navigator) {
     applyChromeHiding();            // re-hide chrome that applyViewMode may reveal
     // top bar - Kanban title shows the active board name (+ sprint suffix, Stage 3c)
     var titleTxt = _frzViewTitle();
-    document.getElementById('frzLeft').innerHTML =
-      _titleHtml(view, titleTxt)+
-      '<span class="frz-crumbs">'+esc(_frzCrumbText())+'</span>';   // Stage 3: project + active saved-filter name
+    // SHELL-IA-1 Stage 3: .frz-ia gates every flag-on style (top brand, tab strip, hidden rail brand,
+    // scope chip). Toggled here so a live flag change (or a fresh boot) is reflected on the next render.
+    if(root) root.classList.toggle('frz-ia', _frzIA());
+    // flag ON -> the top bar holds the VIEW TAB STRIP (scope moves to the filter row as a chip).
+    // Flag OFF -> the existing view title + crumb (project + saved-filter), byte-identical.
+    document.getElementById('frzLeft').innerHTML = _frzIA()
+      ? _frzTabStrip()
+      : (_titleHtml(view, titleTxt) + '<span class="frz-crumbs">'+esc(_frzCrumbText())+'</span>');   // Stage 3: project + active saved-filter name
     document.getElementById('frzBadges').innerHTML='';
     renderBar();
     if(view==='list'){ ensureBulkReleaseBtn(); ensureBulkDeleteBtn(); applyListCols(); }   // Stage 4b bulk bar + column show/hide
@@ -24756,6 +24923,31 @@ if ('serviceWorker' in navigator) {
   function setCollapsed(c, silent){
     state.collapsed = c;
     var instant = silent || _reducedMotion();
+    // SHELL-IA-1 Stage 3.4: flag ON - collapse HIDES the rail entirely (grid rail column -> 0, content
+    // full width). No icon rail (is-collapsed-ui is NOT used here - it stays flag-off-only per Addendum
+    // B), no toggle relocation (brand + toggle live in the top bar). frz-rail-hidden drives it.
+    if (_frzIA()){
+      root.classList.remove('is-collapsed','is-collapsed-ui');
+      root.classList.toggle('frz-rail-hidden', c);
+      // Brand revision (Addendum A 1.3): reveal the top-bar brand as the rail finishes clipping away,
+      // so the two brands are never both fully on screen. The reveal fires at 170ms - a hair before the
+      // 180ms (--frz-anim) grid animation ends - so the f-mark is up while only a <30px clipped sliver
+      // of the rail brand remains at the far left (never a full both-brands frame, since the rail brand
+      // is clipped by the closing rail; and no empty-pop frame either, which a >180ms delay would give).
+      // On expand we drop it at once so the rail brand is the only one as the rail widens back in.
+      // instant/reduced-motion -> no delay.
+      if (c){
+        if (instant) root.classList.add('frz-topbrand-in');
+        else setTimeout(function(){ if (state.collapsed) root.classList.add('frz-topbrand-in'); }, 170);
+      } else {
+        root.classList.remove('frz-topbrand-in');
+      }
+      if (!silent) lset(railKey(), c?'c':'e');
+      try { window.dispatchEvent(new Event('resize')); } catch(e){}
+      var doRenderIA = function(){ try { window.dispatchEvent(new Event('resize')); } catch(e){} if(!state.onItem) _call('renderCurrentView'); };
+      if (instant) doRenderIA(); else setTimeout(doRenderIA, 210);
+      return;
+    }
     if (c){
       // shrink the column now (animated); hide labels/sections only AFTER the
       // column finishes, so the content doesn't pop out before the rail closes.
@@ -25045,6 +25237,7 @@ if ('serviceWorker' in navigator) {
     });
   }
   function chipMenu(key, anchor){
+    if (key==='scope') return _frzScopeMenu(anchor);   // SHELL-IA-1 Stage 3: the scope (Space) chip picker
     if (key==='board') return boardChipMenu(anchor);
     if (key==='range') return rangeMenu(anchor);
     if (key==='sprint') return sprintMenu(anchor);
@@ -25190,6 +25383,8 @@ if ('serviceWorker' in navigator) {
   function wire(){
     // delegated rail nav / projects / saved
     root.addEventListener('click', function(e){
+      var moreBtn = e.target.closest && e.target.closest('[data-frzmore]');
+      if (moreBtn){ e.preventDefault(); e.stopPropagation(); _frzMoreMenu(moreBtn); return; }   // SHELL-IA-1 Stage 3: tab-strip overflow menu
       var navBtn = e.target.closest && e.target.closest('[data-nav]');
       if (navBtn){ e.preventDefault(); var t=navBtn.getAttribute('data-nav');
         if(t.indexOf('view:')===0){ var _v=t.slice(5); var _qs=_frzCarryQS(true);   // carry chips to EVERY view so the shared filter (esp. Devs/owner) persists (each view still self-serializes only what it exposes)
@@ -25250,6 +25445,24 @@ if ('serviceWorker' in navigator) {
       if (opt){ handleOpt(opt.getAttribute('data-opt'), opt); return; }
     });
     document.getElementById('frzCollapse').addEventListener('click', toggleCollapse);
+    // SHELL-IA-1 Stage 3.4: the top-bar collapse toggle (flag-on) + the [ shortcut named in its tooltip.
+    var _topCol=document.getElementById('frzTopCollapse'); if(_topCol) _topCol.addEventListener('click', toggleCollapse);
+    document.addEventListener('keydown', function(e){
+      if(e.key!=='[' || e.metaKey || e.ctrlKey || e.altKey) return;
+      var t=e.target, tag=(t&&t.tagName||'').toLowerCase();
+      if(tag==='input'||tag==='textarea'||tag==='select'||(t&&t.isContentEditable)) return;   // never steal typing
+      if(!document.body.classList.contains('frz-beta-active') || state.onItem) return;
+      e.preventDefault(); toggleCollapse();
+    });
+    // SHELL-IA-1 Stage 3.2: re-flow the tab strip ONLY when the breakpoint BAND changes (not on every
+    // resize pixel) - the overflow set (visible vs More) is band-driven per _frzTabLayout.
+    var _frzTabBand=null;
+    window.addEventListener('resize', function(){
+      if(!_frzIA() || state.onItem || !document.body.classList.contains('frz-beta-active')) return;
+      var l=_frzTabLayout(), band=l.slots+'/'+l.iconOnly;
+      if(band===_frzTabBand) return; _frzTabBand=band;
+      var left=document.getElementById('frzLeft'); if(left) left.innerHTML=_frzTabStrip();
+    });
     // ONE shell-level keyboard handler, bound once here when the shell mounts (same
     // place as the collapse button). document-level, default (bubble) phase, guarded
     // only by "not typing". Handles [ (collapse) and / (focus search) on every route.
