@@ -18948,8 +18948,11 @@ if ('serviceWorker' in navigator) {
   .frz-beta.frz-ia .frz-topbar-brand .frz-logo-full { height:24px; display:block; }
   .frz-beta.frz-ia .frz-topbar-brand .frz-logo-mark { display:none; }
   .frz-beta.frz-ia.frz-rail-hidden .frz-topbar-brand .frz-logo-full { display:none; }
-  .frz-beta.frz-ia.frz-rail-hidden .frz-topbar-brand .frz-logo-mark { display:block; height:auto; max-width:28px; }
-  .frz-beta.frz-ia .frz-topcollapse { position:static; margin:0; width:32px; height:32px; border:0; background:transparent; border-radius:7px; cursor:pointer; color:var(--frz-text-secondary); display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .frz-beta.frz-ia.frz-rail-hidden .frz-topbar-brand .frz-logo-mark { display:block; height:42px; width:auto; max-width:none; }   /* f-mark renders at the SAME 42px height as the expanded wordmark (--frz-logo), so the brand does not shrink on collapse - matches the rail's own is-collapsed-ui f-mark */
+  /* padding:0 overrides the global `select,button{padding:6px 11px}`; without it the 11px side padding
+     shrinks this 32px flex button to a 10px content box and the flex-child svg collapses to 10px wide
+     (the rail #frzCollapse escapes this only because it is display:grid, which does not shrink its child). */
+  .frz-beta.frz-ia .frz-topcollapse { position:static; margin:0; padding:0; width:32px; height:32px; border:0; background:transparent; border-radius:7px; cursor:pointer; color:var(--frz-text-secondary); display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
   .frz-beta.frz-ia .frz-topcollapse:hover { background:var(--frz-bg-app); color:var(--frz-accent); }
   /* 3.2: the view TAB STRIP (icon + label; overflow -> More via _frzTabLayout; scrolls if it still overflows) */
   .frz-beta .frz-tabs { display:flex; align-items:center; gap:2px; min-width:0; overflow-x:auto; scrollbar-width:none; }
