@@ -184,6 +184,46 @@ def test_freshness_not_wired_when_no_metrics_addr(client, team, allow_admin, mon
     assert d["metricsWired"] is False
 
 
+# ── LITESTREAM-FRESHNESS-1: never fabricate an age from a non-timestamp gauge ──
+
+# A real trimmed sample of Litestream v0.3.13's :9091/metrics (captured from prod 2026-09-01).
+# It carries rich per-DB gauges but NO per-DB replication timestamp. Note the traps:
+#   - litestream_sync_seconds: NAME matches the freshness heuristic (sync + second) but the value
+#     is a cumulative DURATION (222.68), NOT a unix epoch - must be rejected by the >1e9 gate.
+#   - litestream_replica_wal_offset / db_size: large per-DB numbers that are a byte offset / size,
+#     never a time - must never be read as an age.
+_V0313_METRICS = (
+    'litestream_db_size{db="/data/tenants/dev/roadmap.db"} 4.698112e+06\n'
+    'litestream_replica_wal_offset{db="/data/tenants/dev/roadmap.db",name="s3"} 498552\n'
+    'litestream_replica_wal_index{db="/data/tenants/dev/roadmap.db",name="s3"} 1080\n'
+    'litestream_sync_count{db="/data/tenants/dev/roadmap.db"} 51657\n'
+    'litestream_sync_seconds{db="/data/tenants/dev/roadmap.db"} 222.68076454999832\n'
+    'litestream_sync_error_count{db="/data/tenants/dev/roadmap.db"} 0\n'
+    'litestream_replica_operation_total{operation="PUT",replica_type="s3"} 21422\n'
+    'process_start_time_seconds 1.78821964511e+09\n'
+)
+
+
+def test_freshness_never_fabricates_age_on_real_v0313_metrics(monkeypatch):
+    class _Resp:
+        def read(self): return _V0313_METRICS.encode()
+    monkeypatch.setattr(server, "urlopen", lambda *a, **k: _Resp())
+    monkeypatch.setenv("LITESTREAM_METRICS_ADDR", ":9091")
+    fr = server._sys_litestream_freshness([{"team": "dev", "path": "/data/tenants/dev/roadmap.db"}])
+    assert fr["status"] == "reachable"                       # the endpoint answered
+    assert fr["byTeam"]["dev"]["ageSeconds"] is None         # but NO age fabricated from offset/size/duration
+    assert fr["byTeam"]["dev"]["lastTs"] is None
+
+
+def test_freshness_unreachable_degrades(monkeypatch):
+    def _boom(*a, **k):
+        raise OSError("connection refused")
+    monkeypatch.setattr(server, "urlopen", _boom)
+    monkeypatch.setenv("LITESTREAM_METRICS_ADDR", ":9091")
+    fr = server._sys_litestream_freshness([{"team": "dev", "path": "/data/tenants/dev/roadmap.db"}])
+    assert fr["status"] == "unreachable"                     # degrade, never a red backup failure
+
+
 # ── The client boolean carrier (Addendum B1.3) ────────────────────────────────
 
 def test_all_carries_sysstatusvisible_true_for_listed(client, team, monkeypatch):
