@@ -786,6 +786,32 @@ _DEFAULT_ASSIGNMENT_TYPES = [
     _at("qa-lead",           "QA Lead",           "Operational",      "#1a9a59", 12, impact=0.20),
 ]
 
+# ── Default departments for a NEW team (DEPT-DEFAULTS-1) ───────────────────────
+# Seeded into a team's config at creation (init_team_db). Names + pill colors only - NO notify
+# emails: those route per-team (departmentMeta[dept].emails) and baking one team's routing into
+# every new team would misfire notifications. Fully admin-editable/deletable afterwards (Admin ->
+# Departments), exactly like any other department. Existing teams are NOT retro-seeded (the
+# migration only backfills a genuinely ABSENT key; every current team already has `departments`).
+_DEFAULT_DEPARTMENTS = [
+    "FINANCE", "LOGISTICS", "MARKETING", "MRT", "PERFORMANCE MANAGEMENT", "SALES",
+    "SERVICE", "WAREHOUSE", "HUMAN RESOURCES", "TECHNOLOGY", "EXECUTIVE", "OPERATIONS", "ACCOUNTING",
+]
+_DEFAULT_DEPARTMENT_META = {
+    "ACCOUNTING":             {"color": "#3b693a"},
+    "EXECUTIVE":              {"color": "#100f0f"},
+    "FINANCE":                {"color": "#83d043"},
+    "HUMAN RESOURCES":        {"color": "#d62020"},
+    "LOGISTICS":              {"color": "#806fd8"},
+    "MARKETING":              {"color": "#e88645"},
+    "MRT":                    {"color": "#92979b"},
+    "OPERATIONS":             {"color": "#79b1e2"},
+    "PERFORMANCE MANAGEMENT": {"color": "#edf02d"},
+    "SALES":                  {"color": "#e859c9"},
+    "SERVICE":                {"color": "#2ac064"},
+    "WAREHOUSE":              {"color": "#191a1a"},
+    # TECHNOLOGY has no seeded color (renders with the derived default) - it is still in the list above.
+}
+
 def _mark_migration_done(c, key: str):
     """Record a one-shot data-migration marker in schema_meta, on the caller's connection `c` (so it stays
     in the same transaction as the migration work it gates).
@@ -1163,7 +1189,7 @@ def init_team_db(team: str):
             # field beside the free-text `resolution`, which is unchanged).
             "locations": [],
             "resolutionTypes": [],
-            "departments":  [],
+            "departments":  list(_DEFAULT_DEPARTMENTS),        # DEPT-DEFAULTS-1: seed the standard set on creation
             "products":     [{"name":"Fraznet","builtin":True},
                              {"name":"HubSpot","builtin":True}],
             "users":        [{"username":"admin","password":_get_init_password(team),
@@ -1207,7 +1233,7 @@ def init_team_db(team: str):
             "intakeProjectStatus": {},  # optional per-project DEFAULT STATUS for portal tickets {product: status}; falls back to statusIsDefault
             "intakeDefaultType": "",    # portal Type preselect ("" = none: reporters must choose when several types are offered)
             "intakeDomains": [],   # allowed reporter email domains (empty = allow any)
-            "departmentMeta": {},  # per-department {name: {color, emails}} - pill color + notify list
+            "departmentMeta": {k: dict(v) for k, v in _DEFAULT_DEPARTMENT_META.items()},  # DEPT-DEFAULTS-1: seed pill colors (NO emails - per-team routing)
             # AssetHub integration (contract-independent plumbing, PR1): the curated set
             # of external-system categories a Flow-originated request may target, keyed by
             # system: {"assethub": [{"id": <opaque>, "label": str}]}. The `id` is whatever

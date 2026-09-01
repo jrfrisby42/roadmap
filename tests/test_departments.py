@@ -23,7 +23,8 @@ def test_normalize_trims_dedups_first_seen_casing():
 
 
 def test_api_all_exposes_departments(client, team, admin_headers):
-    assert _cfg_departments(client, admin_headers) == []   # seeded empty
+    # DEPT-DEFAULTS-1: a new team is seeded with the standard department set.
+    assert _cfg_departments(client, admin_headers) == server._DEFAULT_DEPARTMENTS
 
 
 def test_item_departments_are_normalized_on_save(client, team, admin_headers):
@@ -32,24 +33,26 @@ def test_item_departments_are_normalized_on_save(client, team, admin_headers):
 
 
 def test_create_unions_new_departments_into_config(client, team, admin_headers):
-    _mk(client, admin_headers, departments=["Sales", " Logistics "])
+    # Novel names (not in the seeded set) so the union is what is being tested, not a collision.
+    _mk(client, admin_headers, departments=["QA Guild", " Field Techs "])
     cfg = _cfg_departments(client, admin_headers)
-    assert "Sales" in cfg and "Logistics" in cfg   # trimmed into the shared list
+    assert "QA Guild" in cfg and "Field Techs" in cfg   # trimmed into the shared list
 
 
 def test_case_insensitive_no_duplicate_in_config(client, team, admin_headers):
-    _mk(client, admin_headers, departments=["Logistics"])
-    _mk(client, admin_headers, departments=[" logistics ", "LOGISTICS"])
+    # Novel name so first-seen casing is exercised (the seeded set is all-caps already).
+    _mk(client, admin_headers, departments=["Zephyr"])
+    _mk(client, admin_headers, departments=[" zephyr ", "ZEPHYR"])
     cfg = _cfg_departments(client, admin_headers)
-    assert [d for d in cfg if d.lower() == "logistics"] == ["Logistics"]   # one entry, first-seen casing
+    assert [d for d in cfg if d.lower() == "zephyr"] == ["Zephyr"]   # one entry, first-seen casing
 
 
 def test_update_unions_departments(client, team, admin_headers):
     pid = _mk(client, admin_headers)["id"]
     client.put(f"/api/projects/{pid}",
-               json={"name": "Item", "status": "Planned", "departments": ["Marketing"]},
+               json={"name": "Item", "status": "Planned", "departments": ["Robotics Lab"]},
                headers=admin_headers)
-    assert "Marketing" in _cfg_departments(client, admin_headers)
+    assert "Robotics Lab" in _cfg_departments(client, admin_headers)
 
 
 def test_editor_can_create_a_department(client, team, admin_headers, editor_headers):
@@ -75,5 +78,9 @@ def test_department_meta_admin_only(client, team, editor_headers):
                       headers=editor_headers).status_code == 403
 
 
-def test_department_meta_defaults_empty(client, team, admin_headers):
-    assert client.get("/api/all", headers=admin_headers).json()["departmentMeta"] == {}
+def test_department_meta_seeds_colors_no_emails(client, team, admin_headers):
+    # DEPT-DEFAULTS-1: a new team seeds pill colors for the standard departments, and NO notify
+    # emails (routing is per-team). Was "defaults empty" before the standard set was seeded.
+    meta = client.get("/api/all", headers=admin_headers).json()["departmentMeta"]
+    assert meta.get("FINANCE", {}).get("color") == "#83d043"
+    assert all("emails" not in v for v in meta.values())
