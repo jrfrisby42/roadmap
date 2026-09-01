@@ -18980,6 +18980,13 @@ if ('serviceWorker' in navigator) {
   .frz-beta.is-collapsed-ui .frz-rowmenu { display:none; }
   .frz-beta.is-collapsed-ui .frz-brand { justify-content:center; padding:0; }
   .frz-beta.is-collapsed-ui .frz-logo { height:auto; max-width:40px; }
+  /* RAIL-SPACING-1: even vertical rhythm between every collapsed-rail icon. The section
+     margin-bottom (18px, for the expanded VIEWS/SPACES/SAVED heading gaps) made the My Home ->
+     Gantt gap 18px larger than the inter-view gaps (measured 52px vs 34px). Collapsed, the headings
+     are display:none (so they add nothing - the heading was the red herring); the culprit was
+     #frzHomeNav's own section margin. Zero it collapsed only - expanded keeps the 18px. Headings
+     are untouched (still present, just display:none), so Stage 3's flag-off path is unaffected. */
+  .frz-beta.is-collapsed-ui .frz-section { margin-bottom:0; }
   .frz-beta.is-collapsed-ui .frz-section--saved, .frz-beta.is-collapsed-ui .frz-section--projects { display:none; }   /* SHELL-IA-1 Stage 1: --boards section removed */
   /* Collapsed-rail active-filter cue: the SAVED FILTERS section (and its active-filter dot) is
      hidden when the rail is icon-only, so a collapsed-rail user loses the "a filter is on" signal.
