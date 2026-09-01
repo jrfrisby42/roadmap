@@ -3647,6 +3647,7 @@ def get_all(auth: dict = Depends(require_auth)):
                    "avatarInitials": u.get("avatarInitials", ""),   # user-chosen monogram (blank = derive from username)
                    "avatarColor": u.get("avatarColor", ""),         # user-chosen #RRGGBB (blank = username-hash color)
                    "fte": u.get("fte"),                             # per-user FTE for derived pod capacity (null -> 1.0 at read)
+                   "topbarViews": bool(u.get("topbarViews")),       # SHELL-IA-1 Stage 3: per-user top-bar-views IA opt-in (admin-settable)
                    "revokedAt": u.get("revokedAt")} for u in users_raw]
     return {"projects": projects, "developers": cfg("developers"),
             "statuses": cfg("statuses"), "delayReasons": cfg("delayReasons"),
@@ -3720,6 +3721,12 @@ def get_all(auth: dict = Depends(require_auth)):
             # System tab should render for them. Only the boolean crosses to the browser - the
             # SYS_STATUS_USERS allowlist NEVER does, so it leaks nothing about who else is on it.
             "sysStatusVisible": auth.get("username") in SYS_STATUS_USERS,
+            # SHELL-IA-1 Stage 3: per-user opt-in for the top-bar-views IA (tabs + scope chip + rail
+            # hidden on collapse). Stored on the user's own record in config['users'] (beside
+            # ownerFilter/revokedAt); returned here as a plain per-user boolean. Default false =
+            # byte-identical to today. Admin-settable via the Users tab.
+            "topbarViews": bool(next((u for u in users_raw
+                                      if u.get("username") == auth.get("username")), {}).get("topbarViews")),
             # PHASE B2: minimal read-only stubs for out-of-scope items a Contributor's own items
             # reference (parent / requires). Empty for admin/editor/viewer.
             "relatedStubs": related_stubs}
@@ -5540,6 +5547,10 @@ def set_config(key: str, body = Body(...), username: str = "",
                 u["avatarInitials"] = prev["avatarInitials"]
             if prev and "avatarColor" not in u and prev.get("avatarColor"):
                 u["avatarColor"] = prev["avatarColor"]
+            # SHELL-IA-1 Stage 3: topbarViews is a per-user opt-in the standard user form doesn't
+            # carry - inherit it so an unrelated admin edit doesn't silently wipe the flag.
+            if prev and "topbarViews" not in u and prev.get("topbarViews"):
+                u["topbarViews"] = prev["topbarViews"]
             if not u.get("avatarColor"):   # Stage 6a: seed a distinct color for new/colorless users
                 _col = _pick_avatar_color(used_colors, uname); u["avatarColor"] = _col; used_colors.add(_col)
             pw = u.get("password","")
