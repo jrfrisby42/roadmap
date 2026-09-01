@@ -7893,7 +7893,12 @@ function _sysFreshBadge(fr, team){
   if(fr.status==='unreachable') return _sysBadge('warn','metrics unreachable');
   if(fr.status!=='reachable')   return _sysBadge('info','unknown');
   var t=(fr.byTeam||{})[team];
-  if(!t || t.ageSeconds==null) return _sysBadge('info','age unknown');
+  // LITESTREAM-FRESHNESS-1: Litestream v0.3.13 exposes no per-DB replication TIMESTAMP (only
+  // cumulative gauges: wal_offset/index, sync_count, db_size), so a true per-team age is
+  // structurally unavailable, not a failed read. Name the source, like the AWS Backup row does,
+  // rather than "unknown". A real per-team age would need a stateful cross-scrape tracker (how
+  // ShareBox derives its Operations-card age) - a separate stage, not inferable from one scrape.
+  if(!t || t.ageSeconds==null) return _sysBadge('info','age not reported by Litestream');
   return _sysBadge(t.ageSeconds>3600?'warn':'ok', 'fresh ('+_sysAge(t.ageSeconds)+')');
 }
 function _sysServiceBadge(state){
