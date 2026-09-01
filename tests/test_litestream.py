@@ -6,6 +6,8 @@ systemctl: `do_reload=False` skips the reload command entirely, and no LITESTREA
 env is set unless the test sets it (so the feature is a no-op elsewhere).
 """
 import os
+import sqlite3
+
 import server
 
 
@@ -120,3 +122,33 @@ def test_metrics_addr_emitted_only_when_configured(tmp_path, monkeypatch):
     assert "addr: :9091" in t
     assert t.index("addr: :9091") < t.index("dbs:")     # top-level, sibling of dbs and before it
     assert t.count("addr:") == 1
+
+
+def test_new_team_db_is_enumerable_before_first_use(tmp_path):
+    """NEWTEAM-BACKUP-1: --new-team now creates a valid WAL roadmap.db up front (Option B), so the
+    Litestream generator enumerates the team IMMEDIATELY, not only after its first HTTP request
+    created the DB lazily. Mirror the fix's exact file creation and assert the generator includes
+    it. (The 2026-08-31 finance gap was this file NOT existing when the generator globbed.)"""
+    tenants = tmp_path / "tenants"; tenants.mkdir()
+    tdir = tenants / "newco"; tdir.mkdir()
+    dbp = tdir / "roadmap.db"
+    con = sqlite3.connect(str(dbp)); con.execute("PRAGMA journal_mode=WAL"); con.close()
+    yaml, n = server._litestream_flow_yaml(str(tenants), "bucket", "flow", "us-west-2")
+    assert n == 1
+    assert str(dbp) in yaml
+
+
+def test_init_team_db_accepts_a_precreated_wal_file(team):
+    """NEWTEAM-BACKUP-1 assumption 1.3.1: schema init (all CREATE TABLE IF NOT EXISTS) works cleanly
+    against a roadmap.db that --new-team pre-created empty. Pre-create the WAL file, then init and
+    confirm the schema landed - so the Option B ordering (empty DB first, schema on first use) holds."""
+    slug = team + "pre"
+    d = os.path.join(server.TENANTS_DIR, slug); os.makedirs(d, exist_ok=True)
+    dbp = os.path.join(d, "roadmap.db")
+    con = sqlite3.connect(dbp); con.execute("PRAGMA journal_mode=WAL"); con.close()
+    server.init_team_db(slug)                    # must not raise against the existing empty file
+    with server.db(slug) as c:
+        tbls = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        mode = c.execute("PRAGMA journal_mode").fetchone()[0]
+    assert "projects" in tbls and "config" in tbls   # schema landed onto the pre-created file
+    assert mode.lower() == "wal"                      # WAL mode preserved for the replica
