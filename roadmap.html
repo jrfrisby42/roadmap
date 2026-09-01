@@ -17128,10 +17128,11 @@ async function renderItemPageComments(itemId){
   const el = document.getElementById('ipCommentsList');
   const inputWrap = document.getElementById('ipCommentInput');
   if(!el) return;
-  // Hide comment input for viewers, and for Contributors on an out-of-scope item
-  // (the server 403s an out-of-scope comment regardless - this is the affordance).
+  // VIEWER-COMMENT-1: viewers may comment now (server allows it too), so the composer shows for
+  // them. Contributors are still hidden on an out-of-scope item (the server 403s an out-of-scope
+  // comment regardless - this is the affordance). No other viewer affordance changes.
   const _cp = projects.find(x=>x.id===itemId);
-  const canComment = !isViewer && !(isContributor && !itemInContributorScope(_cp));
+  const canComment = !(isContributor && !itemInContributorScope(_cp));
   if(inputWrap) inputWrap.style.display = canComment ? 'flex' : 'none';
   try {
     const data = await API.get('/api/comments/'+itemId);

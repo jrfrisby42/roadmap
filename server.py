@@ -7093,7 +7093,7 @@ def _notify_item_update(team, pid, old, new, actor):
             _notify(team, list(new_m), "mention", pid, name, f"{actor} mentioned you in {name or 'an item'}", actor)
             _grant_item_access(team, pid, list(new_m), "mention", actor)   # Phase B: mention grants read access
 
-def _notify_on_comment(team, item_id, author, text, parent_id=None):
+def _notify_on_comment(team, item_id, author, text, parent_id=None, author_role=None):
     if not item_id:
         return
     valid = _team_usernames(team)
@@ -7102,7 +7102,12 @@ def _notify_on_comment(team, item_id, author, text, parent_id=None):
     _add_watchers(team, item_id, [author] + list(mentioned))   # commenter + mentioned auto-watch
     if mentioned:
         _notify(team, list(mentioned), "mention", item_id, name, f"{author} mentioned you in a comment", author)
-        _grant_item_access(team, item_id, list(mentioned), "mention", author)   # Phase B: mention grants read access
+        # VIEWER-COMMENT-1: a mention notification always fires (the point of commenting is being
+        # heard), but a VIEWER author does NOT create a Contributor read-access grant. The grant means
+        # "an insider working the ticket vouches for a Contributor seeing it"; letting the lowest,
+        # read-only role widen a scoped Contributor's visibility is a privilege path through that role.
+        if author_role != "viewer":
+            _grant_item_access(team, item_id, list(mentioned), "mention", author)   # Phase B: mention grants read access
     # Stage 4: a reply notifies the parent comment's author (unless self / already mentioned).
     notified = set(mentioned)
     if parent_id is not None:
@@ -9958,7 +9963,11 @@ def _comment_has_content(html_body: str) -> bool:
     return bool(re.search(r"<img\b", html_body, re.I))
 
 @app.post("/api/comments")
-def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin", "editor", "contributor"))):
+def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin", "editor", "contributor", "viewer"))):
+    # VIEWER-COMMENT-1: viewers may CREATE comments (the least destructive write - additive,
+    # attributed, editable only by its author). Nothing else about the viewer role changes. A
+    # viewer-authored comment must NOT satisfy firstResponseAt (see the exclusion below) and must
+    # NOT grant a Contributor item access (see the _notify_on_comment call below).
     team = auth["team"]
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     item_id = body.get("item_id")
@@ -9989,7 +9998,14 @@ def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin
             irow = c.execute("SELECT data FROM projects WHERE id=?", (item_id,)).fetchone()
             if irow:
                 _item = json.loads(irow["data"])
-                if author != (_item.get("reporter") or "") and not _item.get("firstResponseAt"):
+                # VIEWER-COMMENT-1: extend the EXISTING first-touch exclusion (one condition, not a
+                # parallel guard). The reporter clause is a username test; the viewer clause is a role
+                # test - both express the same principle: a comment from someone who is not working the
+                # ticket must not mark it "first touched". A viewer asking "any update?" would otherwise
+                # improve first-touch numbers on tickets that sit exactly as untouched as before.
+                if (author != (_item.get("reporter") or "")
+                        and auth.get("role") != "viewer"
+                        and not _item.get("firstResponseAt")):
                     _item["firstResponseAt"] = datetime.now(timezone.utc).isoformat()
                     _save_project(c, item_id, _item)
         except Exception as e:
@@ -10001,7 +10017,7 @@ def add_comment(body: dict = Body(...), auth: dict = Depends(require_role("admin
         _iur = c.execute("SELECT updated_ts FROM projects WHERE id=?", (item_id,)).fetchone()
     # Stage 3b/4: mention + watcher (+ reply-to parent author) notifications (post-commit, best-effort)
     try:
-        _notify_on_comment(team, item_id, author, body.get("body", ""), parent_id)
+        _notify_on_comment(team, item_id, author, body.get("body", ""), parent_id, auth.get("role"))
     except Exception as e:
         log.warning(f"[Notify] comment hook failed: {e}")
     resp = dict(row)
@@ -10031,8 +10047,13 @@ def delete_comment(cid: int, auth: dict = Depends(require_role("admin", "editor"
 
 @app.patch("/api/comments/{cid}")
 def edit_comment(cid: int, body: dict = Body(...),
-                 auth: dict = Depends(require_role("admin", "editor", "contributor"))):
+                 auth: dict = Depends(require_role("admin", "editor", "contributor", "viewer"))):
     """COMMENT-EDIT-1: a user edits their OWN comment.
+
+    VIEWER-COMMENT-1: viewers are included because a viewer's own comment is their own, and
+    COMMENT-EDIT-1's rule is ownership-based (the token's username must equal the row's author,
+    with NO admin override). So a viewer can fix their own typo and nothing more - the ownership
+    check below is unchanged and does the gating.
 
     Rule 1 (ownership): the token's username must equal the row's author. There is NO admin
     override - editing another person's words under their name is worse than the typo it fixes.
