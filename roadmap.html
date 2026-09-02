@@ -790,6 +790,10 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .admin-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
   .admin-pane { display: none; }
   .admin-pane.active { display: block; }
+  /* POLISH-5 Part 1: hide the per-type "Maintenance" flag (sprint/Planning-only) when Planning is a
+     disabled view. Body class set by _applyAdminViewGates(); a class (not JS on each row) so it holds
+     across Types-list re-renders. */
+  body.frz-no-planning .frz-type-maint { display: none !important; }
 
   /* SYS-STATUS-1: operator System-status page. --frz-* first (resolves in the Flow shell where
      this always renders), with production-token fallbacks so nothing hardcodes a light hex. */
@@ -2046,7 +2050,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       </div>
 
       <!-- Section 2: Defer Reasons -->
-      <div>
+      <div id="deferReasonsSection">
         <div style="font-size:11px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;padding-bottom:6px;border-bottom:2px solid var(--border);display:flex;align-items:center;justify-content:space-between">
           <span>Defer Reasons <span style="font-size:10px;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0"> - shown when deferring items in the Planning Board</span></span>
           <button id="saveDeferReasonsBtn" onclick="saveReasonList('deferReasons')" style="font-size:11px;font-weight:700;background:var(--accent);color:#fff;border:none;padding:4px 12px;border-radius:5px;cursor:pointer;font-family:'Lato',sans-serif">Save</button>
@@ -2339,7 +2343,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.34.0';
+const APP_VERSION = '6.34.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -7821,6 +7825,22 @@ document.getElementById('newDevName')?.addEventListener('keydown', e=>{ if(e.key
 // Render every admin pane + activate a tab. Shared by the classic modal
 // (openAdminPanel) and the Flow full-page shell (setAdmin -> _call). Does NOT
 // show/hide any container - the caller controls presentation.
+// POLISH-5 Part 1: hide Admin config whose subject is a view a team has DISABLED, so admins don't
+// configure something nobody can reach (same rule as FIELDS-1 hidden-when-empty). ONLY the three
+// unambiguously Planning-only sections are gated - Defer Reasons, the Maintenance Duty type, and the
+// per-type "Maintenance" flag. NOT gated (Addendum A A1.3): the Type "Scheduled" toggle and the Capacity
+// editor - both drive CAPACITY, which is read by Gantt, Planning AND Calendar, so on a team with Gantt +
+// Planning off but Calendar on (IT) they still shape the Calendar's capacity rows; the "can it have
+// effect" test keeps them. The theoretical "all three off" gate is deliberately NOT implemented - no team
+// has all three off, so it would be dead, untested code. Timeline Change Reasons is left too (it also
+// fires from the item page). The enabledViews editor itself is never gated. This reads enabledViews; it
+// never edits it.
+function _applyAdminViewGates(){
+  var planningOn = _planningViewEnabled();
+  var defer = document.getElementById('deferReasonsSection'); if(defer) defer.style.display = planningOn ? '' : 'none';
+  var maint = document.getElementById('maintDutyTypeRow');    if(maint) maint.style.display = planningOn ? '' : 'none';
+  document.body.classList.toggle('frz-no-planning', !planningOn);   // hides the per-type Maintenance flag via CSS (survives Types-list re-renders)
+}
 function renderAdminPanes(tabId){
   if(!isAdmin) return;
   // Set audit log link to current team
@@ -7840,6 +7860,7 @@ function renderAdminPanes(tabId){
   renderUserList();
   renderTypeList();
   renderAssignmentTypesList();
+  _applyAdminViewGates();   // POLISH-5 Part 1: gate the Planning-only sections on planning-enabled
   // Assignment types load async at boot; if they weren't ready yet, fetch then re-render.
   if(!(_assignmentTypes||[]).length && typeof loadAssignmentData==='function'){
     loadAssignmentData().then(renderAssignmentTypesList).catch(()=>{});
@@ -9032,7 +9053,7 @@ function renderTypeList(){
         <input type="checkbox" onchange="toggleTypeIgnore(${i},this.checked)" ${ignored?'checked':''} style="accent-color:var(--accent);cursor:pointer">
         Ignore Conflicts
       </label>
-      <label style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;flex-shrink:0" title="Items of this type count as sprint maintenance-duty work (drives the duty summary + duty-pod defaulting)">
+      <label class="frz-type-maint" style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;flex-shrink:0" title="Items of this type count as sprint maintenance-duty work (drives the duty summary + duty-pod defaulting)">
         <input type="checkbox" onchange="toggleTypeMaintenance(${i},this.checked)" ${t.maintenance?'checked':''} style="accent-color:var(--accent);cursor:pointer">
         Maintenance
       </label>
@@ -18959,8 +18980,13 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-tabs::-webkit-scrollbar { display:none; }
   .frz-beta .frz-tab { display:inline-flex; align-items:center; gap:6px; height:34px; padding:0 11px; border:0; background:transparent; border-radius:8px; cursor:pointer; color:var(--frz-text-secondary); font:inherit; font-size:13px; font-weight:600; white-space:nowrap; flex-shrink:0; position:relative; }
   .frz-beta .frz-tab:hover { background:var(--frz-bg-app); color:var(--frz-text); }
-  .frz-beta .frz-tab.is-active { color:var(--frz-accent); }
-  .frz-beta .frz-tab.is-active::after { content:''; position:absolute; left:11px; right:11px; bottom:-1px; height:2px; background:var(--frz-accent); border-radius:2px; }
+  /* POLISH-5 Part 6: the active tab gets the designed --accent-soft FILL + --accent text (only the text
+     half had shipped, so colour was the ONLY differentiator - a subtle, colour-blind-unfriendly cue). The
+     fill is a non-colour cue (shape, not hue) and matches how the rail marks its active item
+     (.frz-item[aria-current]). The old ::after underline is dropped: it sat at bottom:-1px and .frz-tabs'
+     overflow-x:auto clipped it to zero visible height, so it never rendered - and an underline on a filled
+     tab would be belt-and-braces anyway. See the shared "fill means active/narrowing" convention comment. */
+  .frz-beta .frz-tab.is-active { color:var(--frz-accent); background:var(--frz-accent-soft); }
   .frz-beta .frz-tab-ic { display:inline-flex; align-items:center; flex-shrink:0; }
   .frz-beta .frz-tab-ic svg { width:16px; height:16px; display:block; }
   .frz-beta .frz-tabs--icononly .frz-tab-lbl { display:none; }
@@ -18969,10 +18995,13 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-tab--more .frz-chip-caret { width:11px; height:11px; margin-left:1px; }
   /* 3.3 / B4: scope (Space) chip - accent-filled with the Space colour dot; divider separates scope from
      filters. NOTE the .frz-chip.frz-chip--scope specificity (3 classes) so it beats the later .frz-chip base. */
-  .frz-beta .frz-chip.frz-chip--scope { background:var(--frz-accent); color:#fff; border-color:var(--frz-accent); }
-  .frz-beta .frz-chip.frz-chip--scope .frz-chip-value { color:#fff; }
-  .frz-beta .frz-chip.frz-chip--scope .frz-chip-caret { stroke:#fff; }
-  .frz-beta .frz-scope-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; box-shadow:0 0 0 1.5px rgba(255,255,255,.5); }
+  /* POLISH-5 Part 5: the scope chip is NO LONGER accent-filled. Unscoped = plain (base .frz-chip). Scoped
+     gets an inline low-alpha tint of the Space color + a full-color border (both inline, per-Space); the
+     rules here only keep the ink dark in both states and style the count. */
+  .frz-beta .frz-chip.frz-chip--scope { color:var(--frz-text); }
+  .frz-beta .frz-chip.frz-chip--scope .frz-chip-value { color:var(--frz-text); }
+  .frz-beta .frz-chip--scope .frz-scope-cnt { flex-shrink:0; font-size:11.5px; font-weight:600; color:var(--frz-text-muted); font-variant-numeric:tabular-nums; margin-left:1px; }
+  .frz-beta .frz-scope-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
   .frz-beta .frz-chip-divider { width:1px; height:20px; background:var(--frz-border-strong); margin:0 5px; flex-shrink:0; align-self:center; }
   .frz-beta :focus-visible { outline:2px solid var(--frz-accent); outline-offset:2px; border-radius:4px; }
   .frz-beta svg.frz-ic { stroke:currentColor; fill:none; stroke-width:1.33; stroke-linecap:round; stroke-linejoin:round; }   /* frz-ic set is 16x16 viewBox: 1.33 here = stroke 2 on the 24x24 standard */
@@ -21420,7 +21449,12 @@ if ('serviceWorker' in navigator) {
       b.setAttribute('aria-current', String(state.view===v && !state.onItem));
       b.title = VIEW_LABEL[v];
       var icon = (v==='team-calendar') ? IC.teamCalendar : IC[v];
-      var c = (v==='team-calendar' || v==='reports') ? null : viewCount(v);   // Calendar + Reports carry no count pill
+      // POLISH-5 Part 4: Planning carries NO count pill either. It used to show viewCount('planning') =
+      // sprintItems(currentSprint.id).length - the number of items in the ACTIVE SPRINT (verified compute
+      // site; NOT sprints+releases). That is a quantity, not an actionable "N need you" count, so it did
+      // not earn a lone badge among the tabs, and the scope chip (POLISH-5 Part 3) is now the row's single
+      // number. Do NOT re-add it as a missing feature. (Calendar + Reports carry no count pill either.)
+      var c = (v==='team-calendar' || v==='reports' || v==='planning') ? null : viewCount(v);
       b.innerHTML = icon + '<span class="frz-item-lbl" title="'+escA(VIEW_LABEL[v])+'">'+VIEW_LABEL[v]+'</span>' + (c!=null ? '<span class="frz-count">'+c+'</span>' : '') + '<span class="frz-item-cdot" aria-hidden="true"></span>';   // COUNTER-ALIGN-1: label flexes/truncates
       nav.appendChild(b);
     });
@@ -21770,8 +21804,24 @@ if ('serviceWorker' in navigator) {
   function _frzScopeChipHTML(){
     var proj=state.project, isAll=(!proj || proj==='__all__');
     var name=isAll?'All Spaces':proj;
-    var dot=isAll?'rgba(255,255,255,.9)':(_call('projectColor',name)||'rgba(255,255,255,.9)');   // white on the accent fill for the unscoped state
-    return '<button class="frz-chip frz-chip--scope" data-chip="scope" title="Scope to a Space"><span class="frz-scope-dot" style="background:'+dot+'"></span><span class="frz-chip-value">'+esc(name)+'</span>'+IC.caret+'</button>';
+    // POLISH-5 Part 3: the scope COUNT rides on the chip (recovered at a glance when the rail hides it) -
+    // same source as the rail + dropdown (_frzScopeCount). All Spaces shows the team total.
+    var cnt=_frzScopeCount(isAll?null:proj);
+    // POLISH-5 Part 5: TINT, do not fill. SCOPED -> a low-alpha tint of the Space's OWN color (composites
+    // over the bar, so dark mode is automatic), full-color border + dot, dark ink. UNSCOPED (All Spaces) OR
+    // a Space with no color -> PLAIN (the base .frz-chip surface/border/ink, no dot). Tinted = scoped,
+    // plain = everything - readable peripherally at any hue, which a raw accent fill was not (Space colors
+    // are arbitrary + admin-chosen; a yellow-green and a dark red both exist, so no white/dark text rule is
+    // safe on a raw fill). See the shared "fill means active/narrowing" convention comment on the Saved chip.
+    // EXPLICIT color only (Part 5.5): a Space with no `color` set falls back to the PLAIN treatment rather
+    // than tinting with a palette fallback - so we read prod.color directly, NOT projectColor() (which
+    // always returns a deterministic palette colour). No color -> col null -> plain, no dot.
+    var _prod = isAll ? null : (_val('products',[])||[]).filter(function(p){ return (p.name||p)===name; })[0];
+    var col = (_prod && _prod.color) ? _prod.color : null;
+    var style = col ? 'background:color-mix(in srgb, '+col+' 16%, transparent);border-color:'+col+';color:var(--frz-text)' : '';
+    var dotHtml = (isAll || !col) ? '' : '<span class="frz-scope-dot" style="background:'+col+'"></span>';
+    return '<button class="frz-chip frz-chip--scope'+(col?' is-scoped':'')+'" data-chip="scope" title="Scope to a Space"'+(style?' style="'+style+'"':'')+'>'+
+      dotHtml+'<span class="frz-chip-value">'+esc(name)+'</span><span class="frz-scope-cnt">'+cnt+'</span>'+IC.caret+'</button>';
   }
   function _frzScopeMenu(anchor){
     openPop(anchor, function(pop){
@@ -23726,7 +23776,16 @@ if ('serviceWorker' in navigator) {
         (active ? '<span class="frz-chip-clear" data-cfclear="'+key+'" role="button" aria-label="Clear '+esc(label)+' filter">×</span>' : IC.caret)+
         '</button>';
     }
-    host.innerHTML =
+    // POLISH-5 Part 2: Calendar renders its OWN filter row (bypasses renderBar), so it never got the scope
+    // chip - flag-on with the rail hidden it could not be scoped to a Space at all. Add it here, first,
+    // before a divider, same treatment as every other view. Reuses _frzScopeChipHTML() (Part 3 count + Part
+    // 5 tint). Its data-chip="scope" is caught by the shared delegated chipMenu handler (no new wiring), and
+    // renderCalFilters runs inside renderCalendar, which setProject calls on a scope change - so the chip
+    // repaints on every scope-change path (chip dropdown, rail Space, ?project=, browser back). Calendar
+    // DOES honour the scope: _calData filters its tickets through inScope(p). Shown flag-on, or flag-off
+    // when the rail is collapsed (RAIL-COLLAPSED-1), matching the shared renderer.
+    var _scopeHtml = (_frzIA() || _frzRailCollapsed()) ? (_frzScopeChipHTML() + '<span class="frz-chip-divider" aria-hidden="true"></span>') : '';
+    host.innerHTML = _scopeHtml +
       chip('owner','Team')+chip('user','User')+chip('type','Type')+chip('cap','Capacity')+
       ((_calSharedOwner()||f.user||f.type||f.cap) ? '<button class="frz-chip frz-chip--ghost" id="frzCalFClear">Clear</button>' : '');
     host.querySelectorAll('[data-cf]').forEach(function(btn){
@@ -25319,21 +25378,49 @@ if ('serviceWorker' in navigator) {
   // is a funnel/filter glyph) is exactly what the rail's SAVED FILTERS rows render (renderSavedNav ~L21625),
   // so "funnel = saved filter" is already the established meaning here - consistency beats the bookmark.
   var _SAVED_IC = IC.flag;
+  // POLISH-5 Part 7: clear the applied saved filter. What it resets (7.6): the CHIP FILTERS the saved filter
+  // set, via _frzClearChips, which resets every chip in the current view to All and drops the saved-filter
+  // highlight (activeSavedId). It deliberately does NOT touch the Space scope - _frzClearChips never edits
+  // state.project - so clearing a filter never silently moves the user to a different Space (a saved qs can
+  // carry project=, but a user who cleared a filter did not ask to be moved). A saved filter REPLACES the
+  // filter state when applied, so there is no meaningful "before" to restore - clearing returns to no
+  // filters. ONE implementation, two triggers: the chip's x and the dropdown's "Clear filter" entry.
+  function _frzClearSavedFilter(){ _frzClearChips(); }
   function _savedChipHTML(){
     var s = (state.saved||[]).filter(function(x){return x.id===state.activeSavedId;})[0];
-    var name = s ? s.name : 'Saved';
-    return '<button class="frz-chip frz-chip--saved" data-chip="saved" title="Saved filters">'+
-      '<span class="frz-chip-ic">'+_SAVED_IC+'</span><span class="frz-chip-value">'+esc(name)+'</span>'+IC.caret+'</button>';
+    var applied = !!s;
+    // POLISH-5 Part 7: RESTING label is "Saved filters" (plural = plainly a LABEL, not a selection; "None"
+    // collides with a real filter name and "All" is semantically wrong - you do not apply all filters).
+    // APPLIED shows the filter's name + the --accent-soft fill (is-active) + an x to clear.
+    // SHARED VISUAL CONVENTION (Parts 5, 6, 7): a fill means something is active or narrowing your view -
+    // the active tab, a scoped Space (its own colour), an applied saved filter (--accent-soft, since the
+    // saved chip has no colour of its own, matching the tab). Do not change one without the others.
+    var name = applied ? s.name : 'Saved filters';
+    var tail = applied
+      ? '<span class="frz-chip-clear" data-savedclear="1" role="button" tabindex="0" aria-label="Clear saved filter" title="Clear filter">×</span>'
+      : IC.caret;
+    return '<button class="frz-chip frz-chip--saved'+(applied?' is-active':'')+'" data-chip="saved" title="Saved filters">'+
+      '<span class="frz-chip-ic">'+_SAVED_IC+'</span><span class="frz-chip-value">'+esc(name)+'</span>'+tail+'</button>';
   }
   function savedChipMenu(anchor){
     openPop(anchor, function(pop){
+      // POLISH-5 Part 7: a "Clear filter" entry at the TOP when one is applied - the discoverable path for
+      // someone who opens the menu looking for "none". The chip's x is the primary one-click clear; both
+      // call the same _frzClearSavedFilter (one implementation).
+      if(state.activeSavedId){
+        var clr=document.createElement('button'); clr.type='button'; clr.className='frz-pop-opt';
+        clr.innerHTML='<span style="width:16px;text-align:center;flex-shrink:0">×</span><span>Clear filter</span>';
+        clr.addEventListener('click', function(){ closePop(); _frzClearSavedFilter(); });
+        pop.appendChild(clr);
+        var hr0=document.createElement('div'); hr0.className='frz-pop-div'; pop.appendChild(hr0);
+      }
       (state.saved||[]).forEach(function(s){
         var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt'+(s.id===state.activeSavedId?' is-active':'');
         b.innerHTML='<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.name)+'</span>';
         b.addEventListener('click', function(){ closePop(); applySaved(s); });
         pop.appendChild(b);
       });
-      var hr=document.createElement('div'); hr.style.cssText='height:1px;background:var(--frz-border);margin:6px 4px'; pop.appendChild(hr);
+      var hr=document.createElement('div'); hr.className='frz-pop-div'; pop.appendChild(hr);
       var add=document.createElement('button'); add.type='button'; add.className='frz-pop-opt';
       add.innerHTML='<span style="font-size:15px;line-height:0;width:16px;text-align:center;flex-shrink:0">＋</span><span>Save current view</span>';
       add.addEventListener('click', function(){ closePop(); saveCurrent(anchor); });   // reuses the rail `+` save path
@@ -25553,6 +25640,11 @@ if ('serviceWorker' in navigator) {
       }
       var clr = e.target.closest && e.target.closest('[data-clear]');
       if (clr){ e.stopPropagation(); var k=clr.getAttribute('data-clear'); if(k==='range'){ var ff=document.getElementById('filterFrom'),ft=document.getElementById('filterTo'); if(ff){ff.value='';ff.dispatchEvent(new Event('change'));} if(ft){ft.value='';ft.dispatchEvent(new Event('change'));} } else if(k==='sprint'){ state.sprintFilter=''; } else applyPanel(CHIPS[k].panel,null); rerender(); renderBar(); renderRail(); syncURL(true); return; }
+      // POLISH-5 Part 7: the saved chip's x clears the applied filter in one click - caught BEFORE the
+      // [data-chip] menu-open below (the x lives inside the chip), so tapping the x clears and tapping the
+      // rest of the chip opens the dropdown. One action per click.
+      var savedClr = e.target.closest && e.target.closest('[data-savedclear]');
+      if (savedClr){ e.preventDefault(); e.stopPropagation(); _frzClearSavedFilter(); return; }
       var chip = e.target.closest && e.target.closest('[data-chip]');
       if (chip){ chipMenu(chip.getAttribute('data-chip'), chip); return; }
       if (e.target.closest && e.target.closest('[data-addfilter]')){ addFilterMenu(e.target.closest('[data-addfilter]')); return; }
