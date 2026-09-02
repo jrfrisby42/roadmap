@@ -9982,6 +9982,13 @@ async function attemptLogin(){
       return; // don't proceed to app until password is changed
     }
 
+    // RAIL-COLLAPSED-2 Part 4: re-assert the FOUC guard across the login->reload transition. On a cold
+    // (no-session) load boot() shows the login wall and never reaches the reveal site, so .frz-boot is
+    // removed only by the 5s fail-safe; a first-time login that takes >5s (typing, no autofill - common in
+    // incognito) leaves it off, and hideLoginWall() then exposes the classic chrome for a beat before the
+    // reload paints. Re-adding it here keeps the classic shell hidden until the reloaded page boots. This is
+    // a whole-team path (the shell choice + guard precede the topbarViews flag), not a flag-on-only one.
+    document.documentElement.classList.add('frz-boot');
     hideLoginWall();
     const role = data.role || 'viewer';
     setAdminMode(true, data.username, role);
@@ -10160,6 +10167,7 @@ document.getElementById('forcePasswordSaveBtn')?.addEventListener('click', async
     _recordSession(pending.team, r.token, pending.username, pending.role || 'viewer');   // remember this team for the switcher
     // Establish session so boot() doesn't redirect to login wall
     setAdminMode(true, pending.username || '', pending.role || 'viewer');
+    document.documentElement.classList.add('frz-boot');   // RAIL-COLLAPSED-2 Part 4: keep classic hidden across the reload (see the login handler)
     hideLoginWall();
     location.reload();
   } catch(e){
@@ -20909,6 +20917,7 @@ if ('serviceWorker' in navigator) {
   var _boards = [], _betaHideEmpty = false, _sprints = [], _releases = [], _origRenderPlanning = null;
   var state = {
     view:'gantt', collapsed:false, project:'__all__', board:'__all__', planTab:'plan',
+    defaultApplied:false, userChanged:false,   // RAIL-COLLAPSED-2 Part 3: default-apply-once + first-interaction guards
     sprintFilter:'',   // Stage 3: Kanban sprint scope (URL ?sprint=), rides the shared filter machinery
     saved:[], onItem:false, itemId:null, pop:null, itemFromApp:false,
     panelId:null,  // List detail panel: open item id (URL ?panel=), List view only
@@ -24995,18 +25004,7 @@ if ('serviceWorker' in navigator) {
     // x, so the user can see and one-click clear it. If that fill or x is ever removed, an auto-applied
     // filter becomes a trap with no visible exit - do not remove them without removing this too.
     if (initial && !_frzHasFilterParams(location.search) && CFG[vm[1]] && (CFG[vm[1]].chips||[]).length){
-      var _df=_defaultFilter();
-      if(_df){
-        state.savedDismissedId=null;
-        navigate('/'+vm[1] + (_df.qs||''), true);
-        // navigate() renders (setView) BEFORE it writes the URL, so _frzActiveSaved transiently drops
-        // the not-yet-matching anchor and the syncURL re-seed can then pick a BROADER match (e.g. a
-        // range-only saved filter, which matches every URL). Re-anchor to the default AFTER the URL is
-        // in place: the default is the intended one, and _frzActiveSaved keeps a matching anchor from
-        // here on, so no later re-seed overrides it.
-        state.activeSavedId=_df.id; renderSavedNav(); renderBar();
-        return;
-      }
+      if(_frzApplyDefaultFilter(vm[1])) return;   // applied the default onto the REQUESTED view (qs-only); false = no default (or cache empty on a first load -> the post-hydration path applies it) -> continue
     }
     if (vm[1]==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
       // Stage 1b fix: seed state.releaseId from ?release= HERE, before rerender + the first syncURL
@@ -25057,6 +25055,15 @@ if ('serviceWorker' in navigator) {
   function _frzDragHasFiles(e){ var t=(e.dataTransfer&&e.dataTransfer.types)||[]; return Array.prototype.indexOf.call(t,'Files')>=0; }
   document.addEventListener('dragover', function(e){ if(_frzDragHasFiles(e) && document.body.classList.contains('frz-beta-active')) e.preventDefault(); });
   document.addEventListener('drop', function(e){ if(_frzDragHasFiles(e) && document.body.classList.contains('frz-beta-active')) e.preventDefault(); });
+  // RAIL-COLLAPSED-2 Part 3: mark the first GENUINE user interaction, so the post-hydration default-apply
+  // never overrides someone who has already started clicking/scoping/filtering. e.isTrusted gates OUT the
+  // app's own programmatic activity during boot - a synthetic .click(), a focus() call, a dispatched resize
+  // are all isTrusted:false; only a real pointer/key event from the user is isTrusted:true. One-shot: the
+  // listeners self-remove on first fire, so there is zero ongoing cost. Capture phase so nothing can
+  // stopPropagation past it. state.userChanged starts falsy, so it is safe to read before this ever fires.
+  function _frzMarkInteracted(e){ if(e && e.isTrusted){ state.userChanged=true; document.removeEventListener('pointerdown', _frzMarkInteracted, true); document.removeEventListener('keydown', _frzMarkInteracted, true); } }
+  document.addEventListener('pointerdown', _frzMarkInteracted, true);
+  document.addEventListener('keydown', _frzMarkInteracted, true);
 
   // ════════ collapse ════════
   function applyDefaultCollapse(view){
@@ -25065,7 +25072,8 @@ if ('serviceWorker' in navigator) {
     if (pref==='e'){ setCollapsed(false,true); return; }
     setCollapsed(view==='gantt', true); // auto default: collapsed on gantt
   }
-  function _reducedMotion(){ try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(e){ return false; } }
+  // RAIL-COLLAPSED-2: _reducedMotion() was removed - both collapse paths are now instant for everyone, so
+  // the reduced-motion branch it fed is gone (reduced-motion was already a no-op on the instant path).
   // Collapse toggle relocates: brand (right side) when expanded → top of the
   // icon list when collapsed.
   function _placeCollapseBtn(collapsed){
@@ -25075,33 +25083,30 @@ if ('serviceWorker' in navigator) {
   }
   function setCollapsed(c, silent){
     state.collapsed = c;
-    var instant = silent || _reducedMotion();
     // SHELL-IA-1 Stage 3.4: flag ON - collapse HIDES the rail entirely (grid rail column -> 0, content
-    // full width). No icon rail (is-collapsed-ui is NOT used here - it stays flag-off-only per Addendum
-    // B), no toggle relocation (brand + toggle live in the top bar). frz-rail-hidden drives it.
+    // full width). No icon rail (is-collapsed-ui is NOT used here - it stays flag-off-only per Addendum B).
     if (_frzIA()){
       root.classList.remove('is-collapsed','is-collapsed-ui');
+      // RAIL-COLLAPSED-2 Parts 1+2: extend the B2 instant collapse to the flag-on rail-HIDE path (B2 was
+      // scoped to the flag-off setCollapsed below). The grid animated the rail column 232px -> 0 over ~180ms,
+      // reflowing the List table ~11 times - worse than flag-off's 176px, and the state about to widen to
+      // development. Suppress the grid transition, flip frz-rail-hidden, force ONE synchronous layout at the
+      // final width, restore -> one reflow at the destination. Instant for everyone now (reduced-motion was
+      // already instant), same as the flag-off path below.
+      var _pt = root.style.transition; root.style.transition = 'none';
       root.classList.toggle('frz-rail-hidden', c);
-      // Brand revision (Addendum A 1.3): reveal the top-bar brand as the rail finishes clipping away,
-      // so the two brands are never both fully on screen. The reveal fires at 170ms - a hair before the
-      // 180ms (--frz-anim) grid animation ends - so the f-mark is up while only a <30px clipped sliver
-      // of the rail brand remains at the far left (never a full both-brands frame, since the rail brand
-      // is clipped by the closing rail; and no empty-pop frame either, which a >180ms delay would give).
-      // On expand we drop it at once so the rail brand is the only one as the rail widens back in.
-      // instant/reduced-motion -> no delay.
-      if (c){
-        if (instant) root.classList.add('frz-topbrand-in');
-        else setTimeout(function(){ if (state.collapsed) root.classList.add('frz-topbrand-in'); }, 170);
-      } else {
-        root.classList.remove('frz-topbrand-in');
-      }
+      // Brand swap is now INSTANT: the 170ms delay only existed to bridge the 180ms slide, and is meaningless
+      // in one frame. Toggle the top brand in the SAME synchronous frame as the rail flip - the rail (with the
+      // wordmark) clips to 0 width and the f-mark appears in one paint: no both-brands frame, no neither frame.
+      root.classList.toggle('frz-topbrand-in', c);   // c=true hidden -> show top brand; c=false -> rail brand only
+      void root.offsetWidth;                          // commit at the final width before restoring the transition
+      root.style.transition = _pt;
       if (!silent) lset(railKey(), c?'c':'e');
       try { window.dispatchEvent(new Event('resize')); } catch(e){}
-      // STAGE3-PATCH-2 P4: the Saved Filters chip (and the scope chip) live in the filter bar and depend
-      // on frz-rail-hidden, so a collapse toggle must repaint it. Only the renderBar views own
-      // #frzFilterBar (My Home/Calendar/Admin render their own - see setProject), so skip those.
-      var doRenderIA = function(){ try { window.dispatchEvent(new Event('resize')); } catch(e){} if(!state.onItem){ _call('renderCurrentView'); if(state.view!=='my-home' && state.view!=='team-calendar' && state.view!=='admin') renderBar(); } };
-      if (instant) doRenderIA(); else setTimeout(doRenderIA, 210);
+      // STAGE3-PATCH-2 P4: the Saved + scope chips live in the filter bar and depend on frz-rail-hidden, so a
+      // collapse toggle must repaint it; renderBar OWNS #frzFilterBar only on the chip-bar views (My Home/
+      // Calendar/Admin render their own - see setProject). Synchronous now - the collapse is instant.
+      if(!state.onItem){ _call('renderCurrentView'); if(state.view!=='my-home' && state.view!=='team-calendar' && state.view!=='admin') renderBar(); }
       return;
     }
     // RAIL-COLLAPSED-1 Part 4 (B2): the FLAG-OFF rail collapses/expands INSTANTLY - no grid animation.
@@ -25110,8 +25115,9 @@ if ('serviceWorker' in navigator) {
     // relayouts. Instant collapse is already the shipped reduced-motion behaviour and nobody has complained.
     // Suppress the grid transition for THIS width change, flip the classes, force ONE layout at the final
     // width, then restore the transition (other property transitions are unaffected). Expand takes the same
-    // path (the reflow in reverse). Flag-on keeps its animation - the if(_frzIA()) branch above is untouched
-    // (its brand swap depends on the 180ms timing). Reduced-motion is a no-op here - it was instant already.
+    // path (the reflow in reverse). RAIL-COLLAPSED-2: the if(_frzIA()) flag-on branch above now takes the SAME
+    // instant treatment (its brand swap is instant too), so both collapse models are one-reflow. Reduced-motion
+    // is a no-op here - it was instant already. (.is-collapsed-ui vs .frz-rail-hidden stay distinct per Addendum B1.)
     var _prevTrans = root.style.transition;
     root.style.transition = 'none';
     if (c){ root.classList.add('is-collapsed','is-collapsed-ui'); _placeCollapseBtn(true); }
@@ -25151,6 +25157,24 @@ if ('serviceWorker' in navigator) {
     (state.saved||[]).forEach(function(s){ if(makeDefault && s.id===id) s.default=true; else if(s.default) delete s.default; });   // enforce single default: never two
     persistSaved(); renderSavedNav();
   }
+  // SAVED-DEFAULT-1 + RAIL-COLLAPSED-2 Part 3: apply the default saved filter's qs onto `view`. Shared by the
+  // cold-load path (routeFromLocation) and the post-hydration path (_frzSyncSavedFromServer) - a genuine first
+  // load with no cache has an empty state.saved when routeFromLocation runs, so the default is applied once the
+  // server row arrives instead. Applies AT MOST ONCE: state.defaultApplied is set BEFORE navigate so a
+  // re-entrant call cannot double-apply (a cache-present load applies here and the hydration path then no-ops).
+  // qs-ONLY + re-anchor-after-navigate, exactly as the landing rule. The caller owns the landing preconditions.
+  function _frzApplyDefaultFilter(view){
+    if(state.defaultApplied) return false;
+    var df=_defaultFilter(); if(!df) return false;
+    state.defaultApplied=true;
+    state.savedDismissedId=null;
+    navigate('/'+view + (df.qs||''), true);
+    // navigate() renders (setView) BEFORE it writes the URL, so _frzActiveSaved transiently drops the
+    // not-yet-matching anchor and the syncURL re-seed could pick a broader match; re-anchor AFTER the URL is
+    // in place - _frzActiveSaved then keeps the matching anchor, so no later re-seed overrides it.
+    state.activeSavedId=df.id; renderSavedNav(); renderBar();
+    return true;
+  }
   // True when the cold-load URL already pins ANY filter dimension (Space/chip/range/board/sprint/
   // calendar) - i.e. an explicit or shared link. The default must never override one: the URL wins.
   function _frzHasFilterParams(search){
@@ -25172,6 +25196,7 @@ if ('serviceWorker' in navigator) {
   function _frzSavedMigMark(){ return 'frazil_beta_saved_srvmig_' + _teamSlug() + '_' + uname(); }
   function _frzSyncSavedFromServer(){
     if(typeof API==='undefined' || !API || !API.get) return;   // API is a top-level const (bare name), NOT on window
+    var _t0=Date.now();   // RAIL-COLLAPSED-2 Part 3: start of the 3s window for the post-hydration default-apply
     API.get('/api/saved-filters').then(function(r){
       var server = (r && Array.isArray(r.filters)) ? r.filters : [];
       var added = 0;
@@ -25187,6 +25212,18 @@ if ('serviceWorker' in navigator) {
       state.saved = server; _frzWriteSavedCache();
       if(added) _frzPutSavedServer();   // persist the merged union back to the server
       if(document.getElementById('frzSavedNav')) renderSavedNav();
+      // RAIL-COLLAPSED-2 Part 3: a genuine first load (no localStorage cache) has an empty state.saved when
+      // routeFromLocation runs, so the cold-load default-apply found nothing (the 6.35.1 __all__ fix made the
+      // default work on refresh, but not on the very first load). The server row is here now: apply the
+      // default ONCE, but only if the user has NOT interacted, hydration landed within 3s (a filter popping
+      // in later is its own wrong - abandoned SILENTLY, and the cache now written means it applies normally
+      // on the next load), and we are still on a bare landing. The four rules hold: no URL filter param, a
+      // filterable view, URL-wins, My Home/Admin/Calendar left alone. Double-apply is impossible -
+      // _frzApplyDefaultFilter no-ops once state.defaultApplied is set (by whichever path applied first).
+      if(!state.defaultApplied && !state.userChanged && (Date.now()-_t0) < 3000 && !state.onItem){
+        var _v=state.view;
+        if(_v && !_frzHasFilterParams(location.search) && CFG[_v] && (CFG[_v].chips||[]).length) _frzApplyDefaultFilter(_v);
+      }
     }).catch(function(){ /* offline / error: keep the cache-seeded state.saved */ });
   }
   // Non-blocking inline name popover (replaces window.prompt - styleable, async)
