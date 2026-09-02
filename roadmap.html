@@ -25154,9 +25154,16 @@ if ('serviceWorker' in navigator) {
   // True when the cold-load URL already pins ANY filter dimension (Space/chip/range/board/sprint/
   // calendar) - i.e. an explicit or shared link. The default must never override one: the URL wins.
   function _frzHasFilterParams(search){
-    var allow={ project:1, cowner:1, cuser:1, ctype:1, ccap:1, from:1, to:1, board:1, sprint:1 };
+    var allow={ cowner:1, cuser:1, ctype:1, ccap:1, from:1, to:1, board:1, sprint:1 };   // project handled below
     Object.keys(CHIPS).forEach(function(k){ allow[CHIPS[k].param]=1; });
     var sp=new URLSearchParams(search||'');
+    // PATCH-1 (__all__ fix): `project` counts as an explicit scope ONLY when it pins a SPECIFIC Space.
+    // syncURL writes `project=__all__` onto EVERY canonical URL (it encodes "All Spaces" as the sentinel,
+    // not an absent param - see syncURL), so treating any project value as a filter made a plain refresh
+    // (which reloads ?project=__all__) look "explicit" and suppress the default. board/sprint don't have
+    // this: they are only emitted when non-__all__/set, so they stay in the allow list.
+    var proj=sp.get('project');
+    if(proj && proj!=='__all__') return true;
     return Object.keys(allow).some(function(k){ var v=sp.get(k); return v!=null && v!==''; });
   }
   // Reconcile with the server on shell load. ONE-TIME-per-browser, this device's local set is
@@ -25254,6 +25261,11 @@ if ('serviceWorker' in navigator) {
   // Does saved filter `s` STILL match the live filter state? View must match; every NON-project
   // whitelisted param must match exactly both ways; project is enforced ONLY if the saved qs pins
   // one (legacy filters with no project don't falsely drop; a project-pinned filter must match).
+  // PATCH-1 1.1: normalize a multi-value (comma-joined) chip param for ORDER-INSENSITIVE comparison.
+  // syncURL re-emits a multi-select (e.g. status) in the status/config order, NOT the order the filter
+  // was saved in, so an exact string compare drops the anchor on the first render after apply and a
+  // multi-value saved filter never stayed anchored.
+  function _frzNormMulti(v){ return String(v==null?'':v).split(',').map(function(x){return x.trim();}).filter(Boolean).sort().join(','); }
   function _frzSavedStillMatches(s){
     if(!s) return false;
     // View-agnostic: the shared filter travels across views, so a saved filter stays "active" on
@@ -25269,7 +25281,7 @@ if ('serviceWorker' in navigator) {
     // not what identifies the saved filter.
     var IGNORE={ from:1, to:1, board:1, sprint:1 };
     var keys={}; sp.forEach(function(v,k){ if(k!=='project' && !IGNORE[k]) keys[k]=1; }); live.forEach(function(v,k){ if(k!=='project' && !IGNORE[k]) keys[k]=1; });
-    return Object.keys(keys).every(function(k){ return (sp.get(k)||'') === (live.get(k)||''); });
+    return Object.keys(keys).every(function(k){ return _frzNormMulti(sp.get(k)) === _frzNormMulti(live.get(k)); });   // PATCH-1 1.1: order-insensitive (multi-value chip params)
   }
   // The ONE active saved filter: the clicked anchor IF it still matches, else null (match-and-drop;
   // never auto-promotes a different filter). Clears the stale anchor as a side effect.
@@ -25283,9 +25295,22 @@ if ('serviceWorker' in navigator) {
   }
   // COLD LOAD only (deep-link/paste/back - never an applySaved): seed the anchor from URL-match.
   // At most ONE: the most-specific (most params); a tie at the top → none.
+  // PATCH-1 Part 3: does saved filter `s` have an IDENTITY - at least one param that actually narrows
+  // which URLs it matches? A filter pinned only by IGNORE'd params (from/to/board/sprint) or only by
+  // project=__all__ matches essentially EVERY url (the IGNORE list in _frzSavedStillMatches), so a
+  // range-only "New this week" auto-lit on any page. Such a filter is not a valid AUTO-detect (re-seed)
+  // candidate. Explicit application is unaffected - applySaved/the default set the anchor directly, and
+  // _frzActiveSaved keeps a matching anchor - so a user CAN still apply or default a range filter.
+  function _frzSavedHasIdentity(s){
+    var sp=new URLSearchParams((s && s.qs||'').replace(/^\?/,''));
+    var proj=sp.get('project'); if(proj && proj!=='__all__') return true;   // a specific Space identifies it
+    var IGNORE={ project:1, from:1, to:1, board:1, sprint:1 };
+    var has=false; sp.forEach(function(v,k){ if(!IGNORE[k] && v!=null && v!=='') has=true; });
+    return has;   // at least one chip param (status/owner/type/assignee/priority/dept/...)
+  }
   function _frzSeedActiveFromURL(){
     state.activeSavedId=null;
-    var matches=(state.saved||[]).filter(_frzSavedStillMatches);
+    var matches=(state.saved||[]).filter(function(s){ return _frzSavedStillMatches(s) && _frzSavedHasIdentity(s); });   // PATCH-1 Part 3: no auto-anchor for a zero-identity (matches-everything) filter
     // Honor a ×-dismissal (_frzClearSavedFilter): drop the dismissed filter from re-seed candidates
     // while it STILL matches the URL; once the URL diverges from it (scope/filters changed), the
     // dismissal is spent so it can light up again later. In-memory, so a fresh load re-seeds normally.
@@ -25439,26 +25464,28 @@ if ('serviceWorker' in navigator) {
   // carry project=, but a user who cleared a filter did not ask to be moved). A saved filter REPLACES the
   // filter state when applied, so there is no meaningful "before" to restore - clearing returns to no
   // filters. ONE implementation, two triggers: the chip's x and the dropdown's "Clear filter" entry.
-  // Un-apply the anchored saved filter. NOT an alias for _frzClearChips: clearing chips alone
-  // (a) never touches state.activeSavedId, and (b) can't un-match a filter identified only by the
-  // Space scope or an IGNORE'd param (from/to/board/sprint) - _frzSavedStillMatches keeps matching,
-  // so _frzRefreshActiveSaved's URL re-seed re-anchors it and the chip re-fills. So clear the anchor
-  // DIRECTLY, reset the filter's OWN qs dimensions (chips + range) - not just the current view's chip
-  // list - leaving the scope axes (POLISH-5 A4.3: never move the user's Space; board/sprint are scope
-  // too), and set a transient dismissed marker the URL re-seed skips until the filter stops matching.
+  // Un-apply the anchored saved filter. NOT an alias for _frzClearChips (Part 4: [data-clearall] shares
+  // that) - the x ALSO clears the anchor and sets the dismissed marker. PATCH-1 Part 2: WIDER reset -
+  // reset EVERY chip in the CURRENT view (the same set _frzClearChips uses), not just the filter's own
+  // qs dims, so no hand-set chip survives into a combination the user never deliberately built. Leave the
+  // scope axes: project (A4.3 - never move the user's Space) and board + sprint (deliberate: orthogonal
+  // scope, on the _frzSavedStillMatches IGNORE list). The dismissed marker still earns its place for the
+  // scope-only (specific Space) shape - the wider reset leaves project, so that filter keeps matching and
+  // would re-anchor without it. Range/board/sprint-only shapes are now handled by the Part 3 identity
+  // guard (they never auto-anchor), and a plain chip filter diverges on its own once its chips reset, so
+  // the marker is belt-and-braces there.
   function _frzClearSavedFilter(){
-    var s=(state.saved||[]).filter(function(x){return x.id===state.activeSavedId;})[0];
+    var hadId=state.activeSavedId;
     state.activeSavedId=null;                 // clear the anchor directly - do NOT infer un-apply from divergence
-    if(s){
-      state.savedDismissedId=s.id;            // suppress the URL re-seed for THIS filter until it no longer matches
-      var sp=new URLSearchParams((s.qs||'').replace(/^\?/,''));
-      sp.forEach(function(v,k){
-        if(k==='project'||k==='board'||k==='sprint') return;   // scope axes: leave them (A4.3 for the Space)
-        if(k==='from'||k==='to'){ var el=document.getElementById(k==='from'?'filterFrom':'filterTo'); if(el) el.value=''; return; }
-        var ck=Object.keys(CHIPS).filter(function(c){return CHIPS[c].param===k;})[0];   // chip param -> reset its panel (null-safe if not in the current view)
-        if(ck) applyPanel(CHIPS[ck].panel, null);
-      });
-    }
+    if(hadId) state.savedDismissedId=hadId;   // suppress the URL re-seed for THIS filter until it no longer matches
+    var view=state.view;
+    var keys=CFG[view].chips.concat(_added[view]||[]);   // same reset set as _frzClearChips: chips + auto-revealed opt-in priority/dept
+    _XCHIP.forEach(function(k){ if(CFG[view].extra.indexOf(k)>=0 && keys.indexOf(k)<0) keys.push(k); });
+    keys.forEach(function(k){
+      if(k==='sprint') return;   // scope axis: leave it (board is not a chip, so it is naturally left too)
+      if(k==='range'){ var ff=document.getElementById('filterFrom'), ft=document.getElementById('filterTo'); if(ff)ff.value=''; if(ft)ft.value=''; return; }
+      if(CHIPS[k]) applyPanel(CHIPS[k].panel, null);
+    });
     rerender(); renderBar(); renderRail(); syncURL(true);
   }
   function _savedChipHTML(){
