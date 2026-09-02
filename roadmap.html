@@ -2343,7 +2343,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.34.1';
+const APP_VERSION = '6.35.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -21663,7 +21663,7 @@ if ('serviceWorker' in navigator) {
       var _on = !!(active && active.id===s.id);
       b.setAttribute('aria-current', String(_on));   // same weight as view/project
       // Dot on the ACTIVE saved filter so you can see at a glance which one is applied (it scopes every view).
-      b.innerHTML = IC.flag + '<span>'+esc(s.name)+'</span>' + (_on ? '<span class="frz-item-fdot" title="Active filter (applied to all views)"></span>' : '') + '<button class="frz-rowmenu" data-savedmenu="'+s.id+'" title="Rename or delete">…</button>';
+      b.innerHTML = IC.flag + '<span>'+esc(s.name)+(s.default===true?' <span style="color:var(--frz-accent)" title="Default filter">★</span>':'')+'</span>' + (_on ? '<span class="frz-item-fdot" title="Active filter (applied to all views)"></span>' : '') + '<button class="frz-rowmenu" data-savedmenu="'+s.id+'" title="Rename or delete">…</button>';
       sn.appendChild(b);
     });
     _frzApplyRailSections();   // RAIL-1: refresh collapse/count after saved filters repaint
@@ -24986,6 +24986,28 @@ if ('serviceWorker' in navigator) {
     }
     if (vm[1]==='kanban' && _val('isViewer', false)){ navigate('/gantt', true); return; }   // viewers can't see Kanban
     if (!_viewEnabled(vm[1])){ navigate('/'+_firstEnabledView(), true); return; }   // Team Admin: disabled view route -> permitted view (rail+route gated; API not gated, internal-only)
+    // SAVED-DEFAULT-1: apply the user's default saved filter on a COLD LANDING only - the session's
+    // first route (initial) with NO filter param in the URL - and ONLY onto a filterable view (a view
+    // with a chip bar). qs-ONLY: the default's filters land on the REQUESTED view; we never switch to
+    // the filter's own stored view. An explicit/shared URL param always wins (_frzHasFilterParams), and
+    // a landing on My Home / Admin / Calendar (no chip bar) is left alone - a brand-click "take me home"
+    // wins. SAFETY (POLISH-5 + Part 0.1): the auto-applied chip FILLS, names the filter, and shows the
+    // x, so the user can see and one-click clear it. If that fill or x is ever removed, an auto-applied
+    // filter becomes a trap with no visible exit - do not remove them without removing this too.
+    if (initial && !_frzHasFilterParams(location.search) && CFG[vm[1]] && (CFG[vm[1]].chips||[]).length){
+      var _df=_defaultFilter();
+      if(_df){
+        state.savedDismissedId=null;
+        navigate('/'+vm[1] + (_df.qs||''), true);
+        // navigate() renders (setView) BEFORE it writes the URL, so _frzActiveSaved transiently drops
+        // the not-yet-matching anchor and the syncURL re-seed can then pick a BROADER match (e.g. a
+        // range-only saved filter, which matches every URL). Re-anchor to the default AFTER the URL is
+        // in place: the default is the intended one, and _frzActiveSaved keeps a matching anchor from
+        // here on, so no later re-seed overrides it.
+        state.activeSavedId=_df.id; renderSavedNav(); renderBar();
+        return;
+      }
+    }
     if (vm[1]==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
       // Stage 1b fix: seed state.releaseId from ?release= HERE, before rerender + the first syncURL
       // emit - otherwise syncURL writes a release-less URL (stripping the param) before the restore
@@ -25113,6 +25135,30 @@ if ('serviceWorker' in navigator) {
   function _frzWriteSavedCache(){ try { lset(savedKey(), JSON.stringify(state.saved)); } catch(e){} }
   function _frzPutSavedServer(){ try { API.put('/api/saved-filters', { filters: state.saved }); } catch(e){} }   // best-effort; cache already holds it
   function persistSaved(){ _frzWriteSavedCache(); _frzPutSavedServer(); }
+  // ── SAVED-DEFAULT-1: a default saved filter, per user per Organization ─────────
+  // Stored as a `default:true` flag ON the saved-filter entry itself, NOT a separate localStorage
+  // key. Saved filters are server-mirrored (the saved_filters table, per team+user), so the flag
+  // follows the user across devices exactly as the filters do (a separate key would be the one piece
+  // that does not sync), and it can never dangle - deleting the filter deletes its default with it.
+  // ONE default per Organization: _setDefaultFilter clears every other entry's flag on set. Absent
+  // flag = no default (existing entries need no migration). NOT the board's _defaultBoardKey shape:
+  // that key is both per-device AND missing team scope (see the report) - copying it would import a
+  // per-device limitation into synced data.
+  function _defaultFilter(){ return (state.saved||[]).filter(function(s){ return s.default===true; })[0] || null; }   // validate-on-read: null when none set / the entry is gone
+  function _isDefaultFilter(id){ var d=_defaultFilter(); return !!(d && d.id===id); }
+  function _setDefaultFilter(id){
+    var makeDefault = !_isDefaultFilter(id);   // clicking the current default toggles it OFF (clears the default)
+    (state.saved||[]).forEach(function(s){ if(makeDefault && s.id===id) s.default=true; else if(s.default) delete s.default; });   // enforce single default: never two
+    persistSaved(); renderSavedNav();
+  }
+  // True when the cold-load URL already pins ANY filter dimension (Space/chip/range/board/sprint/
+  // calendar) - i.e. an explicit or shared link. The default must never override one: the URL wins.
+  function _frzHasFilterParams(search){
+    var allow={ project:1, cowner:1, cuser:1, ctype:1, ccap:1, from:1, to:1, board:1, sprint:1 };
+    Object.keys(CHIPS).forEach(function(k){ allow[CHIPS[k].param]=1; });
+    var sp=new URLSearchParams(search||'');
+    return Object.keys(allow).some(function(k){ var v=sp.get(k); return v!=null && v!==''; });
+  }
   // Reconcile with the server on shell load. ONE-TIME-per-browser, this device's local set is
   // lifted into the server merged BY NAME (union; server wins on a same-name collision); after
   // that the server row is authoritative. Offline / error keeps the cache-seeded state.saved.
@@ -25192,6 +25238,7 @@ if ('serviceWorker' in navigator) {
     var qs=s.qs||'';
     if(qs){ var u=new URLSearchParams(qs.replace(/^\?/,'')); u.delete('panel'); var t=u.toString(); qs=t?('?'+t):''; }
     state.activeSavedId = s.id;   // Fix 1: anchor the highlight to the CLICKED filter (survives URL canonicalization)
+    state.savedDismissedId = null;   // a fresh apply clears any prior ×-dismissal (SAVED-DEFAULT-1 Part 0.1)
     // A saved filter is a CHIP filter, not a saved view: apply it on the CURRENT view so you can
     // re-filter in place (e.g. swap filters while staying on Reports). Fall back to the filter's
     // origin view ONLY when the current surface has no filter model (My Home, Admin, an item page) -
@@ -25239,6 +25286,13 @@ if ('serviceWorker' in navigator) {
   function _frzSeedActiveFromURL(){
     state.activeSavedId=null;
     var matches=(state.saved||[]).filter(_frzSavedStillMatches);
+    // Honor a ×-dismissal (_frzClearSavedFilter): drop the dismissed filter from re-seed candidates
+    // while it STILL matches the URL; once the URL diverges from it (scope/filters changed), the
+    // dismissal is spent so it can light up again later. In-memory, so a fresh load re-seeds normally.
+    if(state.savedDismissedId){
+      if(matches.some(function(m){return m.id===state.savedDismissedId;})) matches=matches.filter(function(m){return m.id!==state.savedDismissedId;});
+      else state.savedDismissedId=null;
+    }
     if(!matches.length) return;
     matches.sort(function(a,b){ return _frzQSParamCount(b.qs)-_frzQSParamCount(a.qs); });
     if(matches.length===1 || _frzQSParamCount(matches[0].qs) > _frzQSParamCount(matches[1].qs)) state.activeSavedId=matches[0].id;
@@ -25385,7 +25439,28 @@ if ('serviceWorker' in navigator) {
   // carry project=, but a user who cleared a filter did not ask to be moved). A saved filter REPLACES the
   // filter state when applied, so there is no meaningful "before" to restore - clearing returns to no
   // filters. ONE implementation, two triggers: the chip's x and the dropdown's "Clear filter" entry.
-  function _frzClearSavedFilter(){ _frzClearChips(); }
+  // Un-apply the anchored saved filter. NOT an alias for _frzClearChips: clearing chips alone
+  // (a) never touches state.activeSavedId, and (b) can't un-match a filter identified only by the
+  // Space scope or an IGNORE'd param (from/to/board/sprint) - _frzSavedStillMatches keeps matching,
+  // so _frzRefreshActiveSaved's URL re-seed re-anchors it and the chip re-fills. So clear the anchor
+  // DIRECTLY, reset the filter's OWN qs dimensions (chips + range) - not just the current view's chip
+  // list - leaving the scope axes (POLISH-5 A4.3: never move the user's Space; board/sprint are scope
+  // too), and set a transient dismissed marker the URL re-seed skips until the filter stops matching.
+  function _frzClearSavedFilter(){
+    var s=(state.saved||[]).filter(function(x){return x.id===state.activeSavedId;})[0];
+    state.activeSavedId=null;                 // clear the anchor directly - do NOT infer un-apply from divergence
+    if(s){
+      state.savedDismissedId=s.id;            // suppress the URL re-seed for THIS filter until it no longer matches
+      var sp=new URLSearchParams((s.qs||'').replace(/^\?/,''));
+      sp.forEach(function(v,k){
+        if(k==='project'||k==='board'||k==='sprint') return;   // scope axes: leave them (A4.3 for the Space)
+        if(k==='from'||k==='to'){ var el=document.getElementById(k==='from'?'filterFrom':'filterTo'); if(el) el.value=''; return; }
+        var ck=Object.keys(CHIPS).filter(function(c){return CHIPS[c].param===k;})[0];   // chip param -> reset its panel (null-safe if not in the current view)
+        if(ck) applyPanel(CHIPS[ck].panel, null);
+      });
+    }
+    rerender(); renderBar(); renderRail(); syncURL(true);
+  }
   function _savedChipHTML(){
     var s = (state.saved||[]).filter(function(x){return x.id===state.activeSavedId;})[0];
     var applied = !!s;
@@ -25416,8 +25491,19 @@ if ('serviceWorker' in navigator) {
       }
       (state.saved||[]).forEach(function(s){
         var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt'+(s.id===state.activeSavedId?' is-active':'');
-        b.innerHTML='<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.name)+'</span>';
-        b.addEventListener('click', function(){ closePop(); applySaved(s); });
+        b.style.display='flex'; b.style.alignItems='center'; b.style.gap='6px';
+        // SAVED-DEFAULT-1: a trailing star marks + toggles the default (one per Org). Clicking the
+        // star sets/clears the default and does NOT apply the filter; clicking the name applies it.
+        var isDef=(s.default===true);
+        b.innerHTML='<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">'+esc(s.name)+'</span>'
+          +'<span class="frz-saved-defstar" data-defid="'+esc(s.id)+'" role="button" title="'+(isDef?'Default filter (click to clear)':'Set as default')+'" style="width:18px;text-align:center;flex-shrink:0;color:'+(isDef?'var(--frz-accent)':'var(--frz-text-muted)')+'">'+(isDef?'★':'☆')+'</span>';
+        b.addEventListener('click', function(ev){
+          var star=ev.target.closest && ev.target.closest('[data-defid]');
+          if(star){ ev.stopPropagation(); _setDefaultFilter(s.id);   // toggle default in place; keep the menu open, refresh EVERY star (single-default)
+            [].slice.call(pop.querySelectorAll('[data-defid]')).forEach(function(st){ var d=_isDefaultFilter(st.getAttribute('data-defid')); st.textContent=d?'★':'☆'; st.style.color=d?'var(--frz-accent)':'var(--frz-text-muted)'; st.title=d?'Default filter (click to clear)':'Set as default'; });
+            return; }
+          closePop(); applySaved(s);
+        });
         pop.appendChild(b);
       });
       var hr=document.createElement('div'); hr.className='frz-pop-div'; pop.appendChild(hr);
@@ -26112,6 +26198,13 @@ if ('serviceWorker' in navigator) {
     var id = btn.getAttribute('data-savedmenu');
     var s = state.saved.filter(function(x){return x.id===id;})[0]; if(!s) return;
     openPop(btn, function(pop){
+      // SAVED-DEFAULT-1: default toggle at the top, mirroring the board row menu's wording.
+      var isDef=_isDefaultFilter(id);
+      var df=document.createElement('button'); df.className='frz-pop-opt'; df.textContent=isDef?'✓ Default filter':'Set as default';
+      if(isDef) df.style.color='var(--frz-accent)';
+      df.addEventListener('click', function(){ closePop(); _setDefaultFilter(id); });
+      var hrd=document.createElement('div'); hrd.className='frz-pop-div';
+      pop.appendChild(df); pop.appendChild(hrd);
       var r=document.createElement('button'); r.className='frz-pop-opt'; r.textContent='Rename';
       r.addEventListener('click', function(){ namePopover(btn, { placeholder:'Rename…', initial:s.name, saveLabel:'Rename', onSave:function(n){ s.name=n; persistSaved(); renderSavedNav(); } }); });
       var d=document.createElement('button'); d.className='frz-pop-opt'; d.style.color='#C0392B'; d.textContent='Delete';
