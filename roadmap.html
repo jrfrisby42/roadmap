@@ -1651,7 +1651,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
                (.frz-lp-full) - a bare Unicode literal there, no IC entry exists. The new-tab action is
                the separate #modalOpenPageBtn button. -->
           <a id="itemPageLink" href="#" title="Open the item page in this tab"
-            style="position:absolute;right:8px;top:50%;transform:translateY(-50%);color:var(--frz-accent,#0059A9);opacity:0.7;line-height:1;font-size:16px;display:none">⤢</a>
+            style="position:absolute;right:8px;top:50%;transform:translateY(-50%);color:var(--muted);opacity:0.85;line-height:1;font-size:16px;text-decoration:none;display:none">⤢</a>
         </div>
       </div>
       <div class="form-row" style="margin-bottom:0">
@@ -2339,7 +2339,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.32.0';
+const APP_VERSION = '6.32.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -20042,6 +20042,10 @@ if ('serviceWorker' in navigator) {
   body.dark-mode #frzSettingsModal .frz-theme-seg button.is-active {
     background:#0059A9 !important; color:#fff !important; border-color:#0059A9 !important;
   }
+  /* STAGE3-PATCH-1 P5: the item-name ⤢ is a bare Unicode anchor, so kill the default anchor underline
+     in both states (base is inline; :hover is here) and give it a subtle brighten-to-accent affordance. */
+  #itemPageLink, #itemPageLink:hover { text-decoration:none; }
+  #itemPageLink:hover { opacity:1; color:var(--accent); }
   /* Dark: primary action buttons use the deeper Frazil blue - the lighter
      --frz-accent (#2F86DE) washes out as a solid fill under white text. These
      classes are excluded from the wash rule above, so this applies cleanly. */
@@ -20931,7 +20935,7 @@ if ('serviceWorker' in navigator) {
     root.innerHTML =
       '<aside class="frz-rail">'+
         '<div class="frz-brand">'+
-          '<a class="frz-brandlink" href="/" data-nav="view:gantt" aria-label="Flow home">'+
+          '<a class="frz-brandlink" href="/my-home" data-nav="view:my-home" aria-label="Flow home">'+
             '<img class="frz-logo frz-logo-full" src="'+FLOW_LOGO_FULL+'" alt="Flow">'+
             '<img class="frz-logo frz-logo-mark" src="'+FLOW_LOGO_MARK+'" alt="Flow">'+
           '</a>'+
@@ -20954,7 +20958,7 @@ if ('serviceWorker' in navigator) {
              rail's own .frz-brand instead - see the CSS note above. #frzTopCollapse re-expands the
              rail from here; it shows the f-mark (rail-hidden), never the wordmark. */
           '<div class="frz-topbar-brand" id="frzTopBrand">'+
-            '<a class="frz-brandlink" href="/" data-nav="view:gantt" aria-label="Flow home">'+
+            '<a class="frz-brandlink" href="/my-home" data-nav="view:my-home" aria-label="Flow home">'+
               '<img class="frz-logo frz-logo-full" src="'+FLOW_LOGO_FULL+'" alt="Flow">'+
               '<img class="frz-logo frz-logo-mark" src="'+FLOW_LOGO_MARK+'" alt="Flow">'+
             '</a>'+
@@ -22557,7 +22561,12 @@ if ('serviceWorker' in navigator) {
     var home=document.getElementById('frzHome'); if(home) home.style.display='';
     setProjectPanel();
     applyChromeHiding();
-    document.getElementById('frzLeft').innerHTML=_titleHtml('home','My Home');
+    // STAGE3-PATCH-1 (My Home): self-renders #frzLeft, so route it through the SAME flag fork as
+    // setView/Reports/Calendar. My Home is NOT in the tab strip (_FRZ_VIEW_ORDER excludes it), so flag-on
+    // the strip renders with NO active tab - the view tabs stay reachable instead of leaving no nav when
+    // arriving from a flag-on view (the rail's VIEWS section is hidden flag-on). Flag-off = classic title.
+    if(root) root.classList.toggle('frz-ia', _frzIA());
+    document.getElementById('frzLeft').innerHTML = _frzIA() ? _frzTabStrip() : _titleHtml('home','My Home');
     document.getElementById('frzBadges').innerHTML='';
     // TODO-2A: the filter row was empty dead space for my-home (CFG['my-home'].chips is []); occupy it
     // with the tab bar instead of clearing it. If filters are ever added to Assigned/Recent/Watching,
@@ -22631,7 +22640,11 @@ if ('serviceWorker' in navigator) {
     var ap=document.getElementById('frzAdminPage'); if(ap) ap.style.display='';
     setProjectPanel();
     applyChromeHiding();
-    document.getElementById('frzLeft').innerHTML=_titleHtml('admin','Admin');
+    // STAGE3-PATCH-1 (Admin): same flag fork - Admin self-renders #frzLeft and is NOT in the tab strip,
+    // so flag-on it shows the tab strip with no active tab (keeps the views reachable; the Admin "Back"
+    // button still returns to the prior view). Flag-off = classic "Admin" title.
+    if(root) root.classList.toggle('frz-ia', _frzIA());
+    document.getElementById('frzLeft').innerHTML = _frzIA() ? _frzTabStrip() : _titleHtml('admin','Admin');
     document.getElementById('frzBadges').innerHTML='';
     document.getElementById('frzFilterBar').innerHTML='';   // Admin has no chip filter bar
     renderRail();
@@ -22654,7 +22667,11 @@ if ('serviceWorker' in navigator) {
     root.classList.add('frz-cal-active');   // Stage 3.5: scopes the filter-row padding trim to the calendar view only
     setProjectPanel();
     applyChromeHiding();
-    document.getElementById('frzLeft').innerHTML=_titleHtml('teamCalendar','Calendar');
+    // STAGE3-PATCH-1 P1: Calendar self-renders #frzLeft, so route it through the SAME flag fork setView
+    // uses (see ~24103) - flag-on it must render the tab strip, not the classic title. The old bare
+    // _titleHtml clobbered the tab strip and (with the rail hidden) left no view navigation at all.
+    if(root) root.classList.toggle('frz-ia', _frzIA());
+    document.getElementById('frzLeft').innerHTML = _frzIA() ? _frzTabStrip() : _titleHtml('teamCalendar','Calendar');
     document.getElementById('frzBadges').innerHTML='';
     document.getElementById('frzFilterBar').innerHTML='';   // 2c adds filters
     renderRail();
@@ -22676,7 +22693,10 @@ if ('serviceWorker' in navigator) {
     var rv=document.getElementById('reportsView'); if(rv) rv.style.display='';
     setProjectPanel();
     applyChromeHiding();
-    document.getElementById('frzLeft').innerHTML=_titleHtml('reports','Reports');
+    // STAGE3-PATCH-1 P1: Reports self-renders #frzLeft - same flag fork as setView/Calendar so the tab
+    // strip renders flag-on instead of the classic title (which, with the rail hidden, left no nav).
+    if(root) root.classList.toggle('frz-ia', _frzIA());
+    document.getElementById('frzLeft').innerHTML = _frzIA() ? _frzTabStrip() : _titleHtml('reports','Reports');
     document.getElementById('frzBadges').innerHTML='';
     renderBar();   // Phase 1: Reports uses the SHARED chip bar (owner/assignee/type/status + priority/dept), like List/Kanban, so Saved Views scope it
     renderRail();
@@ -25386,6 +25406,18 @@ if ('serviceWorker' in navigator) {
       var moreBtn = e.target.closest && e.target.closest('[data-frzmore]');
       if (moreBtn){ e.preventDefault(); e.stopPropagation(); _frzMoreMenu(moreBtn); return; }   // SHELL-IA-1 Stage 3: tab-strip overflow menu
       var navBtn = e.target.closest && e.target.closest('[data-nav]');
+      // STAGE3-PATCH-1 P4: the brand is a real anchor to /my-home. A modified click (cmd/ctrl/shift/alt)
+      // opens that href in a new tab/window - let the browser handle it rather than swallowing it. On a
+      // plain click the brand lands on My Home, but honours a user's SET default view if one exists
+      // (mirrors boot's applyDefaultViewIfSet); note Part 4.4 - the beta shell has no way to SET one, so
+      // this guard only fires for a legacy default carried over from classic.
+      if (navBtn && navBtn.classList.contains('frz-brandlink')){
+        if (e.metaKey||e.ctrlKey||e.shiftKey||e.altKey) return;   // let the anchor open in a new tab/window
+        e.preventDefault();
+        var _dv=null; try{ var _k=_call('svDefaultKey'); _dv=_k?localStorage.getItem(_k):null; }catch(_e){}
+        if(_dv){ _call('applyDefaultViewIfSet'); return; }
+        navigate('/my-home', false); return;
+      }
       if (navBtn){ e.preventDefault(); var t=navBtn.getAttribute('data-nav');
         if(t.indexOf('view:')===0){ var _v=t.slice(5); var _qs=_frzCarryQS(true);   // carry chips to EVERY view so the shared filter (esp. Devs/owner) persists (each view still self-serializes only what it exposes)
           // Fix 2: switching TO Kanban preserves the active/last board (no silent drop); other views drop it (correct).
@@ -25872,7 +25904,14 @@ if ('serviceWorker' in navigator) {
     if (state.view==='team-calendar') renderCalendar();   // Stage 3.5.1: rerender() only repaints production views; re-scope the Flow-owned calendar too
     if (state.view==='reports') renderReports();           // Reports is Flow-owned too; re-scope it on a project change (rail or its own Project dropdown)
     // refresh crumbs + counts (Stage 3: _frzCrumbText = project + active saved-filter name)
-    if (!state.onItem){ var c=document.querySelector('#frzLeft .frz-crumbs'); if(c) c.textContent=_frzCrumbText(); }
+    if (!state.onItem){
+      var c=document.querySelector('#frzLeft .frz-crumbs'); if(c) c.textContent=_frzCrumbText();
+      // STAGE3-PATCH-1 P3: the scope (Space) chip lives in the filter bar (renderBar) and reads
+      // state.project - setProject was refreshing only the crumb, so the chip's label went stale.
+      // renderBar is the chip's SINGLE render path (no second mechanism to drift), and it also repaints
+      // the Kanban board chip. Gated to flag-on: flag-off has no scope chip, so it stays byte-identical.
+      if (_frzIA()) renderBar();
+    }
     renderRail();
     reflow();
   }
