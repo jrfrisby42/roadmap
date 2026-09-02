@@ -21667,7 +21667,14 @@ if ('serviceWorker' in navigator) {
   var _added = {}; // view -> [extra chip keys added via + Filter]
   function _extraActive(view){ return (_added[view]||[]); }
   // ══════ SHELL-IA-1 Stage 3: top-bar-views IA (per-user flag; flag OFF = byte-identical) ══════
-  function _frzIA(){ return !!window._topbarViews; }
+  // STAGE3-PATCH-2 P3: the flag gates a DESKTOP shell redesign (views out of the rail, scope as a chip,
+  // collapse hiding the rail). Mobile has NO rail, so none of it applies and mobile's own companion UI
+  // (bottom bar + full-screen menu with VIEWS) was already the intended end state. So the flag is
+  // viewport-gated OFF on phones: this single point reverts EVERYTHING flag-on at once (the .frz-ia
+  // class + all its CSS, the #frzLeft tab-strip render, the scope chip, the #frzViewNav hide, the brand
+  // swap), because every one of them keys off _frzIA(). The boundary is re-resolved on the resize below.
+  function _frzIsPhone(){ try { return window.matchMedia('(max-width:640px)').matches; } catch(e){ return false; } }
+  function _frzIA(){ return !!window._topbarViews && !_frzIsPhone(); }
   // B2 priority order: Gantt, List, Kanban, Reports, Calendar, Dashboard, Planning. 'team-calendar'
   // is the calendar view key. My Home is NOT in the strip (RAIL-TIDY-1 standalone rail entry).
   var _FRZ_VIEW_ORDER = ['gantt','list','kanban','reports','team-calendar','dashboard','planning'];
@@ -21792,10 +21799,18 @@ if ('serviceWorker' in navigator) {
     // SHELL-IA-1: the Kanban board chip leads the filter row (Stage 1). Stage 3 (flag ON) slots the
     // SCOPE (Space) chip before it, then a divider, then the filter chips (B4). Flag OFF is unchanged
     // (no scope chip, no divider; the segmented control appears only when the rail is collapsed).
-    var _scopeChip = _frzIA() ? _frzScopeChipHTML() : '';
+    // STAGE3-PATCH-2 P1: a chip only where it means something - gate the scope chip on the VIEW's own
+    // chips config, not on the flag alone. My Home (chips:[]) gets none: To-dos have no Space, and My
+    // Home is "what's mine across everything", so scoping it to one Space works against its purpose.
+    // Mirrors the board chip (Kanban-only). Any future no-chip view gets the same treatment for free.
+    var _scopeChip = (_frzIA() && (CFG[view].chips||[]).length) ? _frzScopeChipHTML() : '';
     var _boardChip = (view==='kanban') ? _boardChipHTML() : '';
     var _scopeDivider = (_frzIA() && (_scopeChip || _boardChip)) ? '<span class="frz-chip-divider" aria-hidden="true"></span>' : '';
-    var html = _frzTopViewControl() + _scopeChip + _boardChip + _scopeDivider + keys.map(chipHTML).join('');
+    // STAGE3-PATCH-2 P4: the Saved Filters chip appears ONLY when the rail is hidden (its rail section is
+    // gone) AND the user has at least one saved filter. It sits after the divider, at the head of the
+    // ordinary filters (a saved filter is a filter, not scope). See _savedChipHTML for the exception note.
+    var _savedChip = (_frzIA() && root.classList.contains('frz-rail-hidden') && (state.saved||[]).length) ? _savedChipHTML() : '';
+    var html = _frzTopViewControl() + _scopeChip + _boardChip + _scopeDivider + _savedChip + keys.map(chipHTML).join('');
     html += '<button class="frz-chip frz-chip--ghost" data-addfilter="1"><svg viewBox="0 0 12 12"><path d="M6 2v8M2 6h8"/></svg> Filter</button>';
     if (anyActive(view)){
       html += '<button class="frz-chip frz-chip--ghost" data-savefilter="1">Save filter</button>';
@@ -24964,7 +24979,10 @@ if ('serviceWorker' in navigator) {
       }
       if (!silent) lset(railKey(), c?'c':'e');
       try { window.dispatchEvent(new Event('resize')); } catch(e){}
-      var doRenderIA = function(){ try { window.dispatchEvent(new Event('resize')); } catch(e){} if(!state.onItem) _call('renderCurrentView'); };
+      // STAGE3-PATCH-2 P4: the Saved Filters chip (and the scope chip) live in the filter bar and depend
+      // on frz-rail-hidden, so a collapse toggle must repaint it. Only the renderBar views own
+      // #frzFilterBar (My Home/Calendar/Admin render their own - see setProject), so skip those.
+      var doRenderIA = function(){ try { window.dispatchEvent(new Event('resize')); } catch(e){} if(!state.onItem){ _call('renderCurrentView'); if(state.view!=='my-home' && state.view!=='team-calendar' && state.view!=='admin') renderBar(); } };
       if (instant) doRenderIA(); else setTimeout(doRenderIA, 210);
       return;
     }
@@ -25256,8 +25274,36 @@ if ('serviceWorker' in navigator) {
       pop.appendChild(add);
     });
   }
+  // STAGE3-PATCH-2 P4: Saved Filters chip. A saved filter is a SET OF FILTERS, so the chip lives with
+  // the ordinary filters (after the divider), not with the scope/board chips. 4.5 decisions: it shows
+  // the ACTIVE saved filter's NAME when one is applied (so you can tell a filter is on - otherwise hard
+  // to know once the rail is hidden), and the dropdown ends with "Save current view" (the rail's SAVED
+  // FILTERS `+` disappears with the rail, so that action needs a home too - like the board chip's Create).
+  var _SAVED_IC = '<svg class="frz-ic" viewBox="0 0 16 16"><path d="M4 2.5h8v11l-4-2.8-4 2.8z"/></svg>';   // bookmark glyph, stroke-only to match .frz-ic
+  function _savedChipHTML(){
+    var s = (state.saved||[]).filter(function(x){return x.id===state.activeSavedId;})[0];
+    var name = s ? s.name : 'Saved';
+    return '<button class="frz-chip frz-chip--saved" data-chip="saved" title="Saved filters">'+
+      '<span class="frz-chip-ic">'+_SAVED_IC+'</span><span class="frz-chip-value">'+esc(name)+'</span>'+IC.caret+'</button>';
+  }
+  function savedChipMenu(anchor){
+    openPop(anchor, function(pop){
+      (state.saved||[]).forEach(function(s){
+        var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt'+(s.id===state.activeSavedId?' is-active':'');
+        b.innerHTML='<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.name)+'</span>';
+        b.addEventListener('click', function(){ closePop(); applySaved(s); });
+        pop.appendChild(b);
+      });
+      var hr=document.createElement('div'); hr.style.cssText='height:1px;background:var(--frz-border);margin:6px 4px'; pop.appendChild(hr);
+      var add=document.createElement('button'); add.type='button'; add.className='frz-pop-opt';
+      add.innerHTML='<span style="font-size:15px;line-height:0;width:16px;text-align:center;flex-shrink:0">＋</span><span>Save current view</span>';
+      add.addEventListener('click', function(){ closePop(); saveCurrent(anchor); });   // reuses the rail `+` save path
+      pop.appendChild(add);
+    });
+  }
   function chipMenu(key, anchor){
     if (key==='scope') return _frzScopeMenu(anchor);   // SHELL-IA-1 Stage 3: the scope (Space) chip picker
+    if (key==='saved') return savedChipMenu(anchor);   // STAGE3-PATCH-2 P4: saved-filters picker (rail-hidden only)
     if (key==='board') return boardChipMenu(anchor);
     if (key==='range') return rangeMenu(anchor);
     if (key==='sprint') return sprintMenu(anchor);
@@ -25488,9 +25534,20 @@ if ('serviceWorker' in navigator) {
     });
     // SHELL-IA-1 Stage 3.2: re-flow the tab strip ONLY when the breakpoint BAND changes (not on every
     // resize pixel) - the overflow set (visible vs More) is band-driven per _frzTabLayout.
-    var _frzTabBand=null;
+    var _frzTabBand=null, _frzWasPhone=_frzIsPhone();
     window.addEventListener('resize', function(){
-      if(!_frzIA() || state.onItem || !document.body.classList.contains('frz-beta-active')) return;
+      if(!document.body.classList.contains('frz-beta-active')) return;
+      // STAGE3-PATCH-2 P3: crossing the 640px phone boundary flips _frzIA() for a flag-user, so the
+      // whole shell (tab strip vs classic title, .frz-ia + its CSS, scope chip, brand) must re-resolve.
+      // Re-render the current view once per crossing. Only a flag-user (window._topbarViews) is affected;
+      // no-flag users are byte-identical on both sides. Rare (device rotation), so a full re-render is fine.
+      var isPhone=_frzIsPhone();
+      if(isPhone!==_frzWasPhone){
+        _frzWasPhone=isPhone; _frzTabBand=null;
+        if(window._topbarViews && !state.onItem){ try{ setView(state.view); }catch(e){} }
+        return;
+      }
+      if(!_frzIA() || state.onItem) return;
       var l=_frzTabLayout(), band=l.slots+'/'+l.iconOnly;
       if(band===_frzTabBand) return; _frzTabBand=band;
       var left=document.getElementById('frzLeft'); if(left) left.innerHTML=_frzTabStrip();
@@ -25910,7 +25967,12 @@ if ('serviceWorker' in navigator) {
       // state.project - setProject was refreshing only the crumb, so the chip's label went stale.
       // renderBar is the chip's SINGLE render path (no second mechanism to drift), and it also repaints
       // the Kanban board chip. Gated to flag-on: flag-off has no scope chip, so it stays byte-identical.
-      if (_frzIA()) renderBar();
+      // STAGE3-PATCH-2 P2: but renderBar OWNS #frzFilterBar only on the chip-bar views. My Home parks its
+      // sub-tabs there (_frzHomeTabsHTML), Calendar renders its own filter row, Admin clears it - so a
+      // blind renderBar here WIPED My Home's four sub-tabs on a scope change (e.g. a rail Space click).
+      // Skip those three; their own render (rerender/renderCalendar above) owns the bar. Planning is NOT
+      // excluded - its Plan/Sprints/Releases tabs live in #planningView, not the filter bar.
+      if (_frzIA() && state.view!=='my-home' && state.view!=='team-calendar' && state.view!=='admin') renderBar();
     }
     renderRail();
     reflow();
