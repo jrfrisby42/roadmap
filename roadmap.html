@@ -22561,7 +22561,12 @@ if ('serviceWorker' in navigator) {
     var home=document.getElementById('frzHome'); if(home) home.style.display='';
     setProjectPanel();
     applyChromeHiding();
-    document.getElementById('frzLeft').innerHTML=_titleHtml('home','My Home');
+    // STAGE3-PATCH-1 (My Home): self-renders #frzLeft, so route it through the SAME flag fork as
+    // setView/Reports/Calendar. My Home is NOT in the tab strip (_FRZ_VIEW_ORDER excludes it), so flag-on
+    // the strip renders with NO active tab - the view tabs stay reachable instead of leaving no nav when
+    // arriving from a flag-on view (the rail's VIEWS section is hidden flag-on). Flag-off = classic title.
+    if(root) root.classList.toggle('frz-ia', _frzIA());
+    document.getElementById('frzLeft').innerHTML = _frzIA() ? _frzTabStrip() : _titleHtml('home','My Home');
     document.getElementById('frzBadges').innerHTML='';
     // TODO-2A: the filter row was empty dead space for my-home (CFG['my-home'].chips is []); occupy it
     // with the tab bar instead of clearing it. If filters are ever added to Assigned/Recent/Watching,
@@ -22635,7 +22640,11 @@ if ('serviceWorker' in navigator) {
     var ap=document.getElementById('frzAdminPage'); if(ap) ap.style.display='';
     setProjectPanel();
     applyChromeHiding();
-    document.getElementById('frzLeft').innerHTML=_titleHtml('admin','Admin');
+    // STAGE3-PATCH-1 (Admin): same flag fork - Admin self-renders #frzLeft and is NOT in the tab strip,
+    // so flag-on it shows the tab strip with no active tab (keeps the views reachable; the Admin "Back"
+    // button still returns to the prior view). Flag-off = classic "Admin" title.
+    if(root) root.classList.toggle('frz-ia', _frzIA());
+    document.getElementById('frzLeft').innerHTML = _frzIA() ? _frzTabStrip() : _titleHtml('admin','Admin');
     document.getElementById('frzBadges').innerHTML='';
     document.getElementById('frzFilterBar').innerHTML='';   // Admin has no chip filter bar
     renderRail();
