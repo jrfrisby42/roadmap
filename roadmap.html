@@ -25192,6 +25192,7 @@ if ('serviceWorker' in navigator) {
     var qs=s.qs||'';
     if(qs){ var u=new URLSearchParams(qs.replace(/^\?/,'')); u.delete('panel'); var t=u.toString(); qs=t?('?'+t):''; }
     state.activeSavedId = s.id;   // Fix 1: anchor the highlight to the CLICKED filter (survives URL canonicalization)
+    state.savedDismissedId = null;   // a fresh apply clears any prior ×-dismissal (SAVED-DEFAULT-1 Part 0.1)
     // A saved filter is a CHIP filter, not a saved view: apply it on the CURRENT view so you can
     // re-filter in place (e.g. swap filters while staying on Reports). Fall back to the filter's
     // origin view ONLY when the current surface has no filter model (My Home, Admin, an item page) -
@@ -25239,6 +25240,13 @@ if ('serviceWorker' in navigator) {
   function _frzSeedActiveFromURL(){
     state.activeSavedId=null;
     var matches=(state.saved||[]).filter(_frzSavedStillMatches);
+    // Honor a ×-dismissal (_frzClearSavedFilter): drop the dismissed filter from re-seed candidates
+    // while it STILL matches the URL; once the URL diverges from it (scope/filters changed), the
+    // dismissal is spent so it can light up again later. In-memory, so a fresh load re-seeds normally.
+    if(state.savedDismissedId){
+      if(matches.some(function(m){return m.id===state.savedDismissedId;})) matches=matches.filter(function(m){return m.id!==state.savedDismissedId;});
+      else state.savedDismissedId=null;
+    }
     if(!matches.length) return;
     matches.sort(function(a,b){ return _frzQSParamCount(b.qs)-_frzQSParamCount(a.qs); });
     if(matches.length===1 || _frzQSParamCount(matches[0].qs) > _frzQSParamCount(matches[1].qs)) state.activeSavedId=matches[0].id;
@@ -25385,7 +25393,28 @@ if ('serviceWorker' in navigator) {
   // carry project=, but a user who cleared a filter did not ask to be moved). A saved filter REPLACES the
   // filter state when applied, so there is no meaningful "before" to restore - clearing returns to no
   // filters. ONE implementation, two triggers: the chip's x and the dropdown's "Clear filter" entry.
-  function _frzClearSavedFilter(){ _frzClearChips(); }
+  // Un-apply the anchored saved filter. NOT an alias for _frzClearChips: clearing chips alone
+  // (a) never touches state.activeSavedId, and (b) can't un-match a filter identified only by the
+  // Space scope or an IGNORE'd param (from/to/board/sprint) - _frzSavedStillMatches keeps matching,
+  // so _frzRefreshActiveSaved's URL re-seed re-anchors it and the chip re-fills. So clear the anchor
+  // DIRECTLY, reset the filter's OWN qs dimensions (chips + range) - not just the current view's chip
+  // list - leaving the scope axes (POLISH-5 A4.3: never move the user's Space; board/sprint are scope
+  // too), and set a transient dismissed marker the URL re-seed skips until the filter stops matching.
+  function _frzClearSavedFilter(){
+    var s=(state.saved||[]).filter(function(x){return x.id===state.activeSavedId;})[0];
+    state.activeSavedId=null;                 // clear the anchor directly - do NOT infer un-apply from divergence
+    if(s){
+      state.savedDismissedId=s.id;            // suppress the URL re-seed for THIS filter until it no longer matches
+      var sp=new URLSearchParams((s.qs||'').replace(/^\?/,''));
+      sp.forEach(function(v,k){
+        if(k==='project'||k==='board'||k==='sprint') return;   // scope axes: leave them (A4.3 for the Space)
+        if(k==='from'||k==='to'){ var el=document.getElementById(k==='from'?'filterFrom':'filterTo'); if(el) el.value=''; return; }
+        var ck=Object.keys(CHIPS).filter(function(c){return CHIPS[c].param===k;})[0];   // chip param -> reset its panel (null-safe if not in the current view)
+        if(ck) applyPanel(CHIPS[ck].panel, null);
+      });
+    }
+    rerender(); renderBar(); renderRail(); syncURL(true);
+  }
   function _savedChipHTML(){
     var s = (state.saved||[]).filter(function(x){return x.id===state.activeSavedId;})[0];
     var applied = !!s;
