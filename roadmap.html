@@ -20003,6 +20003,16 @@ if ('serviceWorker' in navigator) {
   body.dark-mode .frz-beta .frz-legacy-tag,
   body.dark-mode .frz-beta .frz-prog { background:#272b44; }
   body.dark-mode .frz-beta .frz-item[aria-current="true"] .frz-count { background:#15314a; }
+  /* STAGE3-PATCH-3 P1: scope dropdown rows - the count pill mirrors the rail's .frz-count in both modes.
+     The tokens resolve because openPop mounts inside #frzBeta. The rail rows are .frz-item and the dropdown
+     rows are .frz-pop-opt, so the rail selectors do not reach here - these restate the same values. The
+     label flexes with min-width:0 so every count shares one right edge (COUNTER-ALIGN-1). */
+  .frz-beta .frz-scope-opt .frz-scope-lbl { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .frz-beta .frz-scope-opt .frz-count { margin-left:auto; flex-shrink:0; box-sizing:border-box; min-width:26px; text-align:center; font-size:11.5px; font-weight:600; color:var(--frz-text-muted); background:#E7EEF5; border-radius:999px; padding:1px 7px; }
+  .frz-beta .frz-scope-opt.is-active .frz-count { background:#D2E5F6; color:var(--frz-accent); }
+  body.dark-mode .frz-beta .frz-scope-opt .frz-count { background:#272b44; }
+  body.dark-mode .frz-beta .frz-scope-opt.is-active .frz-count { background:#15314a; }
+  .frz-beta .frz-pop-div { height:1px; background:var(--frz-border); margin:6px 4px; }
   body.dark-mode .frz-beta .frz-bcard { background:var(--frz-bg-surface); }
   /* Priority edge bar: dark-adjusted so the light hexes never sit unaltered on the dark card; hues
      align with the app's existing dark color language. p0 (var(--frz-border)) + the keystrip
@@ -21424,7 +21434,6 @@ if ('serviceWorker' in navigator) {
     // projects
     var pn = document.getElementById('frzProjNav');
     pn.querySelectorAll('.frz-item').forEach(function(b){ b.remove(); });
-    var products = _val('products', []) || [];
     var allBtn = document.createElement('button');
     allBtn.className='frz-item'; allBtn.setAttribute('data-proj','__all__');
     allBtn.setAttribute('aria-current', String(state.project==='__all__'));
@@ -21446,10 +21455,14 @@ if ('serviceWorker' in navigator) {
         '<span class="frz-count">'+_frzScopeCount(name)+'</span>';   // PALETTE-1: projectColor() is the single source. COUNTER-ALIGN-1: label flexes/truncates
       return b;
     }
-    var _names = products.map(function(pr){ return pr.name || pr; });
-    var _pinnedSet = {}; _pinnedSpaces().forEach(function(n){ _pinnedSet[n]=1; });
+    // STAGE3-PATCH-3 P1: order + pinned set from the shared _frzOrderedSpaces() (the scope dropdown reads
+    // the same). Rail display is unchanged: pinned (shared order) + the active unpinned Space, rest behind
+    // "Show N more".
+    var _ord = _frzOrderedSpaces();
+    var _names = _ord.all;
+    var _pinnedSet = {}; _ord.pinned.forEach(function(n){ _pinnedSet[n]=1; });
     var _activeProj = (state.project && state.project!=='__all__') ? state.project : null;
-    var _havePins = _names.some(function(n){ return _pinnedSet[n]; });
+    var _havePins = _ord.pinned.length > 0;
     if(!_havePins){
       _names.forEach(function(n){ pn.appendChild(_spaceRow(n)); });
     } else {
@@ -21505,6 +21518,15 @@ if ('serviceWorker' in navigator) {
   function _pinnedKey(){ return 'frazil_beta_pinnedspaces_'+uname(); }
   function _pinnedSpaces(){ try { var a=JSON.parse(ls(_pinnedKey())||'[]'); return Array.isArray(a)?a:[]; } catch(e){ return []; } }
   function _isSpacePinned(name){ return _pinnedSpaces().indexOf(name)>=0; }
+  // STAGE3-PATCH-3 P1: the SINGLE source of Space order + the pinned/rest split. Both the rail
+  // (renderRail) and the scope dropdown (_frzScopeMenu) read from here, so they can never disagree.
+  // Order within each group is products-config order (NOT count), so zero-count Spaces stay reachable.
+  function _frzOrderedSpaces(){
+    var names = (_val('products', []) || []).map(function(pr){ return pr.name || pr; });
+    var pinned = names.filter(function(n){ return _isSpacePinned(n); });
+    var rest   = names.filter(function(n){ return !_isSpacePinned(n); });
+    return { all:names, pinned:pinned, rest:rest };
+  }
   function _toggleSpacePin(name){
     var p=_pinnedSpaces(), i=p.indexOf(name);
     if(i>=0) p.splice(i,1); else p.push(name);
@@ -21756,16 +21778,28 @@ if ('serviceWorker' in navigator) {
   }
   function _frzScopeMenu(anchor){
     openPop(anchor, function(pop){
+      // STAGE3-PATCH-3 P1: order + counts match the rail exactly - order from the shared _frzOrderedSpaces()
+      // and counts from the same _frzScopeCount() the rail uses (never a second calculation). The count is
+      // the OUTERMOST element and the label flexes with min-width:0, so every row (incl All Spaces, which has
+      // no dot-pin) shares one right edge - the exact omission that broke COUNTER-ALIGN-1 the first time.
+      // NO pin icon: pinning stays RAIL-ONLY (J.R.'s decision). With the rail hidden you can SEE which
+      // Spaces are pinned (the grouping) but not change it - a glyph you cannot click is worse than none,
+      // and pinning is a rare configuration act for which expanding the rail is reasonable.
       function row(name,label){
         var isAll=(name==='__all__');
-        var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt'+((state.project||'__all__')===name?' is-active':'');
+        var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt frz-scope-opt'+((state.project||'__all__')===name?' is-active':'');
         var dot=isAll?'var(--frz-accent)':(_call('projectColor',label)||'var(--frz-accent)');
-        b.innerHTML='<span class="frz-scope-dot" style="background:'+dot+';flex-shrink:0"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(label)+'</span>';
+        b.innerHTML='<span class="frz-scope-dot" style="background:'+dot+';flex-shrink:0"></span>'+
+          '<span class="frz-scope-lbl">'+esc(label)+'</span>'+
+          '<span class="frz-count">'+_frzScopeCount(isAll?null:name)+'</span>';
         b.addEventListener('click', function(){ closePop(); setProject(name); });
         pop.appendChild(b);
       }
-      row('__all__','All Spaces');
-      (_val('products',[])||[]).forEach(function(pr){ var n=pr.name||pr; row(n,n); });
+      function divider(){ var d=document.createElement('div'); d.className='frz-pop-div'; pop.appendChild(d); }
+      row('__all__','All Spaces');   // always first, not pinnable - outside the mechanism, as in the rail
+      var _ord=_frzOrderedSpaces();
+      if(_ord.pinned.length){ divider(); _ord.pinned.forEach(function(n){ row(n,n); }); }
+      if(_ord.rest.length){ divider(); _ord.rest.forEach(function(n){ row(n,n); }); }
     });
   }
   // Stage 3: top view control - a segmented Gantt·Kanban·List switcher at the left of the
