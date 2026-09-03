@@ -2343,7 +2343,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.35.2';
+const APP_VERSION = '6.35.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -21665,7 +21665,7 @@ if ('serviceWorker' in navigator) {
   function renderSavedNav(){
     var sn = document.getElementById('frzSavedNav');
     sn.querySelectorAll('.frz-item').forEach(function(b){ b.remove(); });
-    var active=_frzActiveSaved();   // Fix 1: highlight follows the clicked anchor (single)
+    var active=_frzActiveSavedShown();   // Fix 1 + VIEW-QS-1 Addendum A: highlight follows the anchor, but RESTS on a view that carries but cannot express it
     state.saved.forEach(function(s){
       var b = document.createElement('button');
       b.className='frz-item'; b.setAttribute('data-saved', s.id); b.title = s.name;
@@ -22061,15 +22061,31 @@ if ('serviceWorker' in navigator) {
     // serialize themselves when active and stay DROPPED when cleared - without this gate the
     // ride-along re-read the stale (pre-clear) URL and resurrected a just-cleared chip
     // (Clear, and single-chip clear, leaving the param in the URL on reload/share).
-    if (_FRZ_SHARED_VIEWS[view]){
-      var _cur=new URLSearchParams(location.search);
-      var _exposed=CFG[view].chips.concat(_added[view]||[]);
-      ['owner','type','status','assignee','sprint'].forEach(function(pk){   // Stage 3: sprint carries across shared views too (List extension later is free)
-        if(params.has(pk) || _exposed.indexOf(pk)>=0) return;   // exposed chip → self-serializes; cleared stays cleared
-        if(pk==='sprint' && view==='kanban') return;   // kanban self-serializes sprint (explicit emit); never resurrect a just-cleared one
-        var cv=_cur.get(pk); if(cv) params.set(pk, cv);
-      });
-    }
+    // VIEW-QS-1: a view emits the chips it OFFERS (main loop) + opt-in priority/dept where offered (the
+    // _XCHIP loop) + sprint on kanban (explicit) - those self-serialize AND stay cleared. Every OTHER
+    // carried filter param the current view CANNOT express is preserved VERBATIM, on EVERY view (not only
+    // the shared three - this now covers Calendar/Planning/Dashboard/Reports/My-Home/Admin). THE RULE: a
+    // view may decline to ACT on a filter param it cannot express, but it must not DELETE it - dropping it
+    // destroys a saved filter (its anchor falls and the param is gone from everywhere) rather than
+    // suspending it, so the round trip cannot restore it. A param riding unused in the URL is harmless
+    // (project=__all__ already rides everywhere). The _selfSer gate below is what keeps this from
+    // resurrecting a JUST-CLEARED chip (the failure the pre-VIEW-QS-1 carry-forward guarded against): a
+    // param the view self-serializes is trusted to have emitted itself when active and stayed absent when
+    // cleared, so it is never carried. board stays a kanban-only explicit emit above - it is scope, not a
+    // cross-view filter param, so it is not in this set. KNOWN GAP (its own small stage): the List-only
+    // FIELDS-2 chips (location/resolutionType/blockedReason) are NOT carried - they are non-auto-revealing,
+    // so re-emitting a carried value would risk exactly this resurrect-a-cleared-chip bug. Real case: an IT
+    // user saving a filter with blockedReason=Vendor loses it on a cross-view round trip. Do not paper over
+    // it here by adding them to the set - that trades a known limitation for an unknown bug.
+    var _cur=new URLSearchParams(location.search);
+    var _selfSer=CFG[view].chips.concat(_added[view]||[]);
+    ['priority','dept'].forEach(function(x){ if(CFG[view].chips.indexOf(x)>=0 || CFG[view].extra.indexOf(x)>=0) _selfSer.push(x); });   // _XCHIP self-serializes these WHERE OFFERED
+    if(view==='kanban') _selfSer.push('sprint');   // kanban emits sprint explicitly (self-serializes)
+    ['owner','type','status','assignee','sprint','priority','dept'].forEach(function(pk){   // the _frzCarryQS cross-view filter set (project is emitted always, above)
+      if(params.has(pk)) return;                 // already emitted by this view (active)
+      if(_selfSer.indexOf(pk)>=0) return;        // this view self-serializes pk -> trust its emit/clear (cleared stays cleared, no resurrect)
+      var cv=_cur.get(pk); if(cv) params.set(pk, cv);   // this view cannot express pk -> preserve it verbatim (suspend, do not destroy)
+    });
     if (view==='team-calendar' && state.calDate) params.set('d', _ymdLocal(state.calDate));  // Stage 2c: displayed period
     if (view==='team-calendar'){ var _cf=state.calFilter||{}; Object.keys(_CAL_FILTER_PARAMS).forEach(function(k){ if(_cf[k]) params.set(_CAL_FILTER_PARAMS[k], _cf[k]); }); }  // Stage 5a: filter chips in the URL
     if (view==='reports') _rptEmitURL(params);   // RPT-DRILL-1 Stage 2: report-owned r-prefixed controls (+ D4 drill dims when Stage 3 sets them)
@@ -25330,6 +25346,33 @@ if ('serviceWorker' in navigator) {
     }
     return null;
   }
+  // VIEW-QS-1 Addendum A: which saved filter to DISPLAY as active on the CURRENT view. state.activeSavedId
+  // persists across a view switch (VIEW-QS-1 carries the filter's params so the anchor keeps matching), but a
+  // view that carries a filter it CANNOT express must show it RESTING - the filter genuinely is not filtering
+  // there, so no region may claim otherwise (the POLISH-5 fill/× honesty). Return the anchored filter ONLY
+  // when the current view offers every IDENTIFYING (non-IGNORE'd) param of its qs; else null (rest). Matching
+  // is UNCHANGED - this is a DISPLAY gate. The anchor + its match-and-drop still come from _frzActiveSaved
+  // (called here), so a diverged anchor is still cleared; on return to an expressing view the SAME anchor
+  // shows active again and the × returns. Scope axes (project/from/to/board/sprint) are ignored here: a Space
+  // scope applies on every view, so a scope-only filter is NOT rested. The default ★ is deliberately NOT
+  // gated by this - it marks the default's identity, not "active now" (J.R.'s call).
+  function _frzViewExpressesSaved(s){
+    if(!s) return false;
+    var sp=new URLSearchParams((s.qs||'').replace(/^\?/,''));
+    var IGNORE={ project:1, from:1, to:1, board:1, sprint:1 };
+    var view=state.view;
+    // The params the view actually APPLIES (and self-serializes in syncURL): its chips + opted-in extras +
+    // priority/dept where offered (auto-revealed via _XCHIP). Crucially NOT an extra that is merely
+    // offered-but-not-added (type/assignee on Planning) - the view CARRIES those but does not filter by them,
+    // so a filter needing one RESTS here, matching VIEW-QS-1's "Planning drops assignee and type". Using the
+    // applied set (not chips.concat(extra)) is what keeps the display honest on Planning.
+    var applied=CFG[view] ? CFG[view].chips.concat(_added[view]||[]) : [];
+    var appliedP={}; applied.forEach(function(k){ if(CHIPS[k]) appliedP[CHIPS[k].param]=1; });
+    if(CFG[view]){ ['priority','dept'].forEach(function(x){ if((CFG[view].chips.indexOf(x)>=0 || CFG[view].extra.indexOf(x)>=0) && CHIPS[x]) appliedP[CHIPS[x].param]=1; }); }
+    var ok=true; sp.forEach(function(v,k){ if(!IGNORE[k] && v!=='' && !appliedP[k]) ok=false; });
+    return ok;
+  }
+  function _frzActiveSavedShown(){ var a=_frzActiveSaved(); return (a && _frzViewExpressesSaved(a)) ? a : null; }
   // COLD LOAD only (deep-link/paste/back - never an applySaved): seed the anchor from URL-match.
   // At most ONE: the most-specific (most params); a tie at the top → none.
   // PATCH-1 Part 3: does saved filter `s` have an IDENTITY - at least one param that actually narrows
@@ -25359,7 +25402,7 @@ if ('serviceWorker' in navigator) {
     matches.sort(function(a,b){ return _frzQSParamCount(b.qs)-_frzQSParamCount(a.qs); });
     if(matches.length===1 || _frzQSParamCount(matches[0].qs) > _frzQSParamCount(matches[1].qs)) state.activeSavedId=matches[0].id;
   }
-  function _frzActiveSavedName(){ var a=_frzActiveSaved(); return a ? a.name : ''; }
+  function _frzActiveSavedName(){ var a=_frzActiveSavedShown(); return a ? a.name : ''; }   // VIEW-QS-1 Addendum A: crumb rests too on a non-expressing view
   // Crumb text: project always, + the active saved-filter name when one is anchored & matching.
   function _frzCrumbText(){
     var proj = (!state.project || state.project==='__all__') ? 'All Spaces' : state.project;
@@ -25376,9 +25419,12 @@ if ('serviceWorker' in navigator) {
     // the URL always encodes the applied filter. _frzSeedActiveFromURL picks the single most-specific
     // match (a tie -> none), so it never spuriously promotes an unrelated filter.
     if(!active){ _frzSeedActiveFromURL(); active=_frzActiveSaved(); }
+    // VIEW-QS-1 Addendum A: the ANCHOR is managed above (active, + re-seed); the DISPLAY uses the view-gated
+    // `shown`, so the rail dot + aria-current REST on a view that carries the filter but cannot express it.
+    var shown=_frzActiveSavedShown();
     var sn=document.getElementById('frzSavedNav');
     if(sn){ [].slice.call(sn.querySelectorAll('.frz-item[data-saved]')).forEach(function(b){
-      var on=!!(active && active.id===b.getAttribute('data-saved'));
+      var on=!!(shown && shown.id===b.getAttribute('data-saved'));
       b.setAttribute('aria-current', String(on));   // reuses .frz-item[aria-current] weight
       var dot=b.querySelector('.frz-item-fdot');     // keep the active-filter dot in sync live (not just on full renderSavedNav)
       if(on && !dot){ var d=document.createElement('span'); d.className='frz-item-fdot'; d.title='Active filter (applied to all views)'; b.insertBefore(d, b.querySelector('.frz-rowmenu')); }
@@ -25526,7 +25572,7 @@ if ('serviceWorker' in navigator) {
     rerender(); renderBar(); renderRail(); syncURL(true);
   }
   function _savedChipHTML(){
-    var s = (state.saved||[]).filter(function(x){return x.id===state.activeSavedId;})[0];
+    var s = _frzActiveSavedShown();   // VIEW-QS-1 Addendum A: RESTS (and the × is absent by construction) on a view that carries but cannot express the filter
     var applied = !!s;
     // POLISH-5 Part 7: RESTING label is "Saved filters" (plural = plainly a LABEL, not a selection; "None"
     // collides with a real filter name and "All" is semantically wrong - you do not apply all filters).
@@ -25545,8 +25591,11 @@ if ('serviceWorker' in navigator) {
     openPop(anchor, function(pop){
       // POLISH-5 Part 7: a "Clear filter" entry at the TOP when one is applied - the discoverable path for
       // someone who opens the menu looking for "none". The chip's x is the primary one-click clear; both
-      // call the same _frzClearSavedFilter (one implementation).
-      if(state.activeSavedId){
+      // call the same _frzClearSavedFilter (one implementation). VIEW-QS-1 Addendum A: gate on the DISPLAYED
+      // (view-expressed) filter, not the raw anchor - on a view that carries-but-cannot-express there is
+      // nothing to clear (no Clear entry, matching the absent × on the chip) and no row shows is-active.
+      var _shownId=(_frzActiveSavedShown()||{}).id;
+      if(_shownId){
         var clr=document.createElement('button'); clr.type='button'; clr.className='frz-pop-opt';
         clr.innerHTML='<span style="width:16px;text-align:center;flex-shrink:0">×</span><span>Clear filter</span>';
         clr.addEventListener('click', function(){ closePop(); _frzClearSavedFilter(); });
@@ -25554,7 +25603,7 @@ if ('serviceWorker' in navigator) {
         var hr0=document.createElement('div'); hr0.className='frz-pop-div'; pop.appendChild(hr0);
       }
       (state.saved||[]).forEach(function(s){
-        var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt'+(s.id===state.activeSavedId?' is-active':'');
+        var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt'+(s.id===_shownId?' is-active':'');   // VIEW-QS-1 Addendum A: is-active follows the DISPLAYED filter (rests on a non-expressing view)
         b.style.display='flex'; b.style.alignItems='center'; b.style.gap='6px';
         // SAVED-DEFAULT-1: a trailing star marks + toggles the default (one per Org). Clicking the
         // star sets/clears the default and does NOT apply the filter; clicking the name applies it.
