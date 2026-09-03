@@ -25307,6 +25307,12 @@ if ('serviceWorker' in navigator) {
     var _curFilterable = (typeof CFG!=='undefined' && CFG[state.view] && (CFG[state.view].chips||[]).length && !state.onItem);
     var targetView = _curFilterable ? state.view : s.view;   // My Home / Admin / item page have no chip bar -> fall back to the saved view
     navigate('/'+targetView + qs, false);
+    // The bar Saved chip is painted by renderBar(), which navigate()/syncURL() do NOT call (they rerender
+    // the view + surgically update the rail dot, not the filter bar). Without this the chip stayed resting
+    // until the next renderBar (a view change or refresh) even though the filter was applied. Repaint now so
+    // it fills the moment you pick a saved filter, from the chip dropdown OR the rail. Guard matches the other
+    // renderBar sites (My Home / Calendar / Admin own their own bar row).
+    if(!state.onItem && state.view!=='my-home' && state.view!=='team-calendar' && state.view!=='admin') renderBar();
   }
   // ════════ Stage 3 (+ Fix 1): view-aware UI - saved-filter highlight + crumb + sync ════════
   // params of a stored/whitelisted qs (project excluded so we can apply project leniently).
