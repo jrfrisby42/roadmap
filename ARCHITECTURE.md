@@ -36,7 +36,7 @@ Custom HMAC-signed tokens. Not JWT.
 
 | Role | Can do |
 |---|---|
-| `viewer` | Read everything except Planning view (hidden). No state-changing endpoints. |
+| `viewer` | Read everything except Planning view (hidden). One write only: create and edit their OWN comments (VIEWER-COMMENT-1 / COMMENT-EDIT-1, both accept the viewer role); nothing else. |
 | `contributor` | Scoped "editor-lite" (Phase A, 5.0.x). Acts only on **in-scope** items; see below. |
 | `editor` | Create/update items, planning sessions, capacity overrides, Jira sync. |
 | `admin` | Everything: config edits, user management, deletes, audit log. |

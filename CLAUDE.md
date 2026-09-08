@@ -303,7 +303,7 @@ An item can only have one of these two relationships — enforced in the UI via 
 
 ### 10. Roles
 
-- `viewer` — read-only. Cannot see Planning view. Kanban hidden from this role. Clicking a Gantt bar opens the read-only Item Page instead of the edit modal.
+- `viewer` - read-only EXCEPT they may create and edit their own comments (VIEWER-COMMENT-1 / COMMENT-EDIT-1). Cannot see Planning view. Kanban hidden from this role. Clicking a Gantt bar opens the read-only Item Page instead of the edit modal.
 - `editor` — can create/update projects, capacity overrides, planning sessions. Time/date fields are read-only for editors when the item is in an active status. Editors can be **owner-scoped** via the per-user `ownerFilter` field (see below).
 - `admin` — everything, plus config edits, user management, deletes.
 
