@@ -2343,7 +2343,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.35.6';
+const APP_VERSION = '6.36.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -21653,7 +21653,7 @@ if ('serviceWorker' in navigator) {
       var _on = !!(active && active.id===s.id);
       b.setAttribute('aria-current', String(_on));   // same weight as view/project
       // Dot on the ACTIVE saved filter so you can see at a glance which one is applied (it scopes every view).
-      b.innerHTML = IC.flag + '<span>'+esc(s.name)+(s.default===true?' <span style="color:var(--frz-accent)" title="Default filter">★</span>':'')+'</span>' + (_on ? '<span class="frz-item-fdot" title="Active filter (applied to all views)"></span>' : '') + '<button class="frz-rowmenu" data-savedmenu="'+s.id+'" title="Rename or delete">…</button>';
+      b.innerHTML = IC.flag + '<span>'+esc(s.name)+(s.default===true?'<span class="frz-saved-star" style="color:var(--frz-accent)" title="Default filter"> ★</span>':'')+'</span>' + (_on ? '<span class="frz-item-fdot" title="Active filter (applied to all views)"></span>' : '') + '<button class="frz-rowmenu" data-savedmenu="'+s.id+'" title="Rename or delete">…</button>';   // SAVED-PAINT-1: star carries .frz-saved-star so _frzPaintSavedState can keep it in sync surgically
       sn.appendChild(b);
     });
     _frzApplyRailSections();   // RAIL-1: refresh collapse/count after saved filters repaint
@@ -25243,6 +25243,7 @@ if ('serviceWorker' in navigator) {
       state.saved = server; _frzWriteSavedCache();
       if(added) _frzPutSavedServer();   // persist the merged union back to the server
       if(document.getElementById('frzSavedNav')) renderSavedNav();
+      _frzPaintSavedState();   // SAVED-PAINT-1 1.4: hydration is the THIRD presence-transition path. AFTER state.saved=server AND renderSavedNav so the R1 presence check reads the POST-assignment length. Fixes empty-cache + collapsed + NO default: the bar Saved chip appears once server rows arrive (was only incidentally covered when a default was set).
       // RAIL-COLLAPSED-2 Part 3: a genuine first load (no localStorage cache) has an empty state.saved when
       // routeFromLocation runs, so the cold-load default-apply found nothing (the 6.35.1 __all__ fix made the
       // default work on refresh, but not on the very first load). The server row is here now: apply the
@@ -25304,7 +25305,7 @@ if ('serviceWorker' in navigator) {
   function saveCurrent(anchor){
     namePopover(anchor, { placeholder:'Saved filter name…', saveLabel:'Save', onSave:function(name){
       state.saved.push({ id:'s'+Date.now(), name:name, view:state.view, qs:_frzFilterQS() });   // Item 1a: filter-only, no panel
-      persistSaved(); renderSavedNav();
+      persistSaved(); renderSavedNav(); _frzPaintSavedState();   // SAVED-PAINT-1: L1 - first save while collapsed reveals the bar Saved chip (presence transition)
     }});
   }
   // Item 1b: defensively strip `panel` from a saved entry's qs on apply, so already-
@@ -25322,12 +25323,11 @@ if ('serviceWorker' in navigator) {
     var _curFilterable = (typeof CFG!=='undefined' && CFG[state.view] && (CFG[state.view].chips||[]).length && !state.onItem);
     var targetView = _curFilterable ? state.view : s.view;   // My Home / Admin / item page have no chip bar -> fall back to the saved view
     navigate('/'+targetView + qs, false);
-    // The bar Saved chip is painted by renderBar(), which navigate()/syncURL() do NOT call (they rerender
-    // the view + surgically update the rail dot, not the filter bar). Without this the chip stayed resting
-    // until the next renderBar (a view change or refresh) even though the filter was applied. Repaint now so
-    // it fills the moment you pick a saved filter, from the chip dropdown OR the rail. Guard matches the other
-    // renderBar sites (My Home / Calendar / Admin own their own bar row).
-    if(!state.onItem && state.view!=='my-home' && state.view!=='team-calendar' && state.view!=='admin') renderBar();
+    // SAVED-PAINT-1: was a guarded renderBar() (SAVED-CHIP-REPAINT-1) to fill the bar Saved chip after
+    // navigate. Now the shared entry point handles R1 with a surgical swap (and its own barView guard).
+    // navigate()->syncURL()->_frzRefreshActiveSaved()->_frzPaintSavedState already repaints it; this call
+    // is belt-and-suspenders and idempotent (a redundant content swap is cheap, never a full renderBar here).
+    _frzPaintSavedState();
   }
   // ════════ Stage 3 (+ Fix 1): view-aware UI - saved-filter highlight + crumb + sync ════════
   // params of a stored/whitelisted qs (project excluded so we can apply project leniently).
@@ -25433,27 +25433,56 @@ if ('serviceWorker' in navigator) {
   // Re-derive the view-aware surfaces from the just-written URL (called at the END of syncURL =
   // the single chokepoint every view/filter/project/board change funnels through, so match-and-drop
   // is automatic). Cheap + null-tolerant (syncURL can run pre-render).
+  // SAVED-PAINT-1 (SHELL-DEBT-1 Part 1): the ONE entry point that reads saved-filter state ONCE and
+  // paints every STANDING region that depends on it - R1 bar chip, R2 rail fdot/aria, R3 rail star,
+  // R4 crumb. Replaces "each calling path remembers the right paint calls" (six shipped bugs + one
+  // live). R5 (the saved-chip dropdown) stays out: it is on-demand (savedChipMenu) and reads the same
+  // two helpers at open time. READS state, never WRITES it - the anchor match-and-drop lives in
+  // _frzActiveSaved / _frzSeedActiveFromURL (run by _frzRefreshActiveSaved before this).
+  function _frzPaintSavedState(){
+    var shown = _frzActiveSavedShown();   // anchored AND expressible on THIS view -> every ACTIVE indicator
+    var def   = _defaultFilter();         // the default, view-independent -> the star ONLY (one derivation; _isDefaultFilter wraps this). NEVER collapsed with `shown`: the star shows while active indicators rest.
+    // R2 + R3: rail saved rows (surgical). fdot/aria from `shown`; star from `def`, idempotent.
+    var sn=document.getElementById('frzSavedNav');
+    if(sn){ [].slice.call(sn.querySelectorAll('.frz-item[data-saved]')).forEach(function(b){
+      var id=b.getAttribute('data-saved');
+      var on=!!(shown && shown.id===id);
+      b.setAttribute('aria-current', String(on));   // reuses .frz-item[aria-current] weight; RESTS on a non-expressing view
+      var dot=b.querySelector('.frz-item-fdot');
+      if(on && !dot){ var d=document.createElement('span'); d.className='frz-item-fdot'; d.title='Active filter (applied to all views)'; b.insertBefore(d, b.querySelector('.frz-rowmenu')); }
+      else if(!on && dot){ dot.remove(); }
+      var isDef=!!(def && def.id===id);   // R3: star = identity, from `def` NOT `shown` (stays on a resting view)
+      var lbl=b.querySelector('span'), star=b.querySelector('.frz-saved-star');
+      if(isDef && !star && lbl){ var st=document.createElement('span'); st.className='frz-saved-star'; st.style.color='var(--frz-accent)'; st.title='Default filter'; st.textContent=' ★'; lbl.appendChild(st); }
+      else if(!isDef && star){ star.remove(); }
+    }); }
+    // R4: crumb (surgical). _frzCrumbText reads `shown` via _frzActiveSavedName (rests too).
+    if(!state.onItem){ var c=document.querySelector('#frzLeft .frz-crumbs'); if(c) c.textContent=_frzCrumbText(); }
+    // R1: bar Saved chip - TWO cases (a surgical swap cannot create an absent node / remove a present one).
+    var bar=document.getElementById('frzFilterBar');
+    var chip=bar ? bar.querySelector('[data-chip="saved"]') : null;
+    var barView=!state.onItem && state.view!=='my-home' && state.view!=='team-calendar' && state.view!=='admin';
+    var shouldExist=barView && _frzRailCollapsed() && (state.saved||[]).length>0;
+    if(shouldExist === !!chip){
+      // presence AGREES -> content update only. Safe on syncURL's hot path: syncURL changes neither
+      // _railCollapsed nor saved.length, so presence cannot transition there (only content changes).
+      if(chip) chip.outerHTML=_savedChipHTML();
+    } else if(barView){
+      // presence TRANSITION (should-exist-and-absent = first-save-collapsed L1 / hydration; should-not-
+      // exist-and-present = last-delete-collapsed mirror). renderBar rebuilds the bar in correct chip
+      // order - THIS branch closes L1, not the swap. It cannot fire from syncURL (a view switch already
+      // built the bar via setView -> renderBar before syncURL runs).
+      renderBar();
+    }
+  }
   function _frzRefreshActiveSaved(){
-    var active=_frzActiveSaved();   // computed once (also clears a diverged anchor)
+    var active=_frzActiveSaved();   // computed once (also clears a diverged anchor) - ANCHOR mgmt stays here
     // Fall back to a URL-match when nothing is anchored, so a saved filter applied by CLICK (which
     // goes through navigate, not the cold-load routeFromLocation seed) is still detected as active -
     // the URL always encodes the applied filter. _frzSeedActiveFromURL picks the single most-specific
     // match (a tie -> none), so it never spuriously promotes an unrelated filter.
     if(!active){ _frzSeedActiveFromURL(); active=_frzActiveSaved(); }
-    // VIEW-QS-1 Addendum A: the ANCHOR is managed above (active, + re-seed); the DISPLAY uses the view-gated
-    // `shown`, so the rail dot + aria-current REST on a view that carries the filter but cannot express it.
-    var shown=_frzActiveSavedShown();
-    var sn=document.getElementById('frzSavedNav');
-    if(sn){ [].slice.call(sn.querySelectorAll('.frz-item[data-saved]')).forEach(function(b){
-      var on=!!(shown && shown.id===b.getAttribute('data-saved'));
-      b.setAttribute('aria-current', String(on));   // reuses .frz-item[aria-current] weight
-      var dot=b.querySelector('.frz-item-fdot');     // keep the active-filter dot in sync live (not just on full renderSavedNav)
-      if(on && !dot){ var d=document.createElement('span'); d.className='frz-item-fdot'; d.title='Active filter (applied to all views)'; b.insertBefore(d, b.querySelector('.frz-rowmenu')); }
-      else if(!on && dot){ dot.remove(); }
-    }); }
-    if(!state.onItem){ var c=document.querySelector('#frzLeft .frz-crumbs'); if(c) c.textContent=_frzCrumbText(); }
-    // RAIL-COLLAPSED-1 Part 1: the .frz-topview segmented control is gone, so its active-state sync block
-    // (guarded on `if(tv)`) is removed with it.
+    _frzPaintSavedState();   // SAVED-PAINT-1: R1-R4 from the settled anchor (was inline R2 dot/aria + R4 crumb here)
     // Mobile companion (Phase 1): keep the bottom tab bar's active item in sync with the view.
     var bn=document.querySelector('.frz-botnav');
     if(bn){ [].slice.call(bn.querySelectorAll('.frz-botnav-item[data-nav]')).forEach(function(b){
@@ -25465,18 +25494,9 @@ if ('serviceWorker' in navigator) {
     // Collapsed-rail active-filter cue: light the dot on the active view's icon when the current
     // view has an active chip filter (CSS keys off .frz-filter-on + is-collapsed-ui + aria-current).
     if(root) root.classList.toggle('frz-filter-on', !state.onItem && !!CFG[state.view] && anyActive(state.view));
-    // Fix 2: rail BOARDS highlight is part of the view sync - exactly one lit on a Kanban URL.
-    // A [data-board] (incl. the built-in "Open work") lights ONLY when NOT sprint-scoped; a sprint scope
-    // lights the Active Sprint pseudo-board instead (mutually exclusive), so board + active-sprint
-    // highlighting is single-sourced here (syncURL runs on every filter/nav change).
-    var bnav=document.getElementById('frzBoardNav');
-    if(bnav){ var onK=(state.view==='kanban' && !state.onItem);
-      [].slice.call(bnav.querySelectorAll('.frz-item[data-board]')).forEach(function(b){
-        b.setAttribute('aria-current', String(onK && !state.sprintFilter && state.board===b.getAttribute('data-board')));
-      });
-      var asEl=bnav.querySelector('[data-activesprint]');
-      if(asEl) asEl.setAttribute('aria-current', String(onK && state.sprintFilter===asEl.getAttribute('data-activesprint')));
-    }
+    // SAVED-PAINT-1 Part 4: the dead #frzBoardNav board-highlight block was removed here (#frzBoardNav
+    // was deleted in SHELL-IA-1 Stage 1, so its `if(bnav)` guard was permanently false). The renderRail
+    // ~21520 #frzBoardNav block stays out of scope (flagged).
   }
 
   // ════════ popovers ════════
@@ -26340,9 +26360,9 @@ if ('serviceWorker' in navigator) {
       var hrd=document.createElement('div'); hrd.className='frz-pop-div';
       pop.appendChild(df); pop.appendChild(hrd);
       var r=document.createElement('button'); r.className='frz-pop-opt'; r.textContent='Rename';
-      r.addEventListener('click', function(){ namePopover(btn, { placeholder:'Rename…', initial:s.name, saveLabel:'Rename', onSave:function(n){ s.name=n; persistSaved(); renderSavedNav(); } }); });
+      r.addEventListener('click', function(){ namePopover(btn, { placeholder:'Rename…', initial:s.name, saveLabel:'Rename', onSave:function(n){ s.name=n; persistSaved(); renderSavedNav(); _frzPaintSavedState(); } }); });   // SAVED-PAINT-1: keep the bar Saved chip name in sync (pre-empts L2)
       var d=document.createElement('button'); d.className='frz-pop-opt'; d.style.color='#C0392B'; d.textContent='Delete';
-      d.addEventListener('click', function(){ closePop(); if(confirm('Delete "'+s.name+'"?')){ state.saved=state.saved.filter(function(x){return x.id!==id;}); persistSaved(); renderSavedNav(); } });
+      d.addEventListener('click', function(){ closePop(); if(confirm('Delete "'+s.name+'"?')){ state.saved=state.saved.filter(function(x){return x.id!==id;}); persistSaved(); renderSavedNav(); _frzPaintSavedState(); } });   // SAVED-PAINT-1: the mirror - deleting the last filter while collapsed removes the stale bar Saved chip (presence transition)
       pop.appendChild(r); pop.appendChild(d);
     });
   }
