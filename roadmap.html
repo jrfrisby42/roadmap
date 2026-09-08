@@ -2343,7 +2343,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.36.1';
+const APP_VERSION = '6.36.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -18528,6 +18528,19 @@ async function boot(){
   if(isAdmin) setTimeout(() => _restorePlanningSessionFromServer().catch(()=>{}), 1500);
 }
 
+// ITEM-FETCH-2: re-sync the in-memory item set from a fresh /api/all. CLASSIC scope so `projects =`
+// assigns the real top-level global (the beta shell reads projects via _val and cannot assign it).
+// openItem's miss branch calls this via _call before reporting not-found, so an item created mid-session
+// (absent from the boot-loaded set, because the notification poll never refreshes it) is found without a
+// manual refresh. Returns the payload; a fetch failure PROPAGATES (rejects) so the caller can tell a load
+// failure apart from a genuine not-found. projects-only: config/users do not change for a new item, and
+// re-syncing only the item set avoids clobbering other in-flight state.
+async function _frzReloadAllData(){
+  const data = await API.get('/api/all');
+  if(data && Array.isArray(data.projects)) projects = data.projects;
+  return data;
+}
+
 boot();
 
 // ── PWA: register the service worker (installable + cached app shell) ──
@@ -24805,7 +24818,27 @@ if ('serviceWorker' in navigator) {
   function openItem(id, opts){
     opts = opts||{};
     var ps = _val('projects',[])||[];
-    if (!ps.some(function(p){return p.id===id;})){ _call('showToast','Item not found: #'+id); return; }
+    if (!ps.some(function(p){return p.id===id;})){
+      // ITEM-FETCH-2: a miss here is NOT proof the item is absent - `projects` is loaded once at boot and the
+      // notification poll never refreshes it, so an item created mid-session is absent from the in-memory set
+      // though present on the server (ITEM-FETCH-1). Ask the server ONCE (re-fetch /api/all, re-sync projects,
+      // retry) before reporting not-found. SCOPE-SAFE BY CONSTRUCTION: /api/all returns only what the caller
+      // may read, so an out-of-scope or cross-team item STAYS absent after the refetch and correctly reads
+      // not-found - this path can never widen access, because it asks for nothing the caller could not already have.
+      state._itemFetchTried = state._itemFetchTried || {};
+      if(state._itemFetchTried[id]){ _call('showToast','Item not found: #'+id); return; }   // already re-fetched once for this id -> genuine not-found (guards against a re-fetch loop on a bad/stale link)
+      state._itemFetchTried[id] = true;
+      var _rp = _call('_frzReloadAllData');   // classic helper: awaits /api/all, re-syncs `projects`, returns the payload (rejects on fetch failure)
+      if(!_rp || !_rp.then){ delete state._itemFetchTried[id]; _call('showToast','Could not load item #'+id+' - check your connection','error'); return; }   // ITEM-FETCH-2 follow-up: server was NEVER asked -> clear the guard (retryable) + load-failure, not not-found
+      _call('showLoading', true);   // honest loading state: never "Item not found" followed by the item appearing
+      _rp.then(function(){
+        _call('showLoading', false);
+        var ps2 = _val('projects',[])||[];
+        if(ps2.some(function(p){return p.id===id;})) openItem(id, opts);         // now present -> open (retry; no re-fetch, item is in the set)
+        else _call('showToast','Item not found: #'+id);                         // server also lacks it (or out of scope) -> genuine not-found
+      }).catch(function(){ delete state._itemFetchTried[id]; _call('showLoading', false); _call('showToast','Could not load item #'+id+' - check your connection','error'); });   // ITEM-FETCH-2 follow-up: the fetch FAILED and the server was never successfully asked, so CLEAR the guard - a failed attempt must be RETRYABLE (else the next click wrongly short-circuits to not-found, collapsing load-failure into not-found). Guard kept ONLY on success-but-absent (a genuine not-found).
+      return;
+    }
     // PANEL-FIX: the item page is a full-screen overlay, but the List detail panel is position:fixed and
     // would float over it (e.g. open the panel in List, then click a notification that jumps to an item).
     // Close it here so it tears down however the item page is reached (notification, deep link, crumb, etc.).
