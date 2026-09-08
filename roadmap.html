@@ -2343,7 +2343,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.36.0';
+const APP_VERSION = '6.36.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -25340,6 +25340,26 @@ if ('serviceWorker' in navigator) {
   // was saved in, so an exact string compare drops the anchor on the first render after apply and a
   // multi-value saved filter never stayed anchored.
   function _frzNormMulti(v){ return String(v==null?'':v).split(',').map(function(x){return x.trim();}).filter(Boolean).sort().join(','); }
+  // SAVED-ANCHOR-2: the values still selectable for a chip param = the checkbox values in its panel -
+  // the EXACT source applyPanel prunes against (input[type=checkbox][value], minus "all"). Reading the
+  // SAME DOM guarantees the matcher and applyPanel agree: a value applyPanel drops on apply is a value
+  // this prunes from the saved record. Returns null (meaning "do NOT prune this key") when the param has
+  // no panel, or the panel has no options yet (unpopulated) - never over-prune a valid filter to empty.
+  function _frzChipPanelValues(param){
+    var c=(typeof CHIPS!=='undefined') ? CHIPS[param] : null; if(!c || !c.panel) return null;
+    var panel=document.getElementById(c.panel); if(!panel) return null;
+    var set={}, n=0;
+    [].slice.call(panel.querySelectorAll('input[type=checkbox]')).forEach(function(cb){ if(cb.value!=='all'){ set[cb.value]=1; n++; } });
+    return n ? set : null;   // empty panel (unpopulated) -> null: compare unpruned rather than drop everything
+  }
+  // SAVED-ANCHOR-2: prune a comma-joined saved value to only members that still exist as a selectable
+  // option. Drops a config-absent value (matching applyPanel's silent drop on apply); keeps a valid-but-
+  // unselected value untouched (so a hand-narrowed filter still differs from its saved set - identity, not
+  // loosening). Returns null when there is no panel for the param -> caller compares the raw value.
+  function _frzPruneChipVal(param, val){
+    var set=_frzChipPanelValues(param); if(!set) return null;
+    return String(val==null?'':val).split(',').map(function(x){return x.trim();}).filter(function(x){ return x && set[x]; }).join(',');
+  }
   function _frzSavedStillMatches(s){
     if(!s) return false;
     // View-agnostic: the shared filter travels across views, so a saved filter stays "active" on
@@ -25355,7 +25375,16 @@ if ('serviceWorker' in navigator) {
     // not what identifies the saved filter.
     var IGNORE={ from:1, to:1, board:1, sprint:1 };
     var keys={}; sp.forEach(function(v,k){ if(k!=='project' && !IGNORE[k]) keys[k]=1; }); live.forEach(function(v,k){ if(k!=='project' && !IGNORE[k]) keys[k]=1; });
-    return Object.keys(keys).every(function(k){ return _frzNormMulti(sp.get(k)) === _frzNormMulti(live.get(k)); });   // PATCH-1 1.1: order-insensitive (multi-value chip params)
+    // SAVED-ANCHOR-2: prune the SAVED side's chip values to those that still exist as selectable options
+    // (the same panel checkboxes applyPanel prunes against), then compare. applyPanel drops a config-absent
+    // value on apply, so the live URL is ALREADY pruned; without pruning the saved side too, a filter naming
+    // a since-removed status/owner/type/assignee/priority/dept/etc. could never re-equal its own applied URL,
+    // so its anchor was dropped forever (SAVED-ANCHOR-1). Prune removes ONLY config-absent values, never
+    // valid-but-unselected ones, so a hand-narrowed filter still fails to match (identity, not a loosening).
+    return Object.keys(keys).every(function(k){
+      var pr=_frzPruneChipVal(k, sp.get(k));   // null = no panel for this key -> compare raw (unchanged)
+      return _frzNormMulti(pr!=null ? pr : sp.get(k)) === _frzNormMulti(live.get(k));   // PATCH-1 1.1: order-insensitive (multi-value chip params)
+    });
   }
   // The ONE active saved filter: the clicked anchor IF it still matches, else null (match-and-drop;
   // never auto-promotes a different filter). Clears the stale anchor as a side effect.
@@ -25406,8 +25435,11 @@ if ('serviceWorker' in navigator) {
     var sp=new URLSearchParams((s && s.qs||'').replace(/^\?/,''));
     var proj=sp.get('project'); if(proj && proj!=='__all__') return true;   // a specific Space identifies it
     var IGNORE={ project:1, from:1, to:1, board:1, sprint:1 };
-    var has=false; sp.forEach(function(v,k){ if(!IGNORE[k] && v!=null && v!=='') has=true; });
-    return has;   // at least one chip param (status/owner/type/assignee/priority/dept/...)
+    // SAVED-ANCHOR-2: count identity by the PRUNED value - a param naming only since-removed options (e.g.
+    // a status-only filter whose one status was deleted) has no surviving identity, so it must not auto-seed
+    // as "matches everything". Prune to the same panel source as _frzSavedStillMatches.
+    var has=false; sp.forEach(function(v,k){ if(IGNORE[k] || v==null || v==='') return; var pr=_frzPruneChipVal(k, v); var eff=(pr!=null?pr:v); if(eff!=='') has=true; });
+    return has;   // at least one chip param whose value still exists in config
   }
   function _frzSeedActiveFromURL(){
     state.activeSavedId=null;
