@@ -2343,7 +2343,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.35.4';
+const APP_VERSION = '6.35.5';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -21513,8 +21513,7 @@ if ('serviceWorker' in navigator) {
         pn.appendChild(more);
       }
     }
-    // boards + saved filters
-    renderBoardNav();
+    // saved filters (PART-4: renderBoardNav() call removed - the rail BOARDS section is gone)
     renderSavedNav();
     // Boards are Kanban column-layouts - hide the whole section from viewers,
     // who can't see Kanban at all.
@@ -21534,11 +21533,11 @@ if ('serviceWorker' in navigator) {
   function loadBoards(done){
     API.get('/api/boards').then(function(d){ _boards = (d && d.boards) || []; })
       .catch(function(){ _boards = []; })
-      .then(function(){ _boards.sort(function(a,b){ return (a.position||0)-(b.position||0); }); renderBoardNav(); if(done) done(); });
+      .then(function(){ _boards.sort(function(a,b){ return (a.position||0)-(b.position||0); }); if(done) done(); });   // PART-4: renderBoardNav() removed
   }
   function saveBoards(done){
     return API.put('/api/boards', { boards: _boards })
-      .then(function(d){ _boards = (d && d.boards) || _boards; _boards.sort(function(a,b){ return (a.position||0)-(b.position||0); }); renderBoardNav(); if(done) done(); })
+      .then(function(d){ _boards = (d && d.boards) || _boards; _boards.sort(function(a,b){ return (a.position||0)-(b.position||0); }); if(done) done(); })   // PART-4: renderBoardNav() removed
       .catch(function(e){ _call('showToast','Save failed: '+(e&&e.message||''),'error'); throw e; });
   }
   function activeBoard(){ return _boards.filter(function(b){ return b.id===state.board; })[0] || null; }
@@ -21569,9 +21568,18 @@ if ('serviceWorker' in navigator) {
     lset(_pinnedKey(), JSON.stringify(p));
     renderRail();   // re-render (updates the visible set + the Show-N-more label)
   }
-  function _defaultBoardKey(){ return 'frazil_beta_defaultboard_'+uname(); }
-  function _defaultBoard(){ var d=ls(_defaultBoardKey()); return (d && _boards.some(function(b){return b.id===d;})) ? d : '__all__'; }   // validate; deleted board → Open work (id '__all__')
-  function _setDefaultBoard(id){ if(id && id!=='__all__') lset(_defaultBoardKey(), id); else { try{ localStorage.removeItem(_defaultBoardKey()); }catch(e){} } renderBoardNav(); }
+  // PART-2 (SHELL-DEBT-1): the default-board key is TEAM-SCOPED. It was 'frazil_beta_defaultboard_<user>'
+  // - team-blind, so a default set on one Organization applied on all five (validate-on-read masked it by
+  // falling back to '__all__' wherever the board id was absent). It stays PER-DEVICE: unlike saved filters
+  // (server-mirrored), the board default is the one piece that does not follow the user to another browser.
+  // That limit is ACCEPTED here - a synced in-array flag is Branch B, its own stage; this stage only stops
+  // the cross-Organization leak. Migration: the legacy per-user key is read ONCE as a fallback for whichever
+  // Organization the user is on, then lapses (never written again; _setDefaultBoard only writes the scoped key).
+  function _defaultBoardKey(){ return 'frazil_beta_defaultboard_'+_teamSlug()+'_'+uname(); }
+  function _legacyDefaultBoardKey(){ return 'frazil_beta_defaultboard_'+uname(); }   // pre-PART-2 team-blind key; read-only migration fallback
+  function _defaultBoard(){ var d=ls(_defaultBoardKey()) || ls(_legacyDefaultBoardKey());   // scoped key wins; legacy key is the one-time fallback
+    return (d && _boards.some(function(b){return b.id===d;})) ? d : '__all__'; }   // validate against THIS team's boards; a default from another Org (or a deleted board) fails here → Open work ('__all__')
+  function _setDefaultBoard(id){ if(id && id!=='__all__') lset(_defaultBoardKey(), id); else { try{ localStorage.removeItem(_defaultBoardKey()); }catch(e){} } }   // PART-4: renderBoardNav() call removed (rail BOARDS section is gone; the default star repaints in boardChipMenu on open)
 
   // ════════ sprints data (Feature B) ════════
   function loadSprints(done){
@@ -21623,45 +21631,11 @@ if ('serviceWorker' in navigator) {
   function releaseById(id){ return _releases.filter(function(r){ return r.id===id; })[0] || null; }
   function releaseItems(rid){ return (_val('projects',[])||[]).filter(function(p){ return !p.archived && p.release===rid; }); }
 
-  function renderBoardNav(){
-    // SHELL-IA-1 Stage 1: the rail BOARDS section (#frzBoardNav) was removed - boards are now a
-    // Kanban filter-row chip. This is retained as a guarded no-op (its load/save callers still
-    // invoke it); the element is absent, so it returns immediately. Safe to delete in a later tidy.
-    var bn = document.getElementById('frzBoardNav'); if(!bn) return;
-    bn.querySelectorAll('.frz-item').forEach(function(b){ b.remove(); });
-    var onKanban = (state.view==='kanban' && !state.onItem);
-    // built-in "Open work" board (KAN-VIS-1: was "All statuses" - the old label asserted a
-    // completeness the board never delivered; it shows non-terminal work only). The stable
-    // id stays '__all__' everywhere (data-board, ?board=, the per-user default-board key),
-    // so no stored reference is orphaned by the rename.
-    var all = document.createElement('button');
-    all.className='frz-item'; all.setAttribute('data-board','__all__'); all.title='Open work';
-    // Mutually exclusive with Active Sprint: Open work is "selected" only when NOT sprint-scoped
-    // (a sprint scope means the Active-Sprint pseudo-board is the active selection, not this one).
-    all.setAttribute('aria-current', String(onKanban && state.board==='__all__' && !state.sprintFilter));
-    all.innerHTML = KANBAN_IC + '<span>Open work</span>';
-    bn.appendChild(all);
-    // Built-in "Active Sprint" board: shows only while a sprint is Active (only one can be at a
-    // time). Reuses the Stage 3 ?sprint= Kanban scoping - navigates to the Open-work columns
-    // filtered to the active sprint's items. Hidden when no sprint is Active.
-    var _as=activeSprint();
-    if(_as){
-      var asb=document.createElement('button');
-      asb.className='frz-item'; asb.setAttribute('data-activesprint', _as.id); asb.title='Active Sprint: '+_as.name;
-      asb.setAttribute('aria-current', String(onKanban && state.sprintFilter===_as.id));
-      asb.innerHTML = KANBAN_IC + '<span>Active Sprint</span>';
-      bn.appendChild(asb);
-    }
-    _boards.forEach(function(b){
-      var btn = document.createElement('button');
-      btn.className='frz-item'; btn.setAttribute('data-board', b.id); btn.title=b.name;
-      btn.setAttribute('aria-current', String(onKanban && state.board===b.id));
-      btn.innerHTML = KANBAN_IC + '<span>'+esc(b.name)+(b.id===_defaultBoard()?' <span style="color:var(--frz-accent)" title="Default board">★</span>':'')+'</span><button class="frz-rowmenu" data-boardmenu="'+esc(b.id)+'" title="Edit / Duplicate / Delete">…</button>';
-      bn.appendChild(btn);
-    });
-    _frzApplyRailSections();   // RAIL-1: refresh collapse/count after boards repaint (independent re-render)
-  }
-
+  // PART-4 (SHELL-DEBT-1): renderBoardNav() removed. The rail BOARDS section (#frzBoardNav) was deleted
+  // in SHELL-IA-1 Stage 1; the function had since been a guarded no-op (element absent → immediate return),
+  // and all four call sites (renderRail, loadBoards, saveBoards, _setDefaultBoard) were synchronous no-ops,
+  // so removing them changed no load ordering. Boards live in the Kanban board chip; the default-board star
+  // renders in that chip's menu (boardChipMenu), rebuilt on open.
   function renderSavedNav(){
     var sn = document.getElementById('frzSavedNav');
     sn.querySelectorAll('.frz-item').forEach(function(b){ b.remove(); });
@@ -25279,7 +25253,7 @@ if ('serviceWorker' in navigator) {
   // Deliberately NOT from/to/board (view-local; Planning/Dashboard are out of the shared
   // model, and syncURL wouldn't re-emit them on the destination anyway). includeChips=false
   // → project only (for non-shared targets like Planning/Dashboard, where chips don't travel).
-  var _FRZ_SHARED_VIEWS={ list:1, kanban:1, gantt:1 };
+  // PART-4.1 (SHELL-DEBT-1): _FRZ_SHARED_VIEWS={list,kanban,gantt} removed - defined but never read.
   function _frzCarryQS(includeChips){
     var keys = includeChips ? ['project','owner','type','status','assignee','sprint','priority','dept'] : ['project'];   // Stage 3: carry sprint across shared views; + opt-in priority/dept
     var src=new URLSearchParams(location.search), out=new URLSearchParams();
