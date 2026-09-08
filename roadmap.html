@@ -2343,7 +2343,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.36.2';
+const APP_VERSION = '6.36.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -24849,6 +24849,13 @@ if ('serviceWorker' in navigator) {
     try { API.post('/api/items/'+id+'/view', {}).catch(function(){}); } catch(e){}
     state.onItem=true; state.itemId=id; state.itemFromApp=true;   // a beta view entry always sits beneath
     root.classList.add('on-item');
+    // ITEM-RAIL-1 Part 2: openItem is the ONE render path that never toggled .frz-ia (setView/setHome/
+    // setAdmin/setCalendar/setReports all do), so under a flag-on account the item page rendered flag-OFF
+    // chrome - the rail VIEWS section (which flag-on moves into the top-bar tab strip) reappeared here and
+    // nowhere else. Bring the item route under the SAME gate the view routes use; openItem is the sole item
+    // entry point so this covers cold-load, ?item=, ?team=, popstate, in-app nav and the crumb at once.
+    // Flag-off accounts get _frzIA()===false -> no change. #frzLeft stays Back+crumb (deliberate, both flags).
+    if(root) root.classList.toggle('frz-ia', _frzIA());
     // The item overlay flows in-content now (no longer position:fixed), so the
     // view containers must be hidden or they render alongside/over it.
     // applyViewMode() restores them when we navigate back to a view.
