@@ -2343,7 +2343,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.35.5';
+const APP_VERSION = '6.35.6';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -21187,6 +21187,13 @@ if ('serviceWorker' in navigator) {
     _frzSyncAvatar();
 
     // state restore
+    // COLDLOAD-2: record the REQUESTED route once, here, before EITHER default-apply path can fire
+    // (the async _frzSyncSavedFromServer reconcile below OR routeFromLocation at the end of the mount,
+    // whichever wins the race). boot() has already canonicalized ?item=ID -> /item/ID, so this captures
+    // the post-canonical request. state.view is the stale boot default until the router runs, so it is
+    // NOT this value - both default-apply callers consult state.bootReq instead of state.view/location
+    // (the racing navigate mutates location; bootReq stays frozen).
+    if(!state.bootReq) state.bootReq = { path: location.pathname.replace(/\/+$/,''), search: location.search||'' };
     state.saved = loadSaved();           // instant paint from the local cache
     _frzSyncSavedFromServer();           // then reconcile with the server (source of truth; merges this browser's local set once)
     var savedProj = ls(projKey()); if (savedProj) state.project = savedProj;
@@ -24993,7 +25000,11 @@ if ('serviceWorker' in navigator) {
     // wins. SAFETY (POLISH-5 + Part 0.1): the auto-applied chip FILLS, names the filter, and shows the
     // x, so the user can see and one-click clear it. If that fill or x is ever removed, an auto-applied
     // filter becomes a trap with no visible exit - do not remove them without removing this too.
-    if (initial && !_frzHasFilterParams(location.search) && CFG[vm[1]] && (CFG[vm[1]].chips||[]).length){
+    // COLDLOAD-2: gate the default-apply on _frzBootSpecifiesDest() too. When a destination IS specified
+    // (an explicit non-default view, or ?panel=/?release=; item routes returned above), this block is
+    // skipped and we FALL THROUGH to _frzSyncPanelFromURL below - which restores ?panel= instead of being
+    // pre-empted by the default-apply's early return (that early return was the secondary fault).
+    if (initial && !_frzHasFilterParams(location.search) && !_frzBootSpecifiesDest() && CFG[vm[1]] && (CFG[vm[1]].chips||[]).length){
       if(_frzApplyDefaultFilter(vm[1])) return;   // applied the default onto the REQUESTED view (qs-only); false = no default (or cache empty on a first load -> the post-hydration path applies it) -> continue
     }
     if (vm[1]==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
@@ -25153,6 +25164,36 @@ if ('serviceWorker' in navigator) {
   // server row arrives instead. Applies AT MOST ONCE: state.defaultApplied is set BEFORE navigate so a
   // re-entrant call cannot double-apply (a cache-present load applies here and the hydration path then no-ops).
   // qs-ONLY + re-anchor-after-navigate, exactly as the landing rule. The caller owns the landing preconditions.
+  // COLDLOAD-2: did the recorded boot request name a SPECIFIC destination? If so the default saved
+  // filter must NOT fire (from EITHER caller) - a deep link / explicit view wins over the convenience
+  // default. Specified = an item route (/item/:id, incl. the canonicalized ?item=), a destination-
+  // bearing param (panel/release select WHAT is shown, they are not filters), or an explicit view path
+  // other than the view a bare landing resolves to. A bare "/" (and an explicit landing on that
+  // bare-landing view) is NOT specified -> the default applies (the feature, cases 6/7). project=__all__
+  // and pure filter params are handled by _frzHasFilterParams, never here. Reads state.bootReq (frozen at
+  // mount), NEVER location (the racing navigate mutates it) and NEVER state.view (stale until routing).
+  // Stable regardless of which caller wins the race, so both make the same decision.
+  function _frzBootSpecifiesDest(){
+    var req = state.bootReq || { path: location.pathname.replace(/\/+$/,''), search: location.search||'' };
+    // COLDLOAD-2 Addendum A: specified-ness is PATH PRESENCE, not path VALUE. A bare landing has no
+    // requested path; ANY explicit path (a view route, /item/:id, etc.) names a destination and the
+    // default declines. Deterministic and ACCOUNT-INDEPENDENT - it is NEVER compared to lastView(). The
+    // old comparison (`!== lastView()||'gantt'`) made specified-ness depend on the account's persisted
+    // last view, so a user whose lastView was e.g. `reports` got hijacked to the Gantt on a /reports link.
+    // Verified (Addendum 2.2): boot() rewrites only ?item= and /beta, and nothing rewrites a bare "/"
+    // before state.bootReq is captured, so req.path==='' iff the landing was bare - path-presence is exact.
+    if(req.path) return true;                                  // any explicit path -> specified
+    var sp = new URLSearchParams(req.search||'');              // bare path: a destination param still counts
+    return !!(sp.get('panel') || sp.get('release'));           // else unspecified -> default applies (the feature)
+  }
+  // COLDLOAD-2: the view the recorded request resolves to - what the hydration caller applies the default
+  // AGAINST, so it NEVER builds a URL from the stale state.view. Only ever consulted when
+  // _frzBootSpecifiesDest() is false (a bare "/" or the boot-default view), so it resolves to that view.
+  function _frzBootReqView(){
+    var req = state.bootReq || { path:'', search:'' };
+    var vm = (req.path||'').match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar)/);
+    return vm ? vm[1] : (lastView() || 'gantt');
+  }
   function _frzApplyDefaultFilter(view){
     if(state.defaultApplied) return false;
     var df=_defaultFilter(); if(!df) return false;
@@ -25210,8 +25251,8 @@ if ('serviceWorker' in navigator) {
       // on the next load), and we are still on a bare landing. The four rules hold: no URL filter param, a
       // filterable view, URL-wins, My Home/Admin/Calendar left alone. Double-apply is impossible -
       // _frzApplyDefaultFilter no-ops once state.defaultApplied is set (by whichever path applied first).
-      if(!state.defaultApplied && !state.userChanged && (Date.now()-_t0) < 3000 && !state.onItem){
-        var _v=state.view;
+      if(!state.defaultApplied && !state.userChanged && (Date.now()-_t0) < 3000 && !state.onItem && !_frzBootSpecifiesDest()){
+        var _v=_frzBootReqView();   // COLDLOAD-2: the RECORDED requested route's view, NEVER state.view (stale until the router runs). Gated by _frzBootSpecifiesDest, so this fires only for an unspecified landing (bare / or the boot-default view) - where the recorded view IS the correct target.
         if(_v && !_frzHasFilterParams(location.search) && CFG[_v] && (CFG[_v].chips||[]).length) _frzApplyDefaultFilter(_v);
       }
     }).catch(function(){ /* offline / error: keep the cache-seeded state.saved */ });
