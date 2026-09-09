@@ -2359,7 +2359,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.37.6';
+const APP_VERSION = '6.38.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -20647,16 +20647,23 @@ if ('serviceWorker' in navigator) {
     // FIELDS-2: coded-field chips (List only). param maps to the list_items json_extract server filter.
     location:      { label:'Location',        panel:'locationDropPanel',       get:function(){ return _g('getSelectedLocations'); },       param:'location' },
     resolutionType:{ label:'Resolution Type', panel:'resolutionTypeDropPanel', get:function(){ return _g('getSelectedResolutionTypes'); }, param:'resolutionType' },
-    blockedReason: { label:'Blocked Reason',  panel:'blockedReasonDropPanel',  get:function(){ return _g('getSelectedBlockedReasons'); },  param:'blockedReason' }
+    blockedReason: { label:'Blocked Reason',  panel:'blockedReasonDropPanel',  get:function(){ return _g('getSelectedBlockedReasons'); },  param:'blockedReason' },
+    // REPORTER-TEXT-1: a FREE-TEXT chip (no panel) - substring filter on `reporter` (server-side, list_items).
+    // get() returns [value] so the array-based emit/carry loops handle it unchanged; no panel means applyPanel
+    // no-ops (value can't be pruned away) and SAVED-ANCHOR-2's matcher compares it unpruned (both verified).
+    // Filters `reporter`, NOT `reporterEmail`. Value lives in state.reporterFilter (set from the URL on the List).
+    reporter:      { label:'Reporter', freetext:true, param:'reporter',
+                     get:function(){ var v=(state.reporterFilter||'').trim(); return v?[v]:[]; },
+                     set:function(v){ state.reporterFilter=(v||'').trim(); } }
   };
   // FIELDS-2: the opt-in ("+ Filter") extra keys the shell's chip loops iterate. Adding the coded
   // fields here (not to each CFG.extra) means the loops PROCESS them, but a view only SHOWS them if they
   // are in that view's CFG.extra - so they render on the List alone. Empty-list gating is in the offer menu.
-  var _XCHIP = ['priority','dept','location','resolutionType','blockedReason'];
+  var _XCHIP = ['priority','dept','location','resolutionType','blockedReason','reporter'];   // REPORTER-TEXT-1: +reporter (free-text, List-only via CFG.list.extra)
   var CFG = {
     gantt:    { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['groupby','legend','capacity'] },   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
     kanban:   { chips:['owner','assignee','type','status'], extra:['sprint','priority','dept'], opts:['flagged','hideEmpty'] },   // FN5: +Flagged toggle
-    list:     { chips:['owner','assignee','type','status'], extra:['priority','dept','location','resolutionType','blockedReason'], opts:['listgroup','flagged','columns','export'] },     // FN5: +Flagged; GROUPBY-2: +Group by. FIELDS-2: +location/resolutionType/blockedReason chips (List only; server-filtered; gated on non-empty list)
+    list:     { chips:['owner','assignee','type','status'], extra:['priority','dept','location','resolutionType','blockedReason','reporter'], opts:['listgroup','flagged','columns','export'] },     // FN5: +Flagged; GROUPBY-2: +Group by. FIELDS-2: +location/resolutionType/blockedReason chips (List only; server-filtered; gated on non-empty list)
     planning: { chips:['owner','status'],                   extra:['type','assignee','priority','dept'], opts:['whatif'] },   // What-if (Phase 0)
     dashboard:{ chips:['owner','range'],                    extra:[], opts:[] },
     'my-home':{ chips:[],                                   extra:[], opts:[] },  // Stage 5: personal landing, no chips
@@ -21997,6 +22004,7 @@ if ('serviceWorker' in navigator) {
     keys.forEach(function(k){
       if(k==='range'){ var ff=document.getElementById('filterFrom'), ft=document.getElementById('filterTo'); if(ff){ff.value='';} if(ft){ft.value='';} }
       else if(k==='sprint'){ state.sprintFilter=''; }
+      else if(CHIPS[k] && CHIPS[k].freetext){ CHIPS[k].set(''); }   // REPORTER-TEXT-1: free-text chip has no panel - clear the state var
       else if(CHIPS[k]) applyPanel(CHIPS[k].panel, null);
     });
     if(view==='kanban') state.sprintFilter='';   // Stage 3: clear the sprint scope even when it was active only via URL (not in _added)
@@ -22152,9 +22160,9 @@ if ('serviceWorker' in navigator) {
     // cross-view round trip.
     var _cur=new URLSearchParams(location.search);
     var _selfSer=CFG[view].chips.concat(_added[view]||[]);
-    ['priority','dept','location','resolutionType','blockedReason'].forEach(function(x){ if(CFG[view].chips.indexOf(x)>=0 || CFG[view].extra.indexOf(x)>=0) _selfSer.push(x); });   // _XCHIP self-serializes these WHERE OFFERED. FIELDS-CARRY-2: +location/resolutionType/blockedReason (offered on the List) so a clear on the List stays cleared
+    ['priority','dept','location','resolutionType','blockedReason','reporter'].forEach(function(x){ if(CFG[view].chips.indexOf(x)>=0 || CFG[view].extra.indexOf(x)>=0) _selfSer.push(x); });   // _XCHIP self-serializes these WHERE OFFERED. FIELDS-CARRY-2: +location/resolutionType/blockedReason. REPORTER-TEXT-1: +reporter (offered on the List) so a cleared reporter stays cleared
     if(view==='kanban') _selfSer.push('sprint');   // kanban emits sprint explicitly (self-serializes)
-    ['owner','type','status','assignee','sprint','priority','dept','location','resolutionType','blockedReason'].forEach(function(pk){   // the _frzCarryQS cross-view filter set (project is emitted always, above). FIELDS-CARRY-2: +the three FIELDS-2 params so a view that cannot express them preserves them verbatim (suspend, not delete) - paired with the _selfSer addition above so a clear on the List still stays cleared
+    ['owner','type','status','assignee','sprint','priority','dept','location','resolutionType','blockedReason','reporter'].forEach(function(pk){   // the _frzCarryQS cross-view filter set (project is emitted always, above). FIELDS-CARRY-2: +the three FIELDS-2 params. REPORTER-TEXT-1: +reporter - a view that cannot express it preserves it verbatim (suspend, not delete); paired with the _selfSer + carry additions so a clear on the List stays cleared
       if(params.has(pk)) return;                 // already emitted by this view (active)
       if(_selfSer.indexOf(pk)>=0) return;        // this view self-serializes pk -> trust its emit/clear (cleared stays cleared, no resurrect)
       var cv=_cur.get(pk); if(cv) params.set(pk, cv);   // this view cannot express pk -> preserve it verbatim (suspend, do not destroy)
@@ -22210,6 +22218,7 @@ if ('serviceWorker' in navigator) {
     _XCHIP.forEach(function(k){
       if (CFG[view].extra.indexOf(k)<0 && CFG[view].chips.indexOf(k)<0) return;
       var v = qp.get(CHIPS[k].param);
+      if (CHIPS[k].freetext){ CHIPS[k].set(v||''); return; }   // REPORTER-TEXT-1: free-text value, no panel - set the state var verbatim (never split)
       applyPanel(CHIPS[k].panel, v ? v.split(',') : null);
     });
     if (view==='dashboard'){
@@ -25440,7 +25449,7 @@ if ('serviceWorker' in navigator) {
   // → project only (for non-shared targets like Planning/Dashboard, where chips don't travel).
   // PART-4.1 (SHELL-DEBT-1): _FRZ_SHARED_VIEWS={list,kanban,gantt} removed - defined but never read.
   function _frzCarryQS(includeChips){
-    var keys = includeChips ? ['project','owner','type','status','assignee','sprint','priority','dept','location','resolutionType','blockedReason'] : ['project'];   // Stage 3: carry sprint across shared views; + opt-in priority/dept. FIELDS-CARRY-2: +the three FIELDS-2 params so a view-tab / rail click carries them (this is the cross-view carry path; syncURL preserves them on the destination's canonicalization). Reads the CANONICAL URL, so a chip cleared on the List (already absent from the URL via syncURL's _selfSer) is not carried -> stays cleared
+    var keys = includeChips ? ['project','owner','type','status','assignee','sprint','priority','dept','location','resolutionType','blockedReason','reporter'] : ['project'];   // Stage 3: carry sprint across shared views; + opt-in priority/dept. FIELDS-CARRY-2: +the three FIELDS-2 params. REPORTER-TEXT-1: +reporter - the view-tab / rail-click carry path (syncURL preserves it on the destination's canonicalization). Reads the CANONICAL URL, so a chip cleared on the List (already absent via syncURL's _selfSer) is not carried -> stays cleared
     var src=new URLSearchParams(location.search), out=new URLSearchParams();
     keys.forEach(function(k){ var v=src.get(k); if(v!=null && v!=='') out.set(k, v); });
     var s=out.toString(); return s ? ('?'+s) : '';
@@ -25561,7 +25570,7 @@ if ('serviceWorker' in navigator) {
     // applied set (not chips.concat(extra)) is what keeps the display honest on Planning.
     var applied=CFG[view] ? CFG[view].chips.concat(_added[view]||[]) : [];
     var appliedP={}; applied.forEach(function(k){ if(CHIPS[k]) appliedP[CHIPS[k].param]=1; });
-    if(CFG[view]){ ['priority','dept','location','resolutionType','blockedReason'].forEach(function(x){ if((CFG[view].chips.indexOf(x)>=0 || CFG[view].extra.indexOf(x)>=0) && CHIPS[x]) appliedP[CHIPS[x].param]=1; }); }   // FIELDS-CARRY-2: +the three FIELDS-2 params where offered (the List), so a saved filter carrying one shows its anchor ACTIVE on the List and RESTS on views that cannot express it - mirrors priority/dept
+    if(CFG[view]){ ['priority','dept','location','resolutionType','blockedReason','reporter'].forEach(function(x){ if((CFG[view].chips.indexOf(x)>=0 || CFG[view].extra.indexOf(x)>=0) && CHIPS[x]) appliedP[CHIPS[x].param]=1; }); }   // FIELDS-CARRY-2: +the three FIELDS-2 params. REPORTER-TEXT-1: +reporter where offered (the List), so a saved filter carrying it shows its anchor ACTIVE on the List and RESTS where unexpressible
     var ok=true; sp.forEach(function(v,k){ if(!IGNORE[k] && v!=='' && !appliedP[k]) ok=false; });
     return ok;
   }
@@ -25848,6 +25857,7 @@ if ('serviceWorker' in navigator) {
     if (key==='board') return boardChipMenu(anchor);
     if (key==='range') return rangeMenu(anchor);
     if (key==='sprint') return sprintMenu(anchor);
+    if (CHIPS[key] && CHIPS[key].freetext) return reporterMenu(key, anchor);   // REPORTER-TEXT-1: free-text chip -> text-input popover, not a checkbox panel
     var def = CHIPS[key];
     var panel = document.getElementById(def.panel);
     if (!panel) return;
@@ -25892,6 +25902,26 @@ if ('serviceWorker' in navigator) {
       var list=_sprints.filter(function(s){ return s.state==='Planned' || s.state==='Active'; });
       if(!list.length){ var d=document.createElement('div'); d.className='frz-pop-opt'; d.style.color='var(--frz-text-muted)'; d.textContent='No Planned or Active sprints'; pop.appendChild(d); }
       list.forEach(function(s){ pop.appendChild(opt(s.name+(s.state==='Active'?' · Active':''), s.id)); });
+    });
+  }
+  // REPORTER-TEXT-1: the free-text reporter chip's popover - a single text input (name or email substring),
+  // not a checkbox panel. Applies debounced on input and immediately on Enter; the value round-trips via the
+  // URL like every chip. Mirrors rangeMenu (renderBar with the pop open is fine - the pop lives on root, not
+  // in #frzFilterBar, and the input keeps focus). Clearing happens via the chip's x (data-clear) / Clear-all.
+  function reporterMenu(key, anchor){
+    var def=CHIPS[key];
+    openPop(anchor, function(pop){
+      pop.style.minWidth='240px';
+      var wrap=document.createElement('div'); wrap.style.padding='4px';
+      var inp=document.createElement('input'); inp.type='text'; inp.placeholder='Reporter name or email…';
+      inp.value=(def.get()[0]||'');
+      inp.style.cssText='width:100%;box-sizing:border-box;padding:6px 9px;font:inherit;font-size:13px;border:1px solid var(--frz-border-strong);border-radius:6px;background:var(--frz-bg-surface);color:var(--frz-text);outline:none';
+      var t;
+      function apply(){ def.set(inp.value); rerender(); renderBar(); renderRail(); syncURL(true); }
+      inp.addEventListener('input', function(){ clearTimeout(t); t=setTimeout(apply, 300); });
+      inp.addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); clearTimeout(t); apply(); closePop(); } });
+      wrap.appendChild(inp); pop.appendChild(wrap);
+      setTimeout(function(){ try{ inp.focus(); }catch(e){} }, 0);
     });
   }
   // FIELDS-2: a coded field is offered in "+ Filter" only when its list is non-empty (the seventh
@@ -26054,7 +26084,7 @@ if ('serviceWorker' in navigator) {
         _asu.delete('board'); _asu.set('sprint', _asid); navigate('/kanban?'+_asu.toString(), false); return;
       }
       var clr = e.target.closest && e.target.closest('[data-clear]');
-      if (clr){ e.stopPropagation(); var k=clr.getAttribute('data-clear'); if(k==='range'){ var ff=document.getElementById('filterFrom'),ft=document.getElementById('filterTo'); if(ff){ff.value='';ff.dispatchEvent(new Event('change'));} if(ft){ft.value='';ft.dispatchEvent(new Event('change'));} } else if(k==='sprint'){ state.sprintFilter=''; } else applyPanel(CHIPS[k].panel,null); rerender(); renderBar(); renderRail(); syncURL(true); return; }
+      if (clr){ e.stopPropagation(); var k=clr.getAttribute('data-clear'); if(k==='range'){ var ff=document.getElementById('filterFrom'),ft=document.getElementById('filterTo'); if(ff){ff.value='';ff.dispatchEvent(new Event('change'));} if(ft){ft.value='';ft.dispatchEvent(new Event('change'));} } else if(k==='sprint'){ state.sprintFilter=''; } else if(CHIPS[k] && CHIPS[k].freetext){ CHIPS[k].set(''); } else applyPanel(CHIPS[k].panel,null); rerender(); renderBar(); renderRail(); syncURL(true); return; }
       // POLISH-5 Part 7: the saved chip's x clears the applied filter in one click - caught BEFORE the
       // [data-chip] menu-open below (the x lives inside the chip), so tapping the x clears and tapping the
       // rest of the chip opens the dropdown. One action per click.
