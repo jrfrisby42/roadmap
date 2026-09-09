@@ -2343,7 +2343,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.37.0';
+const APP_VERSION = '6.37.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -11582,9 +11582,12 @@ function _listColOrderAll(){
 }
 let _listColsRenderCache = null;
 function _listEffectiveCols(){ return _listColOrderAll().filter(_listColEnabled); }
-function _listTh(id){
+function _listTh(id, opts){
   const c=_LIST_COL_DEF[id]; if(!c) return '';
-  const resizable=(id==='name'||id==='description');
+  // HOME-HEAD-1: opts.plain (My Home) -> never sortable, never resizable, ALWAYS data-col (so the header
+  // cell can be matched to its body cell by identity). The List path (opts absent) is byte-identical.
+  const plain = !!(opts && opts.plain);
+  const resizable=(id==='name'||id==='description') && !plain;
   const w=resizable?_listColWidth(id):null;
   // Only Name + Description are width-constrained (position:relative anchors the grip;
   // width/max-width/overflow applied ONLY once a width is stored). Every other column
@@ -11593,15 +11596,21 @@ function _listTh(id){
   if(resizable) base+=';position:relative';
   if(w) base+=`;width:${w}px;max-width:${w}px;overflow:hidden;text-overflow:ellipsis`;
   const grip=resizable?`<span class="list-resizer" data-col="${id}" title="Drag to resize" style="position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize;user-select:none"></span>`:'';
-  return c.sort
+  const dc=(resizable||plain)?` data-col="${id}"`:'';   // List keeps its exact data-col behavior; plain always carries it
+  return (!plain && c.sort)
     ? `<th class="list-sort" data-col="${id}" data-sort="${c.sort}" style="${base};cursor:pointer;user-select:none">${esc(c.label)}<span class="sort-arrow"></span>${grip}</th>`
-    : `<th${resizable?` data-col="${id}"`:''} style="${base}">${esc(c.label)}${grip}</th>`;
+    : `<th${dc} style="${base}">${esc(c.label)}${grip}</th>`;
 }
-function _renderListHeader(){
-  const hr=document.getElementById('listHeadRow'); if(!hr) return;
-  _listColsRenderCache = _listEffectiveCols();   // snapshot used by the row renderer this pass
-  hr.innerHTML = '<th style="padding:8px 10px;width:32px"><input type="checkbox" id="listSelectAll" title="Select all on this page"></th>'
-    + _listColsRenderCache.map(_listTh).join('');
+// HOME-HEAD-1: parameterized so My Home can reuse it (not fork it). hr = the target header <tr> (defaults
+// to the List's #listHeadRow); leadTh = the leading cell markup (default = the List's select-all checkbox;
+// My Home passes a blank hidden .frz-mw-cb cell - no bulk-select there); thPlain = build non-sortable ths
+// (My Home). All three default to the List's exact prior behavior, so `_renderListHeader()` is unchanged.
+function _renderListHeader(hr, leadTh, thPlain){
+  hr = hr || document.getElementById('listHeadRow'); if(!hr) return;
+  _listColsRenderCache = _listEffectiveCols();   // snapshot used by the row renderer this pass (header + cells share it)
+  const lead = (leadTh!=null) ? leadTh
+    : '<th style="padding:8px 10px;width:32px"><input type="checkbox" id="listSelectAll" title="Select all on this page"></th>';
+  hr.innerHTML = lead + _listColsRenderCache.map(id => _listTh(id, thPlain ? {plain:true} : null)).join('');
 }
 function _listColCount(){ return (_listColsRenderCache||_listEffectiveCols()).length + 1; }   // +checkbox col, for colspan
 function _listColMoveBy(id, dir){
@@ -21142,7 +21151,7 @@ if ('serviceWorker' in navigator) {
       '<div class="frz-home-body-wrap">'+
         '<div id="frzHomeCount" class="frz-mw-count"></div>'+
         '<div id="frzWatchClear" class="frz-mw-clear"></div>'+   // DIGEST-WATCH-1: "Stop watching finished" action slot (Watching tab, when >0 finished; cleared each tab render)
-        '<table class="frz-mw-table"><thead><tr>'+
+        '<table class="frz-mw-table"><thead><tr id="frzHomeHeadRow">'+   // HOME-HEAD-1: filled dynamically by _paintHome; the static cells below are an inert pre-paint fallback, overwritten on every list-tab render
           '<th class="frz-mw-cb"></th><th>Key</th><th>Type</th><th>Name</th><th>Status</th>'+
           '<th>Priority</th><th>Team</th><th>Assignee</th><th style="text-align:center">Pts</th><th>Sprint</th>'+
         '</tr></thead><tbody id="frzHomeBody"></tbody></table>'+
@@ -22224,6 +22233,13 @@ if ('serviceWorker' in navigator) {
   // (or the empty message). Reuses the My Work row markup for all three tabs.
   function _paintHome(items, countText, emptyText){
     var body=document.getElementById('frzHomeBody'); if(!body) return;
+    // HOME-HEAD-1: build the header from the SAME effective columns the rows use (reuses the List's
+    // _renderListHeader with a blank hidden lead cell + plain non-sortable ths - My Home has no bulk-select
+    // and no sort). This also snapshots _listColsRenderCache, which _listRowHtml reads below, so the header
+    // and cells cannot drift. Only the 3 list tabs reach _paintHome; To-dos returns earlier in renderHome
+    // and hides this table, so its header + renderer stay untouched.
+    var hr=document.getElementById('frzHomeHeadRow');
+    if(hr) _call('_renderListHeader', hr, '<th class="frz-mw-cb"></th>', true);
     var cnt=document.getElementById('frzHomeCount'); if(cnt) cnt.textContent = countText||'';
     if(items===null){ body.innerHTML='<tr><td colspan="10" class="frz-mw-empty">Loading…</td></tr>'; return; }
     body.innerHTML = items.length
