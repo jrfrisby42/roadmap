@@ -2359,7 +2359,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.37.3';
+const APP_VERSION = '6.37.4';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -22141,16 +22141,20 @@ if ('serviceWorker' in navigator) {
     // resurrecting a JUST-CLEARED chip (the failure the pre-VIEW-QS-1 carry-forward guarded against): a
     // param the view self-serializes is trusted to have emitted itself when active and stayed absent when
     // cleared, so it is never carried. board stays a kanban-only explicit emit above - it is scope, not a
-    // cross-view filter param, so it is not in this set. KNOWN GAP (its own small stage): the List-only
-    // FIELDS-2 chips (location/resolutionType/blockedReason) are NOT carried - they are non-auto-revealing,
-    // so re-emitting a carried value would risk exactly this resurrect-a-cleared-chip bug. Real case: an IT
-    // user saving a filter with blockedReason=Vendor loses it on a cross-view round trip. Do not paper over
-    // it here by adding them to the set - that trades a known limitation for an unknown bug.
+    // cross-view filter param, so it is not in this set. FIELDS-CARRY-2: the List-only FIELDS-2 chips
+    // (location/resolutionType/blockedReason) are now carried AND self-serialized, mirroring priority/dept -
+    // they are in BOTH the carry set below AND _selfSer-where-offered (the List) above. THE TWO SETS MUST STAY
+    // IN SYNC: carry WITHOUT _selfSer resurrects a just-cleared chip (that was the original warning here, and
+    // it was correct about the NAIVE carry-only fix; adding to BOTH sets is the safe change). Any future chip
+    // added to one MUST be added to the other. Before this they were in neither, so a cross-view round trip
+    // DELETED the param (case a) - destroying the value AND dropping any saved filter's anchor; that is the bug
+    // this fixed. Real case that was broken: an IT user saving a filter with blockedReason=Vendor lost it on a
+    // cross-view round trip.
     var _cur=new URLSearchParams(location.search);
     var _selfSer=CFG[view].chips.concat(_added[view]||[]);
-    ['priority','dept'].forEach(function(x){ if(CFG[view].chips.indexOf(x)>=0 || CFG[view].extra.indexOf(x)>=0) _selfSer.push(x); });   // _XCHIP self-serializes these WHERE OFFERED
+    ['priority','dept','location','resolutionType','blockedReason'].forEach(function(x){ if(CFG[view].chips.indexOf(x)>=0 || CFG[view].extra.indexOf(x)>=0) _selfSer.push(x); });   // _XCHIP self-serializes these WHERE OFFERED. FIELDS-CARRY-2: +location/resolutionType/blockedReason (offered on the List) so a clear on the List stays cleared
     if(view==='kanban') _selfSer.push('sprint');   // kanban emits sprint explicitly (self-serializes)
-    ['owner','type','status','assignee','sprint','priority','dept'].forEach(function(pk){   // the _frzCarryQS cross-view filter set (project is emitted always, above)
+    ['owner','type','status','assignee','sprint','priority','dept','location','resolutionType','blockedReason'].forEach(function(pk){   // the _frzCarryQS cross-view filter set (project is emitted always, above). FIELDS-CARRY-2: +the three FIELDS-2 params so a view that cannot express them preserves them verbatim (suspend, not delete) - paired with the _selfSer addition above so a clear on the List still stays cleared
       if(params.has(pk)) return;                 // already emitted by this view (active)
       if(_selfSer.indexOf(pk)>=0) return;        // this view self-serializes pk -> trust its emit/clear (cleared stays cleared, no resurrect)
       var cv=_cur.get(pk); if(cv) params.set(pk, cv);   // this view cannot express pk -> preserve it verbatim (suspend, do not destroy)
