@@ -2343,7 +2343,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.36.3';
+const APP_VERSION = '6.37.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -11344,7 +11344,7 @@ function _attachLinkIndicator(p){
     + '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a5 5 0 0 1-7.07-7.07l9.19-9.19a3 3 0 0 1 4.24 4.24l-9.2 9.19a1 1 0 0 1-1.41-1.41l8.49-8.49"/></svg>'
     + '</span>';
 }
-const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','watchers','reporter','blockedReason','location','resolutionType','points','sprint','project','due','created'];   // UI-POLISH-1: +reporter, +created (both default hidden via _optin2). BLOCK-REASON-1: +blockedReason (_optin3). FIELDS-1: +location, +resolutionType (default hidden via _optin4; gated OUT entirely when the list is empty). ADOPT-2: +due (default hidden via _optin5). WATCH-COL-1: +watchers after assignee (default hidden via _optin6)
+const _LIST_DEFAULT_ORDER = ['key','type','name','description','status','sla','priority','owner','assignee','watchers','reporter','jira','blockedReason','location','resolutionType','points','sprint','project','due','created'];   // UI-POLISH-1: +reporter, +created (both default hidden via _optin2). BLOCK-REASON-1: +blockedReason (_optin3). FIELDS-1: +location, +resolutionType (default hidden via _optin4; gated OUT entirely when the list is empty). ADOPT-2: +due (default hidden via _optin5). WATCH-COL-1: +watchers after assignee (default hidden via _optin6). JIRA-COL-1: +jira (default hidden via _optin7; gated OUT entirely unless Jira sync on + scope mapped)
 // SCROLL-CARET-1: one shared caret asset for every expand/collapse indicator (replaces the ▶/▾/▼ text
 // glyphs, which Unicode ships at different sizes). Reuses the IC.caret glyph - the same path + the (now
 // mode-safe) .frz-chip-caret class. 12px SVG; the caller keeps its own fixed-width box, so collapsed and
@@ -11402,6 +11402,32 @@ function _listWatchers(it){
   if(extra>0){ discs+='<span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;font-size:8px;font-weight:700;line-height:1;box-sizing:border-box;background:var(--surface2);color:var(--muted);border:1px solid var(--border);'+ring+';margin-left:-4px">+'+extra+'</span>'; }
   var titleAll=ws.map(displayName).join(', ');
   return '<span title="'+escA(titleAll)+'" style="display:inline-flex;align-items:center;vertical-align:middle">'+discs+'</span>';
+}
+// JIRA-COL-1: List Jira cell. Follows the Watchers column's first-plus-count-plus-full-list-in-title
+// STRUCTURE, but renders text keys (not avatars - _listWatchers is avatar-specific, so not directly
+// reusable). The first key links via the per-issue cached URL (it.jiraCache[key].url - the SAME source
+// renderJiraIssueCard uses; there is no client-visible Jira base URL to construct one, so an uncached key
+// stays plain text, never a hardcoded host). +N (the remainder) is plain text; the full key list is in the
+// cell title. No key -> the shared "-" placeholder so rows stay aligned.
+function _listJira(it){
+  var ks = Array.isArray(it && it.jiraTickets) ? it.jiraTickets.filter(Boolean) : [];
+  if(!ks.length) return _listCell('');
+  var cache = (it && it.jiraCache) || {};
+  var first = ks[0];
+  var url = cache[first] && cache[first].url;
+  // A4: an uncached first key renders as plain text (there is no client-visible Jira base URL to build a
+  // link from). Two adjacent rows can then differ in clickability with nothing explaining why, so the
+  // plain case carries a title saying the link is pending a sync. The linked case needs none (the link is
+  // self-evident), and the OUTER title still lists every key (incl. those behind +N) so the full set stays
+  // reachable. The plain title is a fixed safe literal (no dynamic content to esc); the key-list title
+  // below is escA'd. A title is an attribute only - it adds no box, so row height is unaffected (A3).
+  var firstHtml = url
+    ? '<a href="'+escA(url)+'" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-family:monospace">'+esc(first)+'</a>'
+    : '<span title="Jira link available after this issue syncs" style="font-family:monospace">'+esc(first)+'</span>';
+  var extra = ks.length-1;
+  var more = extra>0 ? ' <span style="color:var(--muted);font-size:11px">+'+extra+'</span>' : '';
+  var ttl = ks.length>1 ? ' title="'+escA(ks.join(', '))+'"' : '';
+  return '<span'+ttl+'>'+firstHtml+more+'</span>';
 }
 const _LIST_COL_DEF = {
   key:        { label:'Key',         sort:'item_key',
@@ -11489,6 +11515,12 @@ const _LIST_COL_DEF = {
   // sort:null - consistent with the coded fields. CSV exports usernames as text, not avatars.
   watchers:   { label:'Watchers',    sort:null,
                 td:(it)=>`<td data-col="watchers" style="padding:7px 10px;white-space:nowrap">${_listWatchers(it)}</td>` },
+  // JIRA-COL-1: optional, default-hidden (via _optin7). Linked Jira key(s) from the item blob (it.jiraTickets).
+  // No server sort key (JSON-blob field), so sort:null - consistent with the other coded/optional columns.
+  // Gated OUT of the order entirely (not just default-hidden) unless Jira sync is enabled AND the current
+  // Space scope has a project mapping - see _frzJiraColAvailable in _listColOrderAll. CSV exports all keys.
+  jira:       { label:'Jira',        sort:null,
+                td:(it)=>`<td data-col="jira" style="padding:7px 10px;white-space:nowrap">${_listJira(it)}</td>` },
 };
 function _listColUser(){ try { return (typeof uname==='function'?uname():'') || localStorage.getItem('frazil_rm_user') || ''; } catch(e){ return ''; } }
 function _listOrderKey(){ return 'frazil_beta_listorder_' + _listColUser(); }   // NEW key, separate from the visibility key
@@ -11512,6 +11544,23 @@ function _listColHiddenSet(){
   try { return (typeof window._frzHiddenListCols === 'function') ? window._frzHiddenListCols() : new Set(); } catch(e){ return new Set(); }
 }
 function _listColEnabled(id){ return (id==='key'||id==='name') ? true : !_listColHiddenSet().has(id); }
+// JIRA-COL-1: the Jira column is offered only when Jira sync is enabled AND the current Space scope has a
+// project mapping. Specific Space -> that Space must map; All Spaces -> ANY Space maps (so it's available
+// while scoped to all, and disappears when you narrow to an unmapped Space). Scope comes from the shell
+// (window._frzListScope; '__all__' when there's no shell). Gate off => the column is filtered from the full
+// order in _listColOrderAll, so it's absent from order/header/picker/render/export ENTIRELY (not merely
+// default-hidden). The per-user opt-in lives in a SEPARATE visibility key (frazil_beta_listcols_<user>) that
+// this gate never touches, so un-hiding it in a mapped Space survives a switch to an unmapped one.
+function _frzJiraColAvailable(){
+  try {
+    var cfg = window._jiraSyncConfigData || {};
+    if(!cfg.enabled) return false;
+    var map = window._jiraProjectMappingData || {};
+    var scope = (typeof window._frzListScope==='function') ? window._frzListScope() : '__all__';
+    if(scope && scope !== '__all__') return !!(map[scope] && String(map[scope]).trim());
+    return Object.keys(map).some(function(k){ return map[k] && String(map[k]).trim(); });
+  } catch(e){ return false; }
+}
 // Reconciled FULL order (all columns regardless of visibility): saved ∩ existing, with any
 // code-only id (e.g. a future column) inserted at its default index - never dropped.
 function _listColOrderAll(){
@@ -11528,6 +11577,7 @@ function _listColOrderAll(){
   if(!(Array.isArray(locations) && locations.length)) saved = saved.filter(id => id!=='location');                   // FIELDS-1: absent everywhere (order/picker/render) when unconfigured
   if(!(Array.isArray(resolutionTypes) && resolutionTypes.length)) saved = saved.filter(id => id!=='resolutionType'); // FIELDS-1
   if(!_sprintFieldOn()) saved = saved.filter(id => id!=='sprint');   // FIELDS-2: Sprint column absent unless team has sprints AND Planning is enabled
+  if(!_frzJiraColAvailable()) saved = saved.filter(id => id!=='jira');   // JIRA-COL-1: Jira column absent (order/header/picker/render) unless sync on + scope mapped
   return saved;
 }
 let _listColsRenderCache = null;
@@ -26224,12 +26274,16 @@ if ('serviceWorker' in navigator) {
       if(!ls(key+'_optin4')){ set.add('location'); set.add('resolutionType'); lset(key+'_optin4','1'); changed=true; }   // FIELDS-1: default hidden (when configured; gated out entirely when the list is empty)
       if(!ls(key+'_optin5')){ set.add('due');                                lset(key+'_optin5','1'); changed=true; }   // ADOPT-2: Due column default hidden
       if(!ls(key+'_optin6')){ set.add('watchers');                           lset(key+'_optin6','1'); changed=true; }   // WATCH-COL-1: Watchers column default hidden
+      if(!ls(key+'_optin7')){ set.add('jira');                               lset(key+'_optin7','1'); changed=true; }   // JIRA-COL-1: Jira column default hidden (opt-in survives a hiding scope change - the gate never touches this key)
       if(changed) lset(key, JSON.stringify(Array.from(set)));
     } catch(e){}
   }
   // Expose to the first script (this module is an IIFE, so its functions aren't global).
   // The model-driven List render (_listColEnabled) reads visibility through these.
   try { window._frzHiddenListCols = hiddenListCols; window._frzMigrateListCols = _migrateListColsDefaults; } catch(e){}
+  // JIRA-COL-1: expose the current Space scope so the classic-script Jira-column gate (_frzJiraColAvailable)
+  // can read it. state lives in this IIFE; '__all__' is the safe default (classic/no-shell reads all-Spaces).
+  try { window._frzListScope = function(){ try { return state.project || '__all__'; } catch(e){ return '__all__'; } }; } catch(e){}
   function applyListCols(){
     // Visibility + ORDER are now applied by render-omission in the model-driven header/rows
     // (_renderListHeader + _listRowHtml). Keep the visibility migration; retire the old
@@ -26297,17 +26351,19 @@ if ('serviceWorker' in navigator) {
       blockedReason:{label:'Blocked Reason', get:function(it){ return it.blockedReason||''; }},   // BLOCK-REASON-1
       location:{label:'Location', get:function(it){ return it.location||''; }},                   // FIELDS-1
       resolutionType:{label:'Resolution Type', get:function(it){ return it.resolutionType||''; }}, // FIELDS-1
-      watchers:{label:'Watchers', get:function(it){ return (Array.isArray(it._watchers)?it._watchers:[]).join('; '); }}   // WATCH-COL-1: usernames as text (semicolon-joined), never avatars
+      watchers:{label:'Watchers', get:function(it){ return (Array.isArray(it._watchers)?it._watchers:[]).join('; '); }},   // WATCH-COL-1: usernames as text (semicolon-joined), never avatars
+      jira:{label:'Jira', get:function(it){ return (Array.isArray(it.jiraTickets)?it.jiraTickets:[]).join('; '); }}   // JIRA-COL-1: all keys as text (semicolon-joined), never links
     };
   }
   // mode 'all' → full set in the prompt's order; 'visible' → only shown cols, in table display order.
   function _exportCols(mode){
     var D=_exportColDefs();
     if(mode==='all'){
-      var allCols=['key','name','type','status','priority','owner','assignee','watchers','reporter','blockedReason','location','resolutionType','points','sprint','project','due','created','description'];   // UI-POLISH-1: +reporter,+created. BLOCK-REASON-1: +blockedReason. FIELDS-1: +location,+resolutionType (gated below). ADOPT-2: +due (absolute). WATCH-COL-1: +watchers
+      var allCols=['key','name','type','status','priority','owner','assignee','watchers','reporter','jira','blockedReason','location','resolutionType','points','sprint','project','due','created','description'];   // UI-POLISH-1: +reporter,+created. BLOCK-REASON-1: +blockedReason. FIELDS-1: +location,+resolutionType (gated below). ADOPT-2: +due (absolute). WATCH-COL-1: +watchers. JIRA-COL-1: +jira (gated below)
       if(!(Array.isArray(locations)&&locations.length)) allCols=allCols.filter(function(k){ return k!=='location'; });                     // FIELDS-1: empty list -> absent from export
       if(!(Array.isArray(resolutionTypes)&&resolutionTypes.length)) allCols=allCols.filter(function(k){ return k!=='resolutionType'; });  // FIELDS-1
       if(!_sprintFieldOn()) allCols=allCols.filter(function(k){ return k!=='sprint'; });   // FIELDS-2: Sprint absent from export unless team has sprints + Planning on
+      if(!_frzJiraColAvailable()) allCols=allCols.filter(function(k){ return k!=='jira'; });   // JIRA-COL-1: Jira absent from the full export unless sync on + scope mapped
       return allCols.map(function(k){ return D[k]; });
     }
     var hidden=hiddenListCols();
