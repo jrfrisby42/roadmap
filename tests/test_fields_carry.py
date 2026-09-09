@@ -31,6 +31,17 @@ def test_carry_set_includes_fields2():
         assert f"'{p}'" in body, f"the carry set must include {p}"
 
 
+def test_frzcarryqs_keys_include_fields2():
+    # _frzCarryQS is the cross-view carry path a view-tab / rail click uses; its key list must carry the three
+    # too, else the param is dropped before navigation and syncURL never sees it (the 6.37.4 miss).
+    src = _src()
+    m = re.search(r"var keys = includeChips \? \[('project','owner'[^\]]*)\] : \['project'\]", src)
+    assert m, "_frzCarryQS key list was not found"
+    body = m.group(1)
+    for p in ("location", "resolutionType", "blockedReason"):
+        assert f"'{p}'" in body, f"_frzCarryQS.keys must include {p} (the tab-click carry path)"
+
+
 def test_selfser_includes_fields2():
     # the _selfSer-where-offered list must list all three, alongside priority/dept
     src = _src()

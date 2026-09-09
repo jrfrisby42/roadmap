@@ -2359,7 +2359,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.37.4';
+const APP_VERSION = '6.37.5';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -25440,7 +25440,7 @@ if ('serviceWorker' in navigator) {
   // → project only (for non-shared targets like Planning/Dashboard, where chips don't travel).
   // PART-4.1 (SHELL-DEBT-1): _FRZ_SHARED_VIEWS={list,kanban,gantt} removed - defined but never read.
   function _frzCarryQS(includeChips){
-    var keys = includeChips ? ['project','owner','type','status','assignee','sprint','priority','dept'] : ['project'];   // Stage 3: carry sprint across shared views; + opt-in priority/dept
+    var keys = includeChips ? ['project','owner','type','status','assignee','sprint','priority','dept','location','resolutionType','blockedReason'] : ['project'];   // Stage 3: carry sprint across shared views; + opt-in priority/dept. FIELDS-CARRY-2: +the three FIELDS-2 params so a view-tab / rail click carries them (this is the cross-view carry path; syncURL preserves them on the destination's canonicalization). Reads the CANONICAL URL, so a chip cleared on the List (already absent from the URL via syncURL's _selfSer) is not carried -> stays cleared
     var src=new URLSearchParams(location.search), out=new URLSearchParams();
     keys.forEach(function(k){ var v=src.get(k); if(v!=null && v!=='') out.set(k, v); });
     var s=out.toString(); return s ? ('?'+s) : '';
