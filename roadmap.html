@@ -62,8 +62,24 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   }
 
   /* ── Dark mode: global element overrides ── */
+  /* DARK-ACTIVE-1: this legacy global button clobber (background/color/border !important) predates the Flow
+     shell and overrode the shell's themed active-state fills in dark. .frz-tab / .frz-chip / .frz-item /
+     .frz-set-tab active states resolve --frz-accent-soft (#15314a in dark) and the scope chip an inline
+     Space-colour color-mix, but this rule's !important forced them all to --surface2 (#1C2230) + --text, so
+     the active view/filter/rail state was indistinguishable from its inactive sibling in dark. The shell
+     fully themes these families via --frz-* tokens (base rules + their own dark overrides), so they are
+     excluded here - the SAME pattern already applied to .frz-newitem/.frz-lp-openbtn/.frz-avatar etc. Fixes
+     flag-on and flag-off together (both use these classes). Light is unaffected (this rule is dark-only).
+     The .frz-cal-daytoggle buttons are BARE <button> children (no own class), so they take a complex
+     :not(.frz-cal-daytoggle button) rather than a class exclusion. The .frz-theme-seg buttons are
+     deliberately NOT excluded: they are already differentiated in dark by rule 20165 (a #0059A9 fill via
+     #frzSettingsModal ID specificity), so they never lost their active state - aligning that hue to the dark
+     accent would mean touching 20165's shared primary-button list, out of scope here.
+     PARKED, not this stage: this is the classic-shaped "one global !important that every new surface must be
+     excluded from one by one" - it has cost debugging twice now; it should eventually be SCOPED to non-Flow
+     surfaces (e.g. :not(.frz-beta ...)) rather than growing an ever-longer :not() chain. */
   body.dark-mode select,
-  body.dark-mode button:not(.primary):not(.btn-save):not(.btn-cancel):not(.btn-danger):not(.btn-ic):not(.rte-btn):not(.frz-newitem):not(.frz-lp-openbtn):not(.frz-bcard-open):not(.frz-avatar):not(.frz-ava-sw) {
+  body.dark-mode button:not(.primary):not(.btn-save):not(.btn-cancel):not(.btn-danger):not(.btn-ic):not(.rte-btn):not(.frz-newitem):not(.frz-lp-openbtn):not(.frz-bcard-open):not(.frz-avatar):not(.frz-ava-sw):not(.frz-tab):not(.frz-chip):not(.frz-item):not(.frz-set-tab):not(.frz-pop-opt):not(.frz-cal-daytoggle button) {
     background: var(--surface2) !important;
     color: var(--text) !important;
     border-color: var(--border) !important;
@@ -2343,7 +2359,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.37.1';
+const APP_VERSION = '6.37.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
