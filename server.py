@@ -1725,7 +1725,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.37.6"
+APP_VERSION = "6.38.0"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -5188,6 +5188,7 @@ def list_items(
     location: Optional[str] = None,          # FIELDS-1: group-by row-fetch filter (JSON-blob field, __none__ = unset)
     resolutionType: Optional[str] = None,    # FIELDS-1
     blockedReason: Optional[str] = None,     # FIELDS-2: row filter (JSON-blob) - was MISSING, so blockedReason=X returned every row (chip + group-expansion defect fix)
+    reporter: Optional[str] = None,          # REPORTER-TEXT-1: free-text substring filter on the indexed reporter column (LIKE, not eq)
     flag: Optional[str] = None,        # FN5: '1' -> only items with an unresolved flag (server-side, uncapped)
     sort: Optional[str] = None,
     page: int = 1,
@@ -5236,6 +5237,14 @@ def list_items(
     eq("json_extract(data, '$.location')", location)
     eq("json_extract(data, '$.resolutionType')", resolutionType)
     eq("json_extract(data, '$.blockedReason')", blockedReason)   # FIELDS-2: the missing filter - powers the Blocked Reason chip AND fixes group-expansion
+    # REPORTER-TEXT-1: free-text SUBSTRING filter on the indexed `reporter` column (mirrors the q clause's
+    # LIKE shape below, NOT eq's exact match). reporter is an indexed column (not a blob field), so this is a
+    # column LIKE, not json_extract. SQLite LIKE is ASCII case-insensitive by default - same as the q clause -
+    # so a mixed-case query matches a lowercase stored address. Substring so the local part alone matches,
+    # which also bridges the username/email mixed-form split for free (no reporterEmail backfill needed).
+    # Filters `reporter`, never `reporterEmail`. Empty / whitespace-only applies no filter (like an unset param).
+    if reporter and reporter.strip():
+        where.append("reporter LIKE ?"); params.append(f"%{reporter.strip()}%")
 
     # Priority: an indexed column, but "no priority" items store NULL (the '' -> None mapping in
     # _project_index_cols), so eq() cannot express the "(No priority)" option. A '__none__' member in

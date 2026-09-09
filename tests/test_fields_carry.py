@@ -67,8 +67,9 @@ def test_selfser_includes_fields2():
 def test_both_sets_paired_not_carry_only():
     # the naive half-fix (carry set only) is the resurrection bug - both must be present together
     src = _src()
-    carry = bool(re.search(r"'assignee','sprint','priority','dept','location','resolutionType','blockedReason'", src))
-    selfser = bool(re.search(r"'priority','dept','location','resolutionType','blockedReason'\]\.forEach", src))
+    # match the three in each set without assuming blockedReason is the LAST element (REPORTER-TEXT-1 appended reporter)
+    carry = bool(re.search(r"'location','resolutionType','blockedReason'[^\]]*\]\.forEach\(function\(pk\)", src))
+    selfser = bool(re.search(r"'location','resolutionType','blockedReason'[^\]]*\]\.forEach\(function\(x\)", src))
     assert carry and selfser, "both the carry set AND _selfSer must carry the three (paired, not carry-only)"
 
 
