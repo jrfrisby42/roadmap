@@ -2359,7 +2359,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.38.0';
+const APP_VERSION = '6.38.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -11300,6 +11300,9 @@ function _listQuery(){
   setMulti('location',       getSelectedLocations());       // FIELDS-2: coded-field chips (server json_extract filters)
   setMulti('resolutionType', getSelectedResolutionTypes()); // FIELDS-2
   setMulti('blockedReason',  getSelectedBlockedReasons());  // FIELDS-2 (also the live blockedReason-filter fix)
+  // REPORTER-TEXT-1: free-text substring filter (no panel, so not a getSelected* - read the beta state var
+  // via the window bridge). Server does `reporter LIKE %value%`. Empty => no filter (unset param).
+  { var _rep = (typeof window._frzReporterFilter==='function') ? window._frzReporterFilter() : ''; if(_rep) params.set('reporter', _rep); }
   if(_betaFlagged) params.set('flag','1');   // FN5: server-side flagged filter (correct across pagination)
   const q = v('itemSearch'); if(q) params.set('q', q);   // shared header search box
   if(_listState.sort) params.set('sort', _listState.sort);
@@ -26367,6 +26370,10 @@ if ('serviceWorker' in navigator) {
   // JIRA-COL-1: expose the current Space scope so the classic-script Jira-column gate (_frzJiraColAvailable)
   // can read it. state lives in this IIFE; '__all__' is the safe default (classic/no-shell reads all-Spaces).
   try { window._frzListScope = function(){ try { return state.project || '__all__'; } catch(e){ return '__all__'; } }; } catch(e){}
+  // REPORTER-TEXT-1: the reporter free-text filter lives in state.reporterFilter (beta closure); the classic
+  // List query builder (_listQuery) needs it to send `reporter` to the server. Bridge it the same way as
+  // _frzListScope (state is not reachable from the classic script otherwise). '' => no filter.
+  try { window._frzReporterFilter = function(){ try { return (state.reporterFilter||'').trim(); } catch(e){ return ''; } }; } catch(e){}
   function applyListCols(){
     // Visibility + ORDER are now applied by render-omission in the model-driven header/rows
     // (_renderListHeader + _listRowHtml). Keep the visibility migration; retire the old
