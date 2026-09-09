@@ -2359,7 +2359,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.37.2';
+const APP_VERSION = '6.37.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -25255,6 +25255,23 @@ if ('serviceWorker' in navigator) {
     if(!state.onItem){ _call('renderCurrentView'); if(state.view!=='my-home' && state.view!=='team-calendar' && state.view!=='admin') renderBar(); }
   }
   function toggleCollapse(){ setCollapsed(!state.collapsed, false); }
+  // COLLAPSE-HOOK-1: verification-only hooks. The rail-collapse toggle (#frzCollapse / #frzTopCollapse /
+  // the bracket-key shortcut) is NOT drivable by tooling - coordinate and synthetic clicks miss it and setCollapsed
+  // is closure-scoped - which left the collapsed-rail cases unverifiable across many stages. These expose the
+  // SAME setCollapsed the button reaches (via toggleCollapse), nothing more; the same shape as the setTheme global.
+  //  1. They exist FOR VERIFICATION, because the toggle is not drivable by tooling.
+  //  2. They PERSIST the collapse preference: setCollapsed(...,false) writes railKey() exactly like a real
+  //     click, so this is USER STATE, not a transient UI nudge. Do not call it casually from other code.
+  //  3. _frzSetCollapsed MUST keep routing through setCollapsed and MUST NEVER grow its own implementation
+  //     (no direct class/grid/brand/persistence work) - a hook that manipulated the DOM itself would verify a
+  //     state the app never actually enters. One hook covers both shells: setCollapsed branches _frzIA()
+  //     (flag-on frz-rail-hidden vs flag-off is-collapsed-ui) internally, so the two classes stay separate here.
+  // _frzIsCollapsed reads the INTERNAL boolean (state.collapsed), never a DOM class, so a check can assert the
+  // requested state took independently of the classes it is testing.
+  try {
+    window._frzSetCollapsed = function(on){ setCollapsed(!!on, false); };   // false = not silent -> matches the button (toggleCollapse) + persists
+    window._frzIsCollapsed  = function(){ return !!state.collapsed; };
+  } catch(e){}
 
   // ════════ saved filters ════════
   function loadSaved(){ _migrateSavedKey(); try { return JSON.parse(ls(savedKey())||'[]'); } catch(e){ return []; } }
