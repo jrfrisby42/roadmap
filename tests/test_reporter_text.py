@@ -63,6 +63,16 @@ def test_define_and_offer_sites():
     assert re.search(r"list:\s*\{ chips:\[[^\]]*\], extra:\[[^\]]*'blockedReason','reporter'\]", src), "CFG.list.extra must include reporter"
 
 
+def test_listquery_actually_sends_reporter():
+    # THE site that makes the filter act: _listQuery (the List's own fetch builder) must send `reporter`.
+    # reporter is a beta state var (no classic panel), so it is bridged to the classic script via
+    # window._frzReporterFilter. Without this the chip shows and the URL carries it but the rendered List
+    # does NOT filter - the defect caught in the 6.38.0 live pass.
+    src = _html()
+    assert "window._frzReporterFilter = function()" in src, "state.reporterFilter must be bridged to the classic script"
+    assert "params.set('reporter', _rep)" in src, "_listQuery must send reporter to /api/items"
+
+
 def test_freetext_apply_menu_and_clear_branches():
     src = _html()
     # apply-from-URL free-text branch (never split)
