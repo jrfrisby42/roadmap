@@ -42,6 +42,18 @@ def test_frzcarryqs_keys_include_fields2():
         assert f"'{p}'" in body, f"_frzCarryQS.keys must include {p} (the tab-click carry path)"
 
 
+def test_view_expresses_saved_includes_fields2():
+    # _frzViewExpressesSaved is the anchor DISPLAY gate: a saved filter shows active only when the view
+    # "expresses" every identifying param. Its appliedP set mirrors priority/dept and must include the three,
+    # else a FIELDS-2 saved filter rests (no anchor) even on the List that offers it.
+    src = _src()
+    m = re.search(r"if\(CFG\[view\]\)\{ \[('priority','dept'[^\]]*)\]\.forEach\(function\(x\)\{ if\(\(CFG\[view\]\.chips", src)
+    assert m, "_frzViewExpressesSaved appliedP list was not found"
+    body = m.group(1)
+    for p in ("location", "resolutionType", "blockedReason"):
+        assert f"'{p}'" in body, f"_frzViewExpressesSaved must express {p} (else the anchor rests on the List)"
+
+
 def test_selfser_includes_fields2():
     # the _selfSer-where-offered list must list all three, alongside priority/dept
     src = _src()
