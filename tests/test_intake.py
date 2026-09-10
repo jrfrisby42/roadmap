@@ -155,7 +155,15 @@ def test_intake_presign_validation(client, team, admin_headers):
                              "size": 99_000_000}).status_code == 413
 
 
-def test_submit_records_intake_attachment_and_rejects_foreign_key(client, team, admin_headers):
+def test_submit_records_intake_attachment_and_rejects_foreign_key(client, team, admin_headers, monkeypatch):
+    # INTAKE-PROMOTE-1: a recorded intake/ attachment is now COPIED to items/{pid}/ on submit
+    # (copy-on-submit), so the stored key is items/-prefixed, not intake/. A foreign key is still
+    # rejected at record time, BEFORE promotion. Mock S3 so the copy succeeds (the credential-less
+    # env would otherwise drop the file per A3 option 3, which is its own guard in test_intake_promote).
+    class _FakeS3:
+        def copy_object(self, **kw):
+            return {}
+    monkeypatch.setattr(server, "_s3_client", lambda: _FakeS3())
     _expose(client, admin_headers, types=["Bug"])
     server._rate.clear()
     good = {"attId": "abc123", "key": f"intake/{team}/abc123/shot.png",
@@ -167,8 +175,11 @@ def test_submit_records_intake_attachment_and_rejects_foreign_key(client, team, 
     it = next(p for p in client.get("/api/all", headers=admin_headers).json()["projects"]
               if p["name"] == "With shot")
     keys = [a["key"] for a in (it.get("attachments") or [])]
-    assert f"intake/{team}/abc123/shot.png" in keys        # our-prefix key kept
-    assert not any(k.startswith("items/") for k in keys)   # foreign key dropped
+    # the good attachment is PROMOTED intake/ -> items/{pid}/ (copy-on-submit)
+    assert keys == [f"items/{it['id']}/abc123/shot.png"], keys
+    # the foreign items/5/... key was rejected at record time - never promoted, never stored
+    assert not any("secret.png" in k for k in keys)
+    assert "items/5/x/secret.png" not in keys
 
 
 # ── 4.15.0: project + department on submission ────────────────────────────────
