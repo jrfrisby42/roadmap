@@ -2359,7 +2359,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.38.5';
+const APP_VERSION = '6.38.6';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -19107,6 +19107,10 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-chip-divider { width:1px; height:20px; background:var(--frz-border-strong); margin:0 5px; flex-shrink:0; align-self:center; }
   .frz-beta :focus-visible { outline:2px solid var(--frz-accent); outline-offset:2px; border-radius:4px; }
   .frz-beta svg.frz-ic { stroke:currentColor; fill:none; stroke-width:1.33; stroke-linecap:round; stroke-linejoin:round; }   /* frz-ic set is 16x16 viewBox: 1.33 here = stroke 2 on the 24x24 standard */
+  /* GLYPH-IC-1 Part 1: an frz-ic placed as a toolbar button label has NO sizing wrapper (the tab/bell/
+     watch contexts each size their own svg), so it blows up to the button's width (~214px) and clips to
+     blank - the 6.38.5 IC.image regression. Size it here, matching the .frz-tab-ic svg convention. */
+  .frz-beta .frz-rte-btn svg.frz-ic { width:15px; height:15px; display:block; }
 
   /* Rail */
   .frz-beta .frz-rail { background:var(--frz-bg-rail); border-right:1px solid var(--frz-border); display:flex; flex-direction:column; overflow:hidden; min-width:0; }
