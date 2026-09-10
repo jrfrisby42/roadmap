@@ -7997,7 +7997,7 @@ def _audit_forbidden_page(team: str) -> str:
 <style>*{{box-sizing:border-box;margin:0;padding:0}}body{{font-family:'Lato',sans-serif;background:#f5f5f7;color:#1a1a2e;display:flex;align-items:center;justify-content:center;min-height:100vh}}.card{{background:#fff;border-radius:12px;padding:40px;text-align:center;max-width:400px;box-shadow:0 4px 20px rgba(0,0,0,.1)}}h1{{font-size:20px;font-weight:900;margin-bottom:12px;color:#e8394a}}p{{font-size:13px;color:#7070a0;margin-bottom:20px}}a{{background:#0059A9;color:#fff;padding:9px 20px;border-radius:7px;text-decoration:none;font-weight:700;font-size:13px}}</style>
 </head><body>
 <div class="card">
-  <h1>⛔ Access Denied</h1>
+  <h1>Access Denied</h1>
   <p>The audit log requires admin access. Please log in with an admin account for the <strong>{html.escape(team)}</strong> team.</p>
   <a href="/?team={html.escape(team)}">← Back to Flow</a>
 </div>
@@ -8132,7 +8132,7 @@ tr:hover td{{background:#fafafe}}
 </head><body>
 <div class="header">
   <div>
-    <h1>⚙ Audit Log - {team}</h1>
+    <h1>Audit Log - {team}</h1>
     <div class="sub">{len(rows)} entries shown</div>
     <div style="font-size:11px;color:#888;margin-top:4px">App v{APP_VERSION} · Server v{APP_VERSION}</div>
   </div>
