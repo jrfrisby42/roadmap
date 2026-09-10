@@ -2271,7 +2271,13 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
 
 @app.post("/api/intake/{team}/attach")
 def intake_presign(team: str, body: dict = Body(...), request: FRequest = None):
-    """Public: presigned S3 PUT for a portal attachment. Rate-limited, type/size-capped."""
+    """Public: presigned S3 POST for a portal attachment. Rate-limited, type-restricted, and the
+    size cap is a real S3 policy condition (content-length-range) - PRESIGN-CAP-1. A presigned PUT
+    (generate_presigned_url) cannot carry a size condition, so the old path only refused to sign an
+    oversized DECLARED size while the actual body was unbounded. A presigned POST expresses the cap
+    as policy, so S3 itself rejects an oversized body (403 EntityTooLarge) whatever the client
+    declared. The declared-size pre-check below is kept as a fast, friendly refusal before an upload
+    starts - belt and suspenders (the policy is the guard, the pre-check the courtesy)."""
     ip = (request.client.host if request else "unknown")
     _check_rate_limit("intake-att:" + ip)
     team = re.sub(r"[^a-z0-9]", "", (team or "").lower())
@@ -2285,24 +2291,36 @@ def intake_presign(team: str, body: dict = Body(...), request: FRequest = None):
         raise HTTPException(422, "size must be an integer")
     if ctype not in _INTAKE_ATTACH_TYPES:
         raise HTTPException(415, "Only images (PNG/JPG/GIF/WebP), PDF, spreadsheets (XLSX/XLS/CSV), or plain text are allowed.")
-    if size > _INTAKE_MAX_ATTACH_BYTES:
+    if size > _INTAKE_MAX_ATTACH_BYTES:   # declared-size pre-check (courtesy); the POST policy is the real guard
         raise HTTPException(413, "File exceeds the 15 MB limit.")
     att_id = _uuid.uuid4().hex
-    key = _intake_attachment_key(team, att_id, filename)
-    params = {"Bucket": ATTACH_BUCKET, "Key": key, "ContentType": ctype}
-    put_headers = {"Content-Type": ctype}
+    key = _intake_attachment_key(team, att_id, filename)   # server-generated; the client cannot choose it
+    # Policy conditions: the size cap (the point of this stage) + the content type, so the type
+    # allow-list is a real upload constraint too, not only a presign-time gate. boto3 pins the exact
+    # Key in the policy automatically (fixed Key, no ${filename} variable), so the prefix stays
+    # server-owned. Fields carry the same values the browser must echo back in the multipart form.
+    fields = {"Content-Type": ctype}
+    conditions = [
+        ["content-length-range", 0, _INTAKE_MAX_ATTACH_BYTES],
+        {"Content-Type": ctype},
+    ]
     if ATTACH_KMS_KEY_ID:
-        params["ServerSideEncryption"] = "aws:kms"
-        params["SSEKMSKeyId"] = ATTACH_KMS_KEY_ID
-        put_headers["x-amz-server-side-encryption"] = "aws:kms"
-        put_headers["x-amz-server-side-encryption-aws-kms-key-id"] = ATTACH_KMS_KEY_ID
+        # Mirror the PUT path's guard EXACTLY - do not hardcode the SSE fields. A POST expresses
+        # SSE-KMS as form fields + matching policy conditions (not request headers). When the CMK is
+        # unset the bucket's default encryption applies and these are omitted, identical to the PUT
+        # path's unset branch. (Prod has ATTACH_KMS_KEY_ID set, so this branch is the live one.)
+        fields["x-amz-server-side-encryption"] = "aws:kms"
+        fields["x-amz-server-side-encryption-aws-kms-key-id"] = ATTACH_KMS_KEY_ID
+        conditions.append({"x-amz-server-side-encryption": "aws:kms"})
+        conditions.append({"x-amz-server-side-encryption-aws-kms-key-id": ATTACH_KMS_KEY_ID})
     try:
-        url = _s3_client().generate_presigned_url("put_object", Params=params, ExpiresIn=PRESIGN_EXPIRY)
+        post = _s3_client().generate_presigned_post(
+            ATTACH_BUCKET, key, Fields=fields, Conditions=conditions, ExpiresIn=PRESIGN_EXPIRY)
     except Exception as e:
         log.warning("[Intake] presign failed for team %s: %s", team, e)
         raise HTTPException(502, "Could not presign the upload (storage unavailable).")
-    return {"attId": att_id, "key": key, "url": url,
-            "name": _sanitize_filename(filename), "headers": put_headers}
+    return {"attId": att_id, "key": key, "url": post["url"], "fields": post["fields"],
+            "name": _sanitize_filename(filename)}
 
 def _ticket_token(team: str, pid) -> str:
     """Unguessable, stateless status-link token (no expiry - a 'track your ticket'
@@ -2858,8 +2876,22 @@ async function addFiles(files){
     try{
       var pr=await fetch('/api/intake/'+encodeURIComponent(team)+'/attach',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:f.name,contentType:f.type||'application/octet-stream',size:f.size})});
       var pd=await pr.json().catch(function(){return {}}); if(!pr.ok) throw new Error((pd&&pd.detail)||'rejected');
-      var put=await fetch(pd.url,{method:'PUT',headers:pd.headers||{'Content-Type':f.type||'application/octet-stream'},body:f});
-      if(!put.ok) throw new Error('upload failed');
+      // PRESIGN-CAP-1: upload via the presigned POST (was a PUT). Append EVERY policy field in
+      // order, then the file LAST - S3 ignores any form field that appears after the file, so a
+      // reordering silently drops the policy or the SSE-KMS fields (the upload then fails oddly,
+      // or worse succeeds unencrypted). Do not set Content-Type on the fetch - the browser sets
+      // the multipart boundary itself.
+      var fd=new FormData(); var flds=pd.fields||{};
+      Object.keys(flds).forEach(function(k){ fd.append(k, flds[k]); });
+      fd.append('file', f);   // MUST be last
+      var put=await fetch(pd.url,{method:'POST',body:fd});
+      if(!put.ok){
+        // S3 answers 403 EntityTooLarge when the body exceeds content-length-range. Show the
+        // reporter the real reason, not a silent drop or a bare status.
+        var msg='upload failed ('+put.status+')';
+        try{ var xt=await put.text(); if(/EntityTooLarge/i.test(xt)) msg='exceeds the 15 MB limit'; }catch(_e){}
+        throw new Error(msg);
+      }
       _atts.push({attId:pd.attId,key:pd.key,name:pd.name||f.name,contentType:f.type||'application/octet-stream',size:f.size}); renderAtts();
     }catch(e){ showErr(f.name+': '+(e.message||'upload failed')); }
   }
@@ -6068,7 +6100,12 @@ def delete_assignment(aid: int, auth: dict = Depends(require_role("admin", "edit
 # (p.attachments) so there is no schema migration.
 import uuid as _uuid
 
-MAX_ATTACH_BYTES = 50 * 1024 * 1024  # 50 MB, enforced server-side (refuse to sign) + client-side
+MAX_ATTACH_BYTES = 50 * 1024 * 1024  # 50 MB. This is a declared-size REFUSAL, not an S3 policy cap:
+# the item-page presign below still uses generate_presigned_url("put_object"), which cannot carry a
+# content-length-range, so an oversized DECLARED size is refused before signing but the actual PUT
+# body is unbounded. This path is authenticated, so the risk is an insider abusing their own tenancy.
+# The PUBLIC intake presign was converted to a policy-enforced POST (PRESIGN-CAP-1); converting this
+# authenticated path the same way (POST + content-length-range) is a separate, un-authorized stage.
 # ATTACH-URL-1: single source of truth for the presigned-UPLOAD (PUT) lifetime. 300s is correct for a
 # one-shot, click-initiated upload. VIEW/download no longer uses a render-time presign at all - it goes
 # through the authenticated streaming proxy (GET .../attachments/{id}/raw), so a URL embedded in a page
