@@ -2313,8 +2313,18 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
                               (json.dumps(promoted), item["id"]))
         except Exception as e:
             log.warning(f"[Intake] attachment promotion failed for item {item.get('id')}: {e}")
+    # B.5: fold the dropped filenames into this create audit so a promotion failure is DISCOVERABLE
+    # by staff, not only visible to the reporter (who rarely escalates) or greppable in the log. The
+    # promotion above already ran, so dropped_atts is in scope here - no second audit entry needed.
+    # Written ONLY when something was dropped, so a populated field always means a copy failed; the
+    # no-drop majority case keeps exactly today's content (the reporter email). Names, not S3 keys
+    # (the name is what an admin matches a complaint to; keys leak the prefix). The two promote
+    # log.warnings above are the exception-detail record and stay - the audit does not replace them.
+    _create_changes = {"email": email}
+    if dropped_atts:
+        _create_changes["attachmentsDropped"] = dropped_atts
     try:
-        write_audit(team, "intake:create", "Portal", item["id"], title, changes={"email": email})
+        write_audit(team, "intake:create", "Portal", item["id"], title, changes=_create_changes)
     except Exception as e:
         log.warning(f"[Intake] audit failed for item {item.get('id')}: {e}")
     # Confirmation emails to the reporter + the team inbox (best-effort - never fail the submit).
