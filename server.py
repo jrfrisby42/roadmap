@@ -1725,7 +1725,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.38.2"
+APP_VERSION = "6.38.3"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -2152,6 +2152,51 @@ def intake_team_config(team: str):
             "defaultType": _intake_default_type(team),
             "departments": _intake_departments(team), "projects": _intake_projects(team)}
 
+def _promote_intake_attachments(team: str, pid: int, atts: list):
+    """Copy-on-submit (INTAKE-PROMOTE-1): copy each intake/{team}/ attachment to items/{pid}/ so the
+    intake/ prefix becomes genuinely transient (a lifecycle rule can then reap it safely - Part C).
+    Returns (promoted, dropped_names).
+
+    Per-file, best-effort, and it NEVER raises - the ticket is already committed before this runs, so
+    a copy failure must not roll it back. On a copy failure the attachment is DROPPED (A3 option 3),
+    never left as a live intake/ reference (that is the trap: a later intake/ lifecycle rule could
+    then delete a still-referenced object). A dropped file's name is returned so the reporter can be
+    told (submit surfaces it) - a silent drop behind a success message is worse than an error.
+
+    The source object is NOT deleted here - the lifecycle rule handles it, which preserves a reversal
+    window. Attachments already under items/ (or any non-intake key) pass through untouched, so this
+    is idempotent across runs and a mixed-key item keeps its items/-keyed files. SSE-KMS is inherited
+    from the bucket's default encryption (verified aws:kms with no explicit params); the
+    if ATTACH_KMS_KEY_ID: guard is mirrored as belt-and-suspenders (B1.4)."""
+    promoted, dropped = [], []
+    try:
+        s3 = _s3_client()
+    except Exception as e:
+        log.warning("[Intake] promote: S3 client unavailable for item %s: %s", pid, e)
+        s3 = None
+    for a in atts:
+        key = str(a.get("key") or "")
+        if not key.startswith(f"intake/{team}/"):
+            promoted.append(a)                        # already items/ (or foreign) - leave as-is
+            continue
+        if s3 is None:
+            dropped.append(a.get("name") or "file")   # cannot copy any - drop, never keep an intake/ key
+            continue
+        try:
+            dest = _attachment_key(pid, a.get("id") or _uuid.uuid4().hex, a.get("name") or "file")
+            params = {"Bucket": ATTACH_BUCKET, "Key": dest,
+                      "CopySource": {"Bucket": ATTACH_BUCKET, "Key": key}}
+            if ATTACH_KMS_KEY_ID:                     # belt-and-suspenders; bucket default is already SSE-KMS
+                params["ServerSideEncryption"] = "aws:kms"
+                params["SSEKMSKeyId"] = ATTACH_KMS_KEY_ID
+            s3.copy_object(**params)
+            na = dict(a); na["key"] = dest
+            promoted.append(na)
+        except Exception as e:
+            log.warning("[Intake] promote copy failed for item %s att %s: %s", pid, a.get("id"), e)
+            dropped.append(a.get("name") or "file")
+    return promoted, dropped
+
 @app.post("/api/intake/{team}")
 def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     """Public: create a ticket from the portal. Rate-limited, type-restricted."""
@@ -2248,6 +2293,26 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     with db(team) as c:
         _assign_item_key(c, item)
         item["id"] = _insert_project(c, item)
+    # Copy-on-submit (INTAKE-PROMOTE-1): the item now has an id, so promote each intake/ attachment
+    # to items/{pid}/ and re-store the rewritten keys. This runs AFTER the insert above has
+    # committed - the ticket exists and must never be rolled back by a copy failure. A2.2/A2.3: the
+    # id does not exist until _insert_project, and today the item + its records land atomically in
+    # one db block, so the copy is a deliberately SEPARATE step (insert, then copy, then a second,
+    # surgical UPDATE of just $.attachments - no reindex, no wholesale blob rewrite). The S3 copies
+    # run OUTSIDE any db connection (never hold the DB open across network calls). A3 option 3: a
+    # file that cannot be copied is dropped and surfaced to the reporter, never left as an intake/
+    # key. Best-effort throughout - a failure here can degrade attachments but never fail the submit.
+    dropped_atts = []
+    if item.get("attachments"):
+        try:
+            promoted, dropped_atts = _promote_intake_attachments(team, item["id"], item["attachments"])
+            if promoted != item["attachments"]:
+                item["attachments"] = promoted
+                with db(team) as c:
+                    c.execute("UPDATE projects SET data=json_set(data, '$.attachments', json(?)) WHERE id=?",
+                              (json.dumps(promoted), item["id"]))
+        except Exception as e:
+            log.warning(f"[Intake] attachment promotion failed for item {item.get('id')}: {e}")
     try:
         write_audit(team, "intake:create", "Portal", item["id"], title, changes={"email": email})
     except Exception as e:
@@ -2267,7 +2332,8 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     except Exception as e:
         log.warning(f"[Intake] team-notify hook failed for item {item.get('id')}: {e}")
     return {"ok": True, "itemKey": item.get("itemKey"), "id": item["id"],
-            "url": f"{APP_BASE_URL}/ticket?team={team}&id={item['id']}&t={_ticket_token(team, item['id'])}"}
+            "url": f"{APP_BASE_URL}/ticket?team={team}&id={item['id']}&t={_ticket_token(team, item['id'])}",
+            "attachmentsDropped": dropped_atts}
 
 @app.post("/api/intake/{team}/attach")
 def intake_presign(team: str, body: dict = Body(...), request: FRequest = None):
@@ -2275,7 +2341,8 @@ def intake_presign(team: str, body: dict = Body(...), request: FRequest = None):
     size cap is a real S3 policy condition (content-length-range) - PRESIGN-CAP-1. A presigned PUT
     (generate_presigned_url) cannot carry a size condition, so the old path only refused to sign an
     oversized DECLARED size while the actual body was unbounded. A presigned POST expresses the cap
-    as policy, so S3 itself rejects an oversized body (403 EntityTooLarge) whatever the client
+    as policy, so S3 itself rejects an oversized body (an EntityTooLarge error, HTTP 400 for a POST
+    content-length-range violation - the client keys off the error code, not the status) whatever the client
     declared. The declared-size pre-check below is kept as a fast, friendly refusal before an upload
     starts - belt and suspenders (the policy is the guard, the pre-check the courtesy)."""
     ip = (request.client.host if request else "unknown")
@@ -2796,6 +2863,7 @@ _INTAKE_PAGE = """<!doctype html><html lang="en"><head>
   <div class="done" id="done"><div style="display:flex;justify-content:center;margin-bottom:6px"><!--FLOWMARK_DONE--></div>
     <h2 style="margin:8px 0 4px">Thanks - your ticket was created.</h2>
     <p style="color:#6b7280">Reference: <span class="k" id="doneKey"></span></p>
+    <div id="doneAttWarn" style="display:none;margin:10px auto 0;max-width:420px;background:#fef6e7;border:1px solid #f2c66b;color:#8a5a00;border-radius:8px;padding:10px 14px;font-size:13px;line-height:1.4;text-align:left"></div>
     <a id="doneLink" href="#" style="display:none;margin-top:14px;background:var(--acc);color:#fff;text-decoration:none;border-radius:8px;padding:10px 18px;font-weight:700;font-size:14px">View your ticket →</a></div>
   <div style="border-top:1px solid #eef1f4;padding:16px 24px;background:#fafbfc">
     <div style="font-size:13px;font-weight:700;color:#1f2733;margin-bottom:6px">Already submitted a ticket?</div>
@@ -2886,7 +2954,8 @@ async function addFiles(files){
       fd.append('file', f);   // MUST be last
       var put=await fetch(pd.url,{method:'POST',body:fd});
       if(!put.ok){
-        // S3 answers 403 EntityTooLarge when the body exceeds content-length-range. Show the
+        // S3 answers EntityTooLarge (HTTP 400 for a POST content-length-range violation) when the
+        // body exceeds the cap. Key off the error code in the body, not the status. Show the
         // reporter the real reason, not a silent drop or a bare status.
         var msg='upload failed ('+put.status+')';
         try{ var xt=await put.text(); if(/EntityTooLarge/i.test(xt)) msg='exceeds the 15 MB limit'; }catch(_e){}
@@ -2919,6 +2988,12 @@ async function submitForm(ev){
     var d=await r.json().catch(function(){return {}});
     if(!r.ok) throw new Error((d&&d.detail)||('Submission failed ('+r.status+')'));
     $('#form').style.display='none'; $('#done').style.display='block'; $('#doneKey').textContent=(d.itemKey||('#'+d.id));
+    // Copy-on-submit may drop a file it could not save (INTAKE-PROMOTE-1, A3 option 3). The reporter
+    // MUST see this - a dropped attachment behind a plain success reads as "it arrived".
+    var dropped=(d.attachmentsDropped||[]);
+    if(dropped.length){ var w=$('#doneAttWarn'); if(w){ var many=dropped.length>1;
+      w.textContent='Note: '+dropped.length+' attachment'+(many?'s':'')+' could not be saved and '+(many?'were':'was')+' not attached to your ticket: '+dropped.join(', ')+'. Please contact the team to add '+(many?'them':'it')+'.';
+      w.style.display='block'; } }
     if(d.url){ var dl=$('#doneLink'); dl.href=d.url; dl.style.display='inline-block'; }
   }catch(e){ if(window.turnstile){ try{ turnstile.reset(); }catch(_e){} } showErr(e.message||'Submission failed'); btn.disabled=false; }
   return false;
