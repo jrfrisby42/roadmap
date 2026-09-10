@@ -58,10 +58,13 @@ def test_d2_comment_image_button_uses_ic_not_emoji():
     assert "\\u{1F5BC}" not in src, "the colour picture-frame emoji must no longer appear anywhere"
 
 
-def test_d2_emoji_button_left_as_followup():
-    # the OTHER colour glyph (the emoji button, description-toolbar only) is a recorded follow-up,
-    # deliberately not folded into this stage - it must still be present (untouched).
-    assert "\\u{1F642}" in _html(), "the emoji button glyph is out of scope this stage and must be left in place"
+def test_d2_emoji_button_converted_by_glyph_ic_1():
+    # MOBILE-POLISH-1 left the emoji button (description toolbar) as a recorded follow-up. GLYPH-IC-1
+    # Part 2 IS that follow-up: the smiley literal is now converted to IC.emoji. (Was: assert the
+    # glyph is still present. Updated to the new reality - the follow-up shipped.)
+    src = _html()
+    assert "\\u{1F642}" not in src, "the emoji button smiley was converted to IC.emoji by GLYPH-IC-1"
+    assert "label:IC.emoji" in src, "the emoji button must now render IC.emoji"
 
 
 # ── D3 ────────────────────────────────────────────────────────────────────────

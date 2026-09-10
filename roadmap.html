@@ -2359,7 +2359,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.38.6';
+const APP_VERSION = '6.38.7';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -16838,7 +16838,7 @@ function renderItemPage(p){
   const relD  = parseD(p.releaseDate);
   const startD= parseD(p.start);
   const fmtDate = d => d ? d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : null;
-  const lockNote = isLocked && !isAdmin ? `<span style="font-size:10px;color:#e8a000;display:block;margin-top:2px">🔒 Locked - active item</span>` : '';
+  const lockNote = isLocked && !isAdmin ? `<span style="font-size:10px;color:#e8a000;display:block;margin-top:2px"><svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><rect x="3.5" y="7.2" width="9" height="6" rx="1.2"/><path d="M5.5 7.2V5.2a2.5 2.5 0 0 1 5 0v2"/></svg> Locked - active item</span>` : '';
 
   document.getElementById('ipFields').innerHTML = [
     ipEditField('status',     'Status',       p.status ? `<span class="${statusCls(p.status)}" style="background:none;border:none;padding:0">${esc(p.status)}</span>` : '', 'select', {bold:true, readonly: RESERVED_TERMINAL_STATUSES.has(p.status)}),   // POLISH-2: reserved statuses (Transferred/Duplicate) are locked - no inline picker (server-enforced; use "Not a duplicate" to reopen)
@@ -19111,6 +19111,9 @@ if ('serviceWorker' in navigator) {
      watch contexts each size their own svg), so it blows up to the button's width (~214px) and clips to
      blank - the 6.38.5 IC.image regression. Size it here, matching the .frz-tab-ic svg convention. */
   .frz-beta .frz-rte-btn svg.frz-ic { width:15px; height:15px; display:block; }
+  /* GLYPH-IC-1 Part 2: the link-row badge is a 28px grid-centered chip; size its IC.link svg (same
+     reason as the toolbar rule above - an frz-ic needs an explicit size outside a sizing wrapper). */
+  .frz-beta .frz-att-ic svg.frz-ic { width:15px; height:15px; }
 
   /* Rail */
   .frz-beta .frz-rail { background:var(--frz-bg-rail); border-right:1px solid var(--frz-border); display:flex; flex-direction:column; overflow:hidden; min-width:0; }
@@ -20636,6 +20639,8 @@ if ('serviceWorker' in navigator) {
     teamCalendar:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5 1.8v2.4M11 1.8v2.4"/><circle cx="5" cy="9" r="0.9" fill="currentColor" stroke="none"/><circle cx="8" cy="9" r="0.9" fill="currentColor" stroke="none"/><circle cx="11" cy="9" r="0.9" fill="currentColor" stroke="none"/><circle cx="5" cy="11.6" r="0.9" fill="currentColor" stroke="none"/><circle cx="8" cy="11.6" r="0.9" fill="currentColor" stroke="none"/></svg>',
     clipboard:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="11" rx="1.5"/><rect x="5.5" y="1.8" width="5" height="2.4" rx="1"/><path d="M5.5 7.5h5M5.5 10.5h5"/></svg>',
     image:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="5.6" cy="6.4" r="1.1"/><path d="M2.8 12l3.4-3.3 2.2 2.2 2.3-2.3 2.5 2.6"/></svg>',
+    emoji:'<svg class="frz-ic" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M5.4 9.6c.7 1.2 4.5 1.2 5.2 0"/><circle cx="6" cy="6.6" r="0.75" fill="currentColor" stroke="none"/><circle cx="10" cy="6.6" r="0.75" fill="currentColor" stroke="none"/></svg>',
+    link:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M6.4 9.6l3.2-3.2"/><path d="M7.3 5.2l1-1a2.4 2.4 0 0 1 3.4 3.4l-1.3 1.3"/><path d="M8.7 10.8l-1 1a2.4 2.4 0 0 1-3.4-3.4l1.3-1.3"/></svg>',
     caret:'<svg class="frz-chip-caret" viewBox="0 0 12 12"><path d="M3 4.5l3 3 3-3"/></svg>'
   };
   var VIEW_KEYS = ['gantt','kanban','list','planning','dashboard'];
@@ -29289,7 +29294,7 @@ if ('serviceWorker' in navigator) {
       : '<span class="frz-att-nm" title="'+escA(l.url)+' (blocked: not an http/https link)" style="color:var(--frz-text-muted,var(--muted))">'+label+' <span style="font-size:10px">(blocked link)</span></span>';
     var edit=canLink?'<button type="button" class="frz-att-del" data-linkedit="'+escA(l.id)+'" title="Edit">✎</button>':'';
     var del =canLink?'<button type="button" class="frz-att-del" data-linkdel="'+escA(l.id)+'" title="Remove">✕</button>':'';
-    return '<div class="frz-att-file"><span class="frz-att-ic" title="Link" style="font-weight:700">🔗</span><span class="frz-att-meta">'+body+'</span>'+edit+del+'</div>';
+    return '<div class="frz-att-file"><span class="frz-att-ic" title="Link">'+IC.link+'</span><span class="frz-att-meta">'+body+'</span>'+edit+del+'</div>';
   }
   function _frzLinkFormEls(){
     return { form:document.getElementById('frzLinkForm'), label:document.getElementById('frzLinkLabel'),
@@ -29888,7 +29893,7 @@ if ('serviceWorker' in navigator) {
     code:     { label:'&lt;/&gt;', title:'Code block', run:function(C){ C().toggleCodeBlock().run(); }, isActive:function(ed){ return ed.isActive('codeBlock'); } },
     divider:  { label:'-', title:'Divider', run:function(C){ C().setHorizontalRule().run(); } },
     link:     { label:'Link', title:'Add / edit link', run:function(C, ed){ var prev=ed.getAttributes('link').href||''; var h=prompt('Link URL', prev); if(h===null) return; if(h==='') { C().unsetLink().run(); return; } C().extendMarkRange('link').setLink({ href:h }).run(); }, isActive:function(ed){ return ed.isActive('link'); } },
-    emoji:    { label:'\u{1F642}', title:'Emoji', run:function(C, ed, btn){ _frzToggleEmoji(btn, ed); } },
+    emoji:    { label:IC.emoji, title:'Emoji', run:function(C, ed, btn){ _frzToggleEmoji(btn, ed); } },
     image:    { label:IC.image, title:'Insert image', run:function(C, ed){ var inp=document.createElement('input'); inp.type='file'; inp.accept='image/*'; inp.onchange=function(){ var f=this.files&&this.files[0]; if(f) _frzInsertImage(f, ed); }; inp.click(); } },
     table:    { label:'▦ Table ▾', title:'Table', run:function(C, ed, btn){ _frzMenuPop(btn, [
         { label:'Insert table', fn:function(){ C().insertTable({ rows:3, cols:3, withHeaderRow:true }).run(); } },
@@ -31192,7 +31197,7 @@ if ('serviceWorker' in navigator) {
         '<li><b>Can:</b> create and update items across Gantt, Kanban, List and Planning; <b>comment</b> (with @mentions) and add/remove <b>attachments</b>; plan - run planning sessions, add/remove items to <b>sprints</b> and <b>releases</b>, set <b>capacity overrides</b>, and create <b>availability entries</b> (PTO, training, on-call) on the Calendar; set an item’s status, owner, assignee, type, start date, time estimate, story points and sprint.</li>'+
         '<li><b>Guardrails:</b> once an item is in an <b>active status, its time and date fields lock</b> - to move dates, use <b>Delay</b>, and an editor’s delay change is <b>sent to an admin for approval</b> rather than applied immediately. An editor also can’t move an item back out of an active status (that’s an admin action). A few fields are <b>admin-only</b> and don’t appear in the editor’s form: Priority, Parallel Resources, Recurrence, Ignore Conflicts, and Gantt visibility.</li>'+
         '<li><b>Cannot:</b> change configuration, manage users, delete items, run Jira admin/imports, or edit another admin’s password.</li>'+
-        '<li><b>Team-scoped editors:</b> an editor may be limited to one team (a 📌 badge shows this) - their views focus on that team’s items and the team field is locked. This is a focus aid for the person, not a hard security boundary.</li>'+
+        '<li><b>Team-scoped editors:</b> an editor may be limited to one team (a pin badge shows this) - their views focus on that team’s items and the team field is locked. This is a focus aid for the person, not a hard security boundary.</li>'+
       '</ul>'+
 
       '<p><b><span class="frz-man-role">Admin</span> - full control.</b> Everything an editor can do, plus <b>configuration</b> (statuses and their flags, types, projects, owners, departments, capacity, Jira mapping, the intake portal), <b>user management</b> (add, invite, reset), <b>deletes</b>, and <b>Jira/import</b> tools. Admins’ date changes on active items apply immediately (with a required change reason) instead of going to an approval queue. One special rule: only the original built-in admin can change <b>another admin’s</b> password.</p>'+
