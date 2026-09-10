@@ -11659,9 +11659,12 @@ function _listCardHtml(it, depth){
   const statusBadge = it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;white-space:nowrap">${esc(it.status)}</span>` : '';
   const prio = (it.priority && PRIO_LABELS[it.priority]) ? `<span style="background:${PRIO_COLORS[it.priority]}22;color:${PRIO_COLORS[it.priority]};padding:1px 7px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap">${esc(PRIO_LABELS[it.priority])}</span>` : '';
   const tIc = typeIconHTML(it.type) || '';
-  const typeTxt = it.type ? `<span style="display:inline-flex;align-items:center;gap:4px">${tIc}${esc(it.type)}</span>` : '';
-  const owner = it.dev ? esc(it.dev) : '';
-  const metaLeft = [typeTxt, owner].filter(Boolean).join(' · ');
+  // MOBILE-POLISH-1 D3: render type and owner as matching inline-flex segments so they share one
+  // baseline (was: an inline-flex type span beside bare owner text + a bare " · ", which floated
+  // the separator). The absent-type case renders the SAME shape - the type segment is just omitted.
+  const typeTxt = it.type ? `<span class="lc-mi">${tIc}${esc(it.type)}</span>` : '';
+  const owner = it.dev ? `<span class="lc-mi">${esc(it.dev)}</span>` : '';
+  const metaLeft = [typeTxt, owner].filter(Boolean).join('<span class="lc-sep" aria-hidden="true">·</span>');
   return `<tr class="list-row" data-id="${it.id}" data-depth="${depth||0}" style="cursor:pointer">`
     + `<td class="list-card-cell" colspan="99">`
     + `<div class="list-card">`
@@ -20473,6 +20476,19 @@ if ('serviceWorker' in navigator) {
     .frz-beta .frz-title { font-size:14px; }
     .frz-beta .frz-crumbs .frz-crumb-name { max-width:42vw; }
 
+    /* MOBILE-POLISH-1 D1: shorten the Attachments/Links + Linked-Assets card-header action labels so
+       they stop wrapping mid-word in the narrow phone header. VISIBLE text only - each button carries
+       an aria-label with the full name (added in markup), so the accessible name stays "Add link" /
+       "Upload" / "Create procurement request" while the visible label shortens. The title uses nowrap;
+       the shortened buttons free the room it needs. Desktop is untouched (this is inside <=640px). */
+    .frz-beta .frz-cardh-title { white-space:nowrap; }
+    .frz-beta #frzLinkAdd { font-size:0; }
+    .frz-beta #frzLinkAdd::after { content:"Link"; font-size:12px; }
+    .frz-beta #frzAttUp { font-size:0; }
+    .frz-beta #frzAttUp::after { content:"Upload"; font-size:12px; }
+    .frz-beta #frzReqCreate { font-size:0; }
+    .frz-beta #frzReqCreate::after { content:"Request"; font-size:12px; }
+
     /* The bottom nav replaces the rail on phone: hide the rail, give content the full
        width, and let "More" (setCollapsed(false)) open the rail as an overlay drawer. */
     .frz-beta, .frz-beta.frz-narrow, .frz-beta.is-collapsed { grid-template-columns:1fr; }
@@ -20526,7 +20542,11 @@ if ('serviceWorker' in navigator) {
     .frz-beta .lc-key { font-family:monospace; font-size:11px; color:var(--frz-text-muted); }
     .frz-beta .lc-name { font-size:14px; font-weight:700; color:var(--frz-text); line-height:1.3; }
     .frz-beta .lc-meta { display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; color:var(--frz-text-muted); }
-    .frz-beta .lc-meta-left { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .frz-beta .lc-meta-left { display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden; }
+    /* MOBILE-POLISH-1 D3: uniform inline-flex segments + a flex separator, so type/owner sit on one
+       baseline and the dot stops floating. Each segment truncates on its own. */
+    .frz-beta .lc-mi { display:inline-flex; align-items:center; gap:4px; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .frz-beta .lc-sep { flex:0 0 auto; color:var(--frz-text-muted); }
 
     /* Gantt (Phase 5): the timeline is desk work (classic even hides it on mobile). Keep it
        scrollable but show a nudge to the List, which carries the same items as cards. */
@@ -20611,6 +20631,7 @@ if ('serviceWorker' in navigator) {
     back:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M9 3L4 8l5 5M4 8h9"/></svg>',
     teamCalendar:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5 1.8v2.4M11 1.8v2.4"/><circle cx="5" cy="9" r="0.9" fill="currentColor" stroke="none"/><circle cx="8" cy="9" r="0.9" fill="currentColor" stroke="none"/><circle cx="11" cy="9" r="0.9" fill="currentColor" stroke="none"/><circle cx="5" cy="11.6" r="0.9" fill="currentColor" stroke="none"/><circle cx="8" cy="11.6" r="0.9" fill="currentColor" stroke="none"/></svg>',
     clipboard:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="11" rx="1.5"/><rect x="5.5" y="1.8" width="5" height="2.4" rx="1"/><path d="M5.5 7.5h5M5.5 10.5h5"/></svg>',
+    image:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="5.6" cy="6.4" r="1.1"/><path d="M2.8 12l3.4-3.3 2.2 2.2 2.3-2.3 2.5 2.6"/></svg>',
     caret:'<svg class="frz-chip-caret" viewBox="0 0 12 12"><path d="M3 4.5l3 3 3-3"/></svg>'
   };
   var VIEW_KEYS = ['gantt','kanban','list','planning','dashboard'];
@@ -28494,10 +28515,10 @@ if ('serviceWorker' in navigator) {
       card.style.cssText='border:1px solid var(--border);border-radius:10px;overflow:hidden';
       card.innerHTML=''
         +'<div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between">'
-          +'<span>Attachments &amp; Links</span>'
+          +'<span class="frz-cardh-title">Attachments &amp; Links</span>'
           +'<span style="display:flex;gap:8px">'
-            +'<button type="button" class="frz-cardh-btn" id="frzLinkAdd" style="display:none">+ Add link</button>'
-            +'<button type="button" class="frz-cardh-btn" id="frzAttUp" style="display:none">+ Upload</button>'
+            +'<button type="button" class="frz-cardh-btn" id="frzLinkAdd" aria-label="Add link" style="display:none">+ Add link</button>'
+            +'<button type="button" class="frz-cardh-btn" id="frzAttUp" aria-label="Upload" style="display:none">+ Upload</button>'
           +'</span>'
         +'</div>'
         +'<div style="padding:14px 16px">'
@@ -28970,7 +28991,7 @@ if ('serviceWorker' in navigator) {
     // WRITE-2: "Create procurement request" sits in the card-header action cluster, admin/editor
     // only (a Contributor never sees it; the endpoint + AssetHubClient refuse one anyway). It does
     // NOT require a linked asset - a procurement request may acquire something new.
-    var hactions = (canEdit ? '<button type="button" id="frzReqCreate" class="frz-cardh-btn">Create procurement request</button>' : '')
+    var hactions = (canEdit ? '<button type="button" id="frzReqCreate" class="frz-cardh-btn" aria-label="Create procurement request">Create procurement request</button>' : '')
       + (canEdit && links.length ? '<button type="button" id="frzAssetRefresh" class="frz-cardh-btn">Refresh</button>' : '');
     var head = '<div style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;justify-content:space-between;gap:10px">'+
       'Linked assets'+(hactions ? '<div style="display:flex;align-items:center;gap:10px">'+hactions+'</div>' : '')+'</div>';   // shared card-header buttons so the band matches other cards (item A)
@@ -29864,7 +29885,7 @@ if ('serviceWorker' in navigator) {
     divider:  { label:'-', title:'Divider', run:function(C){ C().setHorizontalRule().run(); } },
     link:     { label:'Link', title:'Add / edit link', run:function(C, ed){ var prev=ed.getAttributes('link').href||''; var h=prompt('Link URL', prev); if(h===null) return; if(h==='') { C().unsetLink().run(); return; } C().extendMarkRange('link').setLink({ href:h }).run(); }, isActive:function(ed){ return ed.isActive('link'); } },
     emoji:    { label:'\u{1F642}', title:'Emoji', run:function(C, ed, btn){ _frzToggleEmoji(btn, ed); } },
-    image:    { label:'\u{1F5BC}', title:'Insert image', run:function(C, ed){ var inp=document.createElement('input'); inp.type='file'; inp.accept='image/*'; inp.onchange=function(){ var f=this.files&&this.files[0]; if(f) _frzInsertImage(f, ed); }; inp.click(); } },
+    image:    { label:IC.image, title:'Insert image', run:function(C, ed){ var inp=document.createElement('input'); inp.type='file'; inp.accept='image/*'; inp.onchange=function(){ var f=this.files&&this.files[0]; if(f) _frzInsertImage(f, ed); }; inp.click(); } },
     table:    { label:'▦ Table ▾', title:'Table', run:function(C, ed, btn){ _frzMenuPop(btn, [
         { label:'Insert table', fn:function(){ C().insertTable({ rows:3, cols:3, withHeaderRow:true }).run(); } },
         { sep:true },
