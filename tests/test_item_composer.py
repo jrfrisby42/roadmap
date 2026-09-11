@@ -130,3 +130,99 @@ def _re_css(src, pat):
 def _html_builder(src):
     m = re.search(r"function _frzComposerHeader\(p, id\)\{.*?\n\}", src, re.DOTALL)
     return m.group(0) if m else ""
+
+
+# ── Stage 3: create-mode canvas/rail + editor-panel absorption ────────────────
+# These are SOURCE-SHAPE guards over roadmap.html. The live visual (admin + editor create modals) and
+# the per-role field-set parity were screenshot- and DOM-verified during the build; these fail when
+# Stage 3 is reverted. server.py is untouched by this stage. Invariants are labelled INVARIANT.
+
+def test_stage3_canvas_rail_structure():
+    src = _html()
+    assert '<div class="composer-cols">' in src, "the body splits into a content canvas + property rail"
+    assert '<div class="composer-canvas">' in src and '<div class="composer-rail">' in src, "canvas + rail regions"
+    assert '<input type="text" id="fName" class="composer-title"' in src, "the item name is the hero title in the canvas"
+    # the 3-cell quick-edit grid: Priority (admin) + Space + Type, as value cells not labelled select rows
+    assert '<div class="composer-qgrid">' in src, "a quick-edit grid, not stacked select rows"
+    assert '<div class="composer-qcell" id="priorityRow"' in src, "Priority is a grid cell (moved out of the footer)"
+    assert 'id="qcellProduct"' in src and 'id="qcellType"' in src, "Space + Type are grid cells"
+    # collapsible groups: Ownership open, the rest collapsed
+    assert '<details class="composer-group" id="grpOwnership" open>' in src, "Ownership is open on create"
+    for gid in ["grpSchedule", "grpRelationships", "grpAdvanced"]:
+        assert f'<details class="composer-group" id="{gid}">' in src, f"{gid} is a collapsible group, collapsed by default"
+
+
+def test_stage3_editor_panel_retired():
+    # INVARIANT: the role-scoped #editorFieldPanel and every proxy select it created are gone, replaced
+    # by one unified rail gated per-field. This is the core of the stage; it fails on revert. (Checks the
+    # runtime CODE constructs, not bare names - the names legitimately survive in explanatory comments.)
+    src = _html()
+    assert "panel.id = 'editorFieldPanel'" not in src, "the injected editor panel must not be recreated"
+    assert "getElementById('editorFieldPanel')" not in src, "no code path looks up the retired panel"
+    for proxy in ["fProductEditor", "fStatusEditor", "fDueWeeksEditor", "fRevisedOffsetEditor",
+                  "fExpectedEditor", "fParentEditorInput", "editorJiraInlineRow"]:
+        assert f"getElementById('{proxy}')" not in src, f"the retired editor proxy {proxy} must not be referenced"
+    assert "window._syncEditorJiraList" not in src, "the retired editor Jira-list sync must be gone"
+    assert "function frzApplyComposerRoleScope(p){" in src, "per-field role scope replaces the panel"
+    # the unified layout classes replace the old two-column ones in the composer markup
+    assert 'class="proj-modal-cols"' not in src and 'class="proj-modal-left"' not in src, "the old column markup is gone"
+
+
+def test_stage3_role_scope_gates_the_panel_only_fields():
+    # INVARIANT (per-role parity): editors keep exactly the retired panel's editable set. The role-scope
+    # fn hides Start + Depends-On (never in the panel) and makes Test Period read-only; the other
+    # editor-omitted fields keep their existing admin-only gates. No field is newly exposed to editors.
+    src = _html()
+    m = re.search(r"function frzApplyComposerRoleScope\(p\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "role-scope function not found"
+    body = m.group(0)
+    assert "editorOnly" in body, "the scope keys off editor-not-admin"
+    assert "getElementById('fStart')" in body and "getElementById('dependsOnRow')" in body, "Start + Depends-On are hidden for editors"
+    assert "getElementById('fTestWeeks')" in body and "editorScheduleNote" in body, "Test read-only + the not-broken note (constraint #4)"
+    # existing admin-only gates still resolve on the real rows (moved into editor-visible groups)
+    assert "priorityRow.style.display = isAdmin ? '' : 'none'" in src, "Priority admin-gate uses '' (grid cell), not the old footer 'flex'"
+    assert "hideFromFlowRow" in src, "Hide-from-Flow moved into Advanced and stays admin-gated"
+
+
+def test_stage3_editor_cannot_select_released():
+    # INVARIANT: the retired panel filtered Released out of the editor status list. That exclusion moves
+    # onto the single real #fStatus, keyed on role, so it is not newly exposed to editors.
+    src = _html()
+    assert "validStatuses.filter(s => !statusIsReleased[s] || s === prev)" in src, \
+        "editors cannot SET a released status (an already-released item keeps its value shown)"
+
+
+def test_stage3_change_reason_trigger_rehomed_to_real_field():
+    # INVARIANT (constraint #3): the editor delay change-reason trigger used to hang off the retired
+    # #fRevisedOffsetEditor proxy's onchange. It must be re-homed onto the REAL #fRevisedOffset change
+    # listener so retiring the proxy does not silently drop the editor's reason path. Stage 6 owns the
+    # full dual-history acceptance.
+    src = _html()
+    m = re.search(r"getElementById\('fRevisedOffset'\)\?\.addEventListener\('change', \(\)=>\{.*?\}\);", src, re.DOTALL)
+    assert m, "the real fRevisedOffset change listener not found"
+    assert "checkEditorReasonNeeded();" in m.group(0), "the editor reason trigger must fire from the real field's change"
+
+
+def test_stage3_footer_label_and_context():
+    src = _html()
+    assert "id?'Save Changes':'Create Item'" in src, "create saves via a Create Item button (not 'Add Item')"
+    assert 'id="composerFooterSpace"' in src, "the footer shows the destination Space context"
+    assert "function _frzUpdateComposerFooterSpace(){" in src, "footer Space context is kept in sync with the picker"
+
+
+def test_stage3_validation_reveals_collapsed_group():
+    src = _html()
+    m = re.search(r"function _frzRevealComposerField\(fieldId\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "the validation-reveal helper not found"
+    body = m.group(0)
+    assert "grp.open = true" in body and "classList.add('has-error')" in body and ".focus()" in body, \
+        "a collapsed group with an error auto-opens, is marked, and focus moves to the field"
+    # wired at the schedule-buried validations (test-period and release-required)
+    assert "_frzRevealComposerField('fTestWeeks')" in src, "the test-period guard reveals the Schedule group"
+    assert "_frzRevealComposerField('fRelease')" in src, "the release-required guard reveals the Schedule group"
+
+
+def test_stage3_server_untouched():
+    # Stage 3 is roadmap.html only.
+    src = SERVER.read_text(encoding="utf-8", errors="replace")
+    assert "frz-composer" not in src and "frzApplyComposerRoleScope" not in src, "server.py must not be touched by Stage 3"
