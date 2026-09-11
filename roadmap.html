@@ -338,7 +338,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     .gantt-outer { display: none; } /* Gantt hidden on mobile - use Kanban/Dashboard */
     #kanbanBoard { padding: 10px; }
     .kanban-col { min-width: 85vw !important; }
-    .modal { width: 98vw !important; max-width: 98vw !important; margin: 8px !important; padding: 16px !important; }
+    .modal:not(.frz-composer) { width: 98vw !important; max-width: 98vw !important; margin: 8px !important; padding: 16px !important; }
     .proj-modal-cols { flex-direction: column !important; }
     .proj-modal-right { min-width: 0 !important; }
     #activityPanel { width: 100vw !important; max-width: 100vw !important; }
@@ -678,6 +678,27 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .proj-modal-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
   .proj-modal-left { min-width: 0; }
   .proj-modal-right { min-width: 0; display: flex; flex-direction: column; }
+
+  /* ── ITEM-COMPOSER-1 Stage 1: the item modal (#modalBg > .modal.frz-composer) becomes a responsive
+     composer shell - a fixed header, a single SCROLLING body, and a fixed footer. Scoped to
+     .frz-composer so the SHARED .modal (saved views, capacity, account, admin) is untouched. NO
+     registered field is moved in this stage; the body is only prepared to later hold a content canvas
+     and a property rail. ── */
+  .modal.frz-composer { display: flex; flex-direction: column; width: min(1200px, 96vw); max-width: min(1200px, 96vw); max-height: 90vh; padding: 0; overflow: hidden; }
+  .modal.frz-composer .composer-header { flex: 0 0 auto; padding: 20px 26px 14px; margin: 0; border-bottom: 1px solid var(--border); }
+  .modal.frz-composer .composer-body   { flex: 1 1 auto; overflow-y: auto; padding: 18px 26px; }
+  .modal.frz-composer #changeReasonPanel { flex: 0 0 auto; margin: 12px 26px 0; }   /* pinned above the footer so the reason prompt stays visible with the fixed footer (Stage 6 refines its focus/scroll) */
+  .modal.frz-composer .modal-actions   { flex: 0 0 auto; padding: 14px 26px; margin: 0; border-top: 1px solid var(--border); }
+  /* Background scroll lock while the composer is open (restored on close). The shell scroller is
+     .frz-content (overflow:auto), not body, so lock both. */
+  html.composer-lock, html.composer-lock body { overflow: hidden; }
+  html.composer-lock .frz-beta .frz-content { overflow: hidden; }
+  @media (max-width: 640px){
+    /* Below the established shell breakpoint the composer is a full-screen sheet (create-only on
+       mobile - editing an existing item routes to the item page). */
+    .modal.frz-composer { width: 100vw; max-width: 100vw; height: 100vh; max-height: 100vh; margin: 0; border-radius: 0; }
+    .modal.frz-composer .proj-modal-cols { grid-template-columns: 1fr; }
+  }
   /* Date field with clear button */
   .date-wrap { display: flex; gap: 4px; align-items: center; }
   .date-wrap input[type=date] { flex: 1; }
@@ -1643,8 +1664,8 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 
 <!-- PROJECT MODAL -->
 <div class="modal-bg" id="modalBg">
-  <div class="modal">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+  <div class="modal frz-composer">
+    <div class="composer-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <div style="display:flex;align-items:center;gap:12px">
         <h2 id="modalTitle" style="margin:0">Item</h2>
         <a id="modalOpenPageBtn" href="#" target="_blank" rel="noopener" title="Open the full item page in a new tab (schedule, activity, comments)"
@@ -1659,6 +1680,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       </button>
     </div>
 
+    <div class="composer-body">
     <!-- Top row: Name + Developer on same line -->
     <div class="form-grid-3" style="margin-bottom:12px">
       <div class="form-row" style="margin-bottom:0">
@@ -1896,6 +1918,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 
       </div><!-- end right col -->
     </div><!-- end proj-modal-cols -->
+    </div><!-- end composer-body -->
 
     <!-- Change Reason Panel - shown when timeline changes require justification -->
     <div id="changeReasonPanel" style="display:none;background:rgba(232,57,74,0.04);border:1px solid rgba(232,57,74,0.2);border-radius:8px;padding:14px 16px;margin-top:12px">
@@ -6349,6 +6372,54 @@ document.getElementById('modalBg')?.addEventListener('click', e=>{
     onModalClose();
   }
 });
+// ITEM-COMPOSER-1 Stage 1: composer shell a11y + scroll lock, centralised on #modalBg's `open` class
+// via a MutationObserver so every existing open/close site (Save, Cancel, backdrop, item-page routes)
+// is covered without editing each one. Scoped to #modalBg = the item modal only. Moves no field and
+// changes no save/validation behaviour: focus trap, background scroll-lock, focus restore on close,
+// and Escape (confirm when there are unsaved changes, close otherwise).
+(function(){
+  var mb = document.getElementById('modalBg'); if(!mb) return;
+  var lastFocus=null, trapH=null, escH=null, dirty=false;
+  // Coarse dirty flag: only user-initiated (isTrusted) edits count, so programmatic population and the
+  // async Tiptap notes init do not mark the form dirty. It errs toward confirming, never toward loss.
+  mb.addEventListener('input',  function(e){ if(e.isTrusted) dirty=true; });
+  mb.addEventListener('change', function(e){ if(e.isTrusted) dirty=true; });
+  function focusable(){
+    return [].slice.call(mb.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[contenteditable="true"],[tabindex]:not([tabindex="-1"])'))
+      .filter(function(el){ return el.offsetParent!==null; });
+  }
+  function onOpen(){
+    dirty=false; lastFocus=document.activeElement;
+    document.documentElement.classList.add('composer-lock');
+    setTimeout(function(){ var n=document.getElementById('fName'), f=focusable(); (n||f[0]||mb).focus(); }, 0);
+    trapH=function(e){
+      if(e.key!=='Tab') return; var els=focusable(); if(!els.length) return;
+      var a=els[0], z=els[els.length-1];
+      if(e.shiftKey && document.activeElement===a){ e.preventDefault(); z.focus(); }
+      else if(!e.shiftKey && document.activeElement===z){ e.preventDefault(); a.focus(); }
+    };
+    escH=function(e){
+      if(e.key!=='Escape' || !mb.classList.contains('open')) return;
+      e.preventDefault(); e.stopPropagation();
+      if(dirty && !confirm('Discard unsaved changes?')) return;
+      var c=document.getElementById('cancelBtn'); if(c) c.click(); else { mb.classList.remove('open'); }
+    };
+    mb.addEventListener('keydown', trapH);
+    document.addEventListener('keydown', escH, true);
+  }
+  function onClose(){
+    document.documentElement.classList.remove('composer-lock');
+    if(trapH) mb.removeEventListener('keydown', trapH);
+    if(escH) document.removeEventListener('keydown', escH, true);
+    trapH=escH=null;
+    if(lastFocus && lastFocus.focus){ try{ lastFocus.focus(); }catch(_e){} } lastFocus=null;
+  }
+  new MutationObserver(function(){
+    var open=mb.classList.contains('open');
+    if(open && !mb.__composerOpen){ mb.__composerOpen=true; onOpen(); }
+    else if(!open && mb.__composerOpen){ mb.__composerOpen=false; onClose(); }
+  }).observe(mb, {attributes:true, attributeFilter:['class']});
+})();
 document.getElementById('capacityConflictsBg')?.addEventListener('click', e=>{ if(e.target===e.currentTarget) e.currentTarget.classList.remove('open'); });
 document.getElementById('itemConflictBg')?.addEventListener('click', e=>{ if(e.target===e.currentTarget) e.currentTarget.classList.remove('open'); });
 
