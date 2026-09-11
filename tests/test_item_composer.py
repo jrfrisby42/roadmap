@@ -52,6 +52,9 @@ def test_composer_a11y_observer():
     assert "document.documentElement.classList.add('composer-lock')" in src, "opening locks background scroll"
     assert "if(e.key!=='Escape'" in src and "confirm('Discard unsaved changes?')" in src, "Escape confirms when there are unsaved changes"
     assert "if(e.isTrusted) dirty=true" in src, "only user-initiated edits mark the form dirty (not programmatic/Tiptap init)"
+    # Change 1: Escape AND the backdrop click share one discard confirm (consistent close paths)
+    assert "function confirmDiscard(){ return !dirty || confirm('Discard unsaved changes?'); }" in src, "one shared discard-confirm helper"
+    assert "e.currentTarget.__composerConfirmDiscard && !e.currentTarget.__composerConfirmDiscard()" in src, "the backdrop click must use the same confirm as Escape"
     assert "if(trapH) mb.removeEventListener('keydown', trapH)" in src, "the focus trap is removed on close"
     assert "if(lastFocus && lastFocus.focus)" in src, "focus is restored to the originating control on close"
 

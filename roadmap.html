@@ -6368,6 +6368,10 @@ document.getElementById('cancelBtn')?.addEventListener('click', ()=>{
 });
 document.getElementById('modalBg')?.addEventListener('click', e=>{
   if(e.target===e.currentTarget){
+    // Change 1: the backdrop click uses the SAME unsaved-changes confirm as Escape (set by the shell
+    // observer below), so the two close paths are consistent - a stray backdrop click on a
+    // content-heavy composer (Stages 3-4) must not silently discard.
+    if(e.currentTarget.__composerConfirmDiscard && !e.currentTarget.__composerConfirmDiscard()) return;
     e.currentTarget.classList.remove('open');
     onModalClose();
   }
@@ -6384,6 +6388,10 @@ document.getElementById('modalBg')?.addEventListener('click', e=>{
   // async Tiptap notes init do not mark the form dirty. It errs toward confirming, never toward loss.
   mb.addEventListener('input',  function(e){ if(e.isTrusted) dirty=true; });
   mb.addEventListener('change', function(e){ if(e.isTrusted) dirty=true; });
+  // Shared unsaved-changes confirm - Escape AND the backdrop click both use it, so the two close
+  // paths behave consistently. The Cancel BUTTON is an explicit discard and intentionally skips it.
+  function confirmDiscard(){ return !dirty || confirm('Discard unsaved changes?'); }
+  mb.__composerConfirmDiscard = confirmDiscard;
   function focusable(){
     return [].slice.call(mb.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[contenteditable="true"],[tabindex]:not([tabindex="-1"])'))
       .filter(function(el){ return el.offsetParent!==null; });
@@ -6401,7 +6409,7 @@ document.getElementById('modalBg')?.addEventListener('click', e=>{
     escH=function(e){
       if(e.key!=='Escape' || !mb.classList.contains('open')) return;
       e.preventDefault(); e.stopPropagation();
-      if(dirty && !confirm('Discard unsaved changes?')) return;
+      if(!confirmDiscard()) return;
       var c=document.getElementById('cancelBtn'); if(c) c.click(); else { mb.classList.remove('open'); }
     };
     mb.addEventListener('keydown', trapH);
