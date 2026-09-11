@@ -685,7 +685,25 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
      registered field is moved in this stage; the body is only prepared to later hold a content canvas
      and a property rail. ── */
   .modal.frz-composer { display: flex; flex-direction: column; width: min(1200px, 96vw); max-width: min(1200px, 96vw); max-height: 90vh; padding: 0; overflow: hidden; }
-  .modal.frz-composer .composer-header { flex: 0 0 auto; padding: 20px 26px 14px; margin: 0; border-bottom: 1px solid var(--border); }
+  .modal.frz-composer .composer-header { flex: 0 0 auto; padding: 20px 26px 14px; margin: 0; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  /* Stage 2: the LEFT identity group + RIGHT actions on one centreline. Icons are self-sized SVGs
+     (explicit width/height) so none can blow up the way IC.image did without a sizing container. */
+  .modal.frz-composer .composer-id { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .modal.frz-composer .composer-id .composer-ic { display: inline-flex; align-items: center; color: var(--muted); flex-shrink: 0; }
+  .modal.frz-composer .composer-id .composer-ic svg { display: block; }
+  .modal.frz-composer .composer-id .composer-key { font-family: 'SFMono-Regular', ui-monospace, Menlo, monospace; font-size: 15px; font-weight: 700; color: var(--text); }
+  .modal.frz-composer .composer-id .composer-title { font-size: 16px; font-weight: 900; color: var(--text); }
+  .modal.frz-composer .composer-id .composer-space { font-size: 13px; font-weight: 700; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .modal.frz-composer .composer-id .composer-jira { font-size: 12px; font-weight: 700; color: var(--accent); text-decoration: none; white-space: nowrap; }
+  .modal.frz-composer .composer-id .composer-jira:hover { text-decoration: underline; }
+  .modal.frz-composer .composer-id .composer-sep { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; }
+  .modal.frz-composer .composer-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .modal.frz-composer .composer-act { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--muted); font-family: 'Lato', sans-serif; font-weight: 700; font-size: 12px; cursor: pointer; text-decoration: none; }
+  .modal.frz-composer .composer-act:hover { color: var(--text); }
+  .modal.frz-composer .composer-act svg { display: block; }
+  .modal.frz-composer .composer-close { width: 30px; padding: 0; justify-content: center; }
+  .modal.frz-composer .composer-watch { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; color: var(--muted); }
+  .modal.frz-composer .composer-watch svg { display: block; }
   .modal.frz-composer .composer-body   { flex: 1 1 auto; overflow-y: auto; padding: 18px 26px; }
   .modal.frz-composer #changeReasonPanel { flex: 0 0 auto; margin: 12px 26px 0; }   /* pinned above the footer so the reason prompt stays visible with the fixed footer (Stage 6 refines its focus/scroll) */
   .modal.frz-composer .modal-actions   { flex: 0 0 auto; padding: 14px 26px; margin: 0; border-top: 1px solid var(--border); }
@@ -1665,19 +1683,27 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 <!-- PROJECT MODAL -->
 <div class="modal-bg" id="modalBg">
   <div class="modal frz-composer">
-    <div class="composer-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <div style="display:flex;align-items:center;gap:12px">
-        <h2 id="modalTitle" style="margin:0">Item</h2>
-        <a id="modalOpenPageBtn" href="#" target="_blank" rel="noopener" title="Open the full item page in a new tab (schedule, activity, comments)"
-          style="display:none;align-items:center;gap:6px;background:#0059A9;color:#fff;text-decoration:none;padding:6px 13px;border-radius:8px;font-family:'Lato',sans-serif;font-weight:600;font-size:13px;cursor:pointer">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-          Open Item Page
+    <!-- ITEM-COMPOSER-1 Stage 2: header. LEFT identity group (#composerId) is built by
+         _frzComposerHeader(p, id) - edit: type icon + item key + Jira key; create: context icon +
+         "New item" + destination Space. One flex row with align-items:center so the icon, key and
+         Jira sit on a single centreline (both create and edit). RIGHT group: watcher count (from the
+         item blob, edit-only), Flag (utility action), Open Full Item, Close. Comment count + More
+         Actions are NOT built (see the Stage 2 report). -->
+    <div class="composer-header">
+      <div class="composer-id" id="composerId"></div>
+      <div class="composer-actions">
+        <span class="composer-watch" id="composerWatch" style="display:none"></span>
+        <button type="button" class="composer-act" id="flagIssueBtn" style="display:none" onclick="openFlagIssue(editingId)" title="Flag an issue" aria-label="Flag an issue">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
+          <span>Flag</span>
+        </button>
+        <a class="composer-act composer-close" id="modalOpenPageBtn" href="#" target="_blank" rel="noopener" style="display:none" title="Open the full item page in a new tab (schedule, activity, comments)" aria-label="Open the full item page in a new tab">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
         </a>
+        <button type="button" class="composer-act composer-close" id="composerClose" title="Close" aria-label="Close">
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
-      <button id="flagIssueBtn" style="display:none;background:none;border:1px solid #e8a000;color:#c06000;padding:5px 11px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer;align-items:center;gap:5px" onclick="openFlagIssue(editingId)">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>
-        Flag Issue
-      </button>
     </div>
 
     <div class="composer-body">
@@ -2382,7 +2408,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.39.0';
+const APP_VERSION = '6.39.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -5481,6 +5507,43 @@ function openItemPageFromModal(){
   openItemPage(id);
 }
 
+// ITEM-COMPOSER-1 Stage 2: build the composer header's LEFT identity group + the edit-only watcher
+// count. Self-sized inline SVGs (explicit width/height, no sizing container needed). No approved Jira
+// ICON asset exists (Jira issue cards use a status-colour dot), so the Jira element is a TEXT action,
+// not a substituted glyph (reported). Comment count is NOT shown - it needs a fetch (_ipCommentCount
+// is loaded by the item page), which is Stage-4B shape, not header work.
+var _COMPOSER_CREATE_IC = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
+var _COMPOSER_WATCH_IC  = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+function _frzComposerHeader(p, id){
+  var el = document.getElementById('composerId'); if(!el) return;
+  var html;
+  if(p){   // EDIT: type icon + item key + (Jira label + key)
+    var tIc = (typeof typeIconHTML==='function' && p.type) ? typeIconHTML(p.type, {size:18, label:p.type}) : '';
+    var jk  = (Array.isArray(p.jiraTickets) && p.jiraTickets.length) ? p.jiraTickets[0] : '';
+    var jira = '';
+    if(jk){
+      var jurl = (p.jiraCache && p.jiraCache[jk] && p.jiraCache[jk].url) || '';
+      jira = '<span class="composer-sep" aria-hidden="true"></span>'
+           + (jurl ? '<a class="composer-jira" href="'+escA(jurl)+'" target="_blank" rel="noopener">Jira '+esc(jk)+'</a>'
+                   : '<span class="composer-jira" title="Jira '+escA(jk)+' (link pending sync)">Jira '+esc(jk)+'</span>');
+    }
+    html = '<span class="composer-ic">'+tIc+'</span><span class="composer-key">'+esc(p.itemKey||('#'+p.id))+'</span>'+jira;
+  } else {  // CREATE: context icon + "New item" + destination Space (when known)
+    var pe = document.getElementById('fProduct');
+    var space = pe ? (pe.value||'') : '';
+    html = '<span class="composer-ic">'+_COMPOSER_CREATE_IC+'</span><span class="composer-title">New item</span>'
+         + (space ? '<span class="composer-sep" aria-hidden="true"></span><span class="composer-space">'+esc(space)+'</span>' : '');
+  }
+  el.innerHTML = html;
+  // Right group: watcher count from the item blob's _watchers (server-provided by /api/all, no fetch).
+  var w = document.getElementById('composerWatch');
+  if(w){
+    var n = (p && Array.isArray(p._watchers)) ? p._watchers.length : 0;
+    if(n>0){ w.innerHTML = _COMPOSER_WATCH_IC+'<span>'+n+'</span>'; w.title = n+(n===1?' person watching':' people watching');
+             w.setAttribute('aria-label', n+(n===1?' watcher':' watchers')); w.style.display='inline-flex'; }
+    else { w.style.display='none'; w.innerHTML=''; }
+  }
+}
 function openProjectModal(id){
   if(!isAdmin && !isEditor){ if(id) openItemPage(id); return; } // viewers → item page
   if(id && _isListPhone()){ openItemPage(id); return; }         // mobile: existing item → full page, never the edit modal (New Item, id null, still opens the sheet)
@@ -5529,7 +5592,8 @@ function openProjectModal(id){
   jiraStatuses = {};
   // ── End field reset ─────────────────────────────────────────────────────
 
-  document.getElementById('modalTitle').textContent = p?'Edit Item':'New Item';
+  // Stage 2: the header identity (#composerId) is built by _frzComposerHeader below, once fProduct
+  // and jiraTickets are populated - it replaces the old #modalTitle 'Edit Item'/'New Item' text.
   document.getElementById('fName').value     = p?.name||'';
   // Load rich text description
   document.getElementById('fDesc').innerHTML = sanitizeRichHTML(p?.description || '');   // H1: sanitize stored HTML at render
@@ -6113,6 +6177,7 @@ function openProjectModal(id){
   applyModalLocking(p);
   // Recurrence field (admin only)
   initRecurrenceField(p);
+  _frzComposerHeader(p, id);   // Stage 2: build the header identity + edit-only watcher count (post-population)
   document.getElementById('modalBg').classList.add('open');
 }
 
@@ -6366,6 +6431,15 @@ document.getElementById('cancelBtn')?.addEventListener('click', ()=>{
   document.getElementById('modalBg').classList.remove('open');
   onModalClose();
 });
+// Stage 2: the header Close (X) routes through the same unsaved-changes confirm as Escape/backdrop
+// (a "close without deciding" control); the explicit Cancel button above is the deliberate discard.
+document.getElementById('composerClose')?.addEventListener('click', ()=>{
+  var mb=document.getElementById('modalBg');
+  if(mb.__composerConfirmDiscard && !mb.__composerConfirmDiscard()) return;
+  mb.classList.remove('open'); onModalClose();
+});
+// Stage 2: in CREATE mode the header shows the destination Space; keep it in sync with the picker.
+document.getElementById('fProduct')?.addEventListener('change', ()=>{ if(!editingId) _frzComposerHeader(null, null); });
 document.getElementById('modalBg')?.addEventListener('click', e=>{
   if(e.target===e.currentTarget){
     // Change 1: the backdrop click uses the SAME unsaved-changes confirm as Escape (set by the shell
