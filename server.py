@@ -1690,7 +1690,12 @@ _rate: dict = {}
 _rate_last_prune: float = 0.0
 RATE_WINDOW, RATE_MAX = 60, 10
 
-def _check_rate_limit(ip: str):
+def _check_rate_limit(ip: str, message: str = None):
+    # Shared IP rate limiter (login + several public endpoints). `message` overrides the 429 copy for
+    # callers where "login attempts" is wrong - e.g. the public upload presign, where a reporter who
+    # never logged in was told they made too many login attempts. It defaults to None, so the raise
+    # below uses the original login string byte-for-byte and every existing caller is unchanged. The
+    # limit, window, key and 429 status are untouched - this is copy only.
     global _rate_last_prune
     now = time.time()
     # Prune stale IPs every 5 minutes
@@ -1703,7 +1708,7 @@ def _check_rate_limit(ip: str):
     attempts.append(now)
     _rate[ip] = attempts
     if len(attempts) > RATE_MAX:
-        raise HTTPException(429, f"Too many login attempts. Try again in {RATE_WINDOW} seconds.")
+        raise HTTPException(429, message or f"Too many login attempts. Try again in {RATE_WINDOW} seconds.")
 
 # ── Audit logging ─────────────────────────────────────────────────────────────
 def write_audit(team: str, action: str, username: str = "", project_id=None,
@@ -2356,7 +2361,7 @@ def intake_presign(team: str, body: dict = Body(...), request: FRequest = None):
     declared. The declared-size pre-check below is kept as a fast, friendly refusal before an upload
     starts - belt and suspenders (the policy is the guard, the pre-check the courtesy)."""
     ip = (request.client.host if request else "unknown")
-    _check_rate_limit("intake-att:" + ip)
+    _check_rate_limit("intake-att:" + ip, "Too many uploads at once. Wait about a minute and try again.")
     team = re.sub(r"[^a-z0-9]", "", (team or "").lower())
     if not team or not valid_team(team) or not _intake_open(team):
         raise HTTPException(404, "This team is not accepting portal submissions.")

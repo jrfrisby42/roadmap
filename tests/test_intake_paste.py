@@ -12,6 +12,9 @@ reverted. No roadmap.html involvement.
 import re
 import pathlib
 
+import pytest
+import server
+
 SERVER = pathlib.Path(__file__).resolve().parent.parent / "server.py"
 
 
@@ -65,3 +68,49 @@ def test_no_endpoint_or_policy_change():
     # the presign endpoint + its policy conditions are untouched by this stage
     assert 'generate_presigned_post(' in src, "the presign POST conversion must be intact"
     assert '["content-length-range", 0, _INTAKE_MAX_ATTACH_BYTES]' in src, "PRESIGN-CAP-1's size policy must be intact"
+
+
+# ── Addendum A: the rate-limit message parameter (shared helper) ──────────────
+def test_rate_limit_default_message_byte_identical():
+    # the login limiter and every other caller must be UNCHANGED - default (no message) raises the
+    # original login copy, byte for byte. This is the security-sensitive guard.
+    server._rate.clear()
+    for _ in range(server.RATE_MAX):
+        server._check_rate_limit("k-default")
+    with pytest.raises(server.HTTPException) as ei:
+        server._check_rate_limit("k-default")
+    assert ei.value.status_code == 429
+    assert ei.value.detail == f"Too many login attempts. Try again in {server.RATE_WINDOW} seconds."
+
+
+def test_rate_limit_custom_message_for_uploads():
+    server._rate.clear()
+    msg = "Too many uploads at once. Wait about a minute and try again."
+    for _ in range(server.RATE_MAX):
+        server._check_rate_limit("k-upload", msg)
+    with pytest.raises(server.HTTPException) as ei:
+        server._check_rate_limit("k-upload", msg)
+    assert ei.value.status_code == 429 and ei.value.detail == msg
+
+
+def test_limit_and_window_unchanged():
+    # message-only change: the 10th still succeeds, the 11th still fails, status still 429
+    server._rate.clear()
+    assert (server.RATE_WINDOW, server.RATE_MAX) == (60, 10)
+    for _ in range(server.RATE_MAX):
+        server._check_rate_limit("k-limit")     # 10 succeed
+    with pytest.raises(server.HTTPException) as ei:
+        server._check_rate_limit("k-limit")     # 11th fails
+    assert ei.value.status_code == 429
+
+
+def test_only_intake_presign_passes_a_message():
+    src = _py()
+    assert "def _check_rate_limit(ip: str, message: str = None):" in src, "the optional message param must exist"
+    assert 'raise HTTPException(429, message or f"Too many login attempts. Try again in {RATE_WINDOW} seconds.")' in src, \
+        "the default must be the original login string byte-for-byte"
+    assert '_check_rate_limit("intake-att:" + ip, "Too many uploads at once. Wait about a minute and try again.")' in src, \
+        "the intake presign must pass the upload message"
+    # NO other caller passes a second argument (a shared helper is where an unnoticed caller breaks)
+    two_arg = [c for c in re.findall(r"_check_rate_limit\([^)]*,[^)]*\)", src) if "message: str" not in c]
+    assert len(two_arg) == 1, f"only the intake presign may pass a message; found {len(two_arg)}: {two_arg}"
