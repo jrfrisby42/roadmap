@@ -339,8 +339,6 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     #kanbanBoard { padding: 10px; }
     .kanban-col { min-width: 85vw !important; }
     .modal:not(.frz-composer) { width: 98vw !important; max-width: 98vw !important; margin: 8px !important; padding: 16px !important; }
-    .proj-modal-cols { flex-direction: column !important; }
-    .proj-modal-right { min-width: 0 !important; }
     #activityPanel { width: 100vw !important; max-width: 100vw !important; }
     .ms-panel { max-width: 220px; }
     #capacityConflictsBg .modal, #savedViewsBg .modal { width: 98vw !important; }
@@ -674,10 +672,6 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .form-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
   .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; align-items: center; }
-  /* Two-column project modal layout */
-  .proj-modal-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-  .proj-modal-left { min-width: 0; }
-  .proj-modal-right { min-width: 0; display: flex; flex-direction: column; }
 
   /* ── ITEM-COMPOSER-1 Stage 1: the item modal (#modalBg > .modal.frz-composer) becomes a responsive
      composer shell - a fixed header, a single SCROLLING body, and a fixed footer. Scoped to
@@ -715,8 +709,56 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     /* Below the established shell breakpoint the composer is a full-screen sheet (create-only on
        mobile - editing an existing item routes to the item page). */
     .modal.frz-composer { width: 100vw; max-width: 100vw; height: 100vh; max-height: 100vh; margin: 0; border-radius: 0; }
-    .modal.frz-composer .proj-modal-cols { grid-template-columns: 1fr; }
+    .modal.frz-composer .composer-cols { grid-template-columns: 1fr; }
   }
+
+  /* ── ITEM-COMPOSER-1 Stage 3: create-mode content canvas + property rail. Scoped to .frz-composer so
+     the shared .modal is untouched. The modal is a classic <body> child OUTSIDE .frz-beta, so these use
+     the classic tokens (--surface/--border/--text/--muted/--accent), which resolve at :root. ── */
+  .modal.frz-composer .composer-cols { display: grid; grid-template-columns: 1fr 320px; gap: 22px; align-items: start; }
+  @media (max-width: 880px){ .modal.frz-composer .composer-cols { grid-template-columns: 1fr; } }
+  .modal.frz-composer .composer-canvas { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+  .modal.frz-composer .composer-rail { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+
+  /* Title as hero (the item name is the first thing you set, not a field between Team and Type) */
+  .modal.frz-composer .composer-titlewrap { position: relative; padding-right: 22px; }
+  .modal.frz-composer input.composer-title { width: 100%; border: 0; border-bottom: 2px solid transparent; background: transparent; font: 700 22px/1.3 'Lato', sans-serif; color: var(--text); padding: 2px 0 6px; letter-spacing: -0.01em; outline: none; box-shadow: none; }
+  .modal.frz-composer input.composer-title::placeholder { color: var(--muted); font-weight: 600; }
+  .modal.frz-composer input.composer-title:focus { border-bottom-color: var(--accent); box-shadow: none; }
+  .modal.frz-composer .composer-desc > label,
+  .modal.frz-composer .composer-rail label { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: var(--muted); text-transform: uppercase; }
+  .modal.frz-composer .composer-desc #fDesc { margin-top: 6px; }
+
+  /* Status: prominent, not just another select row */
+  .modal.frz-composer .composer-statusrow select { font-weight: 700; color: var(--accent); background: rgba(0,89,169,0.06); border-color: rgba(0,89,169,0.28); }
+
+  /* Quick-edit grid: compact current-value tap targets (not labelled select rows). The label is a
+     small caption; the value (the select's shown option) is the prominent element. Real selects are
+     reused, so they stay keyboard + touch operable and the save contract is unchanged. */
+  .modal.frz-composer .composer-qgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; }
+  .modal.frz-composer .composer-qcell { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); padding: 7px 9px 8px; display: flex; flex-direction: column; gap: 3px; min-width: 0; transition: border-color 0.12s; }
+  .modal.frz-composer .composer-qcell:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,89,169,0.1); }
+  .modal.frz-composer .composer-qcell > label { font-size: 10px; font-weight: 700; letter-spacing: 0.05em; color: var(--muted); text-transform: uppercase; margin: 0; }
+  .modal.frz-composer .composer-qcell select { width: 100%; border: 0; background: transparent; padding: 0; margin: 0; font-family: 'Lato', sans-serif; font-size: 13.5px; font-weight: 700; color: var(--text); outline: none; cursor: pointer; box-shadow: none; min-width: 0; text-overflow: ellipsis; }
+  .modal.frz-composer .composer-qcell select:focus { box-shadow: none; border: 0; }
+
+  /* Collapsible groups: Ownership open on create; Schedule, Relationships, Advanced collapsed. */
+  .modal.frz-composer .composer-group { border-top: 1px solid var(--border); padding-top: 4px; }
+  .modal.frz-composer .composer-group > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 7px; padding: 8px 0; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--text); text-transform: uppercase; }
+  .modal.frz-composer .composer-group > summary::-webkit-details-marker { display: none; }
+  .modal.frz-composer .composer-group > summary::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform 0.15s; flex-shrink: 0; }
+  .modal.frz-composer .composer-group[open] > summary::before { transform: rotate(45deg); }
+  .modal.frz-composer .composer-group.has-error > summary { color: var(--accent2); }
+  .modal.frz-composer .composer-group.has-error > summary::after { content: "!"; display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: var(--accent2); color: #fff; font-size: 10px; font-weight: 900; }
+  .modal.frz-composer .composer-group-body { padding: 4px 0 12px; display: flex; flex-direction: column; gap: 10px; }
+  .modal.frz-composer .composer-group-body .form-grid { gap: 10px; }
+  .modal.frz-composer .composer-editor-note { font-size: 11.5px; line-height: 1.4; color: var(--muted); background: var(--surface2); border-radius: 6px; padding: 8px 10px; }
+
+  /* Footer: destination Space context on the left */
+  .modal.frz-composer .composer-foot-space { font-size: 12px; color: var(--muted); font-weight: 700; }
+  .modal.frz-composer .composer-foot-space b { color: var(--text); }
+
+  .frz-visually-hidden { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
   /* Date field with clear button */
   .date-wrap { display: flex; gap: 4px; align-items: center; }
   .date-wrap input[type=date] { flex: 1; }
@@ -1707,243 +1749,294 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     </div>
 
     <div class="composer-body">
-    <!-- Top row: Name + Developer on same line -->
-    <div class="form-grid-3" style="margin-bottom:12px">
-      <div class="form-row" style="margin-bottom:0">
-        <label>Item Name</label>
-        <div style="position:relative;display:flex;align-items:center;gap:6px">
-          <input type="text" id="fName" placeholder="Enter item name…" style="flex:1;padding-right:32px">
+    <!-- ITEM-COMPOSER-1 Stage 3: create-mode restructure into a content canvas (what the work IS) and a
+         property rail (what the system needs). Every field below is the SAME node as before, RELOCATED
+         verbatim (same id, same inline handlers) - no field is recreated, so runtime listeners that bind
+         by id (openProjectModal + the top-level addEventListener sites) still find them. The role-scoped
+         #editorFieldPanel injection was RETIRED; editors now edit the same real fields with per-field
+         gating (frzApplyComposerRoleScope). -->
+    <div class="composer-cols">
+
+      <!-- ══ CONTENT CANVAS (left) ══ -->
+      <div class="composer-canvas">
+        <div class="composer-titlewrap">
+          <label for="fName" class="frz-visually-hidden">Item Name</label>
+          <input type="text" id="fName" class="composer-title" placeholder="What needs doing?" aria-label="Item name">
           <!-- ADDENDUM A P2: opens the item page IN THIS TAB. No target -> NEWTAB-FIX-1's interceptor
                hands the click to the in-app router; it stays a real anchor so cmd/ctrl-click still opens
                a new tab. The ⤢ glyph is reused from the List detail panel's open-in-current-tab control
                (.frz-lp-full) - a bare Unicode literal there, no IC entry exists. The new-tab action is
                the separate #modalOpenPageBtn button. -->
           <a id="itemPageLink" href="#" title="Open the item page in this tab"
-            style="position:absolute;right:8px;top:50%;transform:translateY(-50%);color:var(--muted);opacity:0.85;line-height:1;font-size:16px;text-decoration:none;display:none">⤢</a>
-        </div>
-      </div>
-      <div class="form-row" style="margin-bottom:0">
-        <label>Team</label>
-        <select id="fDev"></select>
-      </div>
-      <div class="form-row" style="margin-bottom:0">
-        <label id="fTypeLbl">Type</label>
-        <select id="fType">
-          <option value="">- None -</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="proj-modal-cols">
-      <!-- ── LEFT COLUMN ── -->
-      <div class="proj-modal-left">
-
-        <!-- Project + Required Item -->
-        <div class="form-grid">
-          <div class="form-row">
-            <label id="fProductLbl">Space</label>
-            <select id="fProduct"></select>
-          </div>
-          <div class="form-row">
-            <label>Depends On</label>
-            <div style="display:flex;align-items:center;gap:8px">
-              <div id="fRequiresWrap" style="position:relative;flex:1">
-                <input type="text" id="fRequiresInput" placeholder="Search items…" autocomplete="off"
-                  style="width:100%;padding:7px 10px;font-size:13px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;font-family:'Lato',sans-serif;outline:none;box-sizing:border-box">
-                <div id="fRequiresDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:300;max-height:180px;overflow-y:auto"></div>
-                <select id="fRequires" style="display:none">
-                  <option value="">- None -</option>
-                </select>
-              </div>
-              <label style="display:flex;align-items:center;gap:4px;white-space:nowrap;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;flex-shrink:0;text-transform:none;letter-spacing:0">
-                <input type="checkbox" id="fParallel" checked style="width:13px;height:13px;cursor:pointer;accent-color:var(--accent)">
-                Parallel
-              </label>
-            </div>
-          </div>
-        </div>
-
-        <!-- Status + Parent Item -->
-        <div class="form-grid">
-          <div class="form-row">
-            <label>Status</label>
-            <select id="fStatus"></select>
-          </div>
-          <div class="form-row">
-            <label>Parent Item</label>
-            <div id="fParentWrap" style="position:relative">
-              <input type="text" id="fParentInput" placeholder="Search items…" autocomplete="off"
-                style="width:100%;padding:7px 10px;font-size:13px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;font-family:'Lato',sans-serif;outline:none;box-sizing:border-box">
-              <div id="fParentDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:300;max-height:180px;overflow-y:auto"></div>
-              <select id="fParent" style="display:none">
-                <option value="">- None -</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <!-- Start + Time Estimate -->
-        <div class="form-grid">
-          <div class="form-row">
-            <label id="startDateLabel">Start Date</label>
-            <div class="date-wrap">
-              <input type="date" id="fStart">
-              <button type="button" class="date-clear" onclick="document.getElementById('fStart').value='';updateDueDatePreview();" title="Clear"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-            </div>
-          </div>
-          <div class="form-row">
-            <label>Time Estimate</label>
-            <select id="fDueWeeks"></select>
-          </div>
-        </div>
-
-        <div class="form-row" id="dueDatePreview" style="margin-top:-4px;margin-bottom:8px;font-size:11px;color:var(--muted);font-weight:700;padding:0 2px"></div>
-
-        <!-- Delay Date | Parallel Resources -->
-        <div class="form-grid">
-          <div class="form-row">
-            <label id="delayDateLabel">Delay Date</label>
-            <select id="fRevisedOffset">
-              <option value="">- No revision -</option>
-              <option value="-4">−4 weeks (earlier)</option>
-              <option value="-3">−3 weeks</option>
-              <option value="-2">−2 weeks</option>
-              <option value="-1">−1 week</option>
-              <option value="1">+1 week</option>
-              <option value="2">+2 weeks</option>
-              <option value="3">+3 weeks</option>
-              <option value="4">+4 weeks</option>
-              <option value="5">+5 weeks</option>
-              <option value="6">+6 weeks (latest)</option>
-            </select>
-            <div id="revisedDatePreview" style="font-size:11px;color:var(--accent);font-weight:700;margin-top:3px"></div>
-            <input type="hidden" id="fRevised">
-          </div>
-          <div class="form-row" id="parallelResourcesRow">
-            <label style="display:flex;align-items:center;gap:5px">
-              Parallel Resources
-              <span title="Defines how many team capacity units are consumed during the active work phase (Time Estimate minus Testing). Testing and Delay always consume 1 unit. Values round up to nearest 0.25."
-                style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;background:var(--surface2);color:var(--muted);font-size:9px;font-weight:900;cursor:help;flex-shrink:0">?</span>
-            </label>
-            <input type="number" id="fParallelResources" min="1" step="0.25" value="1"
-              style="width:100%;padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none"
-              placeholder="1">
-          </div>
-        </div>
-
-        <!-- Release Date (conditional) -->
-        <div class="form-row" id="releaseRow" style="display:none">
-          <label>Release Date <span style="color:var(--accent2)">*</span></label>
-          <div class="date-wrap">
-            <input type="date" id="fRelease">
-            <button type="button" class="date-clear" onclick="document.getElementById('fRelease').value='';" title="Clear"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-          </div>
-          <div id="releaseError" style="display:none;color:var(--accent2);font-size:11px;margin-top:4px;font-weight:700"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Release date is required for Released status.</div>
-        </div>
-
-        <!-- Test Period | Expected Date -->
-        <div class="form-grid">
-          <div class="form-row">
-            <label>Test Period <span style="font-size:10px;color:var(--muted);font-weight:400">(incl. in estimate)</span></label>
-            <select id="fTestWeeks">
-              <option value="0">0 - no testing</option>
-              <option value="0.142857">1 day</option>
-              <option value="1">1 week</option>
-              <option value="2" selected>2 weeks</option>
-              <option value="4">4 weeks</option>
-            </select>
-            <div id="testWeeksError" style="display:none;font-size:10px;color:var(--accent2);font-weight:700;margin-top:3px"></div>
-          </div>
-          <div class="form-row">
-            <label style="display:flex;justify-content:space-between;align-items:center">
-              Expected Date
-              <button type="button" onclick="expectedManuallySet=false;syncExpectedToScheduled();" title="Sync to scheduled" style="background:none;border:none;color:var(--accent);font-size:10px;font-weight:700;cursor:pointer;padding:0;text-decoration:underline;font-family:'Lato',sans-serif"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Reset</button>
-            </label>
-            <div class="date-wrap">
-              <input type="date" id="fExpected">
-              <button type="button" class="date-clear" onclick="document.getElementById('fExpected').value='';expectedManuallySet=true;" title="Clear"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Recurrence (admin only) -->
-        <div class="form-row" id="recurrenceRow">
-          <label>Recurrence</label>
-          <select id="fRecurrence">
-            <option value="none">None</option>
-            <option value="weekly">Weekly</option>
-            <option value="biweekly">Every 2 Weeks</option>
-            <option value="monthly">Monthly</option>
-          </select>
-          <div style="font-size:10px;color:var(--muted);margin-top:3px">When completed, a new item is automatically created with the same settings.</div>
-          <label id="syncChildrenRow" style="display:none;align-items:center;gap:7px;margin-top:8px;font-size:12px;font-weight:700;cursor:pointer;user-select:none">
-            <input type="checkbox" id="fSyncChildren" style="accent-color:var(--accent);width:14px;height:14px;cursor:pointer">
-            Sync Children from Jira
-            <span style="font-size:10px;font-weight:400;color:var(--muted)">(auto-creates subitems from linked Jira subtasks)</span>
-          </label>
-        </div>
-
-      </div><!-- end left col -->
-
-      <!-- ── RIGHT COLUMN ── -->
-      <div class="proj-modal-right">
-
-        <!-- Ignore Conflicts With (admin only) - kept for quick access -->
-        <div class="form-row" id="ignoreConflictsRow" style="display:none">
-          <label>Ignore Conflicts With</label>
-          <div style="display:flex;gap:6px;margin-bottom:4px">
-            <select id="fIgnoreConflictsAdd" style="flex:1;padding:6px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none">
-              <option value="">- Select item to ignore -</option>
-            </select>
-            <button type="button" id="addIgnoreConflictBtn"
-              style="background:var(--accent);color:#fff;border:none;padding:6px 10px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap">+ Add</button>
-          </div>
-          <div id="ignoreConflictsList" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px"></div>
-        </div>
-
-        <!-- JIRA Tickets (quick add only) -->
-        <div class="form-row" id="jiraModalRow">
-          <label style="display:flex;align-items:center;justify-content:space-between">
-            <span>JIRA Tickets</span>
-            <button id="jiraCreateBtn" type="button" onclick="createJiraIssueFromModal()"
-              style="display:none;font-size:10px;font-weight:700;background:rgba(0,89,169,0.08);color:var(--accent);border:1px solid rgba(0,89,169,0.25);padding:3px 9px;border-radius:5px;cursor:pointer;font-family:'Lato',sans-serif">
-              + Create Jira Issue
-            </button>
-          </label>
-          <div style="display:flex;gap:6px;margin-bottom:6px">
-            <input type="text" id="fJiraInput" placeholder="e.g. FRAZ-1234"
-              style="flex:1;padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none">
-            <button type="button" id="addJiraBtn"
-              style="background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap">Link</button>
-          </div>
-          <div id="jiraLinkError" style="display:none;font-size:11px;color:var(--accent2);font-weight:700;margin-bottom:4px"></div>
-          <div id="jiraList" style="display:grid;gap:4px;margin-bottom:6px"></div>
-        </div>
-
-        <!-- Linked Assets (EDIT modal only; needs a saved item id, like the Jira +Create guard).
-             Reuses the item-page asset card via window._frzRenderAssetCard - one implementation. -->
-        <div class="form-row" id="modalAssetRow" style="display:none"><div id="modalAssetSection"></div></div>
-
-        <!-- Feature Flags - above Notes -->
-        <div class="form-row" id="featureFlagsRow" style="padding-bottom:4px">
-          <label>Feature Flags</label>
-          <div style="display:flex;gap:6px;margin-bottom:6px">
-            <input type="text" id="fFeatureFlagInput" placeholder="Add flag name…"
-              style="flex:1;padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none">
-            <button type="button" onclick="addFeatureFlag()"
-              style="background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap">Add</button>
-          </div>
-          <div id="fFeatureFlagList" style="display:flex;flex-wrap:wrap;gap:6px;min-height:22px"></div>
+            style="position:absolute;right:2px;top:8px;color:var(--muted);opacity:0.85;line-height:1;font-size:16px;text-decoration:none;display:none">⤢</a>
         </div>
 
         <!-- Description (label was "Notes" pre-4.59.0; the box edits p.description) -->
-        <div class="form-row" style="flex:1;display:flex;flex-direction:column;padding-top:2px">
+        <div class="form-row composer-desc" style="flex:1;display:flex;flex-direction:column;padding-top:2px">
           <label>Description</label>
-          <div id="fDesc" class="rte-box" contenteditable="true" spellcheck="true" style="flex:1;min-height:100px;max-height:130px"></div>
+          <div id="fDesc" class="rte-box" contenteditable="true" spellcheck="true" style="flex:1;min-height:120px"></div>
         </div>
 
-      </div><!-- end right col -->
-    </div><!-- end proj-modal-cols -->
+        <!-- Linked Assets / attachments. Create has no item id yet, so no upload control (the queued
+             PRECREATE-ATTACH-1 stage adds it) - an inert "Link assets after saving" line stands in.
+             EDIT reuses the item-page asset card via window._frzRenderAssetCard (one implementation). -->
+        <div class="form-row" id="modalAssetRow" style="display:none"><div id="modalAssetSection"></div></div>
+      </div><!-- end canvas -->
+
+      <!-- ══ PROPERTY RAIL (right) ══ -->
+      <div class="composer-rail">
+
+        <!-- Status -->
+        <div class="form-row composer-statusrow" style="margin-bottom:0">
+          <label>Status</label>
+          <select id="fStatus"></select>
+        </div>
+
+        <!-- Quick-edit grid: current-value tap targets, not labelled select rows. Priority is admin-only
+             (grid degrades to Space + Type for editors). Assignee deferred (J.R.). -->
+        <div class="composer-qgrid">
+          <div class="composer-qcell" id="priorityRow" style="display:none">
+            <label id="fPriorityLbl">Priority</label>
+            <select id="fPriority">
+              <option value="" style="color:#888;font-weight:400">- None -</option>
+              <option value="1" style="color:#e8394a">Urgent</option>
+              <option value="2" style="color:#e87000">High</option>
+              <option value="3" style="color:#c09000">Medium</option>
+              <option value="4" style="color:#22b96e">Low</option>
+            </select>
+          </div>
+          <div class="composer-qcell" id="qcellProduct">
+            <label id="fProductLbl">Space</label>
+            <select id="fProduct"></select>
+          </div>
+          <div class="composer-qcell" id="qcellType">
+            <label id="fTypeLbl">Type</label>
+            <select id="fType">
+              <option value="">- None -</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Ownership (open) -->
+        <details class="composer-group" id="grpOwnership" open>
+          <summary>Ownership</summary>
+          <div class="composer-group-body">
+            <div class="form-row" style="margin-bottom:0">
+              <label>Team</label>
+              <select id="fDev"></select>
+            </div>
+          </div>
+        </details>
+
+        <!-- Schedule &amp; Capacity (collapsed on create) -->
+        <details class="composer-group" id="grpSchedule">
+          <summary>Schedule &amp; Capacity</summary>
+          <div class="composer-group-body" id="grpScheduleBody">
+            <!-- Constraint #4: editors can only change the delay date on active items, so most of this
+                 group is read-only for them. This note keeps a group of locked controls from reading as
+                 broken. Stage 5 adds per-field lock explanations. -->
+            <div class="composer-editor-note" id="editorScheduleNote" style="display:none">Schedule is set by admins. As an editor you can request a delay date on active items; other fields here are read-only.</div>
+
+            <div class="form-grid">
+              <div class="form-row">
+                <label id="startDateLabel">Start Date</label>
+                <div class="date-wrap">
+                  <input type="date" id="fStart">
+                  <button type="button" class="date-clear" onclick="document.getElementById('fStart').value='';updateDueDatePreview();" title="Clear"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                </div>
+              </div>
+              <div class="form-row">
+                <label>Time Estimate</label>
+                <select id="fDueWeeks"></select>
+              </div>
+            </div>
+
+            <div class="form-row" id="dueDatePreview" style="margin-top:-4px;margin-bottom:8px;font-size:11px;color:var(--muted);font-weight:700;padding:0 2px"></div>
+
+            <!-- Delay Date | Parallel Resources -->
+            <div class="form-grid">
+              <div class="form-row">
+                <label id="delayDateLabel">Delay Date</label>
+                <select id="fRevisedOffset">
+                  <option value="">- No revision -</option>
+                  <option value="-4">−4 weeks (earlier)</option>
+                  <option value="-3">−3 weeks</option>
+                  <option value="-2">−2 weeks</option>
+                  <option value="-1">−1 week</option>
+                  <option value="1">+1 week</option>
+                  <option value="2">+2 weeks</option>
+                  <option value="3">+3 weeks</option>
+                  <option value="4">+4 weeks</option>
+                  <option value="5">+5 weeks</option>
+                  <option value="6">+6 weeks (latest)</option>
+                </select>
+                <div id="revisedDatePreview" style="font-size:11px;color:var(--accent);font-weight:700;margin-top:3px"></div>
+                <input type="hidden" id="fRevised">
+              </div>
+              <div class="form-row" id="parallelResourcesRow">
+                <label style="display:flex;align-items:center;gap:5px">
+                  Parallel Resources
+                  <span title="Defines how many team capacity units are consumed during the active work phase (Time Estimate minus Testing). Testing and Delay always consume 1 unit. Values round up to nearest 0.25."
+                    style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;background:var(--surface2);color:var(--muted);font-size:9px;font-weight:900;cursor:help;flex-shrink:0">?</span>
+                </label>
+                <input type="number" id="fParallelResources" min="1" step="0.25" value="1"
+                  style="width:100%;padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none"
+                  placeholder="1">
+              </div>
+            </div>
+
+            <!-- Release Date (conditional) -->
+            <div class="form-row" id="releaseRow" style="display:none">
+              <label>Release Date <span style="color:var(--accent2)">*</span></label>
+              <div class="date-wrap">
+                <input type="date" id="fRelease">
+                <button type="button" class="date-clear" onclick="document.getElementById('fRelease').value='';" title="Clear"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+              </div>
+              <div id="releaseError" style="display:none;color:var(--accent2);font-size:11px;margin-top:4px;font-weight:700"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Release date is required for Released status.</div>
+            </div>
+
+            <!-- Test Period | Expected Date -->
+            <div class="form-grid">
+              <div class="form-row">
+                <label>Test Period <span style="font-size:10px;color:var(--muted);font-weight:400">(incl. in estimate)</span></label>
+                <select id="fTestWeeks">
+                  <option value="0">0 - no testing</option>
+                  <option value="0.142857">1 day</option>
+                  <option value="1">1 week</option>
+                  <option value="2" selected>2 weeks</option>
+                  <option value="4">4 weeks</option>
+                </select>
+                <div id="testWeeksError" style="display:none;font-size:10px;color:var(--accent2);font-weight:700;margin-top:3px"></div>
+              </div>
+              <div class="form-row">
+                <label style="display:flex;justify-content:space-between;align-items:center">
+                  Expected Date
+                  <button type="button" onclick="expectedManuallySet=false;syncExpectedToScheduled();" title="Sync to scheduled" style="background:none;border:none;color:var(--accent);font-size:10px;font-weight:700;cursor:pointer;padding:0;text-decoration:underline;font-family:'Lato',sans-serif"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg> Reset</button>
+                </label>
+                <div class="date-wrap">
+                  <input type="date" id="fExpected">
+                  <button type="button" class="date-clear" onclick="document.getElementById('fExpected').value='';expectedManuallySet=true;" title="Clear"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Relationships (collapsed) -->
+        <details class="composer-group" id="grpRelationships">
+          <summary>Relationships</summary>
+          <div class="composer-group-body">
+            <div class="form-row" id="dependsOnRow">
+              <label>Depends On</label>
+              <div style="display:flex;align-items:center;gap:8px">
+                <div id="fRequiresWrap" style="position:relative;flex:1">
+                  <input type="text" id="fRequiresInput" placeholder="Search items…" autocomplete="off"
+                    style="width:100%;padding:7px 10px;font-size:13px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;font-family:'Lato',sans-serif;outline:none;box-sizing:border-box">
+                  <div id="fRequiresDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:300;max-height:180px;overflow-y:auto"></div>
+                  <select id="fRequires" style="display:none">
+                    <option value="">- None -</option>
+                  </select>
+                </div>
+                <label style="display:flex;align-items:center;gap:4px;white-space:nowrap;font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;flex-shrink:0;text-transform:none;letter-spacing:0">
+                  <input type="checkbox" id="fParallel" checked style="width:13px;height:13px;cursor:pointer;accent-color:var(--accent)">
+                  Parallel
+                </label>
+              </div>
+            </div>
+            <div class="form-row">
+              <label>Parent Item</label>
+              <div id="fParentWrap" style="position:relative">
+                <input type="text" id="fParentInput" placeholder="Search items…" autocomplete="off"
+                  style="width:100%;padding:7px 10px;font-size:13px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;font-family:'Lato',sans-serif;outline:none;box-sizing:border-box">
+                <div id="fParentDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:300;max-height:180px;overflow-y:auto"></div>
+                <select id="fParent" style="display:none">
+                  <option value="">- None -</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- JIRA Tickets (quick add only) -->
+            <div class="form-row" id="jiraModalRow">
+              <label style="display:flex;align-items:center;justify-content:space-between">
+                <span>JIRA Tickets</span>
+                <button id="jiraCreateBtn" type="button" onclick="createJiraIssueFromModal()"
+                  style="display:none;font-size:10px;font-weight:700;background:rgba(0,89,169,0.08);color:var(--accent);border:1px solid rgba(0,89,169,0.25);padding:3px 9px;border-radius:5px;cursor:pointer;font-family:'Lato',sans-serif">
+                  + Create Jira Issue
+                </button>
+              </label>
+              <div style="display:flex;gap:6px;margin-bottom:6px">
+                <input type="text" id="fJiraInput" placeholder="e.g. FRAZ-1234"
+                  style="flex:1;padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none">
+                <button type="button" id="addJiraBtn"
+                  style="background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap">Link</button>
+              </div>
+              <div id="jiraLinkError" style="display:none;font-size:11px;color:var(--accent2);font-weight:700;margin-bottom:4px"></div>
+              <div id="jiraList" style="display:grid;gap:4px;margin-bottom:6px"></div>
+            </div>
+
+            <!-- Ignore Conflicts With (admin only) -->
+            <div class="form-row" id="ignoreConflictsRow" style="display:none">
+              <label>Ignore Conflicts With</label>
+              <div style="display:flex;gap:6px;margin-bottom:4px">
+                <select id="fIgnoreConflictsAdd" style="flex:1;padding:6px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none">
+                  <option value="">- Select item to ignore -</option>
+                </select>
+                <button type="button" id="addIgnoreConflictBtn"
+                  style="background:var(--accent);color:#fff;border:none;padding:6px 10px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap">+ Add</button>
+              </div>
+              <div id="ignoreConflictsList" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px"></div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Advanced (collapsed) -->
+        <details class="composer-group" id="grpAdvanced">
+          <summary>Advanced</summary>
+          <div class="composer-group-body">
+            <!-- Recurrence (admin only) -->
+            <div class="form-row" id="recurrenceRow">
+              <label>Recurrence</label>
+              <select id="fRecurrence">
+                <option value="none">None</option>
+                <option value="weekly">Weekly</option>
+                <option value="biweekly">Every 2 Weeks</option>
+                <option value="monthly">Monthly</option>
+              </select>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px">When completed, a new item is automatically created with the same settings.</div>
+              <label id="syncChildrenRow" style="display:none;align-items:center;gap:7px;margin-top:8px;font-size:12px;font-weight:700;cursor:pointer;user-select:none">
+                <input type="checkbox" id="fSyncChildren" style="accent-color:var(--accent);width:14px;height:14px;cursor:pointer">
+                Sync Children from Jira
+                <span style="font-size:10px;font-weight:400;color:var(--muted)">(auto-creates subitems from linked Jira subtasks)</span>
+              </label>
+            </div>
+
+            <!-- Feature Flags -->
+            <div class="form-row" id="featureFlagsRow" style="padding-bottom:4px">
+              <label>Feature Flags</label>
+              <div style="display:flex;gap:6px;margin-bottom:6px">
+                <input type="text" id="fFeatureFlagInput" placeholder="Add flag name…"
+                  style="flex:1;padding:6px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none">
+                <button type="button" onclick="addFeatureFlag()"
+                  style="background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:13px;cursor:pointer;white-space:nowrap">Add</button>
+              </div>
+              <div id="fFeatureFlagList" style="display:flex;flex-wrap:wrap;gap:6px;min-height:22px"></div>
+            </div>
+
+            <!-- Hide from Flow (admin only; moved out of the footer) -->
+            <div class="form-row" id="hideFromFlowRow">
+              <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;font-weight:700;color:var(--muted)">
+                <span class="toggle" style="display:inline-flex;flex-shrink:0;vertical-align:middle">
+                  <input type="checkbox" id="fHidden">
+                  <span class="toggle-sl"></span>
+                </span>
+                <span style="vertical-align:middle;line-height:1">Hide from Flow</span>
+              </label>
+            </div>
+          </div>
+        </details>
+
+      </div><!-- end rail -->
+    </div><!-- end composer-cols -->
     </div><!-- end composer-body -->
 
     <!-- Change Reason Panel - shown when timeline changes require justification -->
@@ -1971,25 +2064,11 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 
     <!-- Actions row -->
     <div class="modal-actions">
+      <!-- Stage 3 footer: destination Space context (left), then Cancel + Create/Save. Priority moved to
+           the quick-edit grid; Hide-from-Flow moved to Advanced. Delete stays (edit-only, admin-only);
+           Stage 4 refines its placement. -->
       <button class="btn-danger" id="deleteBtn" style="display:none"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg> Delete</button>
-      <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;font-weight:700;color:var(--muted);margin-right:auto">
-        <span class="toggle" style="display:inline-flex;flex-shrink:0;vertical-align:middle">
-          <input type="checkbox" id="fHidden">
-          <span class="toggle-sl"></span>
-        </span>
-        <span style="vertical-align:middle;line-height:1">Hide from Flow</span>
-      </label>
-      <!-- Priority in footer (admin only) -->
-      <div id="priorityRow" style="display:none;align-items:center;gap:6px">
-        <label style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap;margin:0">Priority</label>
-        <select id="fPriority" style="font-weight:700;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none;min-width:100px">
-          <option value="" style="color:#888;font-weight:400">- None -</option>
-          <option value="1" style="color:#e8394a">Urgent</option>
-          <option value="2" style="color:#e87000">High</option>
-          <option value="3" style="color:#c09000">Medium</option>
-          <option value="4" style="color:#22b96e">Low</option>
-        </select>
-      </div>
+      <span class="composer-foot-space" id="composerFooterSpace" style="margin-right:auto"></span>
       <button class="btn-cancel" id="cancelBtn">Cancel</button>
       <button class="btn-save" id="saveBtn">Save</button>
     </div>
@@ -2408,7 +2487,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.39.1';
+const APP_VERSION = '6.39.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -2417,12 +2496,9 @@ function applyJiraVisibility(){
   // Item page Jira card
   const ipCard = document.getElementById('ipJiraCard');
   if(ipCard) ipCard.style.display = show ? '' : 'none';
-  // Item modal Jira row
+  // Item modal Jira row (Stage 3: single real row for both roles; the editor inline row was retired)
   const jiraRow = document.getElementById('jiraModalRow');
   if(jiraRow) jiraRow.style.display = show ? '' : 'none';
-  // Editor panel Jira row - always hidden for editors (they use jiraModalRow instead)
-  const edJiraRow = document.getElementById('editorJiraInlineRow');
-  if(edJiraRow) edJiraRow.style.display = (show && !isEditor) ? '' : 'none';
   // Stop background sync if disabled (routed through the named stopper - Step 0)
   if(!show) _stopBackgroundJiraSync();
 }
@@ -5279,6 +5355,12 @@ document.getElementById('fRevisedOffset')?.addEventListener('change', ()=>{
   updateDelayDateLabels();
   updateRevisedDate();
   syncExpectedToScheduled();
+  // ITEM-COMPOSER-1 Stage 3: the editor change-reason trigger used to hang off the retired
+  // #fRevisedOffsetEditor proxy's onchange. It is re-homed here onto the real field. The function
+  // self-guards (isEditor + existing item), so this no-ops for admins and for create. Stage 6 must
+  // exercise BOTH reason paths from this one field: admin (wireAdminChangeDetection ->
+  // checkAdminReasonNeeded) and editor (checkEditorReasonNeeded -> triggerDueDateApproval).
+  checkEditorReasonNeeded();
 });
 document.getElementById('fTestWeeks')?.addEventListener('change', ()=>{ syncExpectedToScheduled(); updateDueDatePreview(); });
 
@@ -5440,14 +5522,9 @@ function syncMutualExclusion(){
     // Requires is set - disable parent
     if(parentInput){ parentInput.disabled = true; parentInput.style.opacity = '0.4'; parentInput.style.cursor = 'not-allowed'; }
     if(parentSel)   parentSel.disabled = true;
-    // Also disable editor parent input
-    const edParent = document.getElementById('fParentEditorInput');
-    if(edParent){ edParent.disabled = true; edParent.style.opacity = '0.4'; edParent.style.cursor = 'not-allowed'; }
   } else {
     if(parentInput){ parentInput.disabled = false; parentInput.style.opacity = ''; parentInput.style.cursor = ''; }
     if(parentSel)   parentSel.disabled = false;
-    const edParent = document.getElementById('fParentEditorInput');
-    if(edParent){ edParent.disabled = false; edParent.style.opacity = ''; edParent.style.cursor = ''; }
   }
 
   if(parentVal){
@@ -5470,8 +5547,6 @@ document.getElementById('fRequires')?.addEventListener('change', ()=>{
     const parentInput = document.getElementById('fParentInput');
     if(parentSel) parentSel.value = '';
     if(parentInput) parentInput.value = '';
-    const edParent = document.getElementById('fParentEditorInput');
-    if(edParent) edParent.value = '';
   }
   syncMutualExclusion();
 });
@@ -5544,6 +5619,49 @@ function _frzComposerHeader(p, id){
     else { w.style.display='none'; w.innerHTML=''; }
   }
 }
+
+// ── ITEM-COMPOSER-1 Stage 3: per-field role scope for the unified composer ────────────────────────
+// Replaces the retired #editorFieldPanel. The editor-visible EDITABLE set must equal the old panel's
+// exactly. Fields already carrying their own admin-only gate (Priority, Parallel Resources, Release,
+// Recurrence, Ignore Conflicts, Hide, Delete) are handled at their existing sites; this function only
+// covers the fields the panel hid that have NO other gate: Start Date and Depends On/Parallel, plus
+// Test Period which the panel showed read-only. Admin path restores all of them (the modal is reused).
+function frzApplyComposerRoleScope(p){
+  const editorOnly = (typeof isEditor!=='undefined' && isEditor) && !(typeof isAdmin!=='undefined' && isAdmin);
+  // Start Date: editors never had it (no field in the retired panel).
+  const startRow = document.getElementById('fStart')?.closest('.form-row');
+  if(startRow) startRow.style.display = editorOnly ? 'none' : '';
+  // Depends On + Parallel: not in the retired panel.
+  const depRow = document.getElementById('dependsOnRow');
+  if(depRow) depRow.style.display = editorOnly ? 'none' : '';
+  // Test Period: the panel showed it view-only. Show the real select, disabled, for editors.
+  const tw = document.getElementById('fTestWeeks');
+  if(tw){ tw.disabled = editorOnly; tw.style.opacity = editorOnly ? '0.6' : ''; tw.title = editorOnly ? 'Test period is set by admins' : ''; }
+  // Constraint #4: an editor's Schedule group is mostly locked (only Delay, on active items, is
+  // editable). This note keeps the group from reading as broken; Stage 5 adds per-field lock reasons.
+  const note = document.getElementById('editorScheduleNote');
+  if(note) note.style.display = editorOnly ? '' : 'none';
+}
+
+// Footer destination-Space context (Stage 3). Create: "Saves to <Space>"; edit: the item's Space.
+function _frzUpdateComposerFooterSpace(){
+  const el = document.getElementById('composerFooterSpace');
+  if(!el) return;
+  const space = document.getElementById('fProduct')?.value || '';
+  if(!space){ el.textContent = ''; return; }
+  el.innerHTML = (editingId ? '' : 'Saves to ') + '<b>' + esc(space) + '</b>';
+}
+
+// Validation reveal (Stage 3): if a field needing attention is inside a collapsed group, open the
+// group (mark it errored) and move focus to the field. Fields not in a group just focus.
+function _frzRevealComposerField(fieldId){
+  const el = document.getElementById(fieldId);
+  if(!el) return;
+  const grp = el.closest('.composer-group');
+  if(grp){ grp.open = true; grp.classList.add('has-error'); }
+  try { el.focus(); } catch(_e){}
+}
+
 function openProjectModal(id){
   if(!isAdmin && !isEditor){ if(id) openItemPage(id); return; } // viewers → item page
   if(id && _isListPhone()){ openItemPage(id); return; }         // mobile: existing item → full page, never the edit modal (New Item, id null, still opens the sheet)
@@ -5799,10 +5917,11 @@ function openProjectModal(id){
   // Default parallel to true - user must uncheck to enable start date cascade
   document.getElementById('fParallel').checked = p?.parallel !== false;
   document.getElementById('fHidden').checked = p?.hidden||false;
-  // Priority: admin-only field (now in footer as flex row)
+  // Priority: admin-only field (Stage 3: a cell in the quick-edit grid; grid degrades to Space + Type
+  // for editors). Display is '' (the .composer-qcell CSS lays it out), not the old footer 'flex'.
   const priorityRow = document.getElementById('priorityRow');
   const prioritySel = document.getElementById('fPriority');
-  if(priorityRow) priorityRow.style.display = isAdmin ? 'flex' : 'none';
+  if(priorityRow) priorityRow.style.display = isAdmin ? '' : 'none';
 
   // Parallel Resources: admin-only, and locked when item is in an active status
   const parallelRow = document.getElementById('parallelResourcesRow');
@@ -5830,270 +5949,11 @@ function openProjectModal(id){
   document.getElementById('releaseError').style.display = 'none';
   toggleReleaseRow();
 
-  // Editor vs Admin modal layout
-  const leftCol = document.querySelector('.proj-modal-left');
-  const existingEditorPanel = document.getElementById('editorFieldPanel');
-  if(existingEditorPanel) existingEditorPanel.remove();
-
-  if(isEditor){
-    // Editors see a clean fixed panel replacing the left column
-    // Panel goes INSIDE proj-modal-cols so right column (JIRA Tickets + Notes) stays alongside
-    leftCol.style.display = 'none';
-
-    const panel = document.createElement('div');
-    panel.id = 'editorFieldPanel';
-    panel.style.cssText = 'display:flex;flex-direction:column;gap:12px;min-width:0';
-
-    const isActive    = isActiveStatus(p?.status || '');
-    const isPlanned   = !isActive && !!p?.start;
-    const noStart     = !p?.start;
-    const dimStyle    = 'opacity:0.45;pointer-events:none';
-    const activeStyle = '';
-
-    panel.innerHTML = `
-      <!-- Row 1: Project + Status -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-row" style="margin-bottom:0">
-          <label id="fProductEditorLbl">Space</label>
-          <select id="fProductEditor" style="width:100%"></select>
-        </div>
-        <div class="form-row" style="margin-bottom:0">
-          <label>Status</label>
-          <select id="fStatusEditor" style="width:100%"></select>
-        </div>
-      </div>
-
-      <!-- Row 2: Time Estimate + Delay Date -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-row" style="margin-bottom:0" id="editorEstimateRow">
-          <label style="display:flex;align-items:center;gap:4px">
-            Time Estimate
-            ${isActive ? '<span style="font-size:9px;background:rgba(0,89,169,0.1);color:var(--accent);padding:1px 5px;border-radius:4px;font-weight:700">locked</span>' : ''}
-          </label>
-          <select id="fDueWeeksEditor" style="width:100%" ${isActive ? 'disabled' : ''}>
-          </select>
-        </div>
-        <div class="form-row" style="margin-bottom:0" id="editorDelayRow">
-          <label>Delay Date
-            ${noStart ? '<span style="font-size:9px;color:var(--muted);font-weight:400"> (needs start date)</span>' : ''}
-            ${!isActive && !noStart ? '<span style="font-size:9px;color:var(--muted);font-weight:400"> (active only)</span>' : ''}
-          </label>
-          <select id="fRevisedOffsetEditor" style="width:100%" ${!isActive ? 'disabled' : ''}>
-            <option value="">- No revision -</option>
-            <option value="-4">−4 weeks (earlier)</option>
-            <option value="-3">−3 weeks</option>
-            <option value="-2">−2 weeks</option>
-            <option value="-1">−1 week</option>
-            <option value="1">+1 week</option>
-            <option value="2">+2 weeks</option>
-            <option value="3">+3 weeks</option>
-            <option value="4">+4 weeks</option>
-            <option value="5">+5 weeks</option>
-            <option value="6">+6 weeks (latest)</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- Row 3: Expected Date + Test Period (view only) -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-row" style="margin-bottom:0">
-          <label style="display:flex;justify-content:space-between;align-items:center">
-            Expected Date
-            <button type="button" onclick="expectedManuallySet=false;syncExpectedToScheduled();document.getElementById('fExpectedEditor').value=document.getElementById('fExpected').value;" style="background:none;border:none;color:var(--accent);font-size:10px;font-weight:700;cursor:pointer;padding:0;text-decoration:underline;font-family:'Lato',sans-serif">\u21ba Reset</button>
-          </label>
-          <div style="display:flex;align-items:center;gap:6px">
-            <div class="date-wrap" style="flex:1">
-              <input type="date" id="fExpectedEditor">
-              <button type="button" class="date-clear" onclick="document.getElementById('fExpectedEditor').value='';document.getElementById('fExpected').value='';expectedManuallySet=true;" title="Clear">\u2715</button>
-            </div>
-          </div>
-          <div id="editorScheduledHint" style="font-size:10px;color:var(--muted);margin-top:3px"></div>
-        </div>
-        <div class="form-row" style="margin-bottom:0">
-          <label style="display:flex;align-items:center;gap:4px">
-            Test Period
-            <span style="font-size:9px;color:var(--muted);font-weight:400">(view only)</span>
-          </label>
-          <div id="editorTestWeeksDisplay"
-            style="padding:7px 10px;font-size:13px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-family:'Lato',sans-serif;opacity:0.7">
-            -
-          </div>
-        </div>
-      </div>
-
-      <!-- Row 4: Parent Item (full width) -->
-      <div class="form-row" style="margin-bottom:0">
-        <label>Parent Item</label>
-        <div id="fParentEditorWrap" style="position:relative">
-          <input type="text" id="fParentEditorInput" placeholder="Search or select parent\u2026" autocomplete="off"
-            style="width:100%;padding:7px 10px;font-size:13px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;font-family:'Lato',sans-serif;outline:none;box-sizing:border-box">
-          <div id="fParentEditorDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.12);z-index:300;max-height:160px;overflow-y:auto"></div>
-        </div>
-      </div>
-      <div class="form-row" style="margin-bottom:0;display:none" id="editorJiraInlineRow">
-        <label style="display:flex;align-items:center;justify-content:space-between">
-          <span>JIRA</span>
-          <button id="jiraCreateBtnEditor" type="button" onclick="createJiraIssueFromModal()"
-            style="display:none;font-size:9px;font-weight:700;background:rgba(0,89,169,0.08);color:var(--accent);border:1px solid rgba(0,89,169,0.25);padding:2px 7px;border-radius:4px;cursor:pointer;font-family:'Lato',sans-serif">
-            + Create
-          </button>
-        </label>
-        <div style="display:flex;gap:5px;margin-bottom:4px">
-          <input type="text" id="fJiraInputEditor" placeholder="e.g. FRAZ-1234"
-            style="flex:1;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none">
-          <button type="button" id="addJiraBtnEditor"
-            style="background:var(--accent);color:#fff;border:none;padding:5px 10px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap">Link</button>
-        </div>
-        <div id="jiraLinkErrorEditor" style="display:none;font-size:10px;color:var(--accent2);font-weight:700;margin-bottom:3px"></div>
-        <div id="jiraListEditor" style="display:grid;gap:3px"></div>
-      </div>`;
-
-    // Remove any previously inserted editor panel before adding a fresh one
-    document.getElementById('editorFieldPanel')?.remove();
-
-    // Insert inside proj-modal-cols (before right col) so Notes stays in the right column
-    const modalCols = document.querySelector('.proj-modal-cols');
-    const rightCol  = document.querySelector('.proj-modal-right');
-    modalCols.insertBefore(panel, rightCol);
-
-    // In editor mode: hide the editor panel JIRA row - use the right column's "JIRA Tickets" instead
-    const edJiraInline = document.getElementById('editorJiraInlineRow');
-    if(edJiraInline) edJiraInline.style.display = 'none';
-
-    // Wire editor Jira inline inputs to mirror the main hidden ones
-    const edJiraInput = document.getElementById('fJiraInputEditor');
-    const edAddBtn    = document.getElementById('addJiraBtnEditor');
-    const edJiraList  = document.getElementById('jiraListEditor');
-    const edCreateBtn = document.getElementById('jiraCreateBtnEditor');
-
-    // Sync jira list display to editor panel
-    const syncEditorJiraList = () => {
-      if(!edJiraList) return;
-      edJiraList.innerHTML = jiraTickets.map((t,i) => {
-        const info = jiraStatuses[t];
-        return `<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 8px;background:var(--surface);border-radius:5px;border:1px solid var(--border)">
-          <span style="font-size:11px;font-weight:700;color:var(--accent)">${esc(t)}</span>
-          ${info?.summary ? `<span style="font-size:10px;color:var(--muted);flex:1;margin:0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(info.summary)}</span>` : ''}
-          <button type="button" onclick="removeJiraTicket(${i})" style="background:none;border:none;cursor:pointer;color:var(--accent2);font-size:11px;padding:0 2px;font-family:'Lato',sans-serif">✕</button>
-        </div>`;
-      }).join('');
-      if(edCreateBtn) edCreateBtn.style.display = (jiraConfigured && !jiraTickets.length) ? '' : 'none';
-    };
-    syncEditorJiraList();
-    window._syncEditorJiraList = syncEditorJiraList; // expose for autoSaveJiraTickets to call
-
-    if(edAddBtn) edAddBtn.addEventListener('click', async ()=>{
-      // Mirror to main fJiraInput and trigger addJiraTicket
-      const mainInp = document.getElementById('fJiraInput');
-      if(mainInp && edJiraInput){ mainInp.value = edJiraInput.value; edJiraInput.value = ''; }
-      await addJiraTicket();
-      syncEditorJiraList();
-    });
-    if(edJiraInput) edJiraInput.addEventListener('keydown', e=>{
-      if(e.key === 'Enter'){ e.preventDefault(); edAddBtn?.click(); }
-    });
-
-    // Sync proxy selects from hidden main fields
-    const copySelect = (srcId, dstId, onChange) => {
-      const src = document.getElementById(srcId);
-      const dst = document.getElementById(dstId);
-      if(!src||!dst) return;
-      dst.innerHTML = src.innerHTML;
-      dst.value = src.value;
-      dst.addEventListener('change', ()=>{ src.value = dst.value; if(onChange) onChange(); });
-    };
-    copySelect('fProduct','fProductEditor', ()=>{ refreshStatusOptions(); updateJiraFieldVisibility(); });
-    // Refresh status options scoped to the project workflow
-    refreshStatusOptions(p?.status);
-    // Editors cannot set the Released status - remove that option (config-driven,
-    // resolved by value to avoid a selector-injection with a renamed status name).
-    const _relSt = getReleasedStatus();
-    const _fsEd0 = document.getElementById('fStatusEditor');
-    if(_fsEd0 && _relSt){ const _o=[...(_fsEd0.options||[])].find(o=>o.value===_relSt); if(_o) _o.remove(); }
-    // If item is currently the Released status, show as read-only
-    if(_relSt && p?.status === _relSt){
-      const statEdSel = document.getElementById('fStatusEditor');
-      if(statEdSel){
-        statEdSel.disabled = true;
-        const opt = document.createElement('option');
-        opt.value = _relSt; opt.textContent = _relSt; opt.selected = true;
-        statEdSel.appendChild(opt);
-        statEdSel.style.opacity = '0.6';
-      }
-    }
-    copySelect('fDueWeeks','fDueWeeksEditor');
-
-    // Populate Test Period view-only display
-    const testWks = parseFloat(document.getElementById('fTestWeeks')?.value) || 0;
-    const testDisplay = document.getElementById('editorTestWeeksDisplay');
-    if(testDisplay){
-      testDisplay.textContent = testWks === 0 ? 'None' : fmtEstimate(testWks);
-    }
-
-    // Show scheduled hint on Expected Date label
-    const schedHint = document.getElementById('editorScheduledHint');
-    if(schedHint){
-      const schedStr = computeScheduledStr();
-      if(schedStr){
-        const schedD = parseD(schedStr);
-        schedHint.textContent = schedD
-          ? `Scheduled: ${schedD.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`
-          : '';
-      }
-    }
-
-    const expEd = document.getElementById('fExpectedEditor');
-    expEd.value = document.getElementById('fExpected').value;
-    expEd.addEventListener('change', ()=>{ document.getElementById('fExpected').value = expEd.value; expectedManuallySet = true; });
-
-    // Parent typeahead (syncs to hidden fParent)
-    const parentOpts = projects.filter(x => x.id !== editingId);
-    const edInput = document.getElementById('fParentEditorInput');
-    const edDD    = document.getElementById('fParentEditorDropdown');
-    const curPar  = parentOpts.find(x => x.id === p?.parent);
-    edInput.value = curPar ? curPar.name : '';
-
-    const showEdDD = () => {
-      const q = edInput.value.toLowerCase();
-      const filtered = parentOpts.filter(x => !q || x.name.toLowerCase().includes(q));
-      edDD.innerHTML = [
-        `<div data-id="" style="padding:7px 10px;cursor:pointer;font-size:13px;color:var(--muted)">- None -</div>`,
-        // H2: id/name in data-* attributes, applied via property assignment (no inline JS).
-        ...filtered.map(x => `<div data-id="${escA(esc(String(x.id)))}" data-label="${escA(esc(x.name))}" style="padding:7px 10px;cursor:pointer;font-size:13px">${esc(x.name)}</div>`)
-      ].join('');
-      edDD.querySelectorAll('div').forEach(d => {
-        d.addEventListener('mouseover', ()=> d.style.background='var(--surface)');
-        d.addEventListener('mouseout',  ()=> d.style.background='');
-        d.addEventListener('mousedown', () => {
-          const id = d.getAttribute('data-id') || '';
-          document.getElementById('fParent').value = id;
-          document.getElementById('fParentEditorInput').value = id ? (d.getAttribute('data-label') || '') : '';
-          edDD.style.display = 'none';
-          if(id){
-            document.getElementById('fRequires').value = '';
-            document.getElementById('fRequiresInput').value = '';
-          }
-          syncMutualExclusion();
-        });
-      });
-      edDD.style.display = '';
-    };
-    edInput.addEventListener('input', showEdDD);
-    edInput.addEventListener('focus', showEdDD);
-    document.addEventListener('click', e => {
-      if(!e.target.closest('#fParentEditorWrap')) edDD.style.display = 'none';
-    }, {capture:true});
-
-  } else {
-    // Admin - ensure left column is visible and all rows restored
-    leftCol.style.display = '';
-    ['fStart','fRevisedOffset','fTestWeeks','fParallel','dueDatePreview','revisedDatePreview'].forEach(id => {
-      const el = document.getElementById(id);
-      if(!el) return;
-      const row = el.closest('.form-row') || el.closest('.form-grid') || el;
-      row.style.display = '';
-    });
-  }
+  // ITEM-COMPOSER-1 Stage 3: the role-scoped #editorFieldPanel injection was RETIRED. Both admin and
+  // editor now edit the SAME real fields in the unified rail; frzApplyComposerRoleScope hides/locks the
+  // editor-omitted fields so the editor-visible set is byte-identical to the retired panel's, with no
+  // field newly exposed to editors or newly hidden from admins.
+  frzApplyComposerRoleScope(p);
 
   document.getElementById('fDueWeeks').disabled = false;
   // Reset estimate/delay grid visibility (may have been hidden for editors on active items)
@@ -6115,22 +5975,23 @@ function openProjectModal(id){
   // Clean up any stale lock hints from previous modal open
   document.getElementById('lockHint')?.remove();
   // Reset fProduct and fType in case they were locked for a previous item
-  ['fProduct','fType','fProductEditor'].forEach(id => {
+  ['fProduct','fType'].forEach(id => {
     const el = document.getElementById(id);
     if(el){ el.disabled = false; el.title = ''; }
   });
-  ['fProductLbl','fTypeLbl','fProductEditorLbl'].forEach(lblId => {
+  ['fProductLbl','fTypeLbl'].forEach(lblId => {
     document.getElementById(lblId)?.querySelectorAll('.jira-lock-icon').forEach(el => el.remove());
   });
 
   // Delete button: hide for editors
   document.getElementById('deleteBtn').style.display = (id && isAdmin) ? 'inline-block' : 'none';
 
-  // Hide toggle: hide for editors
-  const hiddenToggleRow = document.getElementById('fHidden')?.closest('label');
-  if(hiddenToggleRow) hiddenToggleRow.style.display = isEditor ? 'none' : '';
+  // Hide toggle: admin-only (Stage 3: the toggle moved from the footer into the Advanced group;
+  // hide the whole row for editors).
+  const hiddenToggleRow = document.getElementById('hideFromFlowRow');
+  if(hiddenToggleRow) hiddenToggleRow.style.display = isAdmin ? '' : 'none';
 
-  document.getElementById('saveBtn').textContent = id?'Save Changes':'Add Item';
+  document.getElementById('saveBtn').textContent = id?'Save Changes':'Create Item';
   // Show Flag Issue button only for existing items (not new ones)
   const flagBtn = document.getElementById('flagIssueBtn');
   if(flagBtn) flagBtn.style.display = (id && (isAdmin || isEditor)) ? 'flex' : 'none';
@@ -6178,6 +6039,9 @@ function openProjectModal(id){
   // Recurrence field (admin only)
   initRecurrenceField(p);
   _frzComposerHeader(p, id);   // Stage 2: build the header identity + edit-only watcher count (post-population)
+  // Stage 3: footer destination-Space context, and clear any stale group error flags from a prior open.
+  _frzUpdateComposerFooterSpace();
+  document.querySelectorAll('.modal.frz-composer .composer-group.has-error').forEach(g => g.classList.remove('has-error'));
   document.getElementById('modalBg').classList.add('open');
 }
 
@@ -6250,7 +6114,6 @@ async function autoSaveJiraTickets(){
     const i = projects.findIndex(x=>x.id===editingId);
     if(i>-1) projects[i] = saved;
     showToast('Jira ticket saved to item');
-    window._syncEditorJiraList?.(); // refresh editor panel list if open
     // Phase C2 backfill (Flow shell only - classic untouched): now that jiraTickets is saved
     // server-side, push the item's existing attachments to the (now-)primary ticket. Idempotent
     // server-side; best-effort, non-blocking. Covers attachments uploaded before the link/relink.
@@ -6266,7 +6129,6 @@ async function autoSaveJiraTickets(){
 function removeJiraTicket(i){
   jiraTickets.splice(i, 1);
   renderJiraList();
-  window._syncEditorJiraList?.();
   autoSaveJiraTickets();
   const cb = document.getElementById('jiraCreateBtn');
   if(cb) cb.style.display = (editingId && jiraConfigured && !jiraTickets.length) ? '' : 'none';
@@ -6439,7 +6301,8 @@ document.getElementById('composerClose')?.addEventListener('click', ()=>{
   mb.classList.remove('open'); onModalClose();
 });
 // Stage 2: in CREATE mode the header shows the destination Space; keep it in sync with the picker.
-document.getElementById('fProduct')?.addEventListener('change', ()=>{ if(!editingId) _frzComposerHeader(null, null); });
+// Stage 3: the footer's destination-Space context tracks the same picker.
+document.getElementById('fProduct')?.addEventListener('change', ()=>{ if(!editingId) _frzComposerHeader(null, null); _frzUpdateComposerFooterSpace(); });
 document.getElementById('modalBg')?.addEventListener('click', e=>{
   if(e.target===e.currentTarget){
     // Change 1: the backdrop click uses the SAME unsaved-changes confirm as Escape (set by the shell
@@ -6952,6 +6815,7 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
     const devEl = document.getElementById('fDev');
     devEl?.classList.add('field-error');
     setTimeout(()=> devEl?.classList.remove('field-error'), 2000);
+    _frzRevealComposerField('fDev');   // Stage 3: open Ownership + focus the missing field
     showToast('Cannot move to an Active status - assign a Team first.', 'error');
     return;
   }
@@ -6966,7 +6830,7 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
     updateDueDatePreview();
   }
 
-  if(!data.name) return;
+  if(!data.name){ _frzRevealComposerField('fName'); return; }   // Stage 3: focus the required name
 
   // Guard: test period must be strictly less than the time estimate
   if(data.testWeeks > 0 && data.dueWeeks > 0 && data.testWeeks >= data.dueWeeks){
@@ -6975,6 +6839,7 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
     const testEl = document.getElementById('fTestWeeks');
     testEl?.classList.add('field-error');
     setTimeout(()=>{ testEl?.classList.remove('field-error'); }, 2500);
+    _frzRevealComposerField('fTestWeeks');   // Stage 3: auto-open the collapsed Schedule group + focus
     showToast('Test period cannot equal or exceed the time estimate', 'error');
     return;
   }
@@ -6983,7 +6848,7 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
   // Require release date when status is Released
   if(statusIsReleased[data.status] && !data.releaseDate){
     document.getElementById('releaseError').style.display = 'block';
-    document.getElementById('fRelease').focus();
+    _frzRevealComposerField('fRelease');   // Stage 3: auto-open the collapsed Schedule group + focus
     return;
   }
   document.getElementById('releaseError').style.display = 'none';
@@ -13117,16 +12982,13 @@ function applyModalLocking(p){
   // Jira-linked: lock Project and Type, show blue lock icon on label
   const JIRA_LOCK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="#0052cc" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;margin-left:4px;flex-shrink:0;cursor:help" title="Linked to Jira Ticket"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`;
   if(hasJira){
-    // Lock admin fields
+    // Jira-linked: lock Space + Type (single real fields for both roles now; proxies retired)
     ['fProduct','fType'].forEach(id => {
       const el = document.getElementById(id);
       if(el){ el.disabled = true; el.title = 'Linked to Jira Ticket'; }
     });
-    // Lock editor proxy field too
-    const edProd = document.getElementById('fProductEditor');
-    if(edProd){ edProd.disabled = true; edProd.title = 'Linked to Jira Ticket'; }
-    // Add blue lock icon to all Project/Type labels (admin + editor panels)
-    ['fProductLbl','fTypeLbl','fProductEditorLbl'].forEach(lblId => {
+    // Add blue lock icon to the Space/Type labels
+    ['fProductLbl','fTypeLbl'].forEach(lblId => {
       const lbl = document.getElementById(lblId);
       if(lbl && !lbl.querySelector('.jira-lock-icon')){
         const span = document.createElement('span');
@@ -13157,31 +13019,19 @@ function applyModalLocking(p){
   }
 
   if(!locked){
-    // Unlocked: if in an active status, dim+disable time estimate for editors
+    // Unlocked: if in an active status, dim+disable time estimate for editors (delay stays editable).
+    // Stage 3: operates on the REAL #fDueWeeks / #fRevisedOffset (the editor proxies were retired); the
+    // editor delay change-reason trigger is wired on the real #fRevisedOffset change listener.
     if(isEditor && isActiveStatus(p.status)){
       const dueWeeksEl = document.getElementById('fDueWeeks');
       if(dueWeeksEl) dueWeeksEl.disabled = true;
-      // Editor panel: fDueWeeksEditor dimmed, delay enabled
-      const edEst = document.getElementById('fDueWeeksEditor');
-      if(edEst){ edEst.disabled = true; edEst.style.opacity = '0.45'; }
-      // Wire delay to reason panel for active-unlocked items
-      const edDelay = document.getElementById('fRevisedOffsetEditor');
       const mainDelay = document.getElementById('fRevisedOffset');
-      if(edDelay && mainDelay){
-        edDelay.disabled = false;
-        edDelay.style.opacity = '';
-        edDelay.onchange = () => {
-          mainDelay.value = edDelay.value;
-          updateRevisedDate();
-          syncExpectedToScheduled();
-          checkEditorReasonNeeded();
-        };
-      }
+      if(mainDelay){ mainDelay.disabled = false; mainDelay.style.opacity = ''; }
     }
-    // For non-active editors: delay date must be disabled (only available when active)
+    // For non-active editors: delay date must be disabled (also enforced by updateDelayFieldsState).
     if(isEditor && !isActiveStatus(p.status)){
-      const edDelay = document.getElementById('fRevisedOffsetEditor');
-      if(edDelay){ edDelay.disabled = true; edDelay.style.opacity = '0.45'; }
+      const mainDelay = document.getElementById('fRevisedOffset');
+      if(mainDelay){ mainDelay.disabled = true; }
     }
     return;
   }
@@ -13192,30 +13042,17 @@ function applyModalLocking(p){
   }
 
   // Non-admin, locked active: lock Time Estimate, Start Date, Status
-  const lockFields = ['fDueWeeks', 'fStart', 'fStatus', 'fStatusEditor'];
+  const lockFields = ['fDueWeeks', 'fStart', 'fStatus'];
   lockFields.forEach(id => {
     const el = document.getElementById(id);
     if(el) el.disabled = true;
   });
 
   if(isEditor){
-    // Dim + disable time estimate, enable delay date
-    const edEst = document.getElementById('fDueWeeksEditor');
-    if(edEst){ edEst.disabled = true; edEst.style.opacity = '0.45'; }
-    // Sync delay value and enable it
-    const edDelay = document.getElementById('fRevisedOffsetEditor');
+    // Time estimate is locked above; the delay date stays editable so an editor can request a delay
+    // (reason trigger + AC-approval flow run from the real #fRevisedOffset change listener).
     const mainDelay = document.getElementById('fRevisedOffset');
-    if(edDelay && mainDelay){
-      edDelay.value = mainDelay.value;
-      edDelay.disabled = false;
-      edDelay.style.opacity = '';
-      edDelay.onchange = () => {
-        mainDelay.value = edDelay.value;
-        updateRevisedDate();      // computes and writes fRevised hidden field
-        syncExpectedToScheduled();
-        checkEditorReasonNeeded(); // show reason panel if delay changed
-      };
-    }
+    if(mainDelay){ mainDelay.disabled = false; mainDelay.style.opacity = ''; }
   }
 
   // Show lock hint
@@ -13717,13 +13554,19 @@ function refreshStatusOptions(currentStatusValue){
   const productName = document.getElementById('fProduct')?.value || '';
   const validStatuses = getStatusesForProduct(productName);
 
-  // Admin status select
+  // ITEM-COMPOSER-1 Stage 3: single real #fStatus for both roles (the #fStatusEditor proxy was
+  // retired). Editors cannot SET a released status (parity with the retired editor panel), but an
+  // item that is already released keeps its status shown so it is not mislabelled.
   const fSt = document.getElementById('fStatus');
   if(fSt){
     const prev = currentStatusValue !== undefined ? currentStatusValue : fSt.value;
-    fSt.innerHTML = validStatuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    const isEditorOnly = (typeof isEditor !== 'undefined' && isEditor) && !(typeof isAdmin !== 'undefined' && isAdmin);
+    const roleStatuses = isEditorOnly
+      ? validStatuses.filter(s => !statusIsReleased[s] || s === prev)
+      : validStatuses;
+    fSt.innerHTML = roleStatuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
     // Keep current value if still valid, otherwise show warning and keep as-is
-    if(validStatuses.includes(prev)){
+    if(roleStatuses.includes(prev)){
       fSt.value = prev;
     } else if(prev){
       // Add the current (now invalid) status as a disabled option with warning
@@ -13733,18 +13576,6 @@ function refreshStatusOptions(currentStatusValue){
       fSt.insertAdjacentElement('afterbegin', opt);
       fSt.value = prev;
     }
-  }
-
-  // Editor status select (mirror)
-  const fStEd = document.getElementById('fStatusEditor');
-  if(fStEd){
-    // Use currentStatusValue if provided, fall back to current select value
-    const edPrev = currentStatusValue !== undefined ? currentStatusValue : fStEd.value;
-    const editorStatuses = validStatuses.filter(s => !statusIsReleased[s]);
-    fStEd.innerHTML = editorStatuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
-    if(editorStatuses.includes(edPrev)) fStEd.value = edPrev;
-    // sync back to fStatus
-    fStEd.onchange = ()=>{ if(fSt) fSt.value = fStEd.value; toggleReleaseRow(); autoSetStartDateIfActive(); warnIfActiveWithoutOwner(); updateDelayFieldsState(); };
   }
 }
 
@@ -29932,13 +29763,13 @@ if ('serviceWorker' in navigator) {
   // Move the Description form-row out of the right column to the bottom of the modal body
   // (just above the action buttons), spanning the full width. Idempotent; /beta only.
   function _frzRelocateDescription(fd){
+    // ITEM-COMPOSER-1 Stage 3: Description now lives in the content canvas (full-width left column), so
+    // the old move-to-modal-bottom relocation (which required the retired .proj-modal-cols two-column
+    // layout) is unnecessary. Keep the .frz-desc-full class so the rich editor host retains its sizing
+    // (see the .frz-desc-full CSS); the canvas markup already gives the row flex:1.
     var row=fd.closest && fd.closest('.form-row'); if(!row) return;
-    var cols=document.querySelector('.proj-modal-cols'); if(!cols || !cols.parentNode) return;
-    var body=cols.parentNode, actions=body.querySelector('.modal-actions');
-    if(actions && actions.parentNode===body && row!==actions.previousElementSibling){ body.insertBefore(row, actions); }
-    else if(!actions && row.parentNode!==body){ body.appendChild(row); }
-    row.classList.add('frz-desc-full'); row.style.flex='none';
-    fd.style.maxHeight='none'; fd.style.minHeight='180px';   // plain create box fills the full-width area
+    row.classList.add('frz-desc-full');
+    fd.style.maxHeight='none';   // let the editor grow to fill the canvas
   }
   function _frzInitModalNotes(id){
     var fd=document.getElementById('fDesc'); if(!fd) return;
