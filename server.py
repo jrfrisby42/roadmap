@@ -2985,6 +2985,23 @@ document.addEventListener('drop',function(e){
   var fs=(e.dataTransfer&&e.dataTransfer.files)||[];
   if(fs.length) addFiles([].slice.call(fs));
 });
+// Paste (INTAKE-PASTE-1): a reporter can paste a screenshot straight from the clipboard - the most
+// common bug-report attachment. Document-level, matching the whole-form drop handler above so a paste
+// anywhere on the form works. It hijacks NOTHING by default: preventDefault fires ONLY when the
+// clipboard carries FILE entries (kind 'file'); a plain-text paste (kind 'string') into the
+// description or any field falls straight through to the browser, unchanged. Files go to the SAME
+// addFiles path as drop and the file input - one upload path - so the 10-file guard, the presign, the
+// type allow-list and PRESIGN-CAP-1's content-length-range policy all still apply server-side, and
+// addFiles surfaces their rejections + renders the file row (renderAtts) exactly as drop does.
+document.addEventListener('paste',function(e){
+  var cd=e.clipboardData||window.clipboardData; if(!cd) return;
+  var pf=[], items=cd.items||[];
+  for(var i=0;i<items.length;i++){ if(items[i].kind==='file'){ var f=items[i].getAsFile(); if(f) pf.push(f); } }
+  if(!pf.length && cd.files && cd.files.length){ for(var j=0;j<cd.files.length;j++) pf.push(cd.files[j]); }
+  if(!pf.length) return;    // no file in the clipboard - let ordinary text paste behave exactly as today
+  e.preventDefault();       // only now, a file was found, so the browser must not also paste it as text
+  addFiles(pf);
+});
 async function submitForm(ev){
   ev.preventDefault(); clearErr();
   var team=_selTeam; if(!team){ showErr('Please choose a project.'); return false; }
