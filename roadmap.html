@@ -2581,7 +2581,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.39.7';
+const APP_VERSION = '6.39.8';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -6195,7 +6195,12 @@ function openProjectModal(id){
   // Wire item page links
   const itemUrl = id ? `${location.pathname}?item=${id}` : '#';
   // Hide the item-page affordances when already on the item page (recursive), or for new items.
-  const onItemPage = !!(id && _itemPageId && _itemPageId === id);
+  // 6.39.8: also require the item-page overlay to be ACTUALLY visible. _itemPageId is reset only by the
+  // classic closeItemPage(); the Flow shell navigates away by hiding the overlay directly, leaving
+  // _itemPageId pointed at the last-viewed item. Without this guard, opening that item's modal from a
+  // list wrongly treated it as "on the item page" and hid the open-item-page links.
+  const onItemPage = !!(id && _itemPageId === id
+    && document.getElementById('itemPageOverlay')?.style.display !== 'none');
   const itemPageLink = document.getElementById('itemPageLink');
   if(itemPageLink){
     itemPageLink.href = id ? _frzItemPageUrl(id) : '#';   // UI-TRIO-1 P1: team-explicit new-tab URL
