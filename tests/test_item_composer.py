@@ -470,3 +470,69 @@ def test_6399_status_options_are_space_intersect_org():
     # the item page control (the reference) lists the full Org `statuses`
     assert "if(field==='status'){" in src and "return statuses.map(s=>o(s,s));" in src, \
         "the item page status control lists the Org statuses (the full set)"
+
+
+# ── 6.39.9 Fix A: projects-only /api/all refreshes are refused across a team change ─────────────────
+# The composer status divergence root cause: a projects-only refresh (projects := fresh, config left
+# stale) run AFTER the effective team (shared localStorage token) changed imports the other Org's
+# projects onto this tab's stale statuses/products. The app treats a team change as a full reload, so
+# every projects-only refresh must reload instead of partial-updating when the team no longer matches
+# the one this tab booted on. These are SOURCE-SHAPE guards; they fail on revert.
+def test_6399a_team_change_helper_exists():
+    src = _html()
+    m = re.search(r"function _frzTeamChangedSinceBoot\(\)\{.*?\}", src, re.DOTALL)
+    assert m, "_frzTeamChangedSinceBoot helper not found"
+    body = m.group(0)
+    # compares the effective team to the team booted on; empty _BOOT_TEAM is treated as unchanged
+    assert "_BOOT_TEAM" in body and "activeTeamSlug()" in body and "!==" in body, \
+        "helper must compare activeTeamSlug() to _BOOT_TEAM"
+
+
+def test_6399a_reload_all_data_guarded():
+    # _frzReloadAllData (openItem's miss branch, the reproduced path) reloads instead of importing
+    # another Org's projects when the team changed.
+    src = _html()
+    m = re.search(r"async function _frzReloadAllData\(\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "_frzReloadAllData not found"
+    body = m.group(0)
+    guard = body.index("_frzTeamChangedSinceBoot()")
+    assign = body.index("projects = data.projects")
+    assert guard < assign, "the team-change guard must precede the projects-only assignment"
+    assert "location.reload()" in body[:assign], "guard must force a full reload"
+
+
+def test_6399a_classic_projects_only_refreshes_guarded():
+    # The classic scenario-commit and save-conflict refreshes (projects := fresh.projects) are guarded
+    # the same way. Count the guarded projects-only refreshes to catch a silent regression.
+    src = _html()
+    # every projects-only refresh of this exact shape must sit immediately after a team-change guard
+    refreshes = re.findall(
+        r"(if\(_frzTeamChangedSinceBoot\(\)\)\{ location\.reload\(\); return;? \}\s*\n\s*)?"
+        r"try \{ (?:var|const) fresh = await API\.get\('/api/all'\); if\(fresh && fresh\.projects\) projects = fresh\.projects; \}",
+        src,
+    )
+    assert len(refreshes) >= 2, "expected the two classic projects-only refreshes (scenario commit + save conflict)"
+    assert all(refreshes), "every classic projects-only refresh must be preceded by the team-change guard"
+
+
+def test_6399a_jira_and_planning_refreshes_guarded_but_timer_excluded():
+    # 6.39.9 extended the guard to 4 more projects-only refreshes (release FF reload, planning server
+    # commit, manual Jira pull-all, item-page Jira sync) but DELIBERATELY leaves the background Jira
+    # sync timer (runBackgroundJiraSync) unguarded - a timer tick must not trigger a surprise reload;
+    # the intersection hardening backstops the composer there.
+    src = _html()
+    # the four guarded functions each contain the guard
+    for fn in ("runManualPullSyncAll", "syncJiraFromItemPage"):
+        m = re.search(r"async function " + fn + r"\(.*?\)\{.*?\n\}", src, re.DOTALL)
+        assert m, fn + " not found"
+        assert "_frzTeamChangedSinceBoot()" in m.group(0), fn + " must carry the team-change guard"
+    # background timer stays unguarded but still does a projects-only import
+    mb = re.search(r"async function runBackgroundJiraSync\(\)\{.*?\n\}", src, re.DOTALL)
+    assert mb, "runBackgroundJiraSync not found"
+    assert "_frzTeamChangedSinceBoot()" not in mb.group(0), \
+        "the background Jira sync timer must NOT trigger a reload on a tick"
+    assert "projects = data.projects || projects" in mb.group(0), \
+        "the background timer still does its projects-only import (backstopped by the intersection fix)"
+    # total guard call sites across the file (3 core + 4 extended = 7)
+    assert src.count("if(_frzTeamChangedSinceBoot()){ location.reload()") == 7, \
+        "expected 7 team-change reload guards (3 core + 4 extended; timer excluded)"
