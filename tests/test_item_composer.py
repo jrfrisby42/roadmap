@@ -442,3 +442,15 @@ def test_6397_status_annotation_removed_but_coercion_preserved():
 def test_6397_server_untouched():
     src = SERVER.read_text(encoding="utf-8", errors="replace")
     assert "not in project workflow" not in src, "server.py has no part in this and must be untouched"
+
+
+# ── 6.39.8: item-page links no longer hidden by a stale _itemPageId (shell nav-away) ─────────────────
+def test_6398_onitempage_requires_visible_overlay():
+    # onItemPage must also require the item-page overlay to be visible, so a stale _itemPageId (the shell
+    # hides the overlay without closeItemPage) does not hide the open-item-page links in the modal.
+    # Guard fails on revert (the overlay-visibility clause is removed).
+    src = _html()
+    m = re.search(r"const onItemPage = !!\(id && _itemPageId === id.*?\);", src, re.DOTALL)
+    assert m, "the onItemPage computation was not found (or lost the overlay guard)"
+    assert "getElementById('itemPageOverlay')" in m.group(0) and "style.display !== 'none'" in m.group(0), \
+        "onItemPage must require the item-page overlay to be actually visible"
