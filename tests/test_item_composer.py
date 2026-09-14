@@ -226,3 +226,77 @@ def test_stage3_server_untouched():
     # Stage 3 is roadmap.html only.
     src = SERVER.read_text(encoding="utf-8", errors="replace")
     assert "frz-composer" not in src and "frzApplyComposerRoleScope" not in src, "server.py must not be touched by Stage 3"
+
+
+# ── Stage 4: edit mode (metadata strip + activity + per-mode group defaults) ───
+# SOURCE-SHAPE guards over roadmap.html. The live edit modal (scheduled/unscheduled, admin/editor),
+# the create-hides-both reset, and the activity reuse were screenshot- and DOM-verified during the
+# build. These fail when Stage 4 is reverted. server.py is untouched (only the version bump).
+
+def test_stage4_strip_and_activity_markup_edit_only():
+    src = _html()
+    assert '<div class="composer-meta-strip" id="composerMetaStrip" style="display:none"></div>' in src, \
+        "the read-only metadata strip exists and is hidden by default (edit-only)"
+    assert '<div class="composer-activity" id="composerActivity" style="display:none">' in src, \
+        "the activity section exists and is hidden by default (edit-only)"
+    assert 'id="composerActivityList"' in src and 'id="composerActivityFull"' in src, \
+        "activity has a list container and a full-history link to the item page"
+
+
+def test_stage4_strip_is_readonly_facts_not_grid_duplication():
+    # The strip carries ONLY facts with no other modal home (Assignee/Reporter/Departments). Space,
+    # Type and Priority stay editable in the quick-edit grid and must NOT be duplicated as strip chips.
+    src = _html()
+    m = re.search(r"function _frzComposerMetaStrip\(p\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "the metadata-strip builder not found"
+    body = m.group(0)
+    assert "displayName(p.assignee)" in body, "Assignee is shown read-only via displayName (no modal field)"
+    assert "p.reporter" in body and "p.departments" in body, "Reporter + Departments are the other read-only facts"
+    for editable in ["fProduct", "fType", "fPriority"]:
+        assert editable not in body, f"the strip must not duplicate the editable grid field {editable}"
+
+
+def test_stage4_activity_reuses_existing_source_no_new_endpoint():
+    # INVARIANT: activity is the EXISTING in-memory `activities` audit source, item-scoped and limited -
+    # no fetch, no new endpoint, no comments (comments are Stage 4B).
+    src = _html()
+    m = re.search(r"function _frzComposerActivity\(id\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "the activity builder not found"
+    body = m.group(0)
+    assert "activities" in body and "a.item_id !== id" in body, "reads the in-memory activities array, item-scoped"
+    assert ".slice(0,6)" in body, "shows a LIMITED set (full history stays on the item page)"
+    assert "API.get" not in body and "/api/" not in body and "fetch(" not in body, "no fetch / new endpoint"
+    assert "/api/comments" not in body, "activity is not comments (Stage 4B)"
+
+
+def test_stage4_group_defaults_scheduled_and_needs_attention():
+    src = _html()
+    m = re.search(r"function _frzComposerGroupDefaults\(p, id\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "the group-defaults helper not found"
+    body = m.group(0)
+    assert "set('grpOwnership', true)" in body, "Ownership is always open"
+    assert "set('grpSchedule', !!p.start)" in body, "Schedule & Capacity opens only when the item is actually scheduled"
+    assert "p.recurrence" in body and "ignoreConflictsWith" in body and "p.hidden" in body, \
+        "Advanced opens only when a value needs attention"
+
+
+def test_stage4_footer_last_modified_never_all_changes_saved():
+    src = _html()
+    m = re.search(r"function _frzUpdateComposerFooterSpace\(\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "the footer-status function not found"
+    body = m.group(0)
+    assert "'Last modified '" in body, "edit mode footer shows Last modified from updated_ts"
+    # the rendered footer must never claim autosave; check the function body, not our explaining comment
+    assert "All changes saved" not in body, "the modal footer must never render 'All changes saved'"
+
+
+def test_stage4_wired_edit_only_in_open():
+    src = _html()
+    assert "_frzComposerMetaStrip(id ? p : null);" in src, "strip populates on edit, hides on create"
+    assert "_frzComposerActivity(id || null);" in src, "activity populates on edit, hides on create"
+    assert "_frzComposerGroupDefaults(p, id);" in src, "group defaults are reset per open (the modal is reused)"
+
+
+def test_stage4_server_untouched():
+    src = SERVER.read_text(encoding="utf-8", errors="replace")
+    assert "composerMetaStrip" not in src and "_frzComposerActivity" not in src, "server.py must not be touched by Stage 4"

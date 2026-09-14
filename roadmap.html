@@ -759,6 +759,32 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .modal.frz-composer .composer-foot-space b { color: var(--text); }
 
   .frz-visually-hidden { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+  /* ── ITEM-COMPOSER-1 Stage 4: edit-mode metadata strip + activity (edit-only; hidden on create) ── */
+  .modal.frz-composer .composer-meta-strip { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 4px; }
+  .modal.frz-composer .composer-meta-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface2); font-size: 12px; }
+  .modal.frz-composer .composer-meta-chip .cm-k { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; color: var(--muted); text-transform: uppercase; }
+  .modal.frz-composer .composer-meta-chip .cm-v { font-weight: 700; color: var(--text); }
+  .modal.frz-composer .composer-meta-chip .cm-muted { color: var(--muted); font-weight: 600; }
+  .modal.frz-composer .composer-meta-chip .cm-link { color: var(--accent); text-decoration: none; font-weight: 700; }
+  .modal.frz-composer .composer-meta-chip .cm-link:hover { text-decoration: underline; }
+
+  .modal.frz-composer .composer-activity { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+  .modal.frz-composer .composer-activity-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .modal.frz-composer .composer-activity-head > span { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--muted); text-transform: uppercase; }
+  .modal.frz-composer .composer-activity-full { font-size: 11px; font-weight: 700; color: var(--accent); text-decoration: none; }
+  .modal.frz-composer .composer-activity-full:hover { text-decoration: underline; }
+  .modal.frz-composer .composer-activity-empty { font-size: 12px; color: var(--muted); padding: 6px 0; }
+  .modal.frz-composer .composer-act-row { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .modal.frz-composer .composer-act-row:last-child { border-bottom: 0; }
+  .modal.frz-composer .composer-act-bar { width: 3px; border-radius: 2px; flex-shrink: 0; align-self: stretch; min-height: 20px; }
+  .modal.frz-composer .composer-act-main { flex: 1; min-width: 0; }
+  .modal.frz-composer .composer-act-top { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+  .modal.frz-composer .composer-act-type { font-size: 10px; font-weight: 900; text-transform: uppercase; }
+  .modal.frz-composer .composer-act-ts { font-size: 10px; color: var(--muted); margin-left: auto; }
+  .modal.frz-composer .composer-act-msg { font-size: 12px; color: var(--text); }
+  .modal.frz-composer .composer-act-by { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .modal.frz-composer .composer-act-done { font-size: 10px; color: #22b96e; margin-top: 2px; }
   /* Date field with clear button */
   .date-wrap { display: flex; gap: 4px; align-items: center; }
   .date-wrap input[type=date] { flex: 1; }
@@ -1771,6 +1797,13 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
             style="position:absolute;right:2px;top:8px;color:var(--muted);opacity:0.85;line-height:1;font-size:16px;text-decoration:none;display:none">⤢</a>
         </div>
 
+        <!-- ITEM-COMPOSER-1 Stage 4: EDIT-ONLY read-only metadata strip. Populated by
+             _frzComposerMetaStrip on edit. Carries only the facts with NO other home in the modal -
+             Assignee (no modal field; editable on the item page), Reporter, Departments. Space/Type/
+             Priority stay EDITABLE in the quick-edit grid (not duplicated here); Key + Jira live in the
+             header. Hidden on create. -->
+        <div class="composer-meta-strip" id="composerMetaStrip" style="display:none"></div>
+
         <!-- Description (label was "Notes" pre-4.59.0; the box edits p.description) -->
         <div class="form-row composer-desc" style="flex:1;display:flex;flex-direction:column;padding-top:2px">
           <label>Description</label>
@@ -1781,6 +1814,18 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
              PRECREATE-ATTACH-1 stage adds it) - an inert "Link assets after saving" line stands in.
              EDIT reuses the item-page asset card via window._frzRenderAssetCard (one implementation). -->
         <div class="form-row" id="modalAssetRow" style="display:none"><div id="modalAssetSection"></div></div>
+
+        <!-- ITEM-COMPOSER-1 Stage 4: EDIT-ONLY recent activity, from the EXISTING in-memory `activities`
+             audit source (same filter as renderItemPageActivity, no fetch, no new endpoint). Shows a
+             LIMITED set; the full history stays on the item page (reachable from the header). Hidden on
+             create. -->
+        <div class="composer-activity" id="composerActivity" style="display:none">
+          <div class="composer-activity-head">
+            <span>Activity</span>
+            <a href="#" id="composerActivityFull" class="composer-activity-full" title="Open the full item page">Full history</a>
+          </div>
+          <div id="composerActivityList"></div>
+        </div>
       </div><!-- end canvas -->
 
       <!-- ══ PROPERTY RAIL (right) ══ -->
@@ -2487,7 +2532,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.39.2';
+const APP_VERSION = '6.39.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -5643,13 +5688,19 @@ function frzApplyComposerRoleScope(p){
   if(note) note.style.display = editorOnly ? '' : 'none';
 }
 
-// Footer destination-Space context (Stage 3). Create: "Saves to <Space>"; edit: the item's Space.
+// Footer status text. Stage 3 create: "Saves to <Space>". Stage 4 edit: "Last modified <ts>" from the
+// item's updated_ts (an allowed footer string; never "All changes saved"). One shared left slot.
 function _frzUpdateComposerFooterSpace(){
   const el = document.getElementById('composerFooterSpace');
   if(!el) return;
+  if(editingId){
+    const p = projects.find(x=>x.id===editingId);
+    const ts = p && p.updated_ts;
+    el.innerHTML = ts ? 'Last modified ' + esc(fmtTS(ts)) : '';
+    return;
+  }
   const space = document.getElementById('fProduct')?.value || '';
-  if(!space){ el.textContent = ''; return; }
-  el.innerHTML = (editingId ? '' : 'Saves to ') + '<b>' + esc(space) + '</b>';
+  el.innerHTML = space ? 'Saves to <b>' + esc(space) + '</b>' : '';
 }
 
 // Validation reveal (Stage 3): if a field needing attention is inside a collapsed group, open the
@@ -5660,6 +5711,73 @@ function _frzRevealComposerField(fieldId){
   const grp = el.closest('.composer-group');
   if(grp){ grp.open = true; grp.classList.add('has-error'); }
   try { el.focus(); } catch(_e){}
+}
+
+// ── ITEM-COMPOSER-1 Stage 4: edit-mode surfaces ──────────────────────────────────────────────────
+// Read-only metadata strip: only facts with NO other home in the modal (Assignee has no modal field and
+// is editable on the item page; Reporter/Departments are portal facts). Space/Type/Priority stay
+// editable in the quick-edit grid and are NOT duplicated here; Key + Jira live in the header.
+function _frzComposerMetaStrip(p){
+  const el = document.getElementById('composerMetaStrip');
+  if(!el) return;
+  if(!p){ el.style.display='none'; el.innerHTML=''; return; }
+  const chip = (label, val) => '<span class="composer-meta-chip"><span class="cm-k">'+esc(label)+'</span><span class="cm-v">'+val+'</span></span>';
+  const chips = [];
+  chips.push(chip('Assignee', p.assignee ? esc(displayName(p.assignee)) : '<span class="cm-muted">Unassigned</span>'));
+  if(p.reporter){
+    const rep = p.reporterEmail ? '<a href="mailto:'+escA(p.reporterEmail)+'" class="cm-link">'+esc(p.reporter)+'</a>' : esc(p.reporter);
+    chips.push(chip('Reporter', rep));
+  }
+  const deps = Array.isArray(p.departments) ? p.departments : [];
+  if(deps.length) chips.push(chip(deps.length>1?'Depts':'Dept', deps.map(d=>esc(d)).join(', ')));
+  el.innerHTML = chips.join('');
+  el.style.display = '';
+}
+
+// Recent activity from the EXISTING in-memory `activities` audit source (same filter as
+// renderItemPageActivity - no fetch, no new endpoint). Limited set; full history stays on the item page.
+function _frzComposerActivity(id){
+  const wrap = document.getElementById('composerActivity');
+  const list = document.getElementById('composerActivityList');
+  if(!wrap || !list) return;
+  const full = document.getElementById('composerActivityFull');
+  if(!id){ wrap.style.display='none'; list.innerHTML=''; return; }
+  if(full) full.href = (typeof _frzItemPageUrl==='function') ? _frzItemPageUrl(id) : ('?item='+id);
+  const acts = (typeof activities!=='undefined' ? activities : []).filter(a=>{
+      if(a.item_id !== id) return false;
+      if(a.activity_type === 'Jira Sync' && a.new_value){ try{ if(JSON.parse(a.new_value).skipped) return false; }catch(e){} }
+      return true;
+    }).sort((a,b)=>new Date(b.created_ts)-new Date(a.created_ts)).slice(0,6);
+  wrap.style.display = '';
+  if(!acts.length){ list.innerHTML = '<div class="composer-activity-empty">No activity recorded</div>'; return; }
+  const AC_COLOR = {'At Risk':'#e8394a','Capacity Conflict':'#e8a000','Priority Change':'var(--accent)','Flagged Issue':'#e87000','Admin Override':'#7c3aed','Due Date Change':'var(--accent2)','Delay Date Change':'var(--accent2)'};
+  list.innerHTML = acts.map(a=>{
+    const color = AC_COLOR[a.activity_type]||'var(--muted)';
+    return '<div class="composer-act-row"><div class="composer-act-bar" style="background:'+color+'"></div>'
+      + '<div class="composer-act-main"><div class="composer-act-top"><span class="composer-act-type" style="color:'+color+'">'+esc(a.activity_type||'')+'</span>'
+      + '<span class="composer-act-ts">'+esc(fmtTS(a.created_ts))+'</span></div>'
+      + '<div class="composer-act-msg">'+esc(a.message||'')+'</div>'
+      + (a.created_by?'<div class="composer-act-by">by '+esc(a.created_by)+'</div>':'')
+      + (a.action_taken?'<div class="composer-act-done">'+esc(a.action_taken)+'</div>':'')
+      + '</div></div>';
+  }).join('');
+}
+
+// Group default open-states. Reset every open (the modal is reused). Create: Ownership only. Edit:
+// Ownership always; Schedule & Capacity when the item is actually scheduled (has a start); Advanced when
+// a value needs attention (recurrence set / ignore-conflicts / hidden); Relationships collapsed.
+function _frzComposerGroupDefaults(p, id){
+  const set = (gid, open) => { const g=document.getElementById(gid); if(g) g.open = !!open; };
+  set('grpOwnership', true);
+  set('grpRelationships', false);
+  if(id && p){
+    set('grpSchedule', !!p.start);
+    const advNeeds = (p.recurrence && p.recurrence!=='none') || (Array.isArray(p.ignoreConflictsWith)&&p.ignoreConflictsWith.length) || !!p.hidden;
+    set('grpAdvanced', !!advNeeds);
+  } else {
+    set('grpSchedule', false);
+    set('grpAdvanced', false);
+  }
 }
 
 function openProjectModal(id){
@@ -6039,9 +6157,14 @@ function openProjectModal(id){
   // Recurrence field (admin only)
   initRecurrenceField(p);
   _frzComposerHeader(p, id);   // Stage 2: build the header identity + edit-only watcher count (post-population)
-  // Stage 3: footer destination-Space context, and clear any stale group error flags from a prior open.
+  // Stage 3: footer status text, and clear any stale group error flags from a prior open.
   _frzUpdateComposerFooterSpace();
   document.querySelectorAll('.modal.frz-composer .composer-group.has-error').forEach(g => g.classList.remove('has-error'));
+  // Stage 4: edit-only metadata strip + recent activity (both hide on create), and per-mode group
+  // default open-states (reset every open since the modal is reused).
+  _frzComposerMetaStrip(id ? p : null);
+  _frzComposerActivity(id || null);
+  _frzComposerGroupDefaults(p, id);
   document.getElementById('modalBg').classList.add('open');
 }
 
