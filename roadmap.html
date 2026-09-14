@@ -725,6 +725,10 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     .modal.frz-composer .composer-group-body select,
     .modal.frz-composer .composer-group-body input,
     .modal.frz-composer .composer-group-body .date-wrap input { min-height: 44px; }
+    /* The hero title lives in the canvas (not a group body), so bump it too - it is a primary touch
+       target. min-height (not padding) so the input's own box grows and the text/placeholder stay
+       vertically centred in it; desktop keeps its deliberate ~39px hero proportions from Stage 3. */
+    .modal.frz-composer input.composer-title { min-height: 44px; }
     .modal.frz-composer .composer-group > summary { min-height: 44px; padding: 11px 0; }
     .modal.frz-composer .composer-close { width: 44px; height: 44px; }
     /* Footer: Space context on its own line, then a dominant full-width Create with a secondary Cancel. */
@@ -2602,7 +2606,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.39.11';
+const APP_VERSION = '6.39.12';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app

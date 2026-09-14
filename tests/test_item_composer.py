@@ -629,6 +629,18 @@ def test_stage7_touch_targets_and_dominant_create():
     # Create is the dominant, growing footer button
     assert re.search(r"#saveBtn \{ min-height: 48px; flex: 1 1 auto;", block), \
         "Create must be the dominant full-width footer button on mobile"
+    # the hero title (in the canvas, not a group body) is also a >=44px touch target on mobile only
+    assert "input.composer-title { min-height: 44px; }" in block, \
+        "the hero title must be a >=44px touch target inside the <=640px block (desktop keeps ~39px)"
+    # ...and the desktop rule (the one with the hero font, outside the media block) must NOT carry a
+    # min-height - its ~39px proportions are deliberate and shipped in Stage 3.
+    desktop_title = re.search(r"\.modal\.frz-composer input\.composer-title \{[^}]*font: 700 22px[^}]*\}", src)
+    assert desktop_title, "desktop composer-title rule (hero font) not found"
+    assert "min-height" not in desktop_title.group(0), \
+        "desktop composer-title must keep its Stage 3 proportions (no min-height outside the media block)"
+    # the min-height bump exists ONLY inside the <=640px block, nowhere else
+    assert src.count("input.composer-title { min-height: 44px; }") == 1, \
+        "the title min-height must appear exactly once (inside the mobile block only)"
 
 
 def test_stage7_edit_gate_stays_desktop_only():
