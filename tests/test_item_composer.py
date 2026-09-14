@@ -595,3 +595,45 @@ def test_stage6_both_reason_paths_exist_from_one_field():
     assert re.search(r"if\(isEditor && delayChanged\)\{", src), "editor delay must route to AC approval on save"
     assert "await triggerDueDateApproval(" in src, "editor delay must call triggerDueDateApproval"
     assert "logActionOnItem(editingId" in src, "admin timeline change must write item history directly"
+
+
+# ── STAGE 7: mobile (create-only; the edit-desktop-only gate stays) ──────────────────────────────────
+# The composer becomes a full-screen touch sheet below 640px. The DOM stacking order already matches the
+# spec (verified live), and .form-grid rows stack via the unscoped shell rule; Stage 7 adds the touch
+# sizing. These are SOURCE-SHAPE guards over the <=640px composer block. The actual 430px render, touch
+# and software-keyboard behaviour are J.R.'s on-device checks (the harness pins the viewport near 1920px).
+def _composer_mobile_block(src):
+    # the <=640px media block that contains the full-screen composer sheet rules
+    m = re.search(r"@media \(max-width: 640px\)\{\s*/\* Below the established shell breakpoint.*?\n  \}",
+                  src, re.DOTALL)
+    return m.group(0) if m else ""
+
+
+def test_stage7_composer_is_full_screen_touch_sheet_under_640():
+    src = _html()
+    block = _composer_mobile_block(src)
+    assert block, "the <=640px composer sheet block not found"
+    # full-screen, keyboard-safe dynamic viewport height, single column
+    assert "height: 100dvh" in block, "the sheet must use dynamic viewport height so the keyboard can't hide the footer"
+    assert "width: 100vw" in block and "border-radius: 0" in block, "the sheet must be edge-to-edge full screen"
+    assert ".composer-cols { grid-template-columns: 1fr; }" in block, "canvas/rail must stack to one column"
+
+
+def test_stage7_touch_targets_and_dominant_create():
+    src = _html()
+    block = _composer_mobile_block(src)
+    assert block, "the <=640px composer sheet block not found"
+    # >=44px touch targets on controls + the close button
+    assert "min-height: 44px" in block, "interactive controls must be >=44px tall for touch"
+    assert ".composer-close { width: 44px; height: 44px; }" in block, "the close target must be >=44px"
+    # Create is the dominant, growing footer button
+    assert re.search(r"#saveBtn \{ min-height: 48px; flex: 1 1 auto;", block), \
+        "Create must be the dominant full-width footer button on mobile"
+
+
+def test_stage7_edit_gate_stays_desktop_only():
+    # Mobile is create-only: opening an EXISTING item on a phone routes to the item page, not the modal.
+    # Guard the gate so Stage 7 didn't quietly open edit on mobile.
+    src = _html()
+    assert re.search(r"if\(id && _isListPhone\(\)\)\{ openItemPage\(id\); return; \}", src), \
+        "the edit-modal-desktop-only gate (mobile edit -> item page) must remain"
