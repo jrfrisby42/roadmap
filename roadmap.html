@@ -2581,7 +2581,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.39.8';
+const APP_VERSION = '6.39.9';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -3035,6 +3035,9 @@ async function commitScenario(){
   }
 
   // Reload authoritative server state, then exit WITHOUT restoring the (now-stale) backup.
+  // 6.39.9 (Fix A): a projects-only refresh across a team change would import the other Org's projects onto
+  // this tab's stale config; the app treats a team change as a full reload, so do that instead.
+  if(_frzTeamChangedSinceBoot()){ location.reload(); return; }
   try { var fresh = await API.get('/api/all'); if(fresh && fresh.projects) projects = fresh.projects; } catch(_e){}
   try { await loadAssignmentData(); } catch(_e){}
   try { await loadAllCapOverrides(); } catch(_e){}
@@ -3182,6 +3185,9 @@ async function putItemGuarded(id, body){
       return await API.put('/api/projects/'+id, b);
     }
     // Reload: pull the latest, refresh whatever's visible, discard the local edit.
+    // 6.39.9 (Fix A): if the effective team changed since boot, do a full reload rather than importing the
+    // other Org's projects onto this tab's stale config (the MULTITEAM-DESYNC divergence).
+    if(_frzTeamChangedSinceBoot()){ location.reload(); return; }
     try { const fresh = await API.get('/api/all'); if(fresh && fresh.projects) projects = fresh.projects; } catch(_){}
     const np = (typeof projects !== 'undefined') ? projects.find(x=>x.id===id) : null;
     try {
@@ -9970,6 +9976,12 @@ function _recordSession(team, token, username, role){
   var m=_loadSessions(); m[team]={ token:token, username:username||'', role:role||'viewer', ts:Date.now() }; _saveSessions(m);
 }
 function activeTeamSlug(){ try { return (localStorage.getItem(SK.team)||'').trim(); } catch(e){ return ''; } }
+// 6.39.9 (Fix A): true when this tab's effective team (shared localStorage) no longer matches the team it
+// BOOTED on. A projects-only /api/all refresh in that state would import the other team's projects onto
+// this tab's stale config (statuses/products/statusIs*), which the composer then renders wrong (the
+// MULTITEAM-DESYNC divergence). The app's model is that a team change is always a full reload
+// (switchTeam), so such a refresh must reload rather than partial-update.
+function _frzTeamChangedSinceBoot(){ try { return !!(_BOOT_TEAM && activeTeamSlug() !== _BOOT_TEAM); } catch(e){ return false; } }
 function switchTeam(team, targetUrl){
   var m=_loadSessions(), s=m[team];
   if(!s || team===activeTeamSlug()) return;
@@ -13756,10 +13768,16 @@ function getStatusesForProduct(productName){
   return statuses; // fallback: all statuses
 }
 
-// Rebuild fStatus (and fStatusEditor if present) based on the current product selection
+// Rebuild fStatus from the intersection of the Space's workflow list and the Organization's statuses.
 function refreshStatusOptions(currentStatusValue){
   const productName = document.getElementById('fProduct')?.value || '';
-  const validStatuses = getStatusesForProduct(productName);
+  // 6.39.9: INTERSECTION - offer statuses that are in BOTH the Space's workflow list AND the
+  // Organization's configured `statuses`. This preserves per-Space scoping (a Space not configured for a
+  // status still does not see it - Printers omits Closed, Onboarding omits Resolved, etc.) while making
+  // a STALE per-Space entry unofferable: a name the Org no longer has (e.g. a status renamed but not
+  // cascaded) is filtered out because it is not in `statuses`. The item page lists the full Org
+  // `statuses` (_ipFieldOptions); the composer is intentionally the narrower, Space-scoped view.
+  const validStatuses = getStatusesForProduct(productName).filter(s => statuses.includes(s));
 
   // ITEM-COMPOSER-1 Stage 3: single real #fStatus for both roles (the #fStatusEditor proxy was
   // retired). Editors cannot SET a released status (parity with the retired editor panel), but an
@@ -15511,6 +15529,8 @@ async function confirmReleaseNumber(){
       }
     }
     // Reload all projects in one shot so in-memory featureFlags / jiraFeatureFlags are current
+    // 6.39.9 (Fix A): refuse the projects-only import across a team change; full reload instead.
+    if(_frzTeamChangedSinceBoot()){ location.reload(); return; }
     try {
       const data = await API.get('/api/all');
       if(data?.projects) projects = data.projects;
@@ -15790,6 +15810,8 @@ async function executeReleaseCommit(){
   // If it failed, fall through to individual saves below
   if(serverCommitOk){
     // Server handled everything - just reload projects
+    // 6.39.9 (Fix A): refuse the projects-only import across a team change; full reload instead.
+    if(_frzTeamChangedSinceBoot()){ location.reload(); return; }
     const data = await API.get('/api/all');
     projects = data.projects || projects;
     const session2 = { ..._planningSession, committedAt: new Date().toISOString(),
@@ -18026,6 +18048,8 @@ async function runManualPullSyncAll(){
     _jiraSyncLastRun = new Date().toISOString();
     if(statusEl) statusEl.textContent = `Done - ${r.synced} items checked, ${r.changes} updated, ${r.errors} errors · ${fmtTS(_jiraSyncLastRun)}`;
     if(r.changes > 0){
+      // 6.39.9 (Fix A): refuse the projects-only import across a team change; full reload instead.
+      if(_frzTeamChangedSinceBoot()){ location.reload(); return; }
       const data = await API.get('/api/all');
       projects = data.projects || projects;
       render();
@@ -18426,6 +18450,8 @@ async function syncJiraFromItemPage(silent=false){
 
   try {
     const result = await API.post('/api/jira/pull/'+_itemPageId, {username:getUsername()});
+    // 6.39.9 (Fix A): refuse the projects-only import across a team change; full reload instead.
+    if(_frzTeamChangedSinceBoot()){ location.reload(); return; }
     const data   = await API.get('/api/all');
     projects     = data.projects || projects;
     const p      = projects.find(x=>x.id===_itemPageId);
@@ -18812,6 +18838,11 @@ async function boot(){
 // failure apart from a genuine not-found. projects-only: config/users do not change for a new item, and
 // re-syncing only the item set avoids clobbering other in-flight state.
 async function _frzReloadAllData(){
+  // 6.39.9 (Fix A): a projects-only refresh is only safe while this tab is still on the team it booted on.
+  // If the effective team (shared localStorage token) changed, importing the OTHER team's projects onto this
+  // tab's stale config produces the MULTITEAM-DESYNC divergence (the composer's status list drawn from a
+  // different Org's statuses/products). The app treats a team change as a full reload, so do that instead.
+  if(_frzTeamChangedSinceBoot()){ location.reload(); return new Promise(function(){}); }
   const data = await API.get('/api/all');
   if(data && Array.isArray(data.projects)) projects = data.projects;
   return data;

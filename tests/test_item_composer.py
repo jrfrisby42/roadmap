@@ -434,9 +434,9 @@ def test_6397_status_annotation_removed_but_coercion_preserved():
     assert "fSt.insertAdjacentElement('afterbegin', opt);" in body and "fSt.value = prev;" in body, \
         "the off-workflow status stays selectable + selected so save does not coerce it"
     assert "var(--accent2)" not in body, "the red warning colour on the status option is gone"
-    # source unchanged: the list still comes from the per-Space workflow (getStatusesForProduct), and the
-    # annotation was never driven by statusIsOffFlow
-    assert "getStatusesForProduct(productName)" in body, "the per-Space workflow list is still the option source"
+    # (6.39.7 built the list from the per-Space workflow; 6.39.9 moved the source to the Org `statuses`.
+    # The coercion-prevention branch above is source-agnostic and still applies - see
+    # test_6399_status_options_from_org_statuses_not_perspace for the current source assertion.)
 
 
 def test_6397_server_untouched():
@@ -454,3 +454,85 @@ def test_6398_onitempage_requires_visible_overlay():
     assert m, "the onItemPage computation was not found (or lost the overlay guard)"
     assert "getElementById('itemPageOverlay')" in m.group(0) and "style.display !== 'none'" in m.group(0), \
         "onItemPage must require the item-page overlay to be actually visible"
+
+
+# ── 6.39.9: composer status options are the intersection of the Space list and the Org statuses ─────
+def test_6399_status_options_are_space_intersect_org():
+    # refreshStatusOptions builds #fStatus from the INTERSECTION of the Space's workflow list
+    # (getStatusesForProduct) and the Organization's `statuses` - preserving per-Space scoping while
+    # making a stale per-Space entry (a name the Org no longer has) unofferable. Guard fails on revert.
+    src = _html()
+    m = re.search(r"function refreshStatusOptions\(currentStatusValue\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "refreshStatusOptions not found"
+    body = m.group(0)
+    assert "getStatusesForProduct(productName).filter(s => statuses.includes(s))" in body, \
+        "the option list is the Space workflow list intersected with the Org `statuses`"
+    # the item page control (the reference) lists the full Org `statuses`
+    assert "if(field==='status'){" in src and "return statuses.map(s=>o(s,s));" in src, \
+        "the item page status control lists the Org statuses (the full set)"
+
+
+# ── 6.39.9 Fix A: projects-only /api/all refreshes are refused across a team change ─────────────────
+# The composer status divergence root cause: a projects-only refresh (projects := fresh, config left
+# stale) run AFTER the effective team (shared localStorage token) changed imports the other Org's
+# projects onto this tab's stale statuses/products. The app treats a team change as a full reload, so
+# every projects-only refresh must reload instead of partial-updating when the team no longer matches
+# the one this tab booted on. These are SOURCE-SHAPE guards; they fail on revert.
+def test_6399a_team_change_helper_exists():
+    src = _html()
+    m = re.search(r"function _frzTeamChangedSinceBoot\(\)\{.*?\}", src, re.DOTALL)
+    assert m, "_frzTeamChangedSinceBoot helper not found"
+    body = m.group(0)
+    # compares the effective team to the team booted on; empty _BOOT_TEAM is treated as unchanged
+    assert "_BOOT_TEAM" in body and "activeTeamSlug()" in body and "!==" in body, \
+        "helper must compare activeTeamSlug() to _BOOT_TEAM"
+
+
+def test_6399a_reload_all_data_guarded():
+    # _frzReloadAllData (openItem's miss branch, the reproduced path) reloads instead of importing
+    # another Org's projects when the team changed.
+    src = _html()
+    m = re.search(r"async function _frzReloadAllData\(\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "_frzReloadAllData not found"
+    body = m.group(0)
+    guard = body.index("_frzTeamChangedSinceBoot()")
+    assign = body.index("projects = data.projects")
+    assert guard < assign, "the team-change guard must precede the projects-only assignment"
+    assert "location.reload()" in body[:assign], "guard must force a full reload"
+
+
+def test_6399a_classic_projects_only_refreshes_guarded():
+    # The classic scenario-commit and save-conflict refreshes (projects := fresh.projects) are guarded
+    # the same way. Count the guarded projects-only refreshes to catch a silent regression.
+    src = _html()
+    # every projects-only refresh of this exact shape must sit immediately after a team-change guard
+    refreshes = re.findall(
+        r"(if\(_frzTeamChangedSinceBoot\(\)\)\{ location\.reload\(\); return;? \}\s*\n\s*)?"
+        r"try \{ (?:var|const) fresh = await API\.get\('/api/all'\); if\(fresh && fresh\.projects\) projects = fresh\.projects; \}",
+        src,
+    )
+    assert len(refreshes) >= 2, "expected the two classic projects-only refreshes (scenario commit + save conflict)"
+    assert all(refreshes), "every classic projects-only refresh must be preceded by the team-change guard"
+
+
+def test_6399a_jira_and_planning_refreshes_guarded_but_timer_excluded():
+    # 6.39.9 extended the guard to 4 more projects-only refreshes (release FF reload, planning server
+    # commit, manual Jira pull-all, item-page Jira sync) but DELIBERATELY leaves the background Jira
+    # sync timer (runBackgroundJiraSync) unguarded - a timer tick must not trigger a surprise reload;
+    # the intersection hardening backstops the composer there.
+    src = _html()
+    # the four guarded functions each contain the guard
+    for fn in ("runManualPullSyncAll", "syncJiraFromItemPage"):
+        m = re.search(r"async function " + fn + r"\(.*?\)\{.*?\n\}", src, re.DOTALL)
+        assert m, fn + " not found"
+        assert "_frzTeamChangedSinceBoot()" in m.group(0), fn + " must carry the team-change guard"
+    # background timer stays unguarded but still does a projects-only import
+    mb = re.search(r"async function runBackgroundJiraSync\(\)\{.*?\n\}", src, re.DOTALL)
+    assert mb, "runBackgroundJiraSync not found"
+    assert "_frzTeamChangedSinceBoot()" not in mb.group(0), \
+        "the background Jira sync timer must NOT trigger a reload on a tick"
+    assert "projects = data.projects || projects" in mb.group(0), \
+        "the background timer still does its projects-only import (backstopped by the intersection fix)"
+    # total guard call sites across the file (3 core + 4 extended = 7)
+    assert src.count("if(_frzTeamChangedSinceBoot()){ location.reload()") == 7, \
+        "expected 7 team-change reload guards (3 core + 4 extended; timer excluded)"
