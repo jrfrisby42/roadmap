@@ -394,3 +394,25 @@ def test_stage5_no_enforcement_change():
 def test_stage5_server_untouched():
     src = SERVER.read_text(encoding="utf-8", errors="replace")
     assert "delayActiveLock" not in src and "delayLockMsg" not in src, "server.py must not be touched by Stage 5"
+
+
+# ── 6.39.6: close A1 parity - Parallel Resources gets the inline message when IT is locked (active) ──
+def test_6396_parallel_inline_message_on_lock():
+    src = _html()
+    # the element exists, reuses the shared lock-message class, and is named so it does not read as the
+    # fParallel dependency select
+    assert '<div id="fParallelResourcesInline" class="composer-lock-msg" style="display:none"></div>' in src, \
+        "Parallel Resources has an inline lock message reusing .composer-lock-msg, id fParallelResourcesInline"
+    assert 'id="fParallelInline"' not in src, "the id must be fParallelResourcesInline, not fParallelInline"
+    # shown ONLY when the field is locked (saved status active) - the inverse of Delay - and hidden
+    # otherwise; same prIsActive source as the existing badge; no enforcement change.
+    m = re.search(r"const prMsg = document\.getElementById\('fParallelResourcesInline'\);.*?\n  \}", src, re.DOTALL)
+    assert m, "the parallel inline-message wiring not found"
+    body = m.group(0)
+    assert "if(prIsActive){ prMsg.textContent = 'Cannot be changed while item is active';" in body, \
+        "shown with the existing copy when the saved status is active (the lock condition)"
+    assert "prMsg.style.display = 'none';" in body, "hidden when not locked (editable)"
+    # the client lock itself is unchanged (still disabled when active); server untouched
+    assert "prInp.disabled = prIsActive;" in src, "the existing parallelResources client lock is unchanged"
+    ssrc = SERVER.read_text(encoding="utf-8", errors="replace")
+    assert "fParallelResourcesInline" not in ssrc, "server.py must not be touched by 6.39.6"
