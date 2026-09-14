@@ -354,3 +354,43 @@ def test_stage4b_wired_into_beta_open_wrapper():
 def test_stage4b_server_untouched():
     src = SERVER.read_text(encoding="utf-8", errors="replace")
     assert "composerComments" not in src and "_frzInitModalComments" not in src, "server.py must not be touched by Stage 4B"
+
+
+# ── Stage 5 (Addendum A1): make the status-driven Delay lock as VISIBLE as the Parallel one ────────
+# The whole point of this stage is whether J.R. can SEE why a field is locked without hovering, so the
+# accepted coverage is the two screenshots (Delay locked on an Approved item, unlocked on In Progress).
+# These source-shape guards assert the rule exists and, critically, that NO enforcement changed.
+
+def test_stage5_delay_lock_is_surfaced_visibly():
+    src = _html()
+    m = re.search(r"function updateDelayFieldsState\(\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "updateDelayFieldsState not found"
+    body = m.group(0)
+    # a lock badge on the label (mirrors the parallelResources 'Active' badge) + the reason inline
+    assert "badge.id = 'delayActiveLock';" in body, "a lock badge is added to the Delay label when locked"
+    assert "(!hasStart ? 'Needs start' : 'Active only')" in body, "the badge names the reason at a glance"
+    assert "getElementById('delayLockMsg')" in body, "the existing reason is surfaced inline (not title-only)"
+    assert '<div id="delayLockMsg" class="composer-lock-msg" style="display:none"></div>' in src, "the inline message element exists"
+    # the badge is removed when unlocked (no false lock)
+    assert "getElementById('delayActiveLock')?.remove();" in body, "the badge is cleared when the field is not locked"
+
+
+def test_stage5_no_enforcement_change():
+    # INVARIANT: the disable rule is UNCHANGED (canDelay = hasStart && isActive; revSel.disabled =
+    # !canDelay), config-driven via isActiveStatus (no hardcoded status name), the existing message copy
+    # is unchanged, and the parallelResources lock (client + its 'Active' badge) is left intact.
+    src = _html()
+    body = re.search(r"function updateDelayFieldsState\(\)\{.*?\n\}", src, re.DOTALL).group(0)
+    assert "const canDelay   = hasStart && isActive;" in body and "revSel.disabled = !canDelay;" in body, \
+        "the Delay disable logic is unchanged (nothing newly locked or permitted)"
+    assert "isActiveStatus(currStatus)" in body, "active-ness is resolved through config, never a hardcoded status name"
+    assert "'Delay date is only available on Active items'" in body and "'Set a Start Date before adding a Delay'" in body, \
+        "the existing lock messages are surfaced, not rewritten"
+    # parallelResources keeps its own (pre-existing) client lock + badge - untouched by this stage
+    assert "prInp.title = prIsActive ? 'Cannot be changed while item is active' : '';" in src, "the parallelResources lock is intact"
+    assert "lockSpan.id = 'prActiveLock';" in src, "the parallelResources 'Active' badge is intact"
+
+
+def test_stage5_server_untouched():
+    src = SERVER.read_text(encoding="utf-8", errors="replace")
+    assert "delayActiveLock" not in src and "delayLockMsg" not in src, "server.py must not be touched by Stage 5"
