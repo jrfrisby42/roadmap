@@ -1969,6 +1969,13 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
                 <input type="number" id="fParallelResources" min="1" step="0.25" value="1"
                   style="width:100%;padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none"
                   placeholder="1">
+                <!-- ITEM-COMPOSER-1 Stage 5 (6.39.6): the reason Parallel Resources is locked, surfaced
+                     inline to match the Delay field - reuses the .composer-lock-msg class. Filled + shown
+                     by openProjectModal when the SAVED status is active (the field's only lock condition;
+                     unlike Delay there is no noStart branch - Parallel Resources has no start dependency).
+                     The id is fParallelResourcesInline, not fParallelInline, so it does not read as
+                     belonging to the fParallel dependency select. No enforcement change. -->
+                <div id="fParallelResourcesInline" class="composer-lock-msg" style="display:none"></div>
               </div>
             </div>
 
@@ -6125,6 +6132,15 @@ function openProjectModal(id){
     lockSpan.style.cssText = 'margin-left:6px;font-size:10px;color:#0072f0;display:inline-flex;align-items:center;gap:2px;font-weight:700;vertical-align:middle';
     lockSpan.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Active';
     parallelRow?.querySelector('label')?.appendChild(lockSpan);
+  }
+  // 6.39.6: mirror the Delay lock's inline message on Parallel Resources when IT is locked (the saved
+  // status is active), reusing .composer-lock-msg with the existing title copy. Frozen to the saved
+  // status like the badge above (the server 422 keys off the saved status, so the client lock must too).
+  // No enforcement change - the field stays disabled when active and the server still returns 422.
+  const prMsg = document.getElementById('fParallelResourcesInline');
+  if(prMsg){
+    if(prIsActive){ prMsg.textContent = 'Cannot be changed while item is active'; prMsg.style.display = ''; }
+    else { prMsg.textContent = ''; prMsg.style.display = 'none'; }
   }
   if(prioritySel){ prioritySel.value = p?.priority || ''; updatePrioritySelectColor(prioritySel); }
   document.getElementById('releaseError').style.display = 'none';
