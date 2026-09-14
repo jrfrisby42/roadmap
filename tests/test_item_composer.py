@@ -300,3 +300,57 @@ def test_stage4_wired_edit_only_in_open():
 def test_stage4_server_untouched():
     src = SERVER.read_text(encoding="utf-8", errors="replace")
     assert "composerMetaStrip" not in src and "_frzComposerActivity" not in src, "server.py must not be touched by Stage 4"
+
+
+# ── Stage 4B: comments in the modal (separate, optional; reuses existing endpoints) ───────────────
+# SOURCE-SHAPE guards over roadmap.html. The full read + write round-trip (mount the rich composer,
+# post, re-render) was exercised live on the seeded server; the create/classic-hide and editor-can-
+# comment paths were DOM-verified. These fail when Stage 4B is reverted. server.py is untouched.
+
+def test_stage4b_comments_markup_edit_only():
+    src = _html()
+    assert '<div class="composer-comments" id="composerComments" style="display:none">' in src, \
+        "the comments section exists and is hidden by default (edit-only, beta fills it)"
+    assert 'id="composerCommentComposer"' in src and 'id="composerCommentsList"' in src, \
+        "a composer host slot and a thread list"
+    assert 'id="composerCommentsFull"' in src, "a full-page link to the item page"
+
+
+def test_stage4b_reuses_existing_endpoints_no_new_endpoint():
+    # INVARIANT (the spec's report-first): the modal reads and writes comments through the EXISTING
+    # endpoints - GET /api/comments/{id} to read, and the host-mode rich composer (which POSTs to
+    # /api/comments via _frzPostCommentNow) to write. No new endpoint, no new upload path.
+    src = _html()
+    m = re.search(r"function _frzRenderModalThread\(id\)\{.*?\n  \}", src, re.DOTALL)
+    assert m, "the modal thread renderer not found"
+    assert "API.get('/api/comments/'+id)" in m.group(0), "reads via the existing GET /api/comments/{id}"
+    w = re.search(r"function _frzWireModalComposer\(p\)\{.*?\n  \}", src, re.DOTALL)
+    assert w, "the modal composer wirer not found"
+    body = w.group(0)
+    assert "frzMountCommentEditor(p, { host:host, onPosted:" in body, "reuses the existing host-mode rich composer"
+    assert "_frzPostCommentNow(host._frzPostCtx)" in body, "posts via the existing _frzPostCommentNow (POST /api/comments)"
+    # server.py adds NO new comment route for this stage
+    ssrc = SERVER.read_text(encoding="utf-8", errors="replace")
+    assert ssrc.count('@app.post("/api/comments")') == 1 and ssrc.count('@app.get("/api/comments/{item_id}")') == 1, \
+        "the existing comment endpoints are unchanged and none were added"
+
+
+def test_stage4b_edit_only_beta_only_and_permission_gated():
+    src = _html()
+    init = re.search(r"function _frzInitModalComments\(id\)\{.*?\n  \}", src, re.DOTALL)
+    assert init, "the modal comments init not found"
+    assert "if(!root || id==null){" in init.group(0), "comments are edit-only (id != null) and beta-only (root)"
+    w = re.search(r"function _frzWireModalComposer\(p\)\{.*?\n  \}", src, re.DOTALL)
+    assert "canEdit=(_val('isAdmin',false)||_val('isEditor',false))" in w.group(0), \
+        "the composer shows only for roles the endpoint already permits (admin/editor reach the modal)"
+
+
+def test_stage4b_wired_into_beta_open_wrapper():
+    src = _html()
+    assert "try{ _frzInitModalComments(id); }catch(e){}" in src, \
+        "the beta openProjectModal wrapper initialises the modal comments"
+
+
+def test_stage4b_server_untouched():
+    src = SERVER.read_text(encoding="utf-8", errors="replace")
+    assert "composerComments" not in src and "_frzInitModalComments" not in src, "server.py must not be touched by Stage 4B"
