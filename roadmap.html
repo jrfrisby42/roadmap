@@ -13756,10 +13756,16 @@ function getStatusesForProduct(productName){
   return statuses; // fallback: all statuses
 }
 
-// Rebuild fStatus (and fStatusEditor if present) based on the current product selection
+// Rebuild fStatus from the intersection of the Space's workflow list and the Organization's statuses.
 function refreshStatusOptions(currentStatusValue){
   const productName = document.getElementById('fProduct')?.value || '';
-  const validStatuses = getStatusesForProduct(productName);
+  // 6.39.9: INTERSECTION - offer statuses that are in BOTH the Space's workflow list AND the
+  // Organization's configured `statuses`. This preserves per-Space scoping (a Space not configured for a
+  // status still does not see it - Printers omits Closed, Onboarding omits Resolved, etc.) while making
+  // a STALE per-Space entry unofferable: a name the Org no longer has (e.g. a status renamed but not
+  // cascaded) is filtered out because it is not in `statuses`. The item page lists the full Org
+  // `statuses` (_ipFieldOptions); the composer is intentionally the narrower, Space-scoped view.
+  const validStatuses = getStatusesForProduct(productName).filter(s => statuses.includes(s));
 
   // ITEM-COMPOSER-1 Stage 3: single real #fStatus for both roles (the #fStatusEditor proxy was
   // retired). Editors cannot SET a released status (parity with the retired editor panel), but an

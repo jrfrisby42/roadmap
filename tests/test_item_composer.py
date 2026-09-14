@@ -434,9 +434,9 @@ def test_6397_status_annotation_removed_but_coercion_preserved():
     assert "fSt.insertAdjacentElement('afterbegin', opt);" in body and "fSt.value = prev;" in body, \
         "the off-workflow status stays selectable + selected so save does not coerce it"
     assert "var(--accent2)" not in body, "the red warning colour on the status option is gone"
-    # source unchanged: the list still comes from the per-Space workflow (getStatusesForProduct), and the
-    # annotation was never driven by statusIsOffFlow
-    assert "getStatusesForProduct(productName)" in body, "the per-Space workflow list is still the option source"
+    # (6.39.7 built the list from the per-Space workflow; 6.39.9 moved the source to the Org `statuses`.
+    # The coercion-prevention branch above is source-agnostic and still applies - see
+    # test_6399_status_options_from_org_statuses_not_perspace for the current source assertion.)
 
 
 def test_6397_server_untouched():
@@ -454,3 +454,19 @@ def test_6398_onitempage_requires_visible_overlay():
     assert m, "the onItemPage computation was not found (or lost the overlay guard)"
     assert "getElementById('itemPageOverlay')" in m.group(0) and "style.display !== 'none'" in m.group(0), \
         "onItemPage must require the item-page overlay to be actually visible"
+
+
+# ── 6.39.9: composer status options are the intersection of the Space list and the Org statuses ─────
+def test_6399_status_options_are_space_intersect_org():
+    # refreshStatusOptions builds #fStatus from the INTERSECTION of the Space's workflow list
+    # (getStatusesForProduct) and the Organization's `statuses` - preserving per-Space scoping while
+    # making a stale per-Space entry (a name the Org no longer has) unofferable. Guard fails on revert.
+    src = _html()
+    m = re.search(r"function refreshStatusOptions\(currentStatusValue\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "refreshStatusOptions not found"
+    body = m.group(0)
+    assert "getStatusesForProduct(productName).filter(s => statuses.includes(s))" in body, \
+        "the option list is the Space workflow list intersected with the Org `statuses`"
+    # the item page control (the reference) lists the full Org `statuses`
+    assert "if(field==='status'){" in src and "return statuses.map(s=>o(s,s));" in src, \
+        "the item page status control lists the Org statuses (the full set)"
