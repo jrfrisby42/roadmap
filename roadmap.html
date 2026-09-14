@@ -2581,7 +2581,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.39.9';
+const APP_VERSION = '6.39.10';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -13361,10 +13361,21 @@ function checkAdminReasonNeeded(){
 function showChangeReasonPanel(reasons){
   const panel = document.getElementById('changeReasonPanel');
   if(!panel) return;
+  const wasHidden = panel.style.display === 'none';
   panel.style.display = '';
   const title = document.getElementById('changeReasonTitle');
   if(title) title.textContent = `Reason required: ${reasons.join(' + ')}`;
   document.getElementById('changeReasonError').style.display = 'none';
+  // ITEM-COMPOSER-1 Stage 6: the reason prompt is pinned OUTSIDE the scrolling body, but the qualifying
+  // change that triggers it lives in the collapsible Schedule & Capacity group. When the prompt first
+  // appears, expand that group if it was collapsed (so the change is visible) and move focus across the
+  // body/pinned boundary to the reason select - the field now needing attention. Only on the transition
+  // from hidden to shown, so a later live re-detection does not steal focus from someone mid-edit.
+  if(wasHidden){
+    const grp = document.getElementById('grpSchedule');
+    if(grp && !grp.open) grp.open = true;
+    try { document.getElementById('fChangeReason')?.focus(); } catch(_e){}
+  }
 }
 
 function hideChangeReasonPanel(){

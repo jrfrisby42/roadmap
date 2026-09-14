@@ -536,3 +536,62 @@ def test_6399a_jira_and_planning_refreshes_guarded_but_timer_excluded():
     # total guard call sites across the file (3 core + 4 extended = 7)
     assert src.count("if(_frzTeamChangedSinceBoot()){ location.reload()") == 7, \
         "expected 7 team-change reload guards (3 core + 4 extended; timer excluded)"
+
+
+# ── STAGE 6: schedule + the change-reason workflow (preservation stage) ──────────────────────────────
+# The reason workflow (detect qualifying change -> require a reason -> write to item history) already
+# survived the layout rewrite; these guard the ONE Stage 6 build: the reason prompt is pinned OUTSIDE
+# the scrolling body, so when it first appears it must expand the (collapsible) Schedule group and move
+# focus across the body/pinned boundary to the reason select. Enforcement structurally cannot be bypassed
+# by collapsing (the panel is pinned + the save handler re-checks). These are SOURCE-SHAPE guards; the
+# full workflow (admin direct history + editor AC-approval, both from #fRevisedOffset; collapse-bypass;
+# Cancel-writes-nothing; save conflict) was verified live on the local harness for both roles.
+def test_stage6_reason_panel_expands_schedule_and_moves_focus_on_first_show():
+    src = _html()
+    m = re.search(r"function showChangeReasonPanel\(reasons\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "showChangeReasonPanel not found"
+    body = m.group(0)
+    # first-show detection (don't steal focus on a later live re-detection)
+    assert "wasHidden" in body and "panel.style.display === 'none'" in body, \
+        "must detect the hidden->shown transition so focus only moves on first show"
+    # expand the collapsed Schedule group + move focus to the reason select, guarded on wasHidden
+    assert "grpSchedule" in body and "grp.open = true" in body, \
+        "first show must expand the collapsed Schedule & Capacity group"
+    assert "getElementById('fChangeReason')?.focus()" in body, \
+        "first show must move focus to the reason select (the field needing attention)"
+
+
+def test_stage6_reason_panel_is_pinned_outside_the_scrolling_body():
+    # The structural guarantee that collapsing the Schedule group cannot bypass the reason: the panel is
+    # pinned (flex:0 0 auto) above the fixed footer, OUTSIDE .composer-body, so it stays visible.
+    src = _html()
+    assert re.search(r"\.modal\.frz-composer #changeReasonPanel \{ flex: 0 0 auto;", src), \
+        "the change-reason panel must stay pinned outside the scrolling body"
+
+
+def test_stage6_revised_offset_to_hidden_chain_and_save_reads_hidden():
+    # Stage 0.A's key finding: the visible Delay control is the offset select #fRevisedOffset; it computes
+    # the hidden #fRevised; the save reads ONLY #fRevised. The field that ACTS != the field the render
+    # emits - guard the whole chain so a future refactor can't quietly sever it.
+    src = _html()
+    assert re.search(r"function updateRevisedDate\(\)\{", src), "updateRevisedDate (offset->hidden) missing"
+    assert "document.getElementById('fRevised').value = revisedStr;" in src, \
+        "updateRevisedDate must write the computed date into the hidden #fRevised"
+    assert "revised:    document.getElementById('fRevised').value," in src, \
+        "the save payload must read the hidden #fRevised, not the offset select"
+    # the editor reason trigger is re-homed onto the REAL #fRevisedOffset change listener (Stage 3)
+    assert re.search(r"getElementById\('fRevisedOffset'\)\?\.addEventListener\('change'", src), \
+        "the delay change listener must hang off the real #fRevisedOffset"
+
+
+def test_stage6_both_reason_paths_exist_from_one_field():
+    # One field (#fRevisedOffset) fans out to two histories: admin direct (checkAdminReasonNeeded ->
+    # logActionOnItem) and editor AC-approval (checkEditorReasonNeeded -> triggerDueDateApproval).
+    src = _html()
+    assert "checkEditorReasonNeeded();" in src, "editor reason trigger must be wired"
+    assert re.search(r"function checkAdminReasonNeeded\(\)\{", src) and \
+           re.search(r"function checkEditorReasonNeeded\(\)\{", src), "both reason-check functions must exist"
+    # editor path routes through the AC approval writer; admin path writes item history directly
+    assert re.search(r"if\(isEditor && delayChanged\)\{", src), "editor delay must route to AC approval on save"
+    assert "await triggerDueDateApproval(" in src, "editor delay must call triggerDueDateApproval"
+    assert "logActionOnItem(editingId" in src, "admin timeline change must write item history directly"
