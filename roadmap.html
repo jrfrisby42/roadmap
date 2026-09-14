@@ -785,6 +785,26 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .modal.frz-composer .composer-act-msg { font-size: 12px; color: var(--text); }
   .modal.frz-composer .composer-act-by { font-size: 10px; color: var(--muted); margin-top: 2px; }
   .modal.frz-composer .composer-act-done { font-size: 10px; color: #22b96e; margin-top: 2px; }
+
+  /* ── ITEM-COMPOSER-1 Stage 4B: comments in the modal (edit-only, beta-only) ── */
+  .modal.frz-composer .composer-comments { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+  .modal.frz-composer .composer-comments-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .modal.frz-composer .composer-comments-head > span { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--muted); text-transform: uppercase; }
+  .modal.frz-composer .composer-comments-full { font-size: 11px; font-weight: 700; color: var(--accent); text-decoration: none; }
+  .modal.frz-composer .composer-comments-full:hover { text-decoration: underline; }
+  .modal.frz-composer .composer-cmt-ph { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--muted); font-size: 13px; padding: 9px 12px; cursor: text; }
+  .modal.frz-composer .composer-cmt-ph:hover, .modal.frz-composer .composer-cmt-ph:focus { border-color: var(--accent); outline: none; }
+  .modal.frz-composer #composerCommentComposer { margin-bottom: 12px; }
+  .modal.frz-composer .composer-cmt-post { margin-top: 8px; background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: 6px; padding: 7px 14px; font-family: 'Lato', sans-serif; font-weight: 700; font-size: 13px; cursor: pointer; }
+  .modal.frz-composer .composer-cmt-post:hover { background: var(--accent2, var(--accent)); filter: brightness(0.95); }
+  .modal.frz-composer .composer-cmt-empty { font-size: 12px; color: var(--muted); padding: 6px 0; }
+  .modal.frz-composer .composer-cmt { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .modal.frz-composer .composer-cmt:last-child { border-bottom: 0; }
+  .modal.frz-composer .composer-cmt-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+  .modal.frz-composer .composer-cmt-who { display: inline-flex; align-items: center; gap: 7px; }
+  .modal.frz-composer .composer-cmt-author { font-size: 12px; font-weight: 700; color: var(--text); }
+  .modal.frz-composer .composer-cmt-ts { font-size: 10px; color: var(--muted); }
+  .modal.frz-composer .composer-cmt-body { font-size: 13px; color: var(--text); line-height: 1.5; }
   /* Date field with clear button */
   .date-wrap { display: flex; gap: 4px; align-items: center; }
   .date-wrap input[type=date] { flex: 1; }
@@ -1825,6 +1845,20 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
             <a href="#" id="composerActivityFull" class="composer-activity-full" title="Open the full item page">Full history</a>
           </div>
           <div id="composerActivityList"></div>
+        </div>
+
+        <!-- ITEM-COMPOSER-1 Stage 4B: comments in the modal (SEPARATE, OPTIONAL). EDIT-ONLY + beta-only;
+             the beta module (_frzInitModalComments) fills the composer host + thread list, reusing the
+             EXISTING comment endpoints (GET/POST /api/comments) and the host-mode rich composer
+             (frzMountCommentEditor) - no new endpoint. Classic + create leave this hidden. Full threaded
+             history stays on the item page (reachable from the header). -->
+        <div class="composer-comments" id="composerComments" style="display:none">
+          <div class="composer-comments-head">
+            <span>Comments</span>
+            <a href="#" id="composerCommentsFull" class="composer-comments-full" title="Open the full item page">Open in full page</a>
+          </div>
+          <div id="composerCommentComposer"></div>
+          <div id="composerCommentsList"></div>
         </div>
       </div><!-- end canvas -->
 
@@ -21447,7 +21481,7 @@ if ('serviceWorker' in navigator) {
     // (additive; original runs first and sets #fDesc, then we mount). Classic / (no root) → original only.
     if(window.openProjectModal && !window.openProjectModal._frzWrapped){
       var _origOPM = window.openProjectModal;
-      window.openProjectModal = function(id){ var r=_origOPM.apply(this, arguments); try{ _frzInitModalNotes(id); }catch(e){} return r; };
+      window.openProjectModal = function(id){ var r=_origOPM.apply(this, arguments); try{ _frzInitModalNotes(id); }catch(e){} try{ _frzInitModalComments(id); }catch(e){} return r; };
       window.openProjectModal._frzWrapped = true;
     }
     // Wrap renderKanban: in beta, EVERY board (incl. the built-in "Open work") renders through
@@ -29894,6 +29928,79 @@ if ('serviceWorker' in navigator) {
     row.classList.add('frz-desc-full');
     fd.style.maxHeight='none';   // let the editor grow to fill the canvas
   }
+  // ════════ ITEM-COMPOSER-1 Stage 4B: comments in the item MODAL (edit-only, beta-only) ═══════════
+  // A SECOND comment surface kept consistent with the item page: reuses the EXISTING comment endpoints
+  // (GET/POST /api/comments) and the host-mode rich composer (frzMountCommentEditor) + _renderCommentBody
+  // - NO new endpoint, no new upload path. Mirrors the List detail panel's proven pattern
+  // (_frzRenderPanelThread / _frzWirePanelComposer). Flat newest-first here; the full THREADED history
+  // stays on the item page (reachable from the header + the "Open in full page" link).
+  var _frzModalComposerEd=null, _frzModalComposerMounted=false, _frzModalCommentsFor=null;
+  function _frzTeardownModalComposer(){
+    if(_frzModalComposerEd){ try{ _frzModalComposerEd.destroy(); }catch(e){} _frzModalComposerEd=null; }
+    _frzModalComposerMounted=false;
+  }
+  function _frzRenderModalThread(id){
+    var host=document.getElementById('composerCommentsList'); if(!host) return;
+    host.innerHTML='<div class="composer-cmt-empty">Loading…</div>';
+    _frzLoadDOMPurify().catch(function(){}).then(function(){
+      if(_frzModalCommentsFor!==id) return;                 // reopened for another item during ensure
+      API.get('/api/comments/'+id).then(function(data){
+        if(_frzModalCommentsFor!==id) return;               // reopened during fetch → DISCARD
+        var h=document.getElementById('composerCommentsList'); if(!h) return;
+        data=data||[];
+        if(!data.length){ h.innerHTML='<div class="composer-cmt-empty">No comments yet</div>'; return; }
+        var rows=data.slice().sort(function(a,b){ return (b.id||0)-(a.id||0); });   // newest-first
+        h.innerHTML=rows.map(function(c){
+          return '<div class="composer-cmt"><div class="composer-cmt-hd"><span class="composer-cmt-who">'+avatarHTML(c.author,20)+'<span class="composer-cmt-author">'+esc(c.author)+'</span></span>'
+            + '<span class="composer-cmt-ts">'+esc(fmtTS(c.created_ts))+'</span></div>'
+            + '<div class="composer-cmt-body">'+(_call('_renderCommentBody', c.body)||'')+'</div></div>';
+        }).join('');
+        _frzRehydrateImagesIn(h, id);
+      }).catch(function(){ if(_frzModalCommentsFor===id){ var h2=document.getElementById('composerCommentsList'); if(h2) h2.innerHTML='<div class="composer-cmt-empty">Could not load comments</div>'; } });
+    });
+  }
+  function _frzWireModalComposer(p){
+    var slot=document.getElementById('composerCommentComposer'); if(!slot) return;
+    var canEdit=(_val('isAdmin',false)||_val('isEditor',false));
+    if(!canEdit || !frzRteEnabled()){ slot.style.display='none'; slot.innerHTML=''; return; }   // permission: same gate the endpoint enforces
+    slot.style.display='';
+    slot.innerHTML='<div class="composer-cmt-ph" tabindex="0" role="button">Add a comment…</div>';
+    var ph=slot.querySelector('.composer-cmt-ph');
+    var mount=function(){
+      if(_frzModalComposerMounted) return; _frzModalComposerMounted=true;
+      var openedFor=p.id;
+      slot.innerHTML='<div id="composerCommentHost"></div>';
+      var host=slot.querySelector('#composerCommentHost');
+      frzMountCommentEditor(p, { host:host, onPosted:function(){ _frzRenderModalThread(openedFor); } }).then(function(ed){
+        if(!ed) return;
+        if(_frzModalCommentsFor!==openedFor){ try{ ed.destroy(); }catch(e){} _frzModalComposerMounted=false; return; }   // reopened during mount → discard
+        _frzModalComposerEd=ed;
+        var btn=document.createElement('button'); btn.type='button'; btn.className='composer-cmt-post'; btn.textContent='Comment';
+        btn.addEventListener('click', function(){ _frzPostCommentNow(host._frzPostCtx); });
+        slot.appendChild(btn);
+        try{ ed.commands.focus(); }catch(e){}
+      });
+    };
+    ph.addEventListener('focus', mount); ph.addEventListener('click', mount);
+  }
+  function _frzInitModalComments(id){
+    var sec=document.getElementById('composerComments'); if(!sec) return;
+    _frzTeardownModalComposer();                            // discard any prior composer (destroy editor + reset lazy state)
+    // EDIT-ONLY (an existing id) on /beta. Create (id null) / classic / no-section → hidden.
+    if(!root || id==null){
+      sec.style.display='none'; _frzModalCommentsFor=null;
+      var lst=document.getElementById('composerCommentsList'); if(lst) lst.innerHTML='';
+      var cmp=document.getElementById('composerCommentComposer'); if(cmp) cmp.innerHTML='';
+      return;
+    }
+    var p=(_val('projects',[])||[]).filter(function(x){ return x.id===id; })[0]; if(!p){ sec.style.display='none'; return; }
+    _frzModalCommentsFor=id;
+    sec.style.display='';
+    var full=document.getElementById('composerCommentsFull'); if(full) full.href=(typeof _frzItemPageUrl==='function')?_frzItemPageUrl(id):('?item='+id);
+    _frzRenderModalThread(id);
+    _frzWireModalComposer(p);
+  }
+
   function _frzInitModalNotes(id){
     var fd=document.getElementById('fDesc'); if(!fd) return;
     // On /beta (create + edit): relabel "Description" and relocate the field to the bottom
