@@ -2011,7 +2011,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
                 <input type="date" id="fRelease">
                 <button type="button" class="date-clear" onclick="document.getElementById('fRelease').value='';" title="Clear"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
               </div>
-              <div id="releaseError" style="display:none;color:var(--accent2);font-size:11px;margin-top:4px;font-weight:700"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Release date is required for Released status.</div>
+              <div id="releaseError" role="alert" style="display:none;color:var(--accent2);font-size:11px;margin-top:4px;font-weight:700"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Release date is required for Released status.</div>
             </div>
 
             <!-- Test Period | Expected Date -->
@@ -2025,7 +2025,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
                   <option value="2" selected>2 weeks</option>
                   <option value="4">4 weeks</option>
                 </select>
-                <div id="testWeeksError" style="display:none;font-size:10px;color:var(--accent2);font-weight:700;margin-top:3px"></div>
+                <div id="testWeeksError" role="alert" style="display:none;font-size:10px;color:var(--accent2);font-weight:700;margin-top:3px"></div>
               </div>
               <div class="form-row">
                 <label style="display:flex;justify-content:space-between;align-items:center">
@@ -2159,14 +2159,14 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     </div><!-- end composer-body -->
 
     <!-- Change Reason Panel - shown when timeline changes require justification -->
-    <div id="changeReasonPanel" style="display:none;background:rgba(232,57,74,0.04);border:1px solid rgba(232,57,74,0.2);border-radius:8px;padding:14px 16px;margin-top:12px">
+    <div id="changeReasonPanel" role="group" aria-labelledby="changeReasonTitle" style="display:none;background:rgba(232,57,74,0.04);border:1px solid rgba(232,57,74,0.2);border-radius:8px;padding:14px 16px;margin-top:12px">
       <div style="font-size:12px;font-weight:900;color:var(--accent2);margin-bottom:10px;display:flex;align-items:center;gap:6px">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> <span id="changeReasonTitle">Reason Required</span>
       </div>
       <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">
         <div style="flex:1;min-width:200px">
           <label style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px">Reason <span style="color:var(--accent2)">*</span></label>
-          <select id="fChangeReason" style="width:100%;padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none">
+          <select id="fChangeReason" aria-label="Change reason" style="width:100%;padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none">
             <option value="">- Select reason -</option>
           </select>
         </div>
@@ -2174,11 +2174,11 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
           <label style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px">
             Notes <span id="changeNoteRequired" style="color:var(--accent2);display:none">*</span>
           </label>
-          <input type="text" id="fChangeNote" placeholder="Optional details…"
+          <input type="text" id="fChangeNote" placeholder="Optional details…" aria-label="Change note"
             style="width:100%;padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none">
         </div>
       </div>
-      <div id="changeReasonError" style="display:none;font-size:11px;color:var(--accent2);font-weight:700;margin-top:6px"></div>
+      <div id="changeReasonError" role="alert" style="display:none;font-size:11px;color:var(--accent2);font-weight:700;margin-top:6px"></div>
     </div>
 
     <!-- Actions row -->
@@ -2606,7 +2606,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.39.12';
+const APP_VERSION = '6.39.13';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -5814,6 +5814,26 @@ function _frzRevealComposerField(fieldId){
   try { el.focus(); } catch(_e){}
 }
 
+// ITEM-COMPOSER-1 Stage 8 (a11y): give every composer field a screen-reader name. The rail labels were
+// adjacent-only (no `for=`), so ~15 controls (Status/Space/Type/Team/Start/Estimate/Delay/... ) announced
+// as unlabeled. Derive an aria-label from each control's own field wrapper's <label> (robust to the varied
+// qcell/form-row/status-row markup; the group body wraps many fields, so it is NOT used as the wrapper).
+// Runs on open because the field set is (re)built per open and per role; skips anything already named.
+function _frzWireComposerA11yLabels(){
+  const modal = document.getElementById('modalBg');
+  if(!modal) return;
+  modal.querySelectorAll('.composer-body select, .composer-body input, .composer-body textarea').forEach(el=>{
+    if(!el.id || el.type === 'hidden') return;
+    if(el.getAttribute('aria-label') || (el.labels && el.labels.length)) return;   // already has a name
+    const wrap = el.closest('.composer-qcell, .form-row, .composer-statusrow');
+    const lbl = wrap ? wrap.querySelector('label') : null;
+    if(lbl){
+      const txt = (lbl.textContent || '').replace(/[*?]/g, '').replace(/\s+/g, ' ').trim();
+      if(txt) el.setAttribute('aria-label', txt);
+    }
+  });
+}
+
 // ── ITEM-COMPOSER-1 Stage 4: edit-mode surfaces ──────────────────────────────────────────────────
 // Read-only metadata strip: only facts with NO other home in the modal (Assignee has no modal field and
 // is editable on the item page; Reporter/Departments are portal facts). Space/Type/Priority stay
@@ -6280,6 +6300,7 @@ function openProjectModal(id){
   _frzComposerMetaStrip(id ? p : null);
   _frzComposerActivity(id || null);
   _frzComposerGroupDefaults(p, id);
+  _frzWireComposerA11yLabels();   // Stage 8: name every field for screen readers (fields are rebuilt per open)
   document.getElementById('modalBg').classList.add('open');
 }
 
