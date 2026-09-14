@@ -416,3 +416,29 @@ def test_6396_parallel_inline_message_on_lock():
     assert "prInp.disabled = prIsActive;" in src, "the existing parallelResources client lock is unchanged"
     ssrc = SERVER.read_text(encoding="utf-8", errors="replace")
     assert "fParallelResourcesInline" not in ssrc, "server.py must not be touched by 6.39.6"
+
+
+# ── 6.39.7: remove the composer status "not in project workflow" annotation (match the item page) ────
+def test_6397_status_annotation_removed_but_coercion_preserved():
+    # The composer's status control no longer annotates an off-Space-workflow status - it shows the plain
+    # value, matching the item page. But the branch that keeps that status SELECTED (so save does not
+    # coerce it to a workflow value) is load-bearing and must remain. Guard fails on revert (the revert
+    # brings the annotation string back).
+    src = _html()
+    assert "not in project workflow" not in src, "the off-workflow status annotation must be gone (composer matches the item page)"
+    m = re.search(r"function refreshStatusOptions\(currentStatusValue\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "refreshStatusOptions not found"
+    body = m.group(0)
+    # the off-workflow status is still added as a PLAIN option and selected (coercion-prevention kept)
+    assert "opt.value = prev; opt.textContent = prev;" in body, "the current status is shown as a plain value"
+    assert "fSt.insertAdjacentElement('afterbegin', opt);" in body and "fSt.value = prev;" in body, \
+        "the off-workflow status stays selectable + selected so save does not coerce it"
+    assert "var(--accent2)" not in body, "the red warning colour on the status option is gone"
+    # source unchanged: the list still comes from the per-Space workflow (getStatusesForProduct), and the
+    # annotation was never driven by statusIsOffFlow
+    assert "getStatusesForProduct(productName)" in body, "the per-Space workflow list is still the option source"
+
+
+def test_6397_server_untouched():
+    src = SERVER.read_text(encoding="utf-8", errors="replace")
+    assert "not in project workflow" not in src, "server.py has no part in this and must be untouched"

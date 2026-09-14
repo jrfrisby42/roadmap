@@ -13767,14 +13767,18 @@ function refreshStatusOptions(currentStatusValue){
       ? validStatuses.filter(s => !statusIsReleased[s] || s === prev)
       : validStatuses;
     fSt.innerHTML = roleStatuses.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('');
-    // Keep current value if still valid, otherwise show warning and keep as-is
+    // Keep current value selectable whether or not it is in this Space's workflow list.
     if(roleStatuses.includes(prev)){
       fSt.value = prev;
     } else if(prev){
-      // Add the current (now invalid) status as a disabled option with warning
+      // The current status is not in this Space's workflow list (getStatusesForProduct). Add it so the
+      // value stays selected and save does NOT coerce it to a workflow value - this branch is
+      // load-bearing. Show it as a PLAIN value: "off-workflow" is an admin-config concern (the admin
+      // status table), not something to surface in the technician's composer, and the item page's
+      // status control lists all statuses plainly - this composer matches it. (6.39.7; the old
+      // off-workflow warning annotation shown here was pre-existing, not introduced by this project.)
       const opt = document.createElement('option');
-      opt.value = prev; opt.textContent = `${prev} [!] (not in project workflow)`;
-      opt.style.color = 'var(--accent2)';
+      opt.value = prev; opt.textContent = prev;
       fSt.insertAdjacentElement('afterbegin', opt);
       fSt.value = prev;
     }
