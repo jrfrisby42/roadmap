@@ -733,3 +733,25 @@ def test_polish_placeholder_and_strip_and_note():
     assert "Files and linked assets can be added once the item is saved." in src, \
         "the create note must cover both attachments and linked assets in one line"
     assert src.count("Link assets after saving.") == 0, "the old single-purpose note must be gone"
+
+
+def test_polish_space_chip_in_header_and_footer_dropped():
+    # Parts 4+7: the Space appears in the header as a TINTED chip (both modes) - reusing the scope-chip
+    # 16%-tint derivation with NEUTRAL text (coloured text fails contrast for pale Space colours) - and the
+    # create footer's "Saves to <Space>" third copy is dropped.
+    src = _html()
+    m = re.search(r"function _frzComposerSpaceChip\(space\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "_frzComposerSpaceChip helper not found"
+    body = m.group(0)
+    assert "color-mix(in srgb, " in body and "16%, transparent" in body, \
+        "the chip fill must be the 16% tint of the Space colour (safe over any hue)"
+    assert "prod.color" in body or "prod && prod.color" in body, "the colour must come from the Space config"
+    # neutral ink on the chip (via CSS), full-colour border, and a fallback plain chip when no colour
+    assert ".composer-space-chip { display: inline-flex" in src and "color: var(--text);" in src, \
+        "the chip text must be neutral (var(--text)), not the Space colour"
+    # the header builds the chip in BOTH modes
+    assert src.count("_frzComposerSpaceChip(") >= 3, "the chip must render in edit and create (helper + 2 call sites)"
+    # Part 7: the create footer no longer restates the Space
+    assert "Saves to <b>" not in src, "the create footer must not restate the Space (dropped in Part 7)"
+    fm = re.search(r"function _frzUpdateComposerFooterSpace\(\)\{.*?\n\}", src, re.DOTALL)
+    assert fm and "el.innerHTML = '';" in fm.group(0), "the create footer slot must be cleared, not 'Saves to'"
