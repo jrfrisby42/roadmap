@@ -730,8 +730,13 @@ def test_polish_placeholder_and_strip_and_note():
     assert re.search(r"\.composer-meta-chip \{[^}]*border: 0;[^}]*background: transparent;", src), \
         "the metadata strip chips must drop their border/box so they read as context"
     # Part 10.1's combined note was SUPERSEDED by PRECREATE-ATTACH-1 Stage A, which replaced the
-    # attachment half with a working control and kept the asset half as its own line (see
-    # test_precreate_attach.test_source_shape_client). The old single-purpose note stays gone.
+    # attachment half with a working control and kept the asset half as its own line. Assert the NEW
+    # state, not a loosened check: the control is present AND the linked-assets line survives (the asset
+    # half is the piece a future change is most likely to delete wholesale). Also, the old single-purpose
+    # note stays gone.
+    assert "composer-attach-zone" in src, "the create-mode attachment control must be present"
+    assert "Linked assets can be added once the item is saved." in src, \
+        "the linked-assets line must survive the note replacement (assets still need a saved item)"
     assert src.count("Link assets after saving.") == 0, "the old single-purpose note must be gone"
 
 

@@ -4971,7 +4971,7 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
             if not isinstance(a, dict):
                 continue
             key = str(a.get("key") or ""); aid = str(a.get("attId") or a.get("id") or "")
-            tok = str(a.get("token") or ""); nm = (a.get("name") or "file")
+            tok = str(a.get("token") or ""); nm = str(a.get("name") or "file")   # str(): a non-string name must not raise on the slice below
             try:
                 asize = int(a.get("size") or 0)
             except (TypeError, ValueError):
@@ -4983,7 +4983,7 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
             if not ok:
                 _att_dropped.append(nm[:200]); continue
             _recs.append({"id": aid, "key": key, "name": nm[:200],
-                          "contentType": (a.get("contentType") or "application/octet-stream")[:120],
+                          "contentType": str(a.get("contentType") or "application/octet-stream")[:120],
                           "size": max(0, asize), "by": username, "at": _now})
         if _recs:
             try:
@@ -6265,6 +6265,10 @@ MAX_ATTACH_BYTES = 50 * 1024 * 1024  # 50 MB. This is a declared-size REFUSAL, n
 # body is unbounded. This path is authenticated, so the risk is an insider abusing their own tenancy.
 # The PUBLIC intake presign was converted to a policy-enforced POST (PRESIGN-CAP-1); converting this
 # authenticated path the same way (POST + content-length-range) is a separate, un-authorized stage.
+# CAP MIRRORED IN TWO CLIENT SITES (advisory pre-checks; the server policy is the real guard): the beta
+# `var MAX_ATTACH_BYTES` and the classic-composer `const _FRZ_MAX_ATTACH_BYTES`, both in roadmap.html.
+# Change all three together. (They can't share a source: the client cap is a PRE-upload courtesy check,
+# used before any presign response exists, so it can't be derived from the presign response.)
 # ATTACH-URL-1: single source of truth for the presigned-UPLOAD (PUT) lifetime. 300s is correct for a
 # one-shot, click-initiated upload. VIEW/download no longer uses a render-time presign at all - it goes
 # through the authenticated streaming proxy (GET .../attachments/{id}/raw), so a URL embedded in a page

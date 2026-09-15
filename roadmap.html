@@ -5875,7 +5875,7 @@ function _frzUpdateComposerFooterSpace(){
 // item-page attachment path). Paste attaches the file; it never inserts an inline image (that is a
 // later stage). No S3 read is ever made for a pending file (intake/ objects have no authed read path).
 let _frzPendingAtts = [];
-const _FRZ_MAX_ATTACH_BYTES = 50 * 1024 * 1024;   // 50 MB courtesy pre-check (the server's content-length-range POST policy is the real guard). Own constant: the beta block's MAX_ATTACH_BYTES is out of scope here.
+const _FRZ_MAX_ATTACH_BYTES = 50 * 1024 * 1024;   // 50 MB courtesy pre-check (the server's content-length-range POST policy is the real guard). Own constant: the beta block's MAX_ATTACH_BYTES is out of scope here. CAP MIRRORED in two other sites - change all three together: server.py MAX_ATTACH_BYTES (the real guard) + the beta `var MAX_ATTACH_BYTES` (item-page pre-check).
 function _frzResetPendingAtts(){ _frzPendingAtts = []; }
 function _frzFmtAttSize(n){ n = +n || 0; if(n < 1024) return n + ' B'; if(n < 1048576) return (n/1024).toFixed(0) + ' KB'; return (n/1048576).toFixed(1) + ' MB'; }
 function _frzRenderCreateAttach(host){
@@ -28890,6 +28890,9 @@ if ('serviceWorker' in navigator) {
   }
 
   // ════════ Stage 2a - Attachments (item page) ════════
+  // 50 MB cap MIRRORED in two other sites - change all three together: server.py MAX_ATTACH_BYTES (the
+  // real guard) + the classic-composer `const _FRZ_MAX_ATTACH_BYTES` (create-mode pre-check; the composer
+  // is outside .frz-beta so it can't see this one). Both client values are advisory pre-checks.
   var MAX_ATTACH_BYTES = 50*1024*1024;
   function fmtBytes(n){ n=+n||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(0)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
   function attExt(name){ var m=/\.([A-Za-z0-9]+)$/.exec(name||''); return m?m[1].toUpperCase().slice(0,4):'FILE'; }

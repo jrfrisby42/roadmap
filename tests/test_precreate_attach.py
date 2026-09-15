@@ -218,6 +218,44 @@ def test_source_shape_server():
     assert '"attachments"' not in sof, "A1.2: attachments must NOT be in SERVER_OWNED_FIELDS (update guard already covers it)"
 
 
+# ── Item 5: the validate-then-promote block must never RAISE on a malformed pendingAttachments ─────────
+# Type confusion is the accidental case. For every shape below the create must still succeed (item made),
+# never a 500. A bad ENTRY drops (surfaced via attachmentsDropped) or is ignored; a bad CONTAINER is
+# ignored wholesale. None of these may raise.
+def test_pending_attachments_type_confusion_never_raises(client, team, admin_headers, monkeypatch):
+    monkeypatch.setattr(server, "_s3_client", lambda: _FakeS3())
+    goodkey = f"intake/{team}/uZ/ok.png"
+    goodtok = server._draft_attach_token(team, goodkey, "admin")
+    cases = {
+        "absent": _MISSING,
+        "string_not_list": "nope",
+        "dict_not_list": {"key": goodkey},
+        "number_not_list": 5,
+        "list_with_None": [None],
+        "list_with_string": ["nope"],
+        "dict_missing_key": [{"token": goodtok, "size": 1}],
+        "dict_missing_token": [{"key": goodkey, "size": 1}],
+        "dict_missing_size": [{"key": goodkey, "token": goodtok}],
+        "size_not_number_str": [{"key": goodkey, "token": goodtok, "size": "abc"}],
+        "size_not_number_list": [{"key": goodkey, "token": goodtok, "size": [1, 2]}],
+        "name_not_string": [{"key": goodkey, "token": goodtok, "size": 1, "attId": "uZ", "name": 123}],
+        "over_cap_of_10": [{"key": f"intake/{team}/u{i}/f{i}.png",
+                            "token": server._draft_attach_token(team, f"intake/{team}/u{i}/f{i}.png", "admin"),
+                            "attId": f"u{i}", "size": 1, "name": f"f{i}.png"} for i in range(15)],
+    }
+    for label, pend in cases.items():
+        body = {"name": f"tc-{label}", "status": "New"}
+        if pend is not _MISSING:
+            body["pendingAttachments"] = pend
+        r = client.post("/api/projects", json=body, headers=admin_headers)
+        assert r.status_code in (200, 201), f"{label} must not 500: {r.status_code} {r.text[:200]}"
+        it = _item(client, admin_headers, f"tc-{label}")            # the item was created either way
+        assert (len(it.get("attachments") or []) <= 10), f"{label}: never more than the cap"
+
+
+_MISSING = object()
+
+
 def test_source_shape_client():
     src = _html()
     assert "/api/attachments/presign-draft" in src, "client uploads via the draft presign"
