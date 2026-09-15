@@ -686,3 +686,50 @@ def test_stage8_errors_and_reason_panel_are_announced():
     assert 'id="fChangeReason" aria-label="Change reason"' in src, "the reason select needs an aria-label"
     assert 'id="fChangeNote" placeholder="Optional details…" aria-label="Change note"' in src, \
         "the reason note needs an aria-label"
+
+
+# ── COMPOSER-POLISH-1: visual review polish (its own commit, not a numbered stage; no version bump) ──
+# SOURCE-SHAPE guards over the polish changes; the live evidence (screenshots of every affected host, the
+# before/after frz-ic size table proving no existing icon moved) is in the polish report.
+def test_polish_frz_ic_has_unscoped_default_size_and_paint():
+    # Part 1 root fix: an frz-ic outside .frz-beta (the classic modal RTE toolbar) had no size AND no paint,
+    # rendering 0x0 then as a solid black blob. The default must be UNSCOPED (reaches classic hosts) and
+    # carry BOTH size and the stroke/fill treatment; per-host rules stay more specific and win.
+    src = _html()
+    m = re.search(r"\n  svg\.frz-ic \{[^}]*\}", src)
+    assert m, "unscoped svg.frz-ic default rule not found"
+    rule = m.group(0)
+    assert "width:16px" in rule and "height:16px" in rule, "the default must size the icon (16px, the majority)"
+    assert "stroke:currentColor" in rule and "fill:none" in rule, \
+        "the default must carry the paint treatment (a bare frz-ic default-fills black)"
+    # the per-host rules that need a different size are still present (unchanged, more specific)
+    assert ".frz-beta .frz-rte-btn svg.frz-ic { width:15px" in src, "the beta toolbar keeps its 15px rule"
+    assert ".frz-beta .frz-title-ic .frz-ic { width:17px" in src, "the title icon keeps its 17px rule"
+
+
+def test_polish_type_icon_in_quick_grid_cell():
+    # Part 3: the Type cell shows the type's CONFIGURED icon (shared typeIconHTML), hidden when absent.
+    src = _html()
+    assert re.search(r"function _frzUpdateTypeCellIcon\(\)\{.*?typeIconHTML\(t,.*?\}", src, re.DOTALL), \
+        "_frzUpdateTypeCellIcon must render from the shared typeIconHTML"
+    assert 'id="fTypeIcon"' in src, "the Type cell needs an icon span"
+    assert "_frzUpdateTypeCellIcon();" in src, "the icon must update on modal open"
+    assert re.search(r"getElementById\('fType'\)\?\.addEventListener\('change', _frzUpdateTypeCellIcon\)", src), \
+        "the icon must update when the type changes"
+    # no jump: the icon span is hidden when empty
+    assert ".composer-qcell-ic { display: none;" in src and ".composer-qcell-ic:not(:empty) { display: inline-flex; }" in src, \
+        "the icon span must be hidden when empty so an icon-less type leaves no gap"
+
+
+def test_polish_placeholder_and_strip_and_note():
+    src = _html()
+    # Part 8: J.R.-decided placeholder, aria-label unchanged
+    assert 'placeholder="Enter Item Name" aria-label="Item name"' in src, \
+        "the title placeholder must be the decided 'Enter Item Name' with a stable aria-label"
+    # Part 6: the read-only meta strip is borderless/transparent (quieter than the editable grid)
+    assert re.search(r"\.composer-meta-chip \{[^}]*border: 0;[^}]*background: transparent;", src), \
+        "the metadata strip chips must drop their border/box so they read as context"
+    # Part 10.1: one note covering BOTH attachments and assets (no second after-saving note)
+    assert "Files and linked assets can be added once the item is saved." in src, \
+        "the create note must cover both attachments and linked assets in one line"
+    assert src.count("Link assets after saving.") == 0, "the old single-purpose note must be gone"
