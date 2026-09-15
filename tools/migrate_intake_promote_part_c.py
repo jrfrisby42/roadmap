@@ -7,17 +7,27 @@ so those legacy objects must be copied to items/{pid}/ and their records rewritt
 the intake/ lifecycle rule. Applying the rule first would delete live data.
 
 MECHANISM: reuses the SHIPPED, verified server._promote_intake_attachments (same s3.copy_object, same
-_attachment_key dest, same SSE-KMS handling, same drop-on-copy-failure) - this script does NOT
-reimplement the copy. It then rewrites each item's $.attachments with a surgical json_set (never a
-wholesale blob rewrite, so concurrent state is not clobbered). The source intake/ object is NOT deleted
-(the lifecycle rule does that later, preserving a reversal window).
+_attachment_key dest, same SSE-KMS, same drop-on-copy-failure) - no reimplemented copy. It then rewrites
+each item's $.attachments with a surgical json_set (never a wholesale blob rewrite). The source intake/
+object is NOT deleted (the lifecycle rule does that later, preserving a reversal window).
 
-SAFETY:
-- DRY-RUN by default. Nothing is copied or written unless --commit is passed.
-- --commit backs up each team DB (byte-exact cp, filename printed) BEFORE its first write.
-- Idempotent: an items/-keyed attachment is skipped (pass-through), so a second run is a no-op.
-- Expected counts are printed before and compared after; per-team outcome counts are summarised.
-- Run ON PROD with the app venv:  sudo /opt/roadmap/venv/bin/python tools/migrate_intake_promote_part_c.py [--commit]
+SAFETY (pre-run corrections applied):
+- DRY-RUN by default and TRULY read-only: dry-run does NOT import server, so boot() never runs and no
+  config keys are written (Item 4). --commit imports server (boot's idempotent config backfill runs then,
+  exactly as on any service restart; it is unrelated to attachments and the per-team backup below still
+  captures the exact attachment state for rollback).
+- --commit backs up each team DB with the SQLite online-backup API (Connection.backup), which is
+  WAL-safe under the two live gunicorn workers - a raw shutil.copy could capture a torn snapshot, and the
+  backup is the entire rollback plan (Item 1).
+- After the writes, per-team VERIFY (Item 2): (a) every touched item's attachment COUNT is unchanged
+  (no drop, no duplicate), and (b) each item blob is byte-identical apart from $.attachments (proves
+  json_set was surgical). Plus: zero intake-keyed attachments remain.
+- One audit_log row per team recording the migration + counts, since json_set bypasses update_project
+  and would otherwise leave no trail (Item 3).
+- Idempotent: an items/-keyed attachment is skipped, so a second run is a no-op.
+- The rendered/thumbnail screenshot check on both teams is a browser step run AFTER this, not here.
+
+Run ON PROD with the app venv:  sudo /opt/roadmap/venv/bin/python tools/migrate_intake_promote_part_c.py [--commit]
 """
 import argparse
 import collections
@@ -25,18 +35,20 @@ import datetime
 import glob
 import json
 import os
-import shutil
 import sqlite3
 import sys
 
-sys.path.insert(0, "/opt/roadmap")
-import server  # noqa: E402  (needs the app venv: fastapi + boto3)
-
-TENANTS = getattr(server, "TENANTS_DIR", "/data/tenants")
+DEFAULT_TENANTS = "/data/tenants"
 
 
-def _team_dbs():
-    return sorted(glob.glob(os.path.join(TENANTS, "*", "roadmap.db")))
+def _dbs(tenants):
+    return sorted(glob.glob(os.path.join(tenants, "*", "roadmap.db")))
+
+
+def _connect_ro(db):
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    return con
 
 
 def _needs(atts, team):
@@ -44,24 +56,44 @@ def _needs(atts, team):
             if isinstance(a, dict) and str(a.get("key") or "").startswith(f"intake/{team}/")]
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--commit", action="store_true", help="actually copy + rewrite (default is dry-run)")
-    args = ap.parse_args()
-    mode = "COMMIT" if args.commit else "DRY-RUN"
-    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    print(f"=== INTAKE-PROMOTE-1 Part C migration [{mode}] {ts} ===")
+def _blob_sans_atts(p):
+    """Canonical JSON of the item blob with $.attachments removed - for the surgical-write proof."""
+    return json.dumps({k: v for k, v in p.items() if k != "attachments"}, sort_keys=True)
 
-    plan = collections.Counter()          # per-team attachments that need migration (pre-count)
-    outcome = collections.Counter()       # copied_rewritten / already_items / source_missing_or_failed
-    per_team = collections.Counter()
 
-    for db in _team_dbs():
+def dry_run(tenants):
+    plan = collections.Counter()
+    for db in _dbs(tenants):
         team = os.path.basename(os.path.dirname(db))
-        # pre-count (read-only)
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-        con.row_factory = sqlite3.Row
-        targets = []  # (pid, atts)
+        con = _connect_ro(db)
+        items = 0
+        for row in con.execute("SELECT id, data FROM projects").fetchall():
+            try:
+                p = json.loads(row["data"])
+            except Exception:
+                continue
+            nd = _needs(p.get("attachments"), team)
+            if nd:
+                items += 1
+                plan[team] += len(nd)
+        con.close()
+        if items:
+            print(f"[{team}] items needing migration: {items}  attachments: {plan[team]}")
+    print("---")
+    print("PLAN_PRECOUNT_BY_TEAM", dict(plan), "TOTAL", sum(plan.values()))
+    print("DRY-RUN only - server NOT imported, boot() NOT run, nothing copied or written. "
+          "Re-run with --commit to migrate.")
+
+
+def commit_run(ts):
+    import server  # boot() runs here - documented; idempotent config backfill, unrelated to attachments
+    tenants = getattr(server, "TENANTS_DIR", DEFAULT_TENANTS)
+    grand = collections.Counter()
+    for db in _dbs(tenants):
+        team = os.path.basename(os.path.dirname(db))
+        # ---- pre-capture (read-only): targets + per-item baseline (count, blob-sans-attachments) ----
+        con = _connect_ro(db)
+        targets, pre = [], {}
         for row in con.execute("SELECT id, data FROM projects").fetchall():
             try:
                 p = json.loads(row["data"])
@@ -69,53 +101,80 @@ def main():
                 continue
             if _needs(p.get("attachments"), team):
                 targets.append((row["id"], p.get("attachments")))
-                plan[team] += len(_needs(p.get("attachments"), team))
+                pre[row["id"]] = (len(p.get("attachments") or []), _blob_sans_atts(p))
         con.close()
         if not targets:
             continue
-        print(f"[{team}] items needing migration: {len(targets)}  attachments: {plan[team]}")
+        pre_intake = sum(len(_needs(a, team)) for _, a in targets)
+        print(f"[{team}] migrating {len(targets)} items / {pre_intake} intake-keyed attachments")
 
-        if not args.commit:
-            continue
-
-        # --- COMMIT path: backup this team DB before the first write ---
+        # ---- backup (WAL-safe online backup - the rollback plan) ----
         backup = f"{db}.partc-bak-{ts}"
-        shutil.copy2(db, backup)
-        print(f"[{team}] DB backed up -> {backup}")
+        _src = sqlite3.connect(db)
+        _dst = sqlite3.connect(backup)
+        with _dst:
+            _src.backup(_dst)   # sqlite online backup: consistent even under concurrent WAL writers
+        _src.close()
+        _dst.close()
+        print(f"[{team}] DB backed up (online backup) -> {backup}")
 
+        # ---- migrate: reuse the shipped promote, rewrite $.attachments surgically ----
+        dropped = 0
         for pid, atts in targets:
-            try:
-                promoted, dropped = server._promote_intake_attachments(team, pid, atts)  # copies intake/->items/
-            except Exception as e:
-                print(f"[{team}] item {pid}: promote raised (should not) - skipped: {e}")
-                outcome["failed"] += len(_needs(atts, team))
-                continue
-            for a in dropped:
-                outcome["source_missing_or_failed"] += 1
-            newly = sum(1 for r in promoted if str(r.get("key") or "").startswith(f"items/{pid}/"))
-            # rewrite ONLY if something changed, via a surgical json_set (no wholesale blob rewrite)
+            promoted, drp = server._promote_intake_attachments(team, pid, atts)
+            dropped += len(drp)
             if promoted != atts:
                 with server.db(team) as c:
                     c.execute("UPDATE projects SET data=json_set(data, '$.attachments', json(?)) WHERE id=?",
                               (json.dumps(promoted), pid))
-            # count how many are now items/-keyed vs were already
-            for a in atts:
-                k = str(a.get("key") or "")
-                if k.startswith(f"intake/{team}/"):
-                    outcome["copied_rewritten"] += 1  # attempted; drops counted above are a subset
-                elif k.startswith("items/"):
-                    outcome["already_items"] += 1
-            per_team[team] += newly
 
+        # ---- verify (Item 2): count unchanged (a) + blob byte-identical apart from $.attachments (b) ----
+        con = _connect_ro(db)
+        count_ok = count_bad = blob_ok = blob_bad = still_intake = 0
+        for pid, (precount, preblob) in pre.items():
+            row = con.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+            p = json.loads(row["data"])
+            postcount = len(p.get("attachments") or [])
+            count_ok, count_bad = (count_ok + 1, count_bad) if postcount == precount else (count_ok, count_bad + 1)
+            blob_ok, blob_bad = (blob_ok + 1, blob_bad) if _blob_sans_atts(p) == preblob else (blob_ok, blob_bad + 1)
+            still_intake += len(_needs(p.get("attachments"), team))
+        con.close()
+
+        # ---- audit row (Item 3): one summary per team; json_set bypassed update_project ----
+        migrated = pre_intake - still_intake - dropped
+        try:
+            server.write_audit(team, "intake:migrate-part-c", "System", None, "", changes={
+                "items": len(targets), "attachmentsMigrated": migrated, "dropped": dropped,
+                "backup": os.path.basename(backup)})
+        except Exception as e:
+            print(f"[{team}] audit write failed (non-fatal): {e}")
+
+        print(f"[{team}] RESULT migrated={migrated} dropped={dropped} intake_remaining={still_intake} "
+              f"| VERIFY count_ok={count_ok} count_bad={count_bad} blob_ok={blob_ok} blob_bad={blob_bad}")
+        grand["migrated"] += migrated
+        grand["dropped"] += dropped
+        grand["intake_remaining"] += still_intake
+        grand["count_bad"] += count_bad
+        grand["blob_bad"] += blob_bad
     print("---")
-    print("PLAN_PRECOUNT_BY_TEAM", dict(plan), "TOTAL", sum(plan.values()))
+    print("GRAND", dict(grand))
+    ok = grand["dropped"] == 0 and grand["intake_remaining"] == 0 and grand["count_bad"] == 0 and grand["blob_bad"] == 0
+    print("MIGRATION_CLEAN" if ok else "MIGRATION_HAS_ISSUES_REVIEW_ABOVE")
+    print("Sources NOT deleted - reversal = restore the per-team .partc-bak DB until the intake/ "
+          "lifecycle rule runs. Verify streaming + the rendered screenshot, THEN J.R. applies the rule.")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--commit", action="store_true", help="actually copy + rewrite (default is a read-only dry-run)")
+    ap.add_argument("--tenants", default=DEFAULT_TENANTS, help="tenants dir (dry-run only; --commit uses server.TENANTS_DIR)")
+    args = ap.parse_args()
+    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    print(f"=== INTAKE-PROMOTE-1 Part C migration [{'COMMIT' if args.commit else 'DRY-RUN'}] {ts} ===")
     if args.commit:
-        print("OUTCOME", dict(outcome))
-        print("NOW_ITEMS_KEYED_BY_TEAM", dict(per_team))
-        print("NOTE: sources NOT deleted - reversal = restore the per-team .partc-bak DB (or the old keys) "
-              "until the intake/ lifecycle rule runs. Verify streaming, THEN J.R. applies the rule.")
+        commit_run(ts)
     else:
-        print("DRY-RUN only - nothing copied or written. Re-run with --commit to migrate.")
+        dry_run(args.tenants)
 
 
 if __name__ == "__main__":
