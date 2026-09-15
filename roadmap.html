@@ -2643,7 +2643,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.40.0';
+const APP_VERSION = '6.40.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -29703,7 +29703,13 @@ if ('serviceWorker' in navigator) {
       // existing attachment append order). Each attachment carries `at`, each link `addedAt`.
       var rows=[];
       atts.forEach(function(a){
-        var isImg=/^image\//.test(a.contentType||'');
+        // ATTACH-SERVE-2: only a server-declared inline-safe image gets a thumbnail. An image/svg+xml is
+        // NOT inlineSafe, so it drops to the file row + downloads on open (an <img> of an SVG is harmless,
+        // but its OPEN would execute) - one shared flag decides both. `inlineSafe` comes from the server.
+        var isImg=/^image\//.test(a.contentType||'') && a.inlineSafe;
+        // open element attrs: carry the server's inlineSafe flag + the true name so the click handler can
+        // open a safe type in a tab and force-download everything else. Second layer behind serve-time coercion.
+        var openAttrs=a.url?('data-open="'+escA(a.url)+'" data-inlinesafe="'+(a.inlineSafe?'1':'0')+'" data-name="'+escA(a.name||'file')+'" style="cursor:pointer"'):'';
         var del=canEdit?'<button type="button" class="frz-att-del" data-del="'+escA(a.id)+'" title="Remove">✕</button>':'';
         var onJira = primary && a.jira && a.jira[primary];
         var h;
@@ -29711,9 +29717,9 @@ if ('serviceWorker' in navigator) {
         // the thumbnail loads via fetch-to-blob (data-proxy) and open is a click that fetches then opens.
         if(isImg && a.url){
           var pip = onJira?'<span title="On '+escA(primary)+'" style="position:absolute;top:3px;left:3px;background:var(--frz-accent);color:#fff;font-size:9px;font-weight:800;border-radius:3px;padding:0 3px;line-height:1.5">↗</span>':'';
-          h='<div class="frz-att-thumb"><a data-open="'+escA(a.url)+'" style="cursor:pointer"><img data-proxy="'+escA(a.url)+'" alt="'+escA(a.name)+'"></a>'+pip+del+'<div class="frz-att-cap" title="'+escA(a.name)+'">'+esc(a.name)+'</div></div>';
+          h='<div class="frz-att-thumb"><a '+openAttrs+'><img data-proxy="'+escA(a.url)+'" alt="'+escA(a.name)+'"></a>'+pip+del+'<div class="frz-att-cap" title="'+escA(a.name)+'">'+esc(a.name)+'</div></div>';
         } else {
-          var open=a.url?('data-open="'+escA(a.url)+'" style="cursor:pointer"'):'';
+          var open=openAttrs;
           var badge = onJira?'<span title="On '+escA(primary)+'" style="font-size:10px;font-weight:800;color:var(--frz-accent);margin-left:6px;white-space:nowrap">↗ Jira</span>':'';
           h='<a class="frz-att-file" '+open+'><span class="frz-att-ic">'+esc(attExt(a.name))+'</span><span class="frz-att-meta"><span class="frz-att-nm" title="'+escA(a.name)+'">'+esc(a.name)+'</span><span class="frz-att-sz">'+fmtBytes(a.size)+'</span></span>'+badge+del+'</a>';
         }
@@ -29724,8 +29730,16 @@ if ('serviceWorker' in navigator) {
       list.innerHTML=rows.map(function(r){return r.html;}).join('');
       // ATTACH-URL-1: resolve thumbnails via blob (auth), and wire open-in-new-tab through fetch-to-blob.
       list.querySelectorAll('img[data-proxy]').forEach(function(im){ _frzSetImgFromProxy(im, im.getAttribute('data-proxy')); });
-      list.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); var u=el.getAttribute('data-open');
-        API.getBlobURL(u).then(function(b){ window.open(b, '_blank', 'noopener'); }).catch(function(){ if(typeof showToast==='function') showToast('Could not open the attachment. Your session may have expired.','error'); }); }); });
+      // ATTACH-SERVE-2 (second layer): a safe type opens in a new tab as before; anything else is
+      // force-DOWNLOADED (an anchor with download=), never window.open'd - so even if the server layer were
+      // reverted, a stored text/html or SVG cannot be rendered as a document in the app origin. `data-inlinesafe`
+      // is the server's flag; the two layers share one safe list and cannot disagree.
+      list.querySelectorAll('[data-open]').forEach(function(el){ el.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation();
+        var u=el.getAttribute('data-open'); var safe=el.getAttribute('data-inlinesafe')==='1'; var nm=el.getAttribute('data-name')||'file';
+        API.getBlobURL(u).then(function(b){
+          if(safe){ window.open(b, '_blank', 'noopener'); }
+          else { var an=document.createElement('a'); an.href=b; an.download=nm; document.body.appendChild(an); an.click(); an.remove(); setTimeout(function(){ try{ URL.revokeObjectURL(b); }catch(_e){} }, 30000); }
+        }).catch(function(){ if(typeof showToast==='function') showToast('Could not open the attachment. Your session may have expired.','error'); }); }); });
       list.querySelectorAll('[data-del]').forEach(function(b){ b.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); var id=this.getAttribute('data-del'); var a=atts.filter(function(x){return x.id===id;})[0]; deleteAttachment(p, id, a?a.name:''); }); });
       // LINKS-1: edit / delete wiring. Open is a native <a href target=_blank rel=noopener> - no JS.
       list.querySelectorAll('[data-linkedit]').forEach(function(b){ b.addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); var id=this.getAttribute('data-linkedit'); var l=((p.extLinks)||[]).filter(function(x){return x.id===id;})[0]; if(l) _frzOpenLinkForm(p, l); }); });

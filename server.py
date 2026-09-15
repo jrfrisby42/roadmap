@@ -1730,7 +1730,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.40.0"
+APP_VERSION = "6.40.1"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -6305,6 +6305,27 @@ def _attachment_key(pid: int, u: str, name: str) -> str:
     """items/{itemId}/{uuid}/{sanitized-filename} - uuid is its own path segment."""
     return f"items/{pid}/{u}/{_sanitize_filename(name)}"
 
+# ── ATTACH-SERVE-2: which stored content types are safe to serve INLINE (rendered in-browser) ─────────
+# EXPLICITLY ENUMERATED - never a glob or prefix. The attachment serve path streams bytes that the client
+# wraps in a same-origin blob: URL and opens; a blob whose type renders as a DOCUMENT executes script in
+# the flow.frazil.app origin (reads the bearer token, calls the API as the viewer). So anything NOT in
+# this set is served as application/octet-stream + Content-Disposition: attachment (downloads, cannot
+# execute). image/svg+xml is DELIBERATELY EXCLUDED even though it is an image type: an SVG executes
+# script when opened as a document (unlike an <img>, which is why the thumbnail path is safe). text/html,
+# application/xhtml+xml, etc. are excluded for the same reason. This is the SINGLE source of truth - the
+# client derives its open behaviour from the per-attachment `inlineSafe` flag list_attachments computes
+# from this set, so the two can never disagree. Serve-time coercion protects every consumer, including
+# future ones, and retroactively covers everything already stored (no data migration).
+_INLINE_SAFE_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"})
+
+def _norm_ctype(ct) -> str:
+    """Normalize a content type for the safe-list check: drop any ;charset=... parameter, trim, lowercase.
+    'TEXT/HTML; charset=utf-8' must not slip past an exact-string membership test."""
+    return str(ct or "").split(";")[0].strip().lower()
+
+def _attach_is_inline_safe(ct) -> bool:
+    return _norm_ctype(ct) in _INLINE_SAFE_TYPES
+
 def _s3_download(key: str) -> bytes:
     """Read an attachment's bytes from S3 server-side (to forward to Jira). Raises on failure.
     KMS decrypts transparently via the instance role's kms:Decrypt - no SSE headers on GET
@@ -6457,7 +6478,11 @@ def list_attachments(pid: int, auth: dict = Depends(require_auth)):
     # raw S3 XML - which was the FRZ-311 bug (a 300s presign minted at render, clicked minutes later). The
     # one-shot upload PUT still uses a short presign (see PRESIGN_EXPIRY). Serves both in-app and intake
     # key shapes, since the stored key is used verbatim by the raw endpoint below.
-    out = [{**a, "url": f"/api/items/{pid}/attachments/{a.get('id') or a.get('attId')}/raw"} for a in atts]
+    # ATTACH-SERVE-2: `inlineSafe` is the SINGLE source of truth the client uses to decide open behaviour
+    # (new tab for safe, forced download otherwise) - computed from the same _INLINE_SAFE_TYPES the serve
+    # path coerces against, so client and server can never disagree about which types are safe to render.
+    out = [{**a, "url": f"/api/items/{pid}/attachments/{a.get('id') or a.get('attId')}/raw",
+            "inlineSafe": _attach_is_inline_safe(a.get("contentType"))} for a in atts]
     return {"attachments": out}
 
 @app.get("/api/items/{pid}/attachments/{att_id}/raw")
@@ -6482,14 +6507,24 @@ def stream_attachment(pid: int, att_id: str, auth: dict = Depends(require_auth))
         raise HTTPException(502, "Could not load the attachment (storage unavailable).")
     ctype = att.get("contentType") or obj.get("ContentType") or "application/octet-stream"
     fname = (att.get("name") or "file").replace('"', "")
+    # ATTACH-SERVE-2 (primary layer): only an explicitly-safe type is served with its stored type INLINE.
+    # Everything else - text/html, image/svg+xml, a missing/empty type, anything unrecognized - is served
+    # as application/octet-stream + attachment, so the blob the client builds cannot execute in the app
+    # origin. Fail closed: an absent contentType is NOT treated as safe. nosniff hardens any consumer that
+    # fetches this URL directly (it does not fix the blob path by itself - the coercion above does).
+    if _attach_is_inline_safe(ctype):
+        serve_type, disp = ctype, f'inline; filename="{fname}"'
+    else:
+        serve_type, disp = "application/octet-stream", f'attachment; filename="{fname}"'
     headers = {
-        "Content-Disposition": f'inline; filename="{fname}"',
+        "Content-Disposition": disp,
+        "X-Content-Type-Options": "nosniff",
         "Cache-Control": "private, max-age=3600",   # per-user cache; the URL is stable so re-renders are free
     }
     cl = obj.get("ContentLength")
     if cl is not None:
         headers["Content-Length"] = str(cl)
-    return StreamingResponse(obj["Body"].iter_chunks(chunk_size=65536), media_type=ctype, headers=headers)
+    return StreamingResponse(obj["Body"].iter_chunks(chunk_size=65536), media_type=serve_type, headers=headers)
 
 @app.delete("/api/items/{pid}/attachments/{att_id}")
 def delete_attachment(pid: int, att_id: str,
