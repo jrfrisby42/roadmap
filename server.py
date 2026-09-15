@@ -4944,13 +4944,65 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     body.pop("assetServiceSync", None)   # WRITE-1b: server-owned send-outcome record; never client-seeded
     body.pop("extLinks", None)           # LINKS-1: endpoint-mediated only; a create can't seed reference URLs
     body.pop("ccList", None)             # CC-1: endpoint-mediated only; a create can't seed the external notify list
+    # PRECREATE-ATTACH-1 Stage A: close the create forge hole. create_project inserts the client body
+    # wholesale and does NOT apply SERVER_OWNED_FIELDS (that is update_project's force-restore list), so a
+    # forged `attachments` array would otherwise persist unvalidated. Strip it here (like the fields above);
+    # after this the blob's attachments is written ONLY by the promote step below. `pendingAttachments` is
+    # consumed (validated + promoted post-insert) and never written to the blob.
+    body.pop("attachments", None)
+    _pending_atts = body.pop("pendingAttachments", None)
     with db(team) as c:
         if "assignee" in body:
             body["assignee"] = _resolve_assignee(c, body.get("assignee"))   # display name -> username (import/API safety)
         _bucket_item_owner(c, body)   # owner bucketing: fill a blank owner from the assignee's pod
         _assign_item_key(c, body)
         body["id"] = _insert_project(c, body)
-    write_audit(team, "create", username, body["id"], body.get("name",""))
+    # PRECREATE-ATTACH-1 Stage A: promote any pending create-mode attachments. They were uploaded to
+    # intake/{team}/ before the item existed; now the id exists, copy them into items/{pid}/ (the SAME
+    # copy-on-create path intake uses) and record the rewritten keys. Validation lives HERE, not in
+    # _promote_intake_attachments (which passes non-matching keys THROUGH, so a bad key would persist as a
+    # live foreign-prefix reference): each entry must carry a valid claim token for (team, key, username),
+    # a key under this team's intake prefix, and a size within the cap. A failing entry is DROPPED, never
+    # fatal. Capped at 10 (matching the intake submit path). S3 copies run OUTSIDE any db connection.
+    _att_dropped = []
+    if isinstance(_pending_atts, list) and _pending_atts:
+        _recs, _now = [], datetime.now(timezone.utc).isoformat()
+        for a in _pending_atts[:10]:
+            if not isinstance(a, dict):
+                continue
+            key = str(a.get("key") or ""); aid = str(a.get("attId") or a.get("id") or "")
+            tok = str(a.get("token") or ""); nm = (a.get("name") or "file")
+            try:
+                asize = int(a.get("size") or 0)
+            except (TypeError, ValueError):
+                asize = 0
+            ok = (key.startswith(f"intake/{team}/")
+                  and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", aid)
+                  and hmac.compare_digest(tok, _draft_attach_token(team, key, username))
+                  and asize <= MAX_ATTACH_BYTES)
+            if not ok:
+                _att_dropped.append(nm[:200]); continue
+            _recs.append({"id": aid, "key": key, "name": nm[:200],
+                          "contentType": (a.get("contentType") or "application/octet-stream")[:120],
+                          "size": max(0, asize), "by": username, "at": _now})
+        if _recs:
+            try:
+                promoted, copy_dropped = _promote_intake_attachments(team, body["id"], _recs)
+                _att_dropped += copy_dropped
+                # 2.2e / A1.3 belt-and-suspenders: persist ONLY keys that actually landed under items/{pid}/.
+                saved = [r for r in promoted if str(r.get("key") or "").startswith(f"items/{body['id']}/")]
+                if saved:
+                    with db(team) as c:
+                        c.execute("UPDATE projects SET data=json_set(data, '$.attachments', json(?)) WHERE id=?",
+                                  (json.dumps(saved), body["id"]))
+                    body["attachments"] = saved
+            except Exception as e:
+                log.warning(f"[Attach] create-mode promotion failed for item {body.get('id')}: {e}")
+    _create_changes = None
+    if _att_dropped:
+        _create_changes = {"attachmentsDropped": _att_dropped}   # B.5-style fold: staff-discoverable, names not keys
+        body["attachmentsDropped"] = _att_dropped                # response-only; the client tells the user
+    write_audit(team, "create", username, body["id"], body.get("name",""), changes=_create_changes)
     try:
         _union_departments(team, body.get("departments"))   # persist any new departments (best-effort)
     except Exception as e:
@@ -6300,6 +6352,59 @@ def presign_attachment(pid: int, body: dict = Body(...),
         raise HTTPException(502, "Could not presign the upload (storage unavailable).")
     return {"attId": att_id, "key": key, "url": url,
             "name": _sanitize_filename(filename), "headers": put_headers}
+
+# ── PRECREATE-ATTACH-1 Stage A: attachments uploaded BEFORE an item exists (create mode) ──────────────
+def _draft_attach_token(team: str, key: str, username: str) -> str:
+    """Stateless claim token proving THIS server presigned `key` for THIS user. create_project's promote
+    step accepts a pending attachment only if it carries a valid token, so an admin/editor cannot pass an
+    arbitrary intake/ key (e.g. another user's un-submitted portal upload) into a create body and have it
+    copied into their own item. Modelled on _ticket_token: an HMAC via _sign, stateless (no draft table,
+    no expiry job)."""
+    return _sign(f"draft-att:{team}:{key}:{username}")
+
+@app.post("/api/attachments/presign-draft")
+def presign_draft_attachment(body: dict = Body(...),
+                             auth: dict = Depends(require_role("admin", "editor"))):
+    """Presigned S3 POST for a create-mode attachment, NOT keyed to an item. The server builds an
+    intake/{team}/{uuid}/ key (reusing the intake key builder + prefix - one transient prefix, one
+    lifecycle rule, one promote fn; provenance is the item's `source`, not the key) and returns an opaque
+    claim token the client echoes back at create time. Admin/editor only (who can create items);
+    Contributors never reach it (Part 0 item 5). No rate limit / _intake_open / type allow-list - those are
+    anonymous-stranger defenses, not insider ones (items 6-7). The 50 MB cap is a REAL content-length-range
+    POST policy - genuinely stronger than the item-page PUT presign's declared-size-only check, which is a
+    known asymmetry left unfixed in this stage (item 8)."""
+    team = auth["team"]
+    username = auth.get("username", "")
+    filename = body.get("filename") or "file"
+    ctype = (body.get("contentType") or "application/octet-stream").split(";")[0].strip().lower()
+    try:
+        size = int(body.get("size") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(422, "size must be an integer")
+    if size > MAX_ATTACH_BYTES:   # declared-size courtesy pre-check; the POST policy below is the real guard
+        raise HTTPException(413, f"File exceeds the 50 MB limit ({size} bytes).")
+    att_id = _uuid.uuid4().hex
+    key = _intake_attachment_key(team, att_id, filename)   # reuse the intake key builder (server-owned prefix)
+    fields = {"Content-Type": ctype}
+    conditions = [
+        ["content-length-range", 0, MAX_ATTACH_BYTES],   # 50 MB, a real S3 policy condition (POST)
+        {"Content-Type": ctype},
+    ]
+    if ATTACH_KMS_KEY_ID:
+        # Mirror the intake presign's SSE-KMS expression EXACTLY - form fields + matching policy
+        # conditions; do not hardcode. Unset CMK -> bucket default encryption applies, fields omitted.
+        fields["x-amz-server-side-encryption"] = "aws:kms"
+        fields["x-amz-server-side-encryption-aws-kms-key-id"] = ATTACH_KMS_KEY_ID
+        conditions.append({"x-amz-server-side-encryption": "aws:kms"})
+        conditions.append({"x-amz-server-side-encryption-aws-kms-key-id": ATTACH_KMS_KEY_ID})
+    try:
+        post = _s3_client().generate_presigned_post(
+            ATTACH_BUCKET, key, Fields=fields, Conditions=conditions, ExpiresIn=PRESIGN_EXPIRY)
+    except Exception as e:
+        log.warning("[Attach] draft presign failed for team %s: %s", team, e)
+        raise HTTPException(502, "Could not presign the upload (storage unavailable).")
+    return {"attId": att_id, "key": key, "url": post["url"], "fields": post["fields"],
+            "name": _sanitize_filename(filename), "token": _draft_attach_token(team, key, username)}
 
 @app.post("/api/items/{pid}/attachments")
 def add_attachment(pid: int, body: dict = Body(...),

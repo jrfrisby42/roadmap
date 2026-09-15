@@ -729,9 +729,9 @@ def test_polish_placeholder_and_strip_and_note():
     # Part 6: the read-only meta strip is borderless/transparent (quieter than the editable grid)
     assert re.search(r"\.composer-meta-chip \{[^}]*border: 0;[^}]*background: transparent;", src), \
         "the metadata strip chips must drop their border/box so they read as context"
-    # Part 10.1: one note covering BOTH attachments and assets (no second after-saving note)
-    assert "Files and linked assets can be added once the item is saved." in src, \
-        "the create note must cover both attachments and linked assets in one line"
+    # Part 10.1's combined note was SUPERSEDED by PRECREATE-ATTACH-1 Stage A, which replaced the
+    # attachment half with a working control and kept the asset half as its own line (see
+    # test_precreate_attach.test_source_shape_client). The old single-purpose note stays gone.
     assert src.count("Link assets after saving.") == 0, "the old single-purpose note must be gone"
 
 
