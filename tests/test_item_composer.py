@@ -649,3 +649,40 @@ def test_stage7_edit_gate_stays_desktop_only():
     src = _html()
     assert re.search(r"if\(id && _isListPhone\(\)\)\{ openItemPage\(id\); return; \}", src), \
         "the edit-modal-desktop-only gate (mobile edit -> item page) must remain"
+
+
+# ── STAGE 8: accessibility, performance, release hardening (the final stage) ─────────────────────────
+# Perf and the Stage-0 regression checklist were already satisfied by prior stages and verified live
+# (no refetch on open, no rapid-switch stale bleed, focus restore, non-color validation glyph, the 23-id
+# no-field-lost + reason-enforcement guards). Stage 8's build is the a11y hardening: name every field for
+# screen readers, and announce the reason panel + validation errors. SOURCE-SHAPE guards; the live
+# accessible-name audit (18/18 named) and error roles were confirmed in the browser.
+def test_stage8_a11y_label_helper_exists_and_wired():
+    src = _html()
+    m = re.search(r"function _frzWireComposerA11yLabels\(\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "_frzWireComposerA11yLabels helper not found"
+    body = m.group(0)
+    # derives a name from the field's own wrapper label (NOT the group body, which wraps many fields)
+    assert "composer-qcell, .form-row, .composer-statusrow" in body, \
+        "the helper must scope to the per-field wrapper, not the multi-field group body"
+    assert "setAttribute('aria-label'" in body, "the helper must set an accessible name"
+    # skips controls that already have a name (native label or aria-label)
+    assert "el.labels && el.labels.length" in body and "getAttribute('aria-label')" in body, \
+        "the helper must skip controls that already have a name"
+    # ...and it runs on every modal open (the field set is rebuilt per open/role)
+    assert "_frzWireComposerA11yLabels();" in src.replace(m.group(0), ""), \
+        "the helper must be called from openProjectModal"
+
+
+def test_stage8_errors_and_reason_panel_are_announced():
+    src = _html()
+    # the three validation errors announce via role=alert
+    for eid in ("testWeeksError", "releaseError", "changeReasonError"):
+        assert re.search(r'id="' + eid + r'"\s+role="alert"', src), eid + " must have role=alert"
+    # the reason prompt is a labelled group so focusing into it announces the requirement
+    assert re.search(r'id="changeReasonPanel"\s+role="group"\s+aria-labelledby="changeReasonTitle"', src), \
+        "the change-reason panel must be a group labelled by its title"
+    # the reason controls carry their own names (they live in the hidden panel, so the helper can't reach them)
+    assert 'id="fChangeReason" aria-label="Change reason"' in src, "the reason select needs an aria-label"
+    assert 'id="fChangeNote" placeholder="Optional details…" aria-label="Change note"' in src, \
+        "the reason note needs an aria-label"
