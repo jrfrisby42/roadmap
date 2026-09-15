@@ -741,6 +741,10 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     .modal.frz-composer .composer-foot-space { flex: 1 0 100%; order: -1; margin: 0 0 2px; }
     .modal.frz-composer .modal-actions .btn-cancel { min-height: 48px; flex: 0 0 auto; }
     .modal.frz-composer .modal-actions #saveBtn { min-height: 48px; flex: 1 1 auto; font-size: 15px; }
+    /* PRECREATE-ATTACH-1 Stage A: touch-sized attachment control on the full-screen mobile sheet */
+    .modal.frz-composer .composer-attach-zone { min-height: 64px; display: flex; align-items: center; justify-content: center; }
+    .modal.frz-composer .composer-attach-row { padding: 9px 10px; }
+    .modal.frz-composer .composer-attach-row .ca-remove { width: 44px; height: 44px; font-size: 22px; }
   }
 
   /* ── ITEM-COMPOSER-1 Stage 3: create-mode content canvas + property rail. Scoped to .frz-composer so
@@ -778,6 +782,20 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .modal.frz-composer .composer-qcell-ic { display: none; flex: 0 0 auto; align-items: center; }
   .modal.frz-composer .composer-qcell-ic:not(:empty) { display: inline-flex; }
   .modal.frz-composer .composer-qcell-ic svg { display: block; }
+  /* PRECREATE-ATTACH-1 Stage A: create-mode attachment control (replaces the interim note in place). */
+  .modal.frz-composer .composer-attach { margin: 2px 0 4px; }
+  .modal.frz-composer .composer-attach-head { font-size: 10px; font-weight: 700; letter-spacing: 0.05em; color: var(--muted); text-transform: uppercase; margin-bottom: 6px; }
+  .modal.frz-composer .composer-attach-zone { border: 1px dashed var(--border); border-radius: 8px; padding: 14px 12px; text-align: center; font-size: 12px; color: var(--muted); cursor: pointer; transition: border-color 0.12s, background 0.12s; }
+  .modal.frz-composer .composer-attach-zone:hover, .modal.frz-composer .composer-attach-zone:focus-visible { border-color: var(--accent); color: var(--text); outline: none; }
+  .modal.frz-composer .composer-attach-zone.is-drop { border-color: var(--accent); background: rgba(0,89,169,0.06); color: var(--text); }
+  .modal.frz-composer .composer-attach-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+  .modal.frz-composer .composer-attach-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface2); font-size: 12px; }
+  .modal.frz-composer .composer-attach-row.is-uploading { opacity: 0.6; }
+  .modal.frz-composer .composer-attach-row .ca-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; color: var(--text); }
+  .modal.frz-composer .composer-attach-row .ca-size { flex: 0 0 auto; color: var(--muted); }
+  .modal.frz-composer .composer-attach-row .ca-remove { flex: 0 0 auto; width: 24px; height: 24px; border: 0; background: transparent; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; border-radius: 4px; }
+  .modal.frz-composer .composer-attach-row .ca-remove:hover { color: var(--accent2); background: var(--surface); }
+  .modal.frz-composer .composer-attach-asset { margin-top: 8px; font-size: 11px; color: var(--muted); }
 
   /* Collapsible groups: Ownership open on create; Schedule, Relationships, Advanced collapsed. */
   .modal.frz-composer .composer-group { border-top: 1px solid var(--border); padding-top: 4px; }
@@ -2625,7 +2643,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.39.15';
+const APP_VERSION = '6.40.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -5849,6 +5867,89 @@ function _frzUpdateComposerFooterSpace(){
   el.innerHTML = '';
 }
 
+// ── PRECREATE-ATTACH-1 Stage A: create-mode attachments ──────────────────────────────────────────
+// Files uploaded (via the draft presign) to intake/{team}/ BEFORE the item exists; promoted to
+// items/{pid}/ by the server on create. Held in memory until Save, which sends `pendingAttachments`.
+// Cancel discards (a composer invariant) - the orphaned intake/ objects are reaped by the lifecycle
+// rule; NO server cleanup, NO warning, NO autosave language. Edit mode is unchanged (it uses the
+// item-page attachment path). Paste attaches the file; it never inserts an inline image (that is a
+// later stage). No S3 read is ever made for a pending file (intake/ objects have no authed read path).
+let _frzPendingAtts = [];
+const _FRZ_MAX_ATTACH_BYTES = 50 * 1024 * 1024;   // 50 MB courtesy pre-check (the server's content-length-range POST policy is the real guard). Own constant: the beta block's MAX_ATTACH_BYTES is out of scope here. CAP MIRRORED in two other sites - change all three together: server.py MAX_ATTACH_BYTES (the real guard) + the beta `var MAX_ATTACH_BYTES` (item-page pre-check).
+function _frzResetPendingAtts(){ _frzPendingAtts = []; }
+function _frzFmtAttSize(n){ n = +n || 0; if(n < 1024) return n + ' B'; if(n < 1048576) return (n/1024).toFixed(0) + ' KB'; return (n/1048576).toFixed(1) + ' MB'; }
+function _frzRenderCreateAttach(host){
+  if(!host) return;
+  host.innerHTML =
+    '<div class="composer-attach">'
+    + '<div class="composer-attach-head">Attachments</div>'
+    + '<div class="composer-attach-zone" id="composerAttachZone" tabindex="0" role="button" aria-label="Add attachments - click to choose files, or drop or paste files here">'
+    +   '<input type="file" id="composerAttachInput" multiple hidden>'
+    +   '<span>Drop files here, click to choose, or paste a screenshot</span>'
+    + '</div>'
+    + '<div class="composer-attach-list" id="composerAttachList"></div>'
+    + '<div class="composer-attach-asset">Linked assets can be added once the item is saved.</div>'
+    + '</div>';
+  const zone = document.getElementById('composerAttachZone');
+  const input = document.getElementById('composerAttachInput');
+  if(input) input.addEventListener('change', e => { [].slice.call(e.target.files||[]).forEach(_frzUploadDraftAtt); e.target.value=''; });
+  if(zone){
+    zone.addEventListener('click', () => input && input.click());
+    zone.addEventListener('keydown', e => { if(e.key==='Enter'||e.key===' '){ e.preventDefault(); input && input.click(); } });
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('is-drop'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('is-drop'));
+    zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('is-drop'); [].slice.call((e.dataTransfer&&e.dataTransfer.files)||[]).forEach(_frzUploadDraftAtt); });
+  }
+  _frzRenderPendingList();
+}
+function _frzRenderPendingList(){
+  const list = document.getElementById('composerAttachList');
+  if(!list) return;
+  if(!_frzPendingAtts.length){ list.innerHTML=''; return; }
+  list.innerHTML = _frzPendingAtts.map((a,i) =>
+    '<div class="composer-attach-row'+(a._uploading?' is-uploading':'')+'">'
+    + '<span class="ca-name" title="'+escA(a.name||'file')+'">'+esc(a.name||'file')+'</span>'
+    + '<span class="ca-size">'+(a._uploading?'uploading…':esc(_frzFmtAttSize(a.size)))+'</span>'
+    + '<button type="button" class="ca-remove" data-caidx="'+i+'" title="Remove" aria-label="Remove '+escA(a.name||'file')+'">&times;</button>'
+    + '</div>').join('');
+  list.querySelectorAll('.ca-remove').forEach(b => b.addEventListener('click', () => _frzRemovePendingAtt(+b.getAttribute('data-caidx'))));
+}
+function _frzRemovePendingAtt(i){ if(i>=0 && i<_frzPendingAtts.length){ _frzPendingAtts.splice(i,1); _frzRenderPendingList(); } }
+async function _frzUploadDraftAtt(file){
+  if(!file) return;
+  if(_frzPendingAtts.length >= 10){ showToast('You can attach up to 10 files.','error'); return; }
+  if(file.size > _FRZ_MAX_ATTACH_BYTES){ showToast('"'+(file.name||'file')+'" exceeds the 50 MB limit.','error'); return; }
+  const entry = { name: file.name||'file', size: file.size, type: file.type||'application/octet-stream', _uploading: true };
+  _frzPendingAtts.push(entry); _frzRenderPendingList();
+  try {
+    const pre = await API.post('/api/attachments/presign-draft', { filename: entry.name, contentType: entry.type, size: file.size });
+    const fd = new FormData();
+    Object.keys(pre.fields||{}).forEach(k => fd.append(k, pre.fields[k]));
+    fd.append('file', file);   // MUST be last (S3 ignores fields after the file)
+    const put = await fetch(pre.url, { method:'POST', body: fd });   // no Content-Type header - the browser sets the boundary
+    if(!put.ok){ let msg='upload failed ('+put.status+')'; try { const t=await put.text(); if(/EntityTooLarge/i.test(t)) msg='exceeds the 50 MB limit'; } catch(_e){} throw new Error(msg); }
+    entry.key = pre.key; entry.token = pre.token; entry.attId = pre.attId; entry.name = pre.name || entry.name; entry._uploading = false;
+    _frzRenderPendingList();
+  } catch(e){
+    const i = _frzPendingAtts.indexOf(entry); if(i>-1) _frzPendingAtts.splice(i,1);
+    _frzRenderPendingList(); showToast('Upload failed: '+((e&&e.message)||''),'error');
+  }
+}
+// One document-level paste listener: in CREATE mode with the modal open, a pasted FILE (screenshot)
+// attaches. Text pastes and edit mode are untouched; inline description images are a later stage.
+document.addEventListener('paste', e => {
+  const mb = document.getElementById('modalBg');
+  if(!mb || !mb.classList.contains('open')) return;
+  if(typeof editingId !== 'undefined' && editingId) return;   // create mode only
+  if(!(isAdmin || isEditor)) return;
+  const items = (e.clipboardData && e.clipboardData.items) || [];
+  let file = null;
+  for(let i=0;i<items.length;i++){ if(items[i].kind==='file'){ file = items[i].getAsFile(); if(file) break; } }
+  if(!file) return;
+  e.preventDefault();
+  _frzUploadDraftAtt(file);
+});
+
 // Validation reveal (Stage 3): if a field needing attention is inside a collapsed group, open the
 // group (mark it errored) and move focus to the field. Fields not in a group just focus.
 function _frzRevealComposerField(fieldId){
@@ -6329,7 +6430,7 @@ function openProjectModal(id){
     const _canModalAssets = id && p && typeof window._frzRenderAssetCard==='function'
       && typeof window._frzCanSeeAssets==='function' && window._frzCanSeeAssets(p);
     if(_canModalAssets){ _assetRow.style.display=''; window._frzRenderAssetCard(_assetSec, p); }
-    else if(!id){ _assetRow.style.display=''; _assetSec.innerHTML='<div style="font-size:11px;color:var(--muted);padding:2px 0"><span style="font-weight:700;letter-spacing:0.04em;text-transform:uppercase;font-size:10px;display:block;margin-bottom:2px">Attachments &amp; assets</span>Files and linked assets can be added once the item is saved.</div>'; }   // create defers (no control); COMPOSER-POLISH-1 Part 10.1: one note covering BOTH (attachments + assets), with a heading so it reads as guidance not a leftover - PRECREATE-ATTACH-1 will replace this in place, not add a second note
+    else if(!id && (isAdmin || isEditor)){ _assetRow.style.display=''; _frzResetPendingAtts(); _frzRenderCreateAttach(_assetSec); }   // PRECREATE-ATTACH-1 Stage A: the working attachment control REPLACES the old interim note in place; the asset half survives as a line inside the control. Contributors can't create -> no control.
     else { _assetRow.style.display='none'; _assetSec.innerHTML=''; }   // edit but not configured / hidden item / contributor
   }
   // Apply locking rules based on status flags
@@ -7346,7 +7447,16 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
         renderItemPage(updated);
       }
     } else {
-      const created = await API.post('/api/projects', {...data, _username: getUsername()});
+      // PRECREATE-ATTACH-1 Stage A: send fully-uploaded pending attachments (each carries the claim
+      // token the server verifies before promoting intake/ -> items/{pid}/). In-flight uploads (no key
+      // yet) are excluded. The list is NOT cleared here - if the save throws, it survives for a retry.
+      const _pend = _frzPendingAtts.filter(a => a.key && a.token)
+        .map(a => ({ key:a.key, token:a.token, attId:a.attId, name:a.name, size:a.size, contentType:a.type }));
+      const created = await API.post('/api/projects', {...data, pendingAttachments: _pend, _username: getUsername()});
+      _frzResetPendingAtts();   // committed - safe to clear (a failed save above never reaches here)
+      if(created && Array.isArray(created.attachmentsDropped) && created.attachmentsDropped.length){
+        showToast('Saved, but these attachments could not be stored: ' + created.attachmentsDropped.join(', '), 'error');
+      }
       projects.push(created);
       // Issue 2: offer to create a Jira issue for new items with no ticket
       if(jiraConfigured && !jiraTickets.length){
@@ -28780,6 +28890,9 @@ if ('serviceWorker' in navigator) {
   }
 
   // ════════ Stage 2a - Attachments (item page) ════════
+  // 50 MB cap MIRRORED in two other sites - change all three together: server.py MAX_ATTACH_BYTES (the
+  // real guard) + the classic-composer `const _FRZ_MAX_ATTACH_BYTES` (create-mode pre-check; the composer
+  // is outside .frz-beta so it can't see this one). Both client values are advisory pre-checks.
   var MAX_ATTACH_BYTES = 50*1024*1024;
   function fmtBytes(n){ n=+n||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(0)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
   function attExt(name){ var m=/\.([A-Za-z0-9]+)$/.exec(name||''); return m?m[1].toUpperCase().slice(0,4):'FILE'; }
