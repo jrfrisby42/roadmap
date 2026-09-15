@@ -766,6 +766,12 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .modal.frz-composer .composer-qcell > label { font-size: 10px; font-weight: 700; letter-spacing: 0.05em; color: var(--muted); text-transform: uppercase; margin: 0; }
   .modal.frz-composer .composer-qcell select { width: 100%; border: 0; background: transparent; padding: 0; margin: 0; font-family: 'Lato', sans-serif; font-size: 13.5px; font-weight: 700; color: var(--text); outline: none; cursor: pointer; box-shadow: none; min-width: 0; text-overflow: ellipsis; }
   .modal.frz-composer .composer-qcell select:focus { box-shadow: none; border: 0; }
+  /* COMPOSER-POLISH-1 Part 3: the Type cell's value row = configured type icon + the select. The icon
+     hides when empty so an icon-less type leaves no gap and the row does not jump. */
+  .modal.frz-composer .composer-qcell-val { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .modal.frz-composer .composer-qcell-ic { display: none; flex: 0 0 auto; align-items: center; }
+  .modal.frz-composer .composer-qcell-ic:not(:empty) { display: inline-flex; }
+  .modal.frz-composer .composer-qcell-ic svg { display: block; }
 
   /* Collapsible groups: Ownership open on create; Schedule, Relationships, Advanced collapsed. */
   .modal.frz-composer .composer-group { border-top: 1px solid var(--border); padding-top: 4px; }
@@ -787,7 +793,11 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 
   /* ── ITEM-COMPOSER-1 Stage 4: edit-mode metadata strip + activity (edit-only; hidden on create) ── */
   .modal.frz-composer .composer-meta-strip { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 4px; }
-  .modal.frz-composer .composer-meta-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface2); font-size: 12px; }
+  /* COMPOSER-POLISH-1 Part 6 (smallest version): the read-only strip should read as CONTEXT, not as
+     controls that outweigh the editable quick-grid. Drop the border and lighten the fill so it recedes;
+     values stay legible and selectable. The grid is left untouched (it is correct; the strip was loud). */
+  .modal.frz-composer .composer-meta-chip { display: inline-flex; align-items: baseline; gap: 6px; padding: 2px 8px 2px 0; border: 0; border-radius: 0; background: transparent; font-size: 12px; }
+  .modal.frz-composer .composer-meta-chip + .composer-meta-chip { padding-left: 12px; border-left: 1px solid var(--border); }
   .modal.frz-composer .composer-meta-chip .cm-k { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; color: var(--muted); text-transform: uppercase; }
   .modal.frz-composer .composer-meta-chip .cm-v { font-weight: 700; color: var(--text); }
   .modal.frz-composer .composer-meta-chip .cm-muted { color: var(--muted); font-weight: 600; }
@@ -1836,7 +1846,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       <div class="composer-canvas">
         <div class="composer-titlewrap">
           <label for="fName" class="frz-visually-hidden">Item Name</label>
-          <input type="text" id="fName" class="composer-title" placeholder="What needs doing?" aria-label="Item name">
+          <input type="text" id="fName" class="composer-title" placeholder="Enter Item Name" aria-label="Item name">
           <!-- ADDENDUM A P2: opens the item page IN THIS TAB. No target -> NEWTAB-FIX-1's interceptor
                hands the click to the in-app router; it stays a real anchor so cmd/ctrl-click still opens
                a new tab. The ⤢ glyph is reused from the List detail panel's open-in-current-tab control
@@ -1919,9 +1929,12 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
           </div>
           <div class="composer-qcell" id="qcellType">
             <label id="fTypeLbl">Type</label>
-            <select id="fType">
+            <!-- COMPOSER-POLISH-1 Part 3: the type's CONFIGURED icon (from typeIconHTML, self-sized) sits
+                 left of the value. Hidden when the type has no icon (no jump/gap). The value TEXT stays
+                 neutral - the icon is the differentiator; Priority already owns semantic colour in this row. -->
+            <div class="composer-qcell-val"><span class="composer-qcell-ic" id="fTypeIcon" aria-hidden="true"></span><select id="fType">
               <option value="">- None -</option>
-            </select>
+            </select></div>
           </div>
         </div>
 
@@ -2606,7 +2619,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.39.13';
+const APP_VERSION = '6.39.14';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -5791,6 +5804,16 @@ function frzApplyComposerRoleScope(p){
 
 // Footer status text. Stage 3 create: "Saves to <Space>". Stage 4 edit: "Last modified <ts>" from the
 // item's updated_ts (an allowed footer string; never "All changes saved"). One shared left slot.
+// COMPOSER-POLISH-1 Part 3: mirror the selected type's CONFIGURED icon into the Type quick-grid cell.
+// Uses the shared typeIconHTML (nothing hardcoded, nothing inferred from the name); a type with no icon
+// leaves the span empty, which the CSS hides so the cell does not jump. The value text stays neutral.
+function _frzUpdateTypeCellIcon(){
+  const span = document.getElementById('fTypeIcon');
+  if(!span) return;
+  const t = document.getElementById('fType')?.value || '';
+  const ic = (t && typeof typeIconHTML === 'function') ? (typeIconHTML(t, { size: 16, label: t }) || '') : '';
+  span.innerHTML = ic;
+}
 function _frzUpdateComposerFooterSpace(){
   const el = document.getElementById('composerFooterSpace');
   if(!el) return;
@@ -6284,7 +6307,7 @@ function openProjectModal(id){
     const _canModalAssets = id && p && typeof window._frzRenderAssetCard==='function'
       && typeof window._frzCanSeeAssets==='function' && window._frzCanSeeAssets(p);
     if(_canModalAssets){ _assetRow.style.display=''; window._frzRenderAssetCard(_assetSec, p); }
-    else if(!id){ _assetRow.style.display=''; _assetSec.innerHTML='<div style="font-size:12px;color:var(--muted);padding:2px 0">Link assets after saving.</div>'; }   // create defers (no control)
+    else if(!id){ _assetRow.style.display=''; _assetSec.innerHTML='<div style="font-size:11px;color:var(--muted);padding:2px 0"><span style="font-weight:700;letter-spacing:0.04em;text-transform:uppercase;font-size:10px;display:block;margin-bottom:2px">Attachments &amp; assets</span>Files and linked assets can be added once the item is saved.</div>'; }   // create defers (no control); COMPOSER-POLISH-1 Part 10.1: one note covering BOTH (attachments + assets), with a heading so it reads as guidance not a leftover - PRECREATE-ATTACH-1 will replace this in place, not add a second note
     else { _assetRow.style.display='none'; _assetSec.innerHTML=''; }   // edit but not configured / hidden item / contributor
   }
   // Apply locking rules based on status flags
@@ -6301,6 +6324,7 @@ function openProjectModal(id){
   _frzComposerActivity(id || null);
   _frzComposerGroupDefaults(p, id);
   _frzWireComposerA11yLabels();   // Stage 8: name every field for screen readers (fields are rebuilt per open)
+  _frzUpdateTypeCellIcon();       // COMPOSER-POLISH-1 Part 3: type icon in the quick-grid Type cell
   document.getElementById('modalBg').classList.add('open');
 }
 
@@ -6562,6 +6586,7 @@ document.getElementById('composerClose')?.addEventListener('click', ()=>{
 // Stage 2: in CREATE mode the header shows the destination Space; keep it in sync with the picker.
 // Stage 3: the footer's destination-Space context tracks the same picker.
 document.getElementById('fProduct')?.addEventListener('change', ()=>{ if(!editingId) _frzComposerHeader(null, null); _frzUpdateComposerFooterSpace(); });
+document.getElementById('fType')?.addEventListener('change', _frzUpdateTypeCellIcon);   // COMPOSER-POLISH-1 Part 3
 document.getElementById('modalBg')?.addEventListener('click', e=>{
   if(e.target===e.currentTarget){
     // Change 1: the backdrop click uses the SAME unsaved-changes confirm as Escape (set by the shell
@@ -19390,6 +19415,17 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-chip-divider { width:1px; height:20px; background:var(--frz-border-strong); margin:0 5px; flex-shrink:0; align-self:center; }
   .frz-beta :focus-visible { outline:2px solid var(--frz-accent); outline-offset:2px; border-radius:4px; }
   .frz-beta svg.frz-ic { stroke:currentColor; fill:none; stroke-width:1.33; stroke-linecap:round; stroke-linejoin:round; }   /* frz-ic set is 16x16 viewBox: 1.33 here = stroke 2 on the 24x24 standard */
+  /* COMPOSER-POLISH-1 Part 1 (root, not instance): an frz-ic with no sizing wrapper and no per-host rule
+     has no intrinsic size and renders 0x0 (invisible) or blows up to its container and clips - the bug that
+     shipped THREE times (6.38.5 IC.image, then the modal's classic RTE toolbar, which sits OUTSIDE .frz-beta
+     so the .frz-beta rules below never reached it). Give every frz-ic a default 16px (the size the majority
+     of hosts already render at); this rule is UNSCOPED on purpose so it reaches classic hosts too. Every
+     host that needs a different size keeps its own MORE-SPECIFIC rule below and is unaffected. The paint
+     treatment (stroke:currentColor, fill:none) is on the UNSCOPED rule too: a bare frz-ic default-fills
+     black and renders as a solid blob (a screenshot caught this where an element query did not), so the
+     classic hosts need the stroke/fill defaults, not only a size. Inner glyph parts that set fill/stroke
+     inline (e.g. dot fills) still override this. */
+  svg.frz-ic { width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:1.33; stroke-linecap:round; stroke-linejoin:round; }
   /* GLYPH-IC-1 Part 1: an frz-ic placed as a toolbar button label has NO sizing wrapper (the tab/bell/
      watch contexts each size their own svg), so it blows up to the button's width (~214px) and clips to
      blank - the 6.38.5 IC.image regression. Size it here, matching the .frz-tab-ic svg convention. */
