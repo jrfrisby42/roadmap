@@ -691,6 +691,12 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .modal.frz-composer .composer-id .composer-jira { font-size: 12px; font-weight: 700; color: var(--accent); text-decoration: none; white-space: nowrap; }
   .modal.frz-composer .composer-id .composer-jira:hover { text-decoration: underline; }
   .modal.frz-composer .composer-id .composer-sep { width: 1px; height: 16px; background: var(--border); flex-shrink: 0; }
+  /* COMPOSER-POLISH-1 Part 4: destination/Space chip in the header (both modes). Tinted fill (16% of the
+     Space colour, applied inline) is safe over any hue; NEUTRAL text; full-colour border + dot inline. The
+     name truncates so the header never wraps (Stage 2 rule); the dot never shrinks. */
+  .modal.frz-composer .composer-id .composer-space-chip { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 1; min-width: 0; max-width: 200px; padding: 2px 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface2); font-size: 12px; font-weight: 700; color: var(--text); }
+  .modal.frz-composer .composer-id .composer-space-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .modal.frz-composer .composer-id .composer-space-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   .modal.frz-composer .composer-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
   .modal.frz-composer .composer-act { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--muted); font-family: 'Lato', sans-serif; font-weight: 700; font-size: 12px; cursor: pointer; text-decoration: none; }
   .modal.frz-composer .composer-act:hover { color: var(--text); }
@@ -2619,7 +2625,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.39.14';
+const APP_VERSION = '6.39.15';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -5748,10 +5754,23 @@ function openItemPageFromModal(){
 // is loaded by the item page), which is Stage-4B shape, not header work.
 var _COMPOSER_CREATE_IC = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>';
 var _COMPOSER_WATCH_IC  = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+// COMPOSER-POLISH-1 Part 4: the destination/Space in the header as a tinted chip, in BOTH modes. Space
+// colours are admin-arbitrary (yellow-green, dark red), so coloured TEXT fails contrast; instead reuse the
+// scope-chip derivation - a 16% tint of the Space's OWN colour (safe over any hue) + full-colour border and
+// dot + NEUTRAL ink. A Space with no colour set falls back to the plain surface chip (no tint, no dot).
+// Uses the classic --text/--surface2/--border tokens because the modal lives outside .frz-beta.
+function _frzComposerSpaceChip(space){
+  if(!space) return '';
+  var prod = (typeof products!=='undefined' ? products : []).filter(function(p){ return (p && (p.name||p))===space; })[0];
+  var col = (prod && prod.color) ? prod.color : null;
+  var dot = col ? '<span class="composer-space-dot" style="background:'+escA(col)+'"></span>' : '';
+  var style = col ? ' style="background:color-mix(in srgb, '+escA(col)+' 16%, transparent);border-color:'+escA(col)+'"' : '';
+  return '<span class="composer-space-chip'+(col?' is-tinted':'')+'"'+style+' title="'+escA('Space: '+space)+'">'+dot+'<span class="composer-space-name">'+esc(space)+'</span></span>';
+}
 function _frzComposerHeader(p, id){
   var el = document.getElementById('composerId'); if(!el) return;
   var html;
-  if(p){   // EDIT: type icon + item key + (Jira label + key)
+  if(p){   // EDIT: type icon + item key + Space chip + (Jira label + key)
     var tIc = (typeof typeIconHTML==='function' && p.type) ? typeIconHTML(p.type, {size:18, label:p.type}) : '';
     var jk  = (Array.isArray(p.jiraTickets) && p.jiraTickets.length) ? p.jiraTickets[0] : '';
     var jira = '';
@@ -5761,12 +5780,12 @@ function _frzComposerHeader(p, id){
            + (jurl ? '<a class="composer-jira" href="'+escA(jurl)+'" target="_blank" rel="noopener">Jira '+esc(jk)+'</a>'
                    : '<span class="composer-jira" title="Jira '+escA(jk)+' (link pending sync)">Jira '+esc(jk)+'</span>');
     }
-    html = '<span class="composer-ic">'+tIc+'</span><span class="composer-key">'+esc(p.itemKey||('#'+p.id))+'</span>'+jira;
-  } else {  // CREATE: context icon + "New item" + destination Space (when known)
+    html = '<span class="composer-ic">'+tIc+'</span><span class="composer-key">'+esc(p.itemKey||('#'+p.id))+'</span>'+_frzComposerSpaceChip(p.product||'')+jira;
+  } else {  // CREATE: context icon + "New item" + destination Space chip (when known)
     var pe = document.getElementById('fProduct');
     var space = pe ? (pe.value||'') : '';
     html = '<span class="composer-ic">'+_COMPOSER_CREATE_IC+'</span><span class="composer-title">New item</span>'
-         + (space ? '<span class="composer-sep" aria-hidden="true"></span><span class="composer-space">'+esc(space)+'</span>' : '');
+         + _frzComposerSpaceChip(space);
   }
   el.innerHTML = html;
   // Right group: watcher count from the item blob's _watchers (server-provided by /api/all, no fetch).
@@ -5823,8 +5842,11 @@ function _frzUpdateComposerFooterSpace(){
     el.innerHTML = ts ? 'Last modified ' + esc(fmtTS(ts)) : '';
     return;
   }
-  const space = document.getElementById('fProduct')?.value || '';
-  el.innerHTML = space ? 'Saves to <b>' + esc(space) + '</b>' : '';
+  // COMPOSER-POLISH-1 Part 7: the create footer's "Saves to <Space>" was the THIRD copy of the Space
+  // (header chip + quick-grid Space cell are the other two). The destination now lives in the always-
+  // visible header chip (Part 4), so the footer restatement is dropped. The fProduct change listener is
+  // KEPT - it still drives the header Space chip via _frzComposerHeader (it just no longer feeds the footer).
+  el.innerHTML = '';
 }
 
 // Validation reveal (Stage 3): if a field needing attention is inside a collapsed group, open the
