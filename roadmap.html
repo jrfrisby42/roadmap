@@ -137,6 +137,20 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   body.dark-mode .sched-date.overdue { color: var(--accent2) !important; }
 
   /* ── Dark mode: modals and overlays ── */
+  /* MODAL-SURFACE-2 Item 4: lifting the modal to luminance 0.0232 dropped several foregrounds below WCAG AA.
+     Fix the UNPROTECTED ones, dark only (light values unchanged); ratios measured on 0.0232:
+       - the #0072f0 info/lock blue (the "Set a Start Date" link, the parallel-resources + delay "Active"
+         locks): 3.19 -> #4C9DF2 = 5.06.
+       - --accent2 red INSIDE modals (required asterisks + inline error text): 4.11 -> #F5828B = 5.77. Scoped
+         to .modal-bg so the item page + shell keep their own --accent2 (item-page invariant).
+       - the #888 empty-select placeholder "- None -": 4.05 -> #9AA1AB = 5.51.
+     ACCEPTED, not a bug: the Urgent priority option (#e8394a) measures 3.49 on this surface. Status and
+     priority colours are semantic and protected in both themes by standing decision, so it is left exactly
+     as-is - a real consequence of a correct decision, recorded here so nobody "fixes" or rediscovers it. */
+  body.dark-mode .modal.frz-composer .composer-lock-msg,
+  body.dark-mode #delayActiveLock, body.dark-mode #prActiveLock { color: #4C9DF2 !important; }
+  body.dark-mode .modal-bg { --accent2: #F5828B; }
+  body.dark-mode .modal-bg select option[value=""] { color: #9AA1AB !important; }
   body.dark-mode .modal,
   body.dark-mode .modal-bg .modal { background: var(--surface) !important; border: 1px solid var(--border); box-shadow: 0 0 0 1px rgba(255,255,255,0.06), 0 18px 52px rgba(0,0,0,0.6) !important; }   /* MODAL-SURFACE-1 Part B: dark elevation cue - a 1px hairline LIGHTER than the surface (a black/navy drop shadow is inert on a dark ground) plus a deeper drop for the backdrop. Dark only; light-mode shadow (the .modal base rule) is untouched. */
   body.dark-mode #hamburgerMenu   { background: var(--surface) !important; border-color: var(--border) !important; box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important; }
@@ -881,7 +895,10 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .modal.frz-composer .composer-comments-head > span { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: var(--muted); text-transform: uppercase; }
   .modal.frz-composer .composer-comments-full { font-size: 11px; font-weight: 700; color: var(--accent); text-decoration: none; }
   .modal.frz-composer .composer-comments-full:hover { text-decoration: underline; }
-  .modal.frz-composer .composer-cmt-ph { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--muted); font-size: 13px; padding: 9px 12px; cursor: text; }
+  /* MODAL-SURFACE-2 Item 1: the comment placeholder + mounted editor box read var(--surface2) (the recessed
+     inner rung, dark 0.0160) like the other 16 modal fields, NOT var(--surface) (the modal's own 0.0232) -
+     at --surface they had zero background delta from the modal and read as bare regions, not inputs. */
+  .modal.frz-composer .composer-cmt-ph { border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--muted); font-size: 13px; padding: 9px 12px; cursor: text; }
   .modal.frz-composer .composer-cmt-ph:hover, .modal.frz-composer .composer-cmt-ph:focus { border-color: var(--accent); outline: none; }
   .modal.frz-composer #composerCommentComposer { margin-bottom: 12px; }
   /* COMPOSER-COMMENT-1 Part B: the modal comment editor is a classic <body> child OUTSIDE .frz-beta, so the
@@ -893,19 +910,27 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
      removed - #composerComments is the LAST child of the content column, so expanding on click pushes no
      visible content; the reserve only cost ~101px of permanent collapsed height. The collapsed placeholder
      returns to ~36px; the mounted box + 62px editable + padding (the real fix) stay. */
-  .modal.frz-composer #composerCommentComposer .frz-rte.frz-rte-comment { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
-  .modal.frz-composer #composerCommentComposer .frz-rte.frz-rte-comment .ProseMirror { min-height: 62px; max-height: 220px; overflow-y: auto; padding: 8px 12px; outline: none; color: var(--text); font-size: 13px; line-height: 1.5; }
+  .modal.frz-composer #composerCommentComposer .frz-rte.frz-rte-comment { border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); }
+  /* MODAL-SURFACE-2 Item 2: the editable is ONE line at rest and grows with content (max 220 then scrolls);
+     the collapsed placeholder (min-height below) matches this one-line box, so both are one line and there is
+     still no step on click - only content makes it taller. */
+  .modal.frz-composer #composerCommentComposer .frz-rte.frz-rte-comment .ProseMirror { min-height: 20px; max-height: 220px; overflow-y: auto; padding: 8px 12px; outline: none; color: var(--text); font-size: 13px; line-height: 1.5; }
   .modal.frz-composer #composerCommentComposer .frz-rte.frz-rte-comment .ProseMirror > p { margin: 0; }
-  /* MODAL-SURFACE-1 Part A: match the collapsed placeholder to the mounted EDITABLE box (~62px), so clicking
-     grows only the toolbar + Comment button below it (which move nothing above the last-child comment block)
-     rather than the box stepping under the cursor. This is NOT the removed 137px reserve: 137 matched the
-     ENTIRE mounted block (toolbar + editable + button) against a 36px placeholder, ~101px of dead height; 62
-     matches only the editable, ~26px, so the box stops growing on click. Placeholder ONLY, not the container. */
-  .modal.frz-composer #composerCommentComposer .composer-cmt-ph { min-height: 62px; }
-  /* MODAL-SURFACE-1 Part A: one authoritative comment-toolbar button height. The image button's svg (the
-     unscoped 16px .frz-ic default) made it 4px taller than the line-height-sized text buttons - the third
-     .frz-ic sizing tax. A fixed button height + flex-centre makes height driven by the BUTTON, not by the svg
-     or the line box, so every button matches. Scoped to the modal comment toolbar. */
+  /* Comment placeholder height, in three chapters so the next reader does not see a flip-flop:
+     - 137px (DARK-AUDIT-1, removed): matched the ENTIRE mounted block (toolbar + editable + Comment button)
+       against a 36px placeholder - ~101px of dead collapsed height, wrong because nothing follows the box.
+     - 62px (MODAL-SURFACE-1): matched only the mounted EDITABLE box so the box stopped stepping on click, but
+       that was two lines at rest, more than the control needs.
+     - 38px (MODAL-SURFACE-2 Item 2): the mounted editable is now ONE line (min-height:20 above), so the
+       placeholder matches its one-line box. Collapsed and mounted are both one line - still no step, and it
+       only grows when there is content. Placeholder ONLY, never the container. Do NOT restore 137. */
+  .modal.frz-composer #composerCommentComposer .composer-cmt-ph { min-height: 38px; }
+  /* MODAL-SURFACE-2 Item 3: the comment toolbar is a classic <body> child, so the .frz-beta .frz-rte-tb
+     `display:flex; align-items:center` never reached it - the buttons flowed on the inline/baseline axis and
+     the svg-content image button aligned ~3.5px higher than the text buttons even though all are 29px tall
+     (height was the wrong lever - the fourth .frz-ic tax). Make the toolbar a centred flex row so every
+     button aligns on the cross axis regardless of content. The fixed 29px height stays for a uniform box. */
+  .modal.frz-composer .frz-rte-tb-comment { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; }
   .modal.frz-composer .frz-rte-tb-comment .frz-rte-btn { height: 29px; display: inline-flex; align-items: center; box-sizing: border-box; }
   .modal.frz-composer .composer-cmt-post { margin-top: 8px; background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: 6px; padding: 7px 14px; font-family: 'Lato', sans-serif; font-weight: 700; font-size: 13px; cursor: pointer; }
   .modal.frz-composer .composer-cmt-post:hover { background: var(--accent2, var(--accent)); filter: brightness(0.95); }
@@ -2706,7 +2731,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.40.6';
+const APP_VERSION = '6.40.7';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app

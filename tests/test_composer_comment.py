@@ -58,10 +58,11 @@ def test_comment1_mentionusers_uses_passed_item_with_fallback():
 # ── Part B symptom 1: the modal comment editor gets a real box + reserved height (it is outside .frz-beta) ─
 def test_comment1_modal_editor_reserved_and_styled():
     src = _html()
-    # the editable gets a usable min-height + padding + border, scoped to the modal (the .frz-beta rules
-    # never reach the composer modal, a classic <body> child)
-    assert re.search(r"\.modal\.frz-composer #composerCommentComposer \.frz-rte\.frz-rte-comment \.ProseMirror \{ min-height: 62px;", src), \
-        "the modal comment editable must have a usable min-height (it is outside .frz-beta so the shared rule does not reach it)"
+    # the editable gets a min-height + padding + border, scoped to the modal (the .frz-beta rules never reach
+    # the composer modal, a classic <body> child). MODAL-SURFACE-2 Item 2 made the editable ONE line
+    # (min-height:20, was 62) that grows with content; the box + padding + border remain.
+    assert re.search(r"\.modal\.frz-composer #composerCommentComposer \.frz-rte\.frz-rte-comment \.ProseMirror \{ min-height: 20px;", src), \
+        "the modal comment editable must have its one-line min-height (outside .frz-beta so the shared rule does not reach it)"
     assert re.search(r"\.modal\.frz-composer #composerCommentComposer \.frz-rte\.frz-rte-comment \{ border:", src), \
         "the modal comment editor must have a visible box (border)"
     # DARK-AUDIT-1 Part A: the no-shift RESERVE was removed (nothing sits below #composerComments, so
