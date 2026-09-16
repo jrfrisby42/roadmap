@@ -26,15 +26,17 @@ def _html():
 # ── Part A ───────────────────────────────────────────────────────────────────────────────────────────────
 def test_modalsurface_placeholder_matches_editable_not_block():
     src = _html()
-    # placeholder reserves ONLY the editable height (~62px), on the placeholder, NOT the container
-    assert ".modal.frz-composer #composerCommentComposer .composer-cmt-ph { min-height: 62px; }" in src, \
-        "the collapsed placeholder must match the mounted editable (62px), so the box does not step on click"
-    # the removed 137px whole-block reserve must NOT return, on placeholder or container
+    # MODAL-SURFACE-2 Item 2: placeholder matches the ONE-LINE mounted editable (38px), on the placeholder,
+    # NOT the container. (Was 62px in MODAL-SURFACE-1 when the editable was two lines.)
+    assert ".modal.frz-composer #composerCommentComposer .composer-cmt-ph { min-height: 38px; }" in src, \
+        "the collapsed placeholder must match the mounted one-line editable (38px), so the box does not step on click"
+    # neither the 137px whole-block reserve NOR the old 62px two-line height may return, on placeholder or container
     assert "composer-cmt-ph { min-height: 137px;" not in src and "#composerCommentComposer { min-height: 137px;" not in src, \
-        "the 137px whole-block reserve must stay removed (62 matches the editable; 137 matched toolbar+button too)"
-    # the comment records both numbers so the next reader does not read it as a flip-flop
-    assert "NOT the removed 137px reserve" in src and "matches only the editable" in src, \
-        "a comment must record why 62 is right and 137 was not"
+        "the 137px whole-block reserve must stay removed"
+    assert "composer-cmt-ph { min-height: 62px;" not in src, "the 62px two-line height was superseded by the one-line 38px"
+    # the three-chapter history comment (137 -> 62 -> 38) survives so the next reader does not see a flip-flop
+    assert "137px (DARK-AUDIT-1, removed)" in src and "38px (MODAL-SURFACE-2 Item 2)" in src, \
+        "a comment must record the 137 -> 62 -> 38 history"
 
 
 def test_modalsurface_toolbar_one_height():
