@@ -138,7 +138,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 
   /* ── Dark mode: modals and overlays ── */
   body.dark-mode .modal,
-  body.dark-mode .modal-bg .modal { background: var(--surface) !important; border: 1px solid var(--border); }
+  body.dark-mode .modal-bg .modal { background: var(--surface) !important; border: 1px solid var(--border); box-shadow: 0 0 0 1px rgba(255,255,255,0.06), 0 18px 52px rgba(0,0,0,0.6) !important; }   /* MODAL-SURFACE-1 Part B: dark elevation cue - a 1px hairline LIGHTER than the surface (a black/navy drop shadow is inert on a dark ground) plus a deeper drop for the backdrop. Dark only; light-mode shadow (the .modal base rule) is untouched. */
   body.dark-mode #hamburgerMenu   { background: var(--surface) !important; border-color: var(--border) !important; box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important; }
   body.dark-mode .resolve-menu    { background: var(--surface) !important; }
   body.dark-mode .rte-box { background: var(--surface2) !important; color: var(--text) !important; }
@@ -896,6 +896,17 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .modal.frz-composer #composerCommentComposer .frz-rte.frz-rte-comment { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
   .modal.frz-composer #composerCommentComposer .frz-rte.frz-rte-comment .ProseMirror { min-height: 62px; max-height: 220px; overflow-y: auto; padding: 8px 12px; outline: none; color: var(--text); font-size: 13px; line-height: 1.5; }
   .modal.frz-composer #composerCommentComposer .frz-rte.frz-rte-comment .ProseMirror > p { margin: 0; }
+  /* MODAL-SURFACE-1 Part A: match the collapsed placeholder to the mounted EDITABLE box (~62px), so clicking
+     grows only the toolbar + Comment button below it (which move nothing above the last-child comment block)
+     rather than the box stepping under the cursor. This is NOT the removed 137px reserve: 137 matched the
+     ENTIRE mounted block (toolbar + editable + button) against a 36px placeholder, ~101px of dead height; 62
+     matches only the editable, ~26px, so the box stops growing on click. Placeholder ONLY, not the container. */
+  .modal.frz-composer #composerCommentComposer .composer-cmt-ph { min-height: 62px; }
+  /* MODAL-SURFACE-1 Part A: one authoritative comment-toolbar button height. The image button's svg (the
+     unscoped 16px .frz-ic default) made it 4px taller than the line-height-sized text buttons - the third
+     .frz-ic sizing tax. A fixed button height + flex-centre makes height driven by the BUTTON, not by the svg
+     or the line box, so every button matches. Scoped to the modal comment toolbar. */
+  .modal.frz-composer .frz-rte-tb-comment .frz-rte-btn { height: 29px; display: inline-flex; align-items: center; box-sizing: border-box; }
   .modal.frz-composer .composer-cmt-post { margin-top: 8px; background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: 6px; padding: 7px 14px; font-family: 'Lato', sans-serif; font-weight: 700; font-size: 13px; cursor: pointer; }
   .modal.frz-composer .composer-cmt-post:hover { background: var(--accent2, var(--accent)); filter: brightness(0.95); }
   .modal.frz-composer .composer-cmt-empty { font-size: 12px; color: var(--muted); padding: 6px 0; }
@@ -2695,7 +2706,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.40.5';
+const APP_VERSION = '6.40.6';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -20707,7 +20718,7 @@ if ('serviceWorker' in navigator) {
     --frz-header-tint:#232A3A;   /* subtle lift off the card surface (a hair lighter), not a glowing band - flagged for the dark ticket */
     --frz-accent:#4A97E5; --frz-accent-hover:#6BB1EC; --frz-accent-soft:#15314a;   /* DARK-NEUTRAL-1: accent lifted to clear 4.5:1 AA on both bg-surface + bg-app; hover kept a visible step lighter */
     --frz-accent-soft-border:#24506f; --frz-sky:#65b1e3;
-    --frz-text:#D3D8DE; --frz-text-secondary:#A8AEB8; --frz-text-muted:#8A9099; --frz-danger:#F28B92;  /* DARK-NEUTRAL-1: neutrals desaturated out of the accent hue so the accent has ground to stand on; mirror in body.dark-mode.frz-beta-active */
+    --frz-text:#D3D8DE; --frz-text-secondary:#A8AEB8; --frz-text-muted:#9AA1AB;  /* MODAL-SURFACE-1 Part B: lifted from #8A9099 (dark only) so muted text clears WCAG AA (>=4.5) on the newly-elevated modal surface; re-measured, not predicted */ --frz-danger:#F28B92;  /* DARK-NEUTRAL-1: neutrals desaturated out of the accent hue so the accent has ground to stand on; mirror in body.dark-mode.frz-beta-active */
     --frz-alert:#e8394a; --frz-warn:#e8a000;
     --frz-warn-text:#e8a000;
     --accent:#4A97E5;   /* de-indigo'd reused subtree, dark accent - DARK-NEUTRAL-1: kept in sync with --frz-accent so the reused item-page subtree does not split from the shell */
@@ -20734,7 +20745,7 @@ if ('serviceWorker' in navigator) {
     --frz-bg-app:#11151D; --frz-bg-surface:#1C2230; --frz-bg-rail:#161B26; --frz-bg-elevated:#232A3A; --frz-bg-sunken:#181E2A;
     --frz-border:#3A3F47; --frz-border-strong:#4A5058; --frz-shadow-card:0 2px 10px rgba(0,0,0,.45); --frz-header-tint:#232A3A;
     --frz-accent:#4A97E5; --frz-accent-hover:#6BB1EC; --frz-accent-soft:#15314a; --frz-accent-soft-border:#24506f;
-    --frz-text:#D3D8DE; --frz-text-secondary:#A8AEB8; --frz-text-muted:#8A9099; --frz-danger:#F28B92;
+    --frz-text:#D3D8DE; --frz-text-secondary:#A8AEB8; --frz-text-muted:#9AA1AB;  /* MODAL-SURFACE-1 Part B: lifted from #8A9099 (dark only) so muted text clears WCAG AA (>=4.5) on the newly-elevated modal surface; re-measured, not predicted */ --frz-danger:#F28B92;
     --frz-alert:#e8394a; --frz-warn:#e8a000;
     --frz-warn-text:#e8a000;
   }
@@ -20742,7 +20753,15 @@ if ('serviceWorker' in navigator) {
      residual indigo accent + warm grays on every .modal-bg modal). */
   body.frz-beta-active .modal-bg {
     --accent:var(--frz-accent);
-    --surface:var(--frz-bg-app); --surface2:var(--frz-bg-app);
+    /* MODAL-SURFACE-1 Part B: repoint the modal elevation bridge. A classic modal paints with var(--surface);
+       this bridge used to remap BOTH --surface and --surface2 to --frz-bg-app (the GROUND rung), so a modal
+       matched the app body - invisible in light (ground is near-white), flat in dark (ground is darkest).
+       --surface now reads --frz-bg-elevated (the modal lifts one clear step above the body); --surface2 reads
+       --frz-bg-surface (one rung BELOW the modal), because inside a modal --surface2 styles recessed inner
+       surfaces - the description .rte-box and form inputs - which should read as a subtle inset on the lifted
+       modal, not drop back to the body colour. Light: both resolve to #FFFFFF, so modals become pure white
+       (accepted). The coupled --frz-text-muted lift (dark only) keeps AA on the new, lighter modal surface. */
+    --surface:var(--frz-bg-elevated); --surface2:var(--frz-bg-surface);
     --border:var(--frz-border); --row-sep:var(--frz-border);
     --muted:var(--frz-text-muted); --text:var(--frz-text);
   }
