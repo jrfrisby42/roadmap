@@ -51,8 +51,10 @@ def test_all_four_carry_and_express_sites():
     assert re.search(r"'blockedReason','reporter'\]\.forEach\(function\(pk\)", src), "syncURL carry set must include reporter"
     # 2. syncURL _selfSer-where-offered
     assert re.search(r"'blockedReason','reporter'\]\.forEach\(function\(x\)\{ if\(CFG\[view\]\.chips", src), "_selfSer must include reporter"
-    # 3. _frzCarryQS keys
-    assert re.search(r"'blockedReason','reporter'\] : \['project'\]", src), "_frzCarryQS keys must include reporter"
+    # 3. _frzCarryQS keys - ITEM-VIEWNAV-1 moved this list into the shared _FRZ_CARRY_KEYS constant (one list,
+    #    two readers: URL-based _frzCarryQS + state-based _frzCarryQSFromState). reporter must still be carried.
+    assert re.search(r"var _FRZ_CARRY_KEYS = \['project'.*'blockedReason','reporter'\];", src), "the carry constant must include reporter"
+    assert "var keys = includeChips ? _FRZ_CARRY_KEYS : ['project'];" in src, "_frzCarryQS must read the shared constant"
     # 4. _frzViewExpressesSaved appliedP
     assert re.search(r"'blockedReason','reporter'\]\.forEach\(function\(x\)\{ if\(\(CFG\[view\]\.chips", src), "_frzViewExpressesSaved must include reporter"
 

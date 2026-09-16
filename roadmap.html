@@ -2683,7 +2683,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.40.2';
+const APP_VERSION = '6.40.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -19826,6 +19826,14 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-crumbs { color:var(--frz-text-muted); font-size:13px; display:flex; gap:6px; align-items:center; min-width:0; }
   .frz-beta .frz-crumbs .frz-crumb-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:340px; }
   .frz-beta .frz-crumb-key { color:var(--frz-accent); font-weight:700; cursor:pointer; }
+  /* ITEM-VIEWNAV-1 2.3: the crumb's Space segment is clickable (scopes the List to that Space). A persistent
+     dotted underline + pointer reads as clickable WITHOUT relying on colour alone; hover promotes to accent.
+     DELIBERATE DIVERGENCE from COMPOSER-REFINE-1 Stage 1.4, which styled the COMPOSER header Space chip to
+     NOT read as interactive (it is a label beside the control that edits Space). Two Space affordances, two
+     behaviours, on purpose: this is a breadcrumb segment, that one is a label. Do not "harmonise" them. */
+  .frz-beta .frz-crumb-space { cursor:pointer; text-decoration:underline; text-decoration-style:dotted; text-decoration-color:var(--frz-border-strong); text-underline-offset:2px; }
+  .frz-beta .frz-crumb-space:hover { color:var(--frz-accent); text-decoration-color:var(--frz-accent); }
+  .frz-beta .frz-crumb-space:focus-visible { outline:2px solid var(--frz-accent); outline-offset:2px; border-radius:3px; }
   .frz-beta .frz-back { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); color:var(--frz-text-secondary); font:inherit; font-size:13px; font-weight:600; padding:5px 11px; border-radius:var(--frz-radius-control); cursor:pointer; white-space:nowrap; }
   .frz-beta .frz-back:hover { border-color:var(--frz-accent); color:var(--frz-accent); }
   .frz-beta .frz-back svg { width:14px; height:14px; }
@@ -20621,6 +20629,12 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-watch { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); color:var(--frz-text-secondary); font-weight:700; font-size:11px; border-radius:999px; padding:3px 11px; cursor:pointer; }
   .frz-beta .frz-watch .frz-ic { width:13px; height:13px; }
   .frz-beta .frz-watch:hover { border-color:var(--frz-accent); color:var(--frz-accent); }
+  /* ITEM-VIEWNAV-1 2.1: the Views pill reuses .frz-watch (same height/radius/border as Watch + Flag); it adds
+     a trailing caret as its dropdown affordance and an explicit focus ring. Fixed label "Views", fixed width. */
+  .frz-beta .frz-views-pill { gap:4px; }
+  .frz-beta .frz-views-pill .frz-chip-caret { width:12px; height:12px; opacity:.7; }
+  .frz-beta .frz-views-pill:focus-visible { outline:2px solid var(--frz-accent); outline-offset:2px; }
+  .frz-beta .frz-pop-opt:focus-visible { outline:2px solid var(--frz-accent); outline-offset:-2px; }
   .frz-beta .frz-watch.is-on { background:var(--frz-accent-soft); border-color:var(--frz-accent-soft-border); color:var(--frz-accent); }
   .frz-beta .frz-mention { background:var(--frz-accent-soft); color:var(--frz-accent); border-radius:4px; padding:0 4px; font-weight:600; white-space:nowrap; }
   /* The production `.rte-box *` rule forces description children to black text /
@@ -22511,6 +22525,27 @@ if ('serviceWorker' in navigator) {
         b.addEventListener('click', function(){ closePop(); _frzNavView(v); });
         pop.appendChild(b);
       });
+    });
+  }
+  // ITEM-VIEWNAV-1: the item page's "Views" pill dropdown. Lists _frzOrderedViews() (the SAME gated source
+  // the tab strip uses - NOT the width-responsive _frzTabSplit, since a fixed-width pill has no overflow),
+  // marks the arrived-from view (_frzItemArrivalView; marks NOTHING when null = cold deep-link / restore),
+  // and navigates via _frzNavView so filters + scope carry EXACTLY as an in-app tab switch (D3). openPop gives
+  // the shared dismissal (closes when another pop opens; _popAway closes on outside mousedown). Escape closes
+  // the pop and restores focus to the pill; the first (or marked) option is focused on open for keyboard flow.
+  var _frzItemArrivalView = null;   // in-memory only (NOT persisted): set by openItem on a genuine in-app arrival
+  function _frzViewsMenu(anchor){
+    openPop(anchor, function(pop){
+      _frzOrderedViews().forEach(function(v){
+        var marked=(_frzItemArrivalView===v);
+        var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt'+(marked?' is-active':'');
+        if(marked) b.setAttribute('aria-current','true');
+        b.innerHTML='<span class="frz-board-ic">'+_frzViewIcon(v)+'</span><span>'+esc(VIEW_LABEL[v])+'</span>';
+        b.addEventListener('click', function(){ closePop(); anchor.setAttribute('aria-expanded','false'); _frzNavViewFromItem(v); });   // item-page carry (state, not URL)
+        pop.appendChild(b);
+      });
+      pop.addEventListener('keydown', function(ev){ if(ev.key==='Escape'){ ev.stopPropagation(); closePop(); anchor.setAttribute('aria-expanded','false'); try{ anchor.focus(); }catch(e){} } });
+      setTimeout(function(){ try{ (pop.querySelector('.frz-pop-opt.is-active')||pop.querySelector('.frz-pop-opt')||pop).focus(); }catch(e){} }, 0);
     });
   }
   // 3.3: the scope (Space) chip - the `· All Spaces` crumb becomes the first filter chip when the flag
@@ -25563,6 +25598,12 @@ if ('serviceWorker' in navigator) {
       }).catch(function(){ delete state._itemFetchTried[id]; _call('showLoading', false); _call('showToast','Could not load item #'+id+' - check your connection','error'); });   // ITEM-FETCH-2 follow-up: the fetch FAILED and the server was never successfully asked, so CLEAR the guard - a failed attempt must be RETRYABLE (else the next click wrongly short-circuits to not-found, collapsing load-failure into not-found). Guard kept ONLY on success-but-absent (a genuine not-found).
       return;
     }
+    // ITEM-VIEWNAV-1 (D4): capture the arrived-from view for the Views pill's "you came from here" mark.
+    // A genuine in-app arrival (navigate('/item/N'), or a direct openItem from a list row / dashboard / todo)
+    // carries the real underlying view in state.view. A cold deep-link / history restore passes
+    // arrivalUnknown:true (routeFromLocation set state.view to lastView(), a GUESS), so we mark NOTHING there -
+    // a wrong mark ("you came from Gantt" for an email link) is worse than no mark.
+    _frzItemArrivalView = (opts && opts.arrivalUnknown) ? null : (state.view || null);
     // PANEL-FIX: the item page is a full-screen overlay, but the List detail panel is position:fixed and
     // would float over it (e.g. open the panel in List, then click a notification that jumps to an item).
     // Close it here so it tears down however the item page is reached (notification, deep link, crumb, etc.).
@@ -25603,19 +25644,51 @@ if ('serviceWorker' in navigator) {
     var _ps = _val('projects',[])||[];
     var parent = (p.parent!=null) ? _ps.filter(function(x){return x.id===p.parent;})[0] : null;
     var projDot = '<span class="frz-dot" style="background:'+(_call('projectColor', p.product)||'var(--frz-accent)')+';margin-right:2px"></span>';
+    // ITEM-VIEWNAV-1 2.3: the Space segment is a distinct <span> (unchanged structure - no crumb restructure).
+    // When the item has a real Space (present and not the __all__ sentinel) it becomes an interactive link to
+    // the List scoped to that Space; otherwise it stays plain text and is NOT linked.
+    var _spName = p.product || '';
+    var _spaceLink = (_spName && _spName!=='__all__');
+    var spaceCrumb = _spaceLink
+      ? '<span class="frz-crumb-space" id="frzCrumbSpace" role="link" tabindex="0" title="View all items in '+escA(_spName)+'">'+esc(_spName)+'</span>'
+      : '<span>'+esc(p.product||'-')+'</span>';
     var parentCrumb = parent ? '<span class="frz-crumb-key frz-crumb-parent" id="frzParentCrumb" title="Open parent">'+(parent.itemKey?esc(parent.itemKey):esc(parent.name||'parent'))+'</span> › ' : '';
     var selfCrumb = '<span class="frz-crumb-key" id="frzCrumbKey"'+(p.itemKey?' title="Copy key"':'')+' style="display:inline-flex;align-items:center;gap:4px">'+(_call('typeIconHTML',p.type,{size:14})||'')+'<span>'+(p.itemKey?esc(p.itemKey):esc(p.name||''))+'</span></span>';   // type icon (left) + key, or name fallback if keyless
     document.getElementById('frzLeft').innerHTML =
       '<button class="frz-back" id="frzBack">'+IC.back+' Back</button>'+
-      '<span class="frz-crumbs">'+projDot+'<span>'+esc(p.product||'-')+'</span> › '+parentCrumb+selfCrumb+'</span>';
+      '<span class="frz-crumbs">'+projDot+spaceCrumb+' › '+parentCrumb+selfCrumb+'</span>';
     // Stage 1: status + priority DISPLAY chips relocated into the page header
     // (_frzItemHeader, via the render→_frzItemLayout chain); rail keeps the editable
     // status. The top bar keeps only the action buttons.
     var badges='';
+    // ITEM-VIEWNAV-1 2.1: the Views pill - flag-on desktop only. RENDERED conditionally (not CSS-hidden), so
+    // under flag-off it is genuinely absent from the DOM (the rail already carries VIEWS there). _frzIA() is
+    // window._topbarViews && !_frzIsPhone(), so this also excludes the <=640px mobile layout. Fixed label,
+    // fixed width; the caret is its dropdown affordance (no leading icon - no approved "views" glyph exists).
+    if(_frzIA()){
+      badges += '<button class="frz-watch frz-views-pill" id="frzViewsPill" aria-haspopup="menu" aria-expanded="false" title="Go to a view (keeps your current filters)"><span>Views</span>'+IC.caret+'</button>';
+    }
     badges += '<button class="frz-watch" id="frzWatchBtn" title="Watch this item">'+IC.bell+'<span>Watch</span></button>';   // Stage 3b
     badges += '<button class="frz-watch" id="frzFlagBtn" title="Flag an issue"><svg class="frz-ic" viewBox="0 0 16 16" style="width:13px;height:13px"><path d="M4 14V3M4 3.5C5.5 2.5 7 2.5 8.5 3.5S11.5 4.5 13 3.5V9c-1.5 1-3 1-4.5 0S5.5 8 4 9"/></svg><span>Flag</span></button>';   // item 4: reuse production flag dialog
     document.getElementById('frzBadges').innerHTML = badges;
     loadWatchState(id);
+    // ITEM-VIEWNAV-1: wire the Views pill (flag-on only, so the element may be absent). Click opens the
+    // dropdown via openPop (shared dismissal). The pill keeps focus, so Escape on it also closes the menu.
+    var _vp=document.getElementById('frzViewsPill');
+    if(_vp){
+      _vp.addEventListener('click', function(e){ e.stopPropagation(); _frzViewsMenu(_vp); _vp.setAttribute('aria-expanded','true'); });
+      _vp.addEventListener('keydown', function(ev){ if(ev.key==='Escape' && state.pop){ ev.preventDefault(); ev.stopPropagation(); closePop(); _vp.setAttribute('aria-expanded','false'); } });
+    }
+    // ITEM-VIEWNAV-1 2.3: wire the clickable Space crumb (present only when the item has a real Space).
+    // setProject persists + sets the scope (matching the scope chip); _frzNavView('list') then carries the
+    // now-scoped state + the untouched chips through the SAME path an in-app switch uses - no URL built here,
+    // no chip altered. Keyboard: Enter/Space activate the role="link" span.
+    var _scs=document.getElementById('frzCrumbSpace');
+    if(_scs){
+      var _goSpace=function(){ setProject(p.product); _frzNavViewFromItem('list'); };   // scope to the item's Space (setProject persists it), carry the live chips via the state carry (2.3: chips unaltered)
+      _scs.addEventListener('click', _goSpace);
+      _scs.addEventListener('keydown', function(ev){ if(ev.key==='Enter' || ev.key===' '){ ev.preventDefault(); _goSpace(); } });
+    }
     var fb=document.getElementById('frzFlagBtn'); if(fb) fb.addEventListener('click', function(){ _call('openFlagIssue', id); });
     document.getElementById('frzBack').addEventListener('click', goBack);
     var ck=document.getElementById('frzCrumbKey'); if(ck && p.itemKey) ck.addEventListener('click', function(){ try{ navigator.clipboard.writeText(p.itemKey); _call('showToast','Copied '+p.itemKey); }catch(e){} });
@@ -25740,11 +25813,11 @@ if ('serviceWorker' in navigator) {
       // never the wrong-team item. Run the gate BEFORE resolving the id against the active team.
       if(_frzCrossTeamGate(_itm, parseInt(m[1],10), _iky)){ navigate('/'+(lastView()||'gantt'), true); return; }
       var v = lastView()||'gantt'; state.view=v; applyChromeHiding();
-      history.replaceState({frzView:v},'','/'+v); state.itemFromApp=true; openItem(parseInt(m[1],10), {push:true, key:_iky}); return;
+      history.replaceState({frzView:v},'','/'+v); state.itemFromApp=true; openItem(parseInt(m[1],10), {push:true, key:_iky, arrivalUnknown:true}); return;   // ITEM-VIEWNAV-1 D4: cold deep-link/restore -> arrival view is a guess (lastView()), so the pill marks nothing
     }
     if (qItem){
       var v2 = lastView()||'gantt'; state.view=v2; applyChromeHiding();
-      history.replaceState({frzView:v2},'','/'+v2); state.itemFromApp=true; openItem(parseInt(qItem,10), {push:true}); return;
+      history.replaceState({frzView:v2},'','/'+v2); state.itemFromApp=true; openItem(parseInt(qItem,10), {push:true, arrivalUnknown:true}); return;   // ITEM-VIEWNAV-1 D4: ?item= cold deep-link -> arrival unknown, mark nothing
     }
     if (/^\/my-work(\/|$)/.test(path)){ navigate('/my-home', true); return; }   // Stage 5: absorbed into My Home
     var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar)/);
@@ -26077,11 +26150,46 @@ if ('serviceWorker' in navigator) {
   // model, and syncURL wouldn't re-emit them on the destination anyway). includeChips=false
   // → project only (for non-shared targets like Planning/Dashboard, where chips don't travel).
   // PART-4.1 (SHELL-DEBT-1): _FRZ_SHARED_VIEWS={list,kanban,gantt} removed - defined but never read.
+  // ITEM-VIEWNAV-1: the ONE cross-view carry key list (URL param names). TWO readers share it so they cannot
+  // drift - a shared constant makes an anti-drift guard unnecessary: _frzCarryQS reads these keys' VALUES from
+  // the URL (the tab strip / rail path); _frzCarryQSFromState reads the SAME keys' values from in-memory state
+  // (the item-page path). Only the SOURCE of the key names moved; _frzCarryQS's behaviour is unchanged for all
+  // four existing callers.
+  var _FRZ_CARRY_KEYS = ['project','owner','type','status','assignee','sprint','priority','dept','location','resolutionType','blockedReason','reporter'];
   function _frzCarryQS(includeChips){
-    var keys = includeChips ? ['project','owner','type','status','assignee','sprint','priority','dept','location','resolutionType','blockedReason','reporter'] : ['project'];   // Stage 3: carry sprint across shared views; + opt-in priority/dept. FIELDS-CARRY-2: +the three FIELDS-2 params. REPORTER-TEXT-1: +reporter - the view-tab / rail-click carry path (syncURL preserves it on the destination's canonicalization). Reads the CANONICAL URL, so a chip cleared on the List (already absent via syncURL's _selfSer) is not carried -> stays cleared
-    var src=new URLSearchParams(location.search), out=new URLSearchParams();
+    var keys = includeChips ? _FRZ_CARRY_KEYS : ['project'];   // shared constant (see _FRZ_CARRY_KEYS) - the tab strip / rail carry
+    var src=new URLSearchParams(location.search), out=new URLSearchParams();   // reads the CANONICAL URL: a chip cleared on the List (absent via syncURL's _selfSer) is not carried -> stays cleared
     keys.forEach(function(k){ var v=src.get(k); if(v!=null && v!=='') out.set(k, v); });
     var s=out.toString(); return s ? ('?'+s) : '';
+  }
+  // ITEM-VIEWNAV-1: the item-page carry. Item routes are FILTER-LESS in the URL (/item/N?team&key), so the
+  // URL-based _frzCarryQS would carry NOTHING from an item page - but navigate('/item/N') returns before
+  // applyURLToFilters, so the originating view's filters are still live in state (scope + CHIPS). This reads
+  // the SAME _FRZ_CARRY_KEYS from that state, reproducing the value-shapes syncURL would have emitted
+  // (project||__all__, state.sprintFilter, CHIPS[param].get().join(',')), so the pill / Space crumb carry
+  // EXACTLY what an in-app view switch does (D3). DELIBERATELY SEPARATE from _frzCarryQS - do NOT fold a
+  // URL->state fallback into _frzCarryQS: COLDLOAD-2 leaves a saved filter RESTING in memory while the URL
+  // intentionally does NOT express it, so a blanket fallback would resurrect a resting filter as applied.
+  // This state reader is for the item-page controls ONLY, where the URL is known to be filter-less.
+  function _frzCarryQSFromState(includeChips){
+    var keys = includeChips ? _FRZ_CARRY_KEYS : ['project'];
+    var byParam = {}; for(var ck in CHIPS){ if(CHIPS[ck] && CHIPS[ck].param) byParam[CHIPS[ck].param]=CHIPS[ck]; }   // URL param name -> chip
+    var out = new URLSearchParams();
+    keys.forEach(function(k){
+      var v='';
+      if(k==='project') v = state.project || '__all__';                 // matches syncURL: project emitted always, incl __all__
+      else if(k==='sprint') v = state.sprintFilter || '';               // kanban sprint scope
+      else if(byParam[k]){ var sel=byParam[k].get(); v = (sel && sel.length) ? sel.join(',') : ''; }   // a chip param: same as syncURL
+      if(v!=null && v!=='') out.set(k, v);
+    });
+    var s=out.toString(); return s ? ('?'+s) : '';
+  }
+  // ITEM-VIEWNAV-1: navigate to a view FROM an item page, carrying the LIVE in-memory filters (the URL is
+  // filter-less here). Mirrors _frzNavView's kanban-board special-case, but sources the carry from state.
+  function _frzNavViewFromItem(v){
+    var qs=_frzCarryQSFromState(true);
+    if(v==='kanban' && state.board && state.board!=='__all__'){ var bu=new URLSearchParams(qs.replace(/^\?/,'')); bu.set('board', state.board); qs='?'+bu.toString(); }
+    navigate('/'+v+qs, false);
   }
   function saveCurrent(anchor){
     namePopover(anchor, { placeholder:'Saved filter name…', saveLabel:'Save', onSave:function(name){

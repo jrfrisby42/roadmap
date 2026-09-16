@@ -35,11 +35,15 @@ def test_frzcarryqs_keys_include_fields2():
     # _frzCarryQS is the cross-view carry path a view-tab / rail click uses; its key list must carry the three
     # too, else the param is dropped before navigation and syncURL never sees it (the 6.37.4 miss).
     src = _src()
-    m = re.search(r"var keys = includeChips \? \[('project','owner'[^\]]*)\] : \['project'\]", src)
-    assert m, "_frzCarryQS key list was not found"
+    # ITEM-VIEWNAV-1 extracted the carry key list into the shared constant _FRZ_CARRY_KEYS (one list, two
+    # readers: _frzCarryQS reads the URL, _frzCarryQSFromState reads state). The invariant is unchanged - the
+    # carry set must include the three FIELDS-2 params - it just lives in the constant now.
+    m = re.search(r"var _FRZ_CARRY_KEYS = \[('project','owner'[^\]]*)\];", src)
+    assert m, "_FRZ_CARRY_KEYS constant was not found"
     body = m.group(1)
     for p in ("location", "resolutionType", "blockedReason"):
-        assert f"'{p}'" in body, f"_frzCarryQS.keys must include {p} (the tab-click carry path)"
+        assert f"'{p}'" in body, f"_FRZ_CARRY_KEYS must include {p} (the tab-click carry path)"
+    assert "var keys = includeChips ? _FRZ_CARRY_KEYS : ['project'];" in src, "_frzCarryQS must read the shared constant"
 
 
 def test_view_expresses_saved_includes_fields2():
