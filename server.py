@@ -1730,7 +1730,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.40.9"
+APP_VERSION = "6.41.0"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -4647,26 +4647,36 @@ def _normalize_departments(arr):
         seen.add(k); out.append(d)
     return out
 
-def _union_departments(team, item_depts):
-    """Union an item's departments into the shared `departments` config list
-    (case-insensitive, first-seen casing). Lets editors create departments by
-    typing them on a ticket - same key the admin config path would write."""
-    item_depts = _normalize_departments(item_depts)
-    if not item_depts:
-        return
-    with db(team) as c:
+def _configured_departments(team, c=None):
+    """The team's configured `departments` vocabulary as a set of exact strings. Reads through the
+    passed cursor when already inside a transaction (so it sees that transaction's view without opening
+    a nested connection), else opens its own read."""
+    if c is not None:
         row = c.execute("SELECT value FROM config WHERE key='departments'").fetchone()
-        cur = json.loads(row["value"]) if row else []
-        if not isinstance(cur, list):
+        try:
+            cur = json.loads(row["value"]) if row else []
+        except Exception:
             cur = []
-        seen = {str(d).casefold() for d in cur if isinstance(d, str)}
-        changed = False
-        for d in item_depts:
-            if d.casefold() not in seen:
-                cur.append(d); seen.add(d.casefold()); changed = True
-        if changed:
-            c.execute("INSERT INTO config(key,value) VALUES('departments',?) "
-                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(cur),))
+    else:
+        cur = _cfg_val(team, "departments", []) or []
+    return {d for d in cur if isinstance(d, str)}
+
+def _validate_departments(team, incoming, allowed_existing=None, c=None):
+    """DEPT-PICKER-1: close the department vocabulary. Return the trimmed/deduped list when every value
+    is either CONFIGURED (exact match - no case-fold, no trim-and-guess, no auto-correct of `fin` to
+    `FINANCE`) or GRANDFATHERED via `allowed_existing` - the departments ALREADY on the stored item, so
+    a pre-existing out-of-vocabulary value stays saveable and removable (never re-offered as a choice).
+    Raise 422 on any value that is neither. This is the load-bearing guard: the API, not the picker,
+    is what actually keeps `config.departments` from growing. No normalization beyond the existing trim
+    + case-insensitive dedup (`_normalize_departments`); the union-growth path is deliberately retired."""
+    depts = _normalize_departments(incoming)
+    vocab = _configured_departments(team, c)
+    grand = {d for d in (allowed_existing or []) if isinstance(d, str)}
+    unknown = [d for d in depts if d not in vocab and d not in grand]
+    if unknown:
+        raise HTTPException(422, "Unknown department" + ("s" if len(unknown) > 1 else "") + ": "
+                            + ", ".join(unknown) + ". Choose from the configured Departments list.")
+    return depts
 
 # ── Owner bucketing ───────────────────────────────────────────────────────────
 # An item's/assignment's owner (its capacity pool) can be derived from its assignee:
@@ -4927,7 +4937,9 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     if "parallelResources" in body:
         body["parallelResources"] = round_up_to_quarter(body["parallelResources"])
     if "departments" in body:
-        body["departments"] = _normalize_departments(body.get("departments"))
+        # DEPT-PICKER-1: close the vocabulary on create (no grandfathering - a fresh item has no prior
+        # values). An unknown department -> 422 BEFORE the insert; config.departments never grows from a save.
+        body["departments"] = _validate_departments(team, body.get("departments"))
     # externalRefs is server-owned (AssetHub integration): a client may NEVER seed it on
     # create - only a server-side hook sets it, via _append_external_ref. Strip it BEFORE
     # the insert so the stored blob AND the returned body are clean. (The other creation
@@ -5003,10 +5015,8 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
         _create_changes = {"attachmentsDropped": _att_dropped}   # B.5-style fold: staff-discoverable, names not keys
         body["attachmentsDropped"] = _att_dropped                # response-only; the client tells the user
     write_audit(team, "create", username, body["id"], body.get("name",""), changes=_create_changes)
-    try:
-        _union_departments(team, body.get("departments"))   # persist any new departments (best-effort)
-    except Exception as e:
-        log.warning(f"[Departments] union after create failed for item {body['id']}: {e}")
+    # DEPT-PICKER-1: the config-growth union is retired - departments were validated against the
+    # configured vocabulary above (unknown values 422'd before the insert), so there is nothing to grow.
     # Stage 3b: notifications (post-commit, best-effort - never fail the create)
     try:
         _add_watchers(team, body["id"], [username, body.get("assignee")])
@@ -5167,7 +5177,14 @@ def update_project(pid: int, body: dict, background: BackgroundTasks = None,
             else:
                 merged.pop(_srv, None)
         if "departments" in body:
-            merged["departments"] = _normalize_departments(body.get("departments"))
+            # DEPT-PICKER-1: close the vocabulary on update. Grandfather set = the departments in the
+            # STORED blob (`old`, loaded from the DB above), NOT the incoming payload: update_project
+            # replaces the blob wholesale, so trusting the payload would let a client grandfather any
+            # value by sending it twice. A configured value or an already-stored value is kept (so a
+            # pre-existing out-of-vocabulary value stays saveable and removable); a NEW unknown -> 422,
+            # which rolls back this transaction with no write.
+            merged["departments"] = _validate_departments(team, body.get("departments"),
+                                                          allowed_existing=old.get("departments") or [], c=c)
         # Blocked binding: leaving the Blocked status clears the stashed pre-block
         # status; the open Blocked flag is auto-cleared post-commit below.
         # BLOCK-REASON-1 (Addendum A1): clear the coded Blocked reason + note HERE too, alongside
@@ -5208,10 +5225,8 @@ def update_project(pid: int, body: dict, background: BackgroundTasks = None,
         # edit (else the next save would 409 with a stale base token).
         merged["updated_ts"] = now_ts
     write_audit(team, "update", username, pid, merged.get("name",""), changes or None)
-    try:
-        _union_departments(team, merged.get("departments"))   # persist any new departments (best-effort)
-    except Exception as e:
-        log.warning(f"[Departments] union after update failed for item {pid}: {e}")
+    # DEPT-PICKER-1: the config-growth union is retired - departments were validated against the
+    # configured vocabulary (plus the item's grandfathered prior values) above, so nothing grows.
     merged["id"] = pid
     # Stage 3b: notifications (post-commit, best-effort - never fail/roll back the update)
     try:
@@ -8128,10 +8143,29 @@ def bulk_import(body: dict = Body(...), auth: dict = Depends(require_role("admin
     # Resolve display-name assignees against the users being IMPORTED (they are written to config
     # only after this loop), falling back to the team's current users when the import omits them.
     _import_users = body.get("users") if isinstance(body.get("users"), list) else None
+    # DEPT-PICKER-1: the post-import department vocabulary is the import's OWN departments config (written
+    # to config below), else the current team config when the import omits it. Item departments outside it
+    # are DROPPED per item and recorded on `departmentsDropped` (the attachmentsDropped precedent from
+    # PRECREATE-ATTACH-1 - per item, not a total, so what was lost is findable), never unioned in. Import
+    # is bulk and often one-shot, so it drops-and-continues like intake and transfer rather than 422'ing
+    # the whole reload over a few stale departments (create/update are the interactive exceptions that reject).
+    if isinstance(body.get("departments"), list):
+        _imp_dept_vocab = {d for d in body["departments"] if isinstance(d, str)}
+    else:
+        _imp_dept_vocab = _configured_departments(team)
+    _imp_dept_dropped = 0
     with db(team) as c:
         c.execute("DELETE FROM projects")
         for p in body.get("projects", []):
             p.pop("id", None)
+            if "departments" in p:
+                _kept, _dropped = [], []
+                for _d in _normalize_departments(p.get("departments")):
+                    (_kept if _d in _imp_dept_vocab else _dropped).append(_d)
+                p["departments"] = _kept
+                if _dropped:
+                    p["departmentsDropped"] = _dropped   # per-item record of what the closed vocabulary dropped
+                    _imp_dept_dropped += 1
             # externalRefs (AssetHub integration) intentionally ROUND-TRIPS through
             # export/import: this is admin-trusted JSON (destructive reload), a data-
             # management path, not a client forgery surface. Blobs insert verbatim, so an
@@ -8152,8 +8186,11 @@ def bulk_import(body: dict = Body(...), auth: dict = Depends(require_role("admin
                 c.execute("INSERT INTO config(key,value) VALUES(?,?) "
                           "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                           (key, json.dumps(val)))
-    write_audit(team, "import", username, changes={"imported": len(body.get("projects",[]))})
-    return {"ok": True, "imported": len(body.get("projects", []))}
+    _imp_changes = {"imported": len(body.get("projects", []))}
+    if _imp_dept_dropped:
+        _imp_changes["itemsWithDeptDropped"] = _imp_dept_dropped   # DEPT-PICKER-1: per-item detail is on each blob's departmentsDropped
+    write_audit(team, "import", username, changes=_imp_changes)
+    return {"ok": True, "imported": len(body.get("projects", [])), "itemsWithDeptDropped": _imp_dept_dropped}
 
 # ── Audit log viewer ──────────────────────────────────────────────────────────
 def _audit_forbidden_page(team: str) -> str:

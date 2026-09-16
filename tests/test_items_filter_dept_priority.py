@@ -53,75 +53,75 @@ def test_priority_ands_with_other_filters(client, team, admin_headers):
 # ── department (multi-valued, side index, contains-any) ───────────────────────
 
 def test_filter_by_single_department(client, team, admin_headers):
-    _mk(client, admin_headers, departments=["Hardware"])
-    _mk(client, admin_headers, departments=["Software"])
-    _mk(client, admin_headers, departments=["Hardware", "Network"])
-    assert _total(client, admin_headers, "department=Hardware") == 2   # contains-any
-    assert _total(client, admin_headers, "department=Network") == 1
+    _mk(client, admin_headers, departments=["SALES"])
+    _mk(client, admin_headers, departments=["SERVICE"])
+    _mk(client, admin_headers, departments=["SALES", "WAREHOUSE"])
+    assert _total(client, admin_headers, "department=SALES") == 2   # contains-any
+    assert _total(client, admin_headers, "department=WAREHOUSE") == 1
 
 
 def test_filter_by_multiple_departments_is_or(client, team, admin_headers):
-    _mk(client, admin_headers, departments=["Hardware"])
-    _mk(client, admin_headers, departments=["Software"])
-    _mk(client, admin_headers, departments=["Network"])
-    assert _total(client, admin_headers, "department=Hardware,Software") == 2
+    _mk(client, admin_headers, departments=["SALES"])
+    _mk(client, admin_headers, departments=["SERVICE"])
+    _mk(client, admin_headers, departments=["WAREHOUSE"])
+    assert _total(client, admin_headers, "department=SALES,SERVICE") == 2
 
 
 def test_multi_department_item_matches_any(client, team, admin_headers):
-    pid = _mk(client, admin_headers, departments=["Hardware", "Software", "Network"])
-    assert pid in _ids(client, admin_headers, "department=Software")
-    assert pid in _ids(client, admin_headers, "department=Hardware")
+    pid = _mk(client, admin_headers, departments=["SALES", "SERVICE", "WAREHOUSE"])
+    assert pid in _ids(client, admin_headers, "department=SERVICE")
+    assert pid in _ids(client, admin_headers, "department=SALES")
 
 
 def test_filter_no_department(client, team, admin_headers):
-    _mk(client, admin_headers, departments=["Hardware"])
+    _mk(client, admin_headers, departments=["SALES"])
     _mk(client, admin_headers)                    # no departments key
     _mk(client, admin_headers, departments=[])    # empty list
     assert _total(client, admin_headers, "department=__none__") == 2
-    assert _total(client, admin_headers, "department=Hardware,__none__") == 3
+    assert _total(client, admin_headers, "department=SALES,__none__") == 3
 
 
 def test_department_ands_with_other_filters(client, team, admin_headers):
-    _mk(client, admin_headers, departments=["Hardware"], type="Feature")
-    _mk(client, admin_headers, departments=["Hardware"], type="Enhancement")
-    assert _total(client, admin_headers, "department=Hardware&type=Feature") == 1
+    _mk(client, admin_headers, departments=["SALES"], type="Feature")
+    _mk(client, admin_headers, departments=["SALES"], type="Enhancement")
+    assert _total(client, admin_headers, "department=SALES&type=Feature") == 1
 
 
 # ── index stays in sync with the blob ─────────────────────────────────────────
 
 def test_department_index_resyncs_on_update(client, team, admin_headers):
-    pid = _mk(client, admin_headers, departments=["Hardware"])
-    assert _total(client, admin_headers, "department=Hardware") == 1
-    # move it to Software
-    client.put(f"/api/projects/{pid}", json={"departments": ["Software"]}, headers=admin_headers)
-    assert _total(client, admin_headers, "department=Hardware") == 0
-    assert _total(client, admin_headers, "department=Software") == 1
+    pid = _mk(client, admin_headers, departments=["SALES"])
+    assert _total(client, admin_headers, "department=SALES") == 1
+    # move it to SERVICE
+    client.put(f"/api/projects/{pid}", json={"departments": ["SERVICE"]}, headers=admin_headers)
+    assert _total(client, admin_headers, "department=SALES") == 0
+    assert _total(client, admin_headers, "department=SERVICE") == 1
     # clear it -> now "(No department)"
     client.put(f"/api/projects/{pid}", json={"departments": []}, headers=admin_headers)
-    assert _total(client, admin_headers, "department=Software") == 0
+    assert _total(client, admin_headers, "department=SERVICE") == 0
     assert _total(client, admin_headers, "department=__none__") == 1
 
 
 def test_backfill_rebuilds_index_for_preexisting_items(client, team, admin_headers):
     # Regression for the boot-time backfill bug: the index must be (re)buildable for items that
     # predate it. Simulate that by wiping the index + the fresh marker, then run the deferred pass.
-    _mk(client, admin_headers, departments=["Hardware"])
-    _mk(client, admin_headers, departments=["Software", "Network"])
+    _mk(client, admin_headers, departments=["SALES"])
+    _mk(client, admin_headers, departments=["SERVICE", "WAREHOUSE"])
     with server.db(team) as c:
         c.execute("DELETE FROM item_departments")
         c.execute("DELETE FROM config WHERE key='__deptIndexBuilt2'")
-    assert _total(client, admin_headers, "department=Hardware") == 0   # index empty -> nothing matches
+    assert _total(client, admin_headers, "department=SALES") == 0   # index empty -> nothing matches
     n = server._backfill_item_departments(team)
     assert n >= 2
-    assert _total(client, admin_headers, "department=Hardware") == 1
-    assert _total(client, admin_headers, "department=Network") == 1
+    assert _total(client, admin_headers, "department=SALES") == 1
+    assert _total(client, admin_headers, "department=WAREHOUSE") == 1
     assert server._backfill_item_departments(team) == -1               # marker set -> no-op second run
 
 
 def test_department_index_dropped_on_delete(client, team, admin_headers):
-    pid = _mk(client, admin_headers, departments=["Hardware"])
-    assert _total(client, admin_headers, "department=Hardware") == 1
+    pid = _mk(client, admin_headers, departments=["SALES"])
+    assert _total(client, admin_headers, "department=SALES") == 1
     client.delete(f"/api/projects/{pid}", headers=admin_headers)
-    assert _total(client, admin_headers, "department=Hardware") == 0
+    assert _total(client, admin_headers, "department=SALES") == 0
     with server.db(team) as c:
         assert c.execute("SELECT count(*) FROM item_departments WHERE item_id=?", (pid,)).fetchone()[0] == 0
