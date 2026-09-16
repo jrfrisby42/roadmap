@@ -281,13 +281,18 @@ def test_stage4_group_defaults_scheduled_and_needs_attention():
 
 
 def test_stage4_footer_last_modified_never_all_changes_saved():
+    # COMPOSER-REFINE-1 Stage 1.3 MOVED the edit footer's "Last modified <ts>" into the ITEM INFO group
+    # (no duplication). The footer edit-left slot is now cleared. The load-bearing invariant this test was
+    # written for survives unchanged: the modal footer must NEVER claim autosave ("All changes saved").
     src = _html()
     m = re.search(r"function _frzUpdateComposerFooterSpace\(\)\{.*?\n\}", src, re.DOTALL)
     assert m, "the footer-status function not found"
     body = m.group(0)
-    assert "'Last modified '" in body, "edit mode footer shows Last modified from updated_ts"
-    # the rendered footer must never claim autosave; check the function body, not our explaining comment
+    assert "'Last modified '" not in body, "the footer no longer renders Last modified (it moved to ITEM INFO)"
     assert "All changes saved" not in body, "the modal footer must never render 'All changes saved'"
+    # the Modified fact now lives in the ITEM INFO group instead
+    ii = re.search(r"function _frzComposerItemInfo\(p\)\{.*?\n\}", src, re.DOTALL)
+    assert ii and "row('Modified'" in ii.group(0), "the Modified fact must now render in the ITEM INFO group"
 
 
 def test_stage4_wired_edit_only_in_open():
@@ -634,7 +639,9 @@ def test_stage7_touch_targets_and_dominant_create():
         "the hero title must be a >=44px touch target inside the <=640px block (desktop keeps ~39px)"
     # ...and the desktop rule (the one with the hero font, outside the media block) must NOT carry a
     # min-height - its ~39px proportions are deliberate and shipped in Stage 3.
-    desktop_title = re.search(r"\.modal\.frz-composer input\.composer-title \{[^}]*font: 700 22px[^}]*\}", src)
+    # COMPOSER-REFINE-1 Stage 1.1 restyled the desktop hero title to 750 26px/1.3 with a 3px accent
+    # underline (was 700 22px). The desktop rule still carries the hero font and still has no min-height.
+    desktop_title = re.search(r"\.modal\.frz-composer input\.composer-title \{[^}]*font: 750 26px[^}]*\}", src)
     assert desktop_title, "desktop composer-title rule (hero font) not found"
     assert "min-height" not in desktop_title.group(0), \
         "desktop composer-title must keep its Stage 3 proportions (no min-height outside the media block)"
@@ -741,22 +748,212 @@ def test_polish_placeholder_and_strip_and_note():
 
 
 def test_polish_space_chip_in_header_and_footer_dropped():
-    # Parts 4+7: the Space appears in the header as a TINTED chip (both modes) - reusing the scope-chip
-    # 16%-tint derivation with NEUTRAL text (coloured text fails contrast for pale Space colours) - and the
-    # create footer's "Saves to <Space>" third copy is dropped.
+    # Parts 4+7 baseline: the Space renders in the header in BOTH modes and the create footer's
+    # "Saves to <Space>" third copy is dropped. COMPOSER-REFINE-1 Stage 1.4 SUPERSEDED Part 4's tinted
+    # pill: an accent/tinted fill read as a clickable control the display-only chip will not answer, so the
+    # chip is now a plain label (Space dot + neutral text, no border, no fill). Assert the NEW label form
+    # (fail-on-revert: re-introducing a tint/border/pill fails here), and keep the still-valid footer checks.
     src = _html()
     m = re.search(r"function _frzComposerSpaceChip\(space\)\{.*?\n\}", src, re.DOTALL)
     assert m, "_frzComposerSpaceChip helper not found"
     body = m.group(0)
-    assert "color-mix(in srgb, " in body and "16%, transparent" in body, \
-        "the chip fill must be the 16% tint of the Space colour (safe over any hue)"
-    assert "prod.color" in body or "prod && prod.color" in body, "the colour must come from the Space config"
-    # neutral ink on the chip (via CSS), full-colour border, and a fallback plain chip when no colour
-    assert ".composer-space-chip { display: inline-flex" in src and "color: var(--text);" in src, \
-        "the chip text must be neutral (var(--text)), not the Space colour"
+    assert "color-mix(" not in body, "Stage 1.4 dropped the tint fill - the chip must not reintroduce a color-mix pill"
+    assert "composer-space-name" in body, "the chip renders the Space name as neutral text"
+    assert "prod.color" in body, "the Space dot colour still comes from the Space config"
+    # the CSS reads as a label, not a control: no border, transparent background, neutral ink
+    csm = re.search(r"\.composer-space-chip \{[^}]*\}", src)
+    assert csm, ".composer-space-chip rule not found"
+    css = csm.group(0)
+    assert "border: 0;" in css and "background: transparent;" in css and "padding: 0;" in css, \
+        "the header Space chip must read as a label (no border, no fill, no pad), not an interactive pill"
+    assert "color: var(--text);" in css, "the chip text stays neutral (var(--text))"
     # the header builds the chip in BOTH modes
     assert src.count("_frzComposerSpaceChip(") >= 3, "the chip must render in edit and create (helper + 2 call sites)"
     # Part 7: the create footer no longer restates the Space
     assert "Saves to <b>" not in src, "the create footer must not restate the Space (dropped in Part 7)"
-    fm = re.search(r"function _frzUpdateComposerFooterSpace\(\)\{.*?\n\}", src, re.DOTALL)
+    fm = re.search(r"function _frzUpdateComposerFooterSpace\(\)\{.*?\n  \}", src, re.DOTALL)
     assert fm and "el.innerHTML = '';" in fm.group(0), "the create footer slot must be cleared, not 'Saves to'"
+
+
+# ── COMPOSER-REFINE-1 Stage 1: presentation refine (title, meta strip, ITEM INFO, header chip, grid) ──
+def test_refine1_canvas_title_size_underline():
+    # 1.6 case 1: the canvas title renders at 26px / 750 with a 3px accent underline (fail-on-revert).
+    src = _html()
+    # there are several .modal.frz-composer input.composer-title rules (base, :focus, and the mobile
+    # min-height bump); target the one carrying the hero font so the mobile 44px rule can't shadow it.
+    m = re.search(r"\.modal\.frz-composer input\.composer-title \{[^}]*font:[^}]*\}", src)
+    assert m, "the hero composer-title rule (with font) was not found"
+    rule = m.group(0)
+    assert "font: 750 26px/1.3" in rule, "title must be 26px / 750 weight"
+    assert "border-bottom: 3px solid var(--accent)" in rule, "title must carry a 3px accent underline"
+
+
+def test_refine1_meta_strip_chip_set():
+    # 1.6 cases 3+4: Assignee / Department / Team / Reporter, each with its field name; no Type chip, no
+    # Status chip, no raw email in the strip; the mandatory-label rationale survives as a code comment.
+    src = _html()
+    m = re.search(r"function _frzComposerMetaStrip\(p\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "_frzComposerMetaStrip not found"
+    body = m.group(0)
+    assert "chip('Assignee'" in body, "Assignee chip present"
+    assert "'Depts':'Dept'" in body or "chip(deps.length>1?'Depts':'Dept'" in body, "Department chip present (singular/plural)"
+    assert "chip('Team'" in body, "Team (pod) chip present"
+    assert "chip('Reporter'" in body, "Reporter chip present"
+    assert "chip('Type'" not in body, "the Type chip was dropped (Type is an always-visible grid cell)"
+    assert "chip('Status'" not in body, "no Status chip is added (Status is on-screen in the rail)"
+    assert "reporterEmail" not in body, "the reporter email must NOT render in the meta strip (it moved to Item Info)"
+    # the mandatory-label rule is stated so it survives a future edit
+    assert "MANDATORY" in body and "Support" in body, \
+        "the mandatory-label rule + the Support Type/pod ambiguity must be documented in a comment"
+    # fail-on-revert: the comment must NOT reclaim the false premise that Assignee/Department are editable in
+    # Ownership. Only Team (fDev) is an editable Ownership field; Assignee has no composer control at all.
+    assert "and Department live in the Ownership" not in body, \
+        "Assignee/Department are read-only context (no composer field); the comment must not say they live in Ownership"
+
+
+def test_refine1_item_info_group():
+    # 1.6 case 5: an ITEM INFO group carries Reporter (display name), the email, Created and Modified,
+    # collapsed by default and edit-only; nothing left duplicated (email out of the strip, Modified out of
+    # the footer).
+    src = _html()
+    assert re.search(r'<details class="composer-group" id="grpItemInfo"[^>]*style="display:none"', src), \
+        "the ITEM INFO group must exist and start hidden (revealed only in edit mode)"
+    assert 'id="composerItemInfoBody"' in src, "the ITEM INFO body container must exist"
+    m = re.search(r"function _frzComposerItemInfo\(p\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "_frzComposerItemInfo populate fn not found"
+    body = m.group(0)
+    for k in ("Reporter", "Email", "Created", "Modified"):
+        assert f"row('{k}'" in body, f"ITEM INFO must carry the {k} row"
+    assert "reporterEmail" in body and "mailto:" in body, "the email row is a mailto link built from reporterEmail"
+    assert "p.createdAt" in body and "p.updated_ts" in body, "Created/Modified read the real timestamps"
+    assert "if(!p){ wrap.style.display='none'" in body, "the group is hidden on create (no item)"
+    # collapsed by default
+    gd = re.search(r"function _frzComposerGroupDefaults\(p, id\)\{.*?\n  \}", src, re.DOTALL)
+    assert gd and "set('grpItemInfo', false)" in gd.group(0), "ITEM INFO must default collapsed"
+
+
+def test_refine1_footer_last_modified_moved_out():
+    # 1.6 case 5 (no duplication): "Last modified" is no longer RENDERED - it lives in ITEM INFO now. Check
+    # non-comment lines only (the string legitimately survives in two explaining comments).
+    src = _html()
+    code_lines = [ln for ln in src.splitlines() if not ln.lstrip().startswith("//")]
+    assert not any("Last modified" in ln for ln in code_lines), \
+        "'Last modified' must not render anywhere in code (it moved to the ITEM INFO group; only comments may mention it)"
+    fm = re.search(r"function _frzUpdateComposerFooterSpace\(\)\{.*?\n\}", src, re.DOTALL)
+    assert fm and "if(editingId){" in fm.group(0) and "el.innerHTML = '';" in fm.group(0), \
+        "the edit footer-left slot must be cleared, not carry a Last-modified line"
+
+
+def test_refine1_quick_grid_order_space_priority_type():
+    # 1.6 case 7: grid order is Space, Priority, Type (Assignee moved into Ownership, so it is not a cell).
+    src = _html()
+    i_grid = src.find('class="composer-qgrid"')
+    assert i_grid != -1, "composer-qgrid region not found"
+    i_prod, i_prio, i_type = src.find('id="qcellProduct"'), src.find('id="priorityRow"'), src.find('id="qcellType"')
+    assert i_grid < i_prod < i_prio < i_type, \
+        f"grid order must be Space -> Priority -> Type (positions {i_prod},{i_prio},{i_type} after grid {i_grid})"
+    # the comment recording the deliberate order + Assignee's exclusion must survive
+    assert "Space, Priority, Type" in src, "the grid-order rationale comment must survive"
+
+
+def test_refine1_invariants_attach_and_status_unchanged():
+    # 1.6 cases 9+10: PRECREATE-ATTACH-1's create-mode attachment control and the rail Status control are
+    # both untouched by Stage 1.
+    src = _html()
+    assert "composer-attach-zone" in src, "the create-mode attachment control must still be present (invariant)"
+    assert "_frzUploadDraftAtt" in src, "the draft-attachment upload path must be untouched (invariant)"
+    assert re.search(r'<select id="fStatus"', src), "the rail Status control must be untouched (invariant)"
+
+
+# ── COMPOSER-REFINE-1 Addendum 1: the quick grid stacks at <=640px (Space full width; Priority+Type halves) ──
+def test_refine1_addendum1_grid_stacks_below_640():
+    src = _html()
+    # the three-across base rule is untouched (auto-fit at .composer-qgrid), for 641px and up
+    assert re.search(
+        r"\.modal\.frz-composer \.composer-qgrid \{ display: grid; grid-template-columns: repeat\(auto-fit, minmax\(88px, 1fr\)\); gap: 8px; \}",
+        src), "the three-across base rule (auto-fit minmax 88px) must be untouched for 641px+"
+    # a <=640px block STACKS the grid to two columns AND spans Space across both, placed AFTER the base rule
+    # so it wins the cascade. Find the last such media block that carries the stacking rules.
+    i_base = src.find(".composer-qgrid { display: grid; grid-template-columns: repeat(auto-fit")
+    assert i_base != -1, "base grid rule not found"
+    tail = src[i_base:]
+    m = re.search(r"@media \(max-width: 640px\)\{[^@]*?\.composer-qgrid \{ grid-template-columns: 1fr 1fr; \}"
+                  r"[^@]*?#qcellProduct \{ grid-column: 1 / -1; \}", tail, re.DOTALL)
+    assert m, "a <=640px block AFTER the base rule must set the grid to 1fr 1fr and span #qcellProduct full width"
+    # no NEW breakpoint was introduced (the stacking uses 640, the shell's existing breakpoint)
+    assert "grid-template-columns: 1fr 1fr;" in src and "#qcellProduct { grid-column: 1 / -1; }" in src
+
+
+def test_refine1_addendum1_touch_min_height_invariant_survives():
+    # the Stage 7 touch invariant must still hold after the grid restack: the hero-title min-height bump
+    # appears exactly once (inside the mobile block only). The stack added no input.composer-title rule.
+    src = _html()
+    assert src.count("input.composer-title { min-height: 44px; }") == 1, \
+        "the title min-height must still appear exactly once (the restack must not add another)"
+
+
+# ── COMPOSER-REFINE-1 Stage 2: the item key is a same-tab item-page link with a dirty guard ──────────────
+def test_refine2_key_is_same_tab_anchor_edit_only():
+    src = _html()
+    # the edit-branch header renders the key as a REAL anchor with an href to the item page, no target
+    # (same tab), distinct aria-label naming the item. Create branch renders no key.
+    m = re.search(r"var _keyLink = '<a class=\"composer-key\" id=\"composerKeyLink\" href=\"'\+escA\(_frzItemPageUrl\(p\.id\)\)", src)
+    assert m, "the key must be a real anchor to _frzItemPageUrl(p.id) (native ctrl/cmd/middle-click), not a span"
+    assert 'aria-label="Open item ' in src, "the key anchor needs a distinct aria-label naming the item"
+    assert 'title="Open the item page in this tab"' in src, "the key states its same-tab target"
+    # the key anchor markup carries no target (same tab); the ⤢ and #modalOpenPageBtn own the other roles
+    assert not re.search(r'id="composerKeyLink"[^\n]*target=\\?"_blank', src), \
+        "the key must open in the SAME tab (no target=_blank on the key anchor)"
+
+
+def test_refine2_dirty_state_exposed_confirmdiscard_unchanged():
+    src = _html()
+    # the dirty STATE is exposed read-only for the three-way guard...
+    assert "mb.__composerIsDirty = function(){ return dirty; };" in src, \
+        "the dirty state must be exposed read-only for the nav guard"
+    # ...WITHOUT widening confirmDiscard's contract (its existing binary shape is unchanged)
+    assert "function confirmDiscard(){ return !dirty || confirm('Discard unsaved changes?'); }" in src, \
+        "confirmDiscard's binary contract (Escape/backdrop/Close callers) must be untouched"
+
+
+def test_refine2_three_choice_dialog_and_guard():
+    src = _html()
+    # a three-choice dialog: Save and open / Discard and open / Stay
+    assert "function _frzComposerNavDialog(" in src, "the three-choice dialog helper must exist"
+    for label in ("Save and open", "Discard and open", "Stay"):
+        assert "'"+label+"'" in src, f"the dialog must offer '{label}'"
+    # the guard: save persists then navigates on success; discard navigates; stay does nothing
+    m = re.search(r"async function _frzComposerNavGuard\(id\)\{.*?\n\}", src, re.DOTALL)
+    assert m, "_frzComposerNavGuard not found"
+    g = m.group(0)
+    assert "if(choice==='stay') return;" in g, "Stay must leave the composer untouched"
+    assert "if(choice==='discard'){ location.assign(_frzItemPageUrl(id)); return; }" in g, "Discard navigates, edits gone"
+    assert "getElementById('saveBtn').click()" in g and "location.assign(_frzItemPageUrl(id))" in g, \
+        "Save runs the real save and navigates on success (modal close observed)"
+    assert "attributeFilter:['class']" in g, "Save must navigate only when the modal actually closes (success)"
+
+
+def test_refine2_nav_guard_listener_capture_and_modified_click():
+    src = _html()
+    # a document/capture click listener gates BOTH the key and the ⤢ (#itemPageLink); registered in the
+    # classic block so it runs before the beta interceptor (stopImmediatePropagation gates it).
+    m = re.search(r"document\.addEventListener\('click', function\(e\)\{.*?a\.id==='composerKeyLink'.*?\}, true\);", src, re.DOTALL)
+    assert m, "the nav guard must be a document/capture click listener keyed on the composer links"
+    g = m.group(0)
+    assert "a.id==='itemPageLink'" in g, "the guard must cover the expand arrow too (its pre-existing same-tab defect)"
+    assert "e.metaKey || e.ctrlKey || e.shiftKey || e.altKey" in g, "modified clicks must be recognised"
+    # a modified/middle click on EITHER control blocks the in-app interceptor so the browser opens a native
+    # new tab (no isKey gate any more - the ⤢ gets the same treatment as the key)
+    mod = re.search(r"e\.metaKey \|\| e\.ctrlKey \|\| e\.shiftKey \|\| e\.altKey\)\{\s*e\.stopImmediatePropagation\(\);", g)
+    assert mod, "a modified/middle click on either control must stopImmediatePropagation (native new tab)"
+    assert "if(isKey) e.stopImmediatePropagation()" not in g, "the modified-click new-tab handling must NOT be gated to the key only"
+    assert "mb.__composerIsDirty()" in g and "_frzComposerNavGuard(editingId)" in g, "a dirty plain click runs the three-way guard"
+
+
+def test_refine2_open_controls_invariants():
+    src = _html()
+    # #modalOpenPageBtn is unchanged (new tab); #itemPageLink (the ⤢) is unchanged (same tab, its own title)
+    assert re.search(r'id="modalOpenPageBtn"[^>]*target="_blank"', src), "the new-tab open button stays target=_blank (invariant)"
+    assert 'Open the full item page in a new tab (schedule, activity, comments)' in src, "its new-tab title is unchanged"
+    m = re.search(r'<a id="itemPageLink" href="#" title="Open the item page in this tab"', src)
+    assert m, "the expand arrow (⤢) stays a same-tab anchor with its 'in this tab' title (unchanged)"
