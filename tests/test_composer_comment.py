@@ -64,11 +64,13 @@ def test_comment1_modal_editor_reserved_and_styled():
         "the modal comment editable must have a usable min-height (it is outside .frz-beta so the shared rule does not reach it)"
     assert re.search(r"\.modal\.frz-composer #composerCommentComposer \.frz-rte\.frz-rte-comment \{ border:", src), \
         "the modal comment editor must have a visible box (border)"
-    # the placeholder + container RESERVE the mounted height so clicking does not shift the layout below
-    assert re.search(r"\.modal\.frz-composer #composerCommentComposer \{ min-height: 137px;", src), \
-        "the composer comment container must reserve the mounted height"
-    assert re.search(r"\.modal\.frz-composer #composerCommentComposer \.composer-cmt-ph \{ min-height: 137px;", src), \
-        "the placeholder must reserve the mounted height (no shrink/shift on mount)"
+    # DARK-AUDIT-1 Part A: the no-shift RESERVE was removed (nothing sits below #composerComments, so
+    # expanding on click pushes no visible content). The collapsed placeholder returns to ~36px. Fail-on-
+    # revert: the 137px reserve must NOT come back on the placeholder or the container.
+    assert "#composerCommentComposer { min-height: 137px;" not in src, \
+        "the container reserve must stay removed (nothing follows the comment box, so no reserve is needed)"
+    assert "#composerCommentComposer .composer-cmt-ph { min-height: 137px;" not in src, \
+        "the placeholder reserve must stay removed (collapsed placeholder returns to ~36px)"
 
 
 def test_comment1_invariants():
