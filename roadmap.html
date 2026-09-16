@@ -884,6 +884,19 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .modal.frz-composer .composer-cmt-ph { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--muted); font-size: 13px; padding: 9px 12px; cursor: text; }
   .modal.frz-composer .composer-cmt-ph:hover, .modal.frz-composer .composer-cmt-ph:focus { border-color: var(--accent); outline: none; }
   .modal.frz-composer #composerCommentComposer { margin-bottom: 12px; }
+  /* COMPOSER-COMMENT-1 Part B: the modal comment editor is a classic <body> child OUTSIDE .frz-beta, so the
+     .frz-beta comment-editor rules (container border, editable padding + min-height) never reach it - the
+     editable rendered as a bare ~16px line with no visible box. Reproduce the box here with the classic
+     tokens, give the editable a usable min-height, and RESERVE the placeholder to the mounted height so
+     clicking it neither shrinks the editable nor shifts the content below. Scoped to the modal; the item
+     page + List panel comment editors are unchanged. */
+  .modal.frz-composer #composerCommentComposer .frz-rte.frz-rte-comment { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+  .modal.frz-composer #composerCommentComposer .frz-rte.frz-rte-comment .ProseMirror { min-height: 62px; max-height: 220px; overflow-y: auto; padding: 8px 12px; outline: none; color: var(--text); font-size: 13px; line-height: 1.5; }
+  .modal.frz-composer #composerCommentComposer .frz-rte.frz-rte-comment .ProseMirror > p { margin: 0; }
+  /* reserve = mounted height (toolbar ~33 + bordered editable box 62+16+2 + gaps): the placeholder AND the
+     container hold it, so the click-to-mount swap does not move the content below. */
+  .modal.frz-composer #composerCommentComposer { min-height: 137px; }
+  .modal.frz-composer #composerCommentComposer .composer-cmt-ph { min-height: 137px; }
   .modal.frz-composer .composer-cmt-post { margin-top: 8px; background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: 6px; padding: 7px 14px; font-family: 'Lato', sans-serif; font-weight: 700; font-size: 13px; cursor: pointer; }
   .modal.frz-composer .composer-cmt-post:hover { background: var(--accent2, var(--accent)); filter: brightness(0.95); }
   .modal.frz-composer .composer-cmt-empty { font-size: 12px; color: var(--muted); padding: 6px 0; }
@@ -2683,7 +2696,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.40.3';
+const APP_VERSION = '6.40.4';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -6086,7 +6099,7 @@ function _frzComposerActivity(id){
       if(a.item_id !== id) return false;
       if(a.activity_type === 'Jira Sync' && a.new_value){ try{ if(JSON.parse(a.new_value).skipped) return false; }catch(e){} }
       return true;
-    }).sort((a,b)=>new Date(b.created_ts)-new Date(a.created_ts)).slice(0,6);
+    }).sort((a,b)=>new Date(b.created_ts)-new Date(a.created_ts)).slice(0,2);   // COMPOSER-COMMENT-1 Part A: cap the modal feed at the 2 most recent (edit-and-close surface); the full feed + History tab live on the item page, reachable via the "Full history" link below. Does not change the item page's feed or what is written to activity.
   wrap.style.display = '';
   if(!acts.length){ list.innerHTML = '<div class="composer-activity-empty">No activity recorded</div>'; return; }
   const AC_COLOR = {'At Risk':'#e8394a','Capacity Conflict':'#e8a000','Priority Change':'var(--accent)','Flagged Issue':'#e87000','Admin Override':'#7c3aed','Due Date Change':'var(--accent2)','Delay Date Change':'var(--accent2)'};
@@ -30637,7 +30650,7 @@ if ('serviceWorker' in navigator) {
     var mm=/(^|\s)@([A-Za-z0-9._-]*)$/.exec(before);
     if(!mm){ _closeMention(); return; }
     var prefix=mm[2], pos=sel.from, at=pos-prefix.length-1;
-    var users=_mentionUsers(prefix); if(!users.length){ _closeMention(); return; }
+    var users=_mentionUsers(prefix, ed._frzItem); if(!users.length){ _closeMention(); return; }   // COMPOSER-COMMENT-1: pass THIS editor's item so the reporter gate works in the modal/panel too
     var c; try{ c=ed.view.coordsAtPos(pos); }catch(e){ return; }
     _openMentionMenu(c.left, c.bottom+4, users, function(u){
       ed.chain().focus().deleteRange({ from:at, to:pos }).insertContent([{ type:'mention', attrs:{ user:u } }, { type:'text', text:' ' }]).run();
@@ -30927,6 +30940,10 @@ if ('serviceWorker' in navigator) {
         }
       });
       host._frzEd=ed;
+      // COMPOSER-COMMENT-1 Part B: bind the comment's TARGET item to the editor so the @mention typeahead
+      // resolves the reporter gate from THIS surface's item (modal / panel / item page), not the item-page's
+      // _itemPageId (which is unset in the modal + panel - the reason @reporter was item-page-only).
+      ed._frzItem = p || _frzCurItem();
       if(isPanel){
         ctx.ed=ed;
         _frzBuildToolbar(ed, { buttons:_FRZ_TB_COMMENT, cls:'frz-rte-tb-comment', place:function(t){ host.parentNode.insertBefore(t, host); } });
@@ -32359,15 +32376,17 @@ if ('serviceWorker' in navigator) {
 
   // ════════ Stage 3b - @mention typeahead ════════
   var _mentionMenu=null;
-  function _mentionUsers(prefix){
+  function _mentionUsers(prefix, item){
     var us=(_val('users',[])||[]).map(function(u){ return (u&&u.username)||u; }).filter(Boolean);
     prefix=(prefix||'').toLowerCase();
     var out=us.filter(function(u){ return String(u).toLowerCase().indexOf(prefix)===0; }).slice(0,8);
     // On a portal ticket, offer "reporter" as a mention target - picking it inserts the
     // same .frz-mention chip a user mention does (so it clearly "does something"), and the
     // server emails the reporter on @reporter. Gated to portal tickets with an email.
+    // COMPOSER-COMMENT-1: resolve from the ACTIVE editor's item when given (modal/panel), else fall back to
+    // the item page's _itemPageId - so the item-page path is byte-identical and the modal/panel now work too.
     try {
-      var id=_val('_itemPageId'), p=(_val('projects',[])||[]).filter(function(x){return x.id===id;})[0];
+      var p = item || (function(){ var id=_val('_itemPageId'); return (_val('projects',[])||[]).filter(function(x){return x.id===id;})[0]; })();
       if(p && p.source==='portal' && p.reporterEmail && 'reporter'.indexOf(prefix)===0 && out.indexOf('reporter')<0){
         out.unshift('reporter'); out=out.slice(0,8);
       }
