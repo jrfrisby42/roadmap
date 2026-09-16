@@ -2731,7 +2731,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.40.9';
+const APP_VERSION = '6.41.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -29177,6 +29177,7 @@ if ('serviceWorker' in navigator) {
     if(c) return 'background:'+c+';color:'+_contrastText(c)+';border:1px solid '+c;
     return 'background:var(--frz-accent-soft);color:var(--frz-accent);border:1px solid var(--frz-accent-soft-border)';
   }
+  var _frzDeptPickKeepOpen=false;   // DEPT-PICKER-1: keep the picker open across the re-render an add triggers
   function injectDepartments(p){
     var fields=document.getElementById('ipFields'); if(!fields || !p) return;
     var canEdit=(_val('isAdmin',false)||_val('isEditor',false));
@@ -29188,21 +29189,38 @@ if ('serviceWorker' in navigator) {
       return '<span style="display:inline-flex;align-items:center;gap:4px;'+_deptChipStyle(d)+';border-radius:10px;padding:2px 4px 2px 9px;font-size:12px;font-weight:600">'+esc(d)+
         (canEdit?'<button type="button" class="frz-dept-x" data-dept="'+escA(d)+'" title="Remove" style="border:0;background:none;color:inherit;opacity:0.8;cursor:pointer;font-size:14px;line-height:1;padding:0 2px">×</button>':'')+'</span>';
     }).join('');
+    // DEPT-PICKER-1: the setter is a PICKER over the configured vocabulary - NO free text. The offer is
+    // the configured departments NOT already on this item (already-selected excluded, Part 2.1). An
+    // out-of-vocabulary value already on the item still renders as a removable chip above, but is NEVER
+    // re-offered here. Reuses the .ms-* VISUAL classes from the filter multiselect; the state + selection
+    // semantics are the FIELD's own (none-selected = none, not the filter's none = all) - visual shared,
+    // logic reimplemented (Decision 2).
+    var cfg=(_val('departments',[])||[]).filter(Boolean);
+    var offer=cfg.filter(function(d){ return !depts.some(function(s){ return _deptKey(s)===_deptKey(d); }); });
     var add = canEdit ?
-      '<button type="button" id="frzDeptAddBtn" style="display:inline-flex;align-items:center;background:none;border:1px dashed var(--frz-border-strong);color:var(--frz-accent);padding:2px 9px;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">+ Add</button>'+
-      '<span id="frzDeptAddRow" style="display:none;align-items:center;gap:4px">'+
-        '<input id="frzDeptInput" list="frzDeptList" placeholder="Department…" autocomplete="off" style="padding:3px 8px;font-size:12px;border:1px solid var(--frz-accent);border-radius:8px;background:var(--frz-bg-surface);color:var(--frz-text);outline:none;width:130px">'+
-        '<datalist id="frzDeptList">'+(_val('departments',[])||[]).filter(function(d){ return !depts.some(function(s){ return _deptKey(s)===_deptKey(d); }); }).map(function(d){ return '<option value="'+escA(d)+'"></option>'; }).join('')+'</datalist>'+
-        '<button type="button" id="frzDeptAdd" style="background:var(--frz-accent);color:#fff;border:none;padding:3px 9px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Add</button>'+
+      '<span class="ms-wrap" id="frzDeptPickWrap">'+
+        '<button type="button" class="ms-btn" id="frzDeptAddBtn" style="width:auto;padding:2px 10px;font-size:12px;font-weight:700;color:var(--frz-accent)">+ Add</button>'+
+        '<div class="ms-panel" id="frzDeptPickPanel" style="display:none;min-width:160px">'+
+          (offer.length
+            ? offer.map(function(d){ return '<label class="ms-opt" data-val="'+escA(d)+'"><input type="checkbox" value="'+escA(d)+'"> '+esc(d)+'</label>'; }).join('')
+            : '<div style="padding:6px 10px;font-size:12px;color:var(--frz-text-muted);white-space:nowrap">'+(cfg.length?'All configured departments added':'No departments configured')+'</div>')+
+        '</div>'+
       '</span>' : '';
     wrap.innerHTML=lbl+'<div style="display:flex;flex-wrap:wrap;gap:5px;align-items:center">'+(chips||(canEdit?'':'<span style="font-size:13px;color:var(--frz-text)">-</span>'))+add+'</div>';
     if(canEdit){
       wrap.querySelectorAll('.frz-dept-x').forEach(function(b){ b.addEventListener('click', function(){ _removeDept(p, b.getAttribute('data-dept')); }); });
-      var addBtn=wrap.querySelector('#frzDeptAddBtn'), row=wrap.querySelector('#frzDeptAddRow'), inp=wrap.querySelector('#frzDeptInput'), btn=wrap.querySelector('#frzDeptAdd');
-      if(addBtn) addBtn.addEventListener('click', function(){ addBtn.style.display='none'; if(row) row.style.display='inline-flex'; if(inp) inp.focus(); });
-      var add1=function(){ var v=(inp&&inp.value||'').trim(); if(v) _addDept(p, v); };
-      if(btn) btn.addEventListener('click', add1);
-      if(inp) inp.addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); add1(); } else if(e.key==='Escape'){ if(row) row.style.display='none'; if(addBtn) addBtn.style.display='inline-flex'; } });
+      var addBtn=wrap.querySelector('#frzDeptAddBtn'), panel=wrap.querySelector('#frzDeptPickPanel'), pickWrap=wrap.querySelector('#frzDeptPickWrap');
+      if(addBtn && panel){
+        var onDoc=function(ev){ if(pickWrap && !pickWrap.contains(ev.target)){ panel.style.display='none'; addBtn.classList.remove('open'); document.removeEventListener('mousedown', onDoc); } };
+        var openPanel=function(o){ panel.style.display=o?'block':'none'; addBtn.classList.toggle('open', o); if(o) document.addEventListener('mousedown', onDoc); else document.removeEventListener('mousedown', onDoc); };
+        addBtn.addEventListener('click', function(e){ e.stopPropagation(); openPanel(panel.style.display==='none'); });
+        panel.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+          cb.addEventListener('change', function(){ if(cb.checked){ _frzDeptPickKeepOpen=true; _addDept(p, cb.value); } });   // pick = add; the re-render below re-opens the panel for another pick
+        });
+        // Keep the panel open across the re-render an add triggers, so consecutive picks feel like one
+        // multi-select (until the user closes it or the offer is exhausted).
+        if(_frzDeptPickKeepOpen){ _frzDeptPickKeepOpen=false; if(offer.length) openPanel(true); }
+      }
     }
   }
   function _addDept(p, val){
@@ -29210,7 +29228,9 @@ if ('serviceWorker' in navigator) {
     var cur=Array.isArray(p.departments)?p.departments.slice():[];
     if(cur.some(function(d){ return _deptKey(d)===_deptKey(val); })) return;   // case-insensitive dedup
     cur.push(val);
-    var gd=_val('departments',null); if(gd && !gd.some(function(d){ return _deptKey(d)===_deptKey(val); })) gd.push(val);   // optimistic add to the typeahead list (server persists too)
+    // DEPT-PICKER-1: the vocabulary is CLOSED - do not optimistically grow the master `departments`
+    // list from a typed value (that growth path is retired on client AND server). The picker only offers
+    // configured values and the server validates, so `val` is already a configured department.
     _call('saveItemPagePatch', {departments:cur});
     _call('logActionOnItem', p.id, p.name||'', p.dev||'', p.product||'', 'Department added: '+val, null, null);
   }
