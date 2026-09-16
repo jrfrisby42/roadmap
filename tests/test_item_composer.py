@@ -264,7 +264,7 @@ def test_stage4_activity_reuses_existing_source_no_new_endpoint():
     assert m, "the activity builder not found"
     body = m.group(0)
     assert "activities" in body and "a.item_id !== id" in body, "reads the in-memory activities array, item-scoped"
-    assert ".slice(0,6)" in body, "shows a LIMITED set (full history stays on the item page)"
+    assert ".slice(0,2)" in body, "shows a LIMITED set (COMPOSER-COMMENT-1 Part A tightened the cap 6 -> 2; full history stays on the item page)"
     assert "API.get" not in body and "/api/" not in body and "fetch(" not in body, "no fetch / new endpoint"
     assert "/api/comments" not in body, "activity is not comments (Stage 4B)"
 
