@@ -887,16 +887,15 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   /* COMPOSER-COMMENT-1 Part B: the modal comment editor is a classic <body> child OUTSIDE .frz-beta, so the
      .frz-beta comment-editor rules (container border, editable padding + min-height) never reach it - the
      editable rendered as a bare ~16px line with no visible box. Reproduce the box here with the classic
-     tokens, give the editable a usable min-height, and RESERVE the placeholder to the mounted height so
-     clicking it neither shrinks the editable nor shifts the content below. Scoped to the modal; the item
-     page + List panel comment editors are unchanged. */
+     tokens and give the editable a usable min-height. Scoped to the modal; the item page + List panel
+     comment editors are unchanged.
+     DARK-AUDIT-1 Part A: the earlier no-shift RESERVE (min-height on the placeholder + container) was
+     removed - #composerComments is the LAST child of the content column, so expanding on click pushes no
+     visible content; the reserve only cost ~101px of permanent collapsed height. The collapsed placeholder
+     returns to ~36px; the mounted box + 62px editable + padding (the real fix) stay. */
   .modal.frz-composer #composerCommentComposer .frz-rte.frz-rte-comment { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
   .modal.frz-composer #composerCommentComposer .frz-rte.frz-rte-comment .ProseMirror { min-height: 62px; max-height: 220px; overflow-y: auto; padding: 8px 12px; outline: none; color: var(--text); font-size: 13px; line-height: 1.5; }
   .modal.frz-composer #composerCommentComposer .frz-rte.frz-rte-comment .ProseMirror > p { margin: 0; }
-  /* reserve = mounted height (toolbar ~33 + bordered editable box 62+16+2 + gaps): the placeholder AND the
-     container hold it, so the click-to-mount swap does not move the content below. */
-  .modal.frz-composer #composerCommentComposer { min-height: 137px; }
-  .modal.frz-composer #composerCommentComposer .composer-cmt-ph { min-height: 137px; }
   .modal.frz-composer .composer-cmt-post { margin-top: 8px; background: var(--accent); color: #fff; border: 1px solid var(--accent); border-radius: 6px; padding: 7px 14px; font-family: 'Lato', sans-serif; font-weight: 700; font-size: 13px; cursor: pointer; }
   .modal.frz-composer .composer-cmt-post:hover { background: var(--accent2, var(--accent)); filter: brightness(0.95); }
   .modal.frz-composer .composer-cmt-empty { font-size: 12px; color: var(--muted); padding: 6px 0; }
@@ -2696,7 +2695,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.40.4';
+const APP_VERSION = '6.40.5';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
