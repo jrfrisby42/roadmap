@@ -1993,10 +1993,12 @@ def _intake_default_type(team: str) -> str:
     return d if d and d in _intake_types(team) else ""
 
 # INTAKE-TEMPLATE-1: the section break appended between the reporter's text and the Type's template on a
-# portal item. Public-facing copy on the reporter's /ticket page (J.R.-approved, Option A). A section
-# break introducing the standard shape - NOT a demand, NOT a warning. Templates are stored as HTML
-# (normalized by tools/migrate_normalize_templates.py), so the append is verbatim - no conversion here.
-_INTAKE_TEMPLATE_SEP = "<hr><p><strong>Standard details for this request type</strong></p>"
+# portal item. Just a horizontal rule - the labels below are self-evidently the team's form, so the earlier
+# "Standard details for this request type" heading (dropped after seeing it live) only restated them and read
+# as one more bold line in a stack of bold labels, especially in dark mode. The rule is the only separator
+# now, so it must render on all three surfaces (reporter status page, item page, composer). Public-facing on
+# the /ticket page. Templates are stored as HTML, so the append is verbatim - no conversion here.
+_INTAKE_TEMPLATE_SEP = "<hr>"
 
 def _intake_type_template(team: str, type_name: str) -> str:
     """The description template stored on a Type (by name), or '' if none. Read-only, config-driven -

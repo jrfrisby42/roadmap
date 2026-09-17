@@ -46,6 +46,14 @@ def _item(client, admin_headers, title="T"):
     return next(p for p in ps if p["name"] == title)
 
 
+def test_separator_is_the_rule_alone_no_heading():
+    """INTAKE-TEMPLATE-1 follow-up: the separator is a bare <hr> - the "Standard details..." heading was
+    dropped (it restated the self-evident labels and read as one more bold line, esp. in dark mode). Revert:
+    put the heading back and this fails."""
+    assert SEP == "<hr>", "the separator must be a bare horizontal rule"
+    assert "Standard details" not in SEP and "<strong>" not in SEP, "the heading must be gone"
+
+
 def _load_migration():
     spec = importlib.util.spec_from_file_location("mig_norm", ROOT / "tools" / "migrate_normalize_templates.py")
     mod = importlib.util.module_from_spec(spec)
