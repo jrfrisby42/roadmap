@@ -6008,7 +6008,9 @@ function _frzRenderCreateAttach(host){
     +   '<span>Drop files here, click to choose, or paste a screenshot</span>'
     + '</div>'
     + '<div class="composer-attach-list" id="composerAttachList"></div>'
-    + '<div class="composer-attach-asset">Linked assets can be added once the item is saved.</div>'
+    // The AssetHub "Linked assets" note only makes sense when this org uses AssetHub. Gate it on the
+    // same server-derived flag that gates all asset UI (edit mode already hides the asset card when off).
+    + (assethubConfigured ? '<div class="composer-attach-asset">Linked assets can be added once the item is saved.</div>' : '')
     + '</div>';
   const zone = document.getElementById('composerAttachZone');
   const input = document.getElementById('composerAttachInput');
