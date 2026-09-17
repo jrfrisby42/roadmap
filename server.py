@@ -1358,6 +1358,7 @@ def _migrate_config_keys(team: str):
         "intakeDefaultType": "",
         "intakeDomains": [],
         "intakeNotifyTeam": False,   # notify the team (in-app + Slack channel) on a new portal ticket
+        "intakeAppendTemplate": False,   # INTAKE-TEMPLATE-1: append the resolved Type's description template below the reporter's text (per-Org opt-in). Reporter-visible on the /ticket page.
         "departmentMeta": {},
         "assignmentTypes": _DEFAULT_ASSIGNMENT_TYPES,
         "maintenanceDutyTypeId": "",
@@ -1372,7 +1373,7 @@ def _migrate_config_keys(team: str):
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
     # an admin who deletes all types isn't re-seeded on next boot.)
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeCombined", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeProjectStatus", "intakeDefaultType", "intakeDomains", "intakeNotifyTeam", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify", "slaTargets", "digestConfig"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeCombined", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeProjectStatus", "intakeDefaultType", "intakeDomains", "intakeNotifyTeam", "intakeAppendTemplate", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify", "slaTargets", "digestConfig"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -1730,7 +1731,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.43.5"
+APP_VERSION = "6.44.0"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -1990,6 +1991,23 @@ def _intake_default_type(team: str) -> str:
     (a type removed from the portal/team silently stops preselecting)."""
     d = (_cfg_val(team, "intakeDefaultType", "") or "").strip()
     return d if d and d in _intake_types(team) else ""
+
+# INTAKE-TEMPLATE-1: the section break appended between the reporter's text and the Type's template on a
+# portal item. Public-facing copy on the reporter's /ticket page (J.R.-approved, Option A). A section
+# break introducing the standard shape - NOT a demand, NOT a warning. Templates are stored as HTML
+# (normalized by tools/migrate_normalize_templates.py), so the append is verbatim - no conversion here.
+_INTAKE_TEMPLATE_SEP = "<hr><p><strong>Standard details for this request type</strong></p>"
+
+def _intake_type_template(team: str, type_name: str) -> str:
+    """The description template stored on a Type (by name), or '' if none. Read-only, config-driven -
+    the same per-type object the composer stamps from."""
+    if not type_name:
+        return ""
+    for t in (_cfg_val(team, "types", []) or []):
+        if isinstance(t, dict) and t.get("name") == type_name:
+            tv = t.get("template")
+            return tv if isinstance(tv, str) and tv.strip() else ""
+    return ""
 
 def _intake_projects(team: str) -> list:
     """Exposed product/project names for a team (intakeProjects ∩ products; empty = all)."""
@@ -2283,6 +2301,18 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
     proj_status = (_cfg_val(team, "intakeProjectStatus", {}) or {}).get(product) or ""
     if proj_status and proj_status in (_cfg_val(team, "statuses", []) or []):
         default_status = proj_status
+    # INTAKE-TEMPLATE-1: per-Org opt-in - append the resolved Type's description template below the
+    # reporter's text so a portal item carries the same labelled shape a composer-created one does.
+    # Append only, never prepend/overwrite. Skipped when the reporter wrote nothing (a bare form is
+    # worse than nothing) or the Type has no template. Templates are stored as HTML, so this is a
+    # verbatim concat - no server-side conversion. Best-effort: a failure here never fails the submit.
+    if desc and _cfg_val(team, "intakeAppendTemplate", False):
+        try:
+            _tmpl = _intake_type_template(team, ttype)
+            if _tmpl:
+                desc = desc + _INTAKE_TEMPLATE_SEP + _tmpl
+        except Exception as e:
+            log.warning(f"[Intake] template append failed for a {team} submission: {e}")
     # NOTE (AssetHub integration): this blob is built field-by-field from named, validated
     # inputs and never merges the request body wholesale, so an anonymous submitter cannot
     # seed a server-owned field (e.g. externalRefs) here. This is the ONE untrusted creation
@@ -3854,6 +3884,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "intakeProjectStatus": cfg_map.get("intakeProjectStatus", {}),
             "intakeDefaultType": cfg_map.get("intakeDefaultType", ""),
             "intakeNotifyTeam": bool(cfg_map.get("intakeNotifyTeam", False)),
+            "intakeAppendTemplate": bool(cfg_map.get("intakeAppendTemplate", False)),   # INTAKE-TEMPLATE-1
             "intakeDomains": cfg_map.get("intakeDomains", []),
             "departmentMeta": cfg_map.get("departmentMeta", {}),
             "maintenanceDutyTypeId": cfg_map.get("maintenanceDutyTypeId", ""),
@@ -5777,7 +5808,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow","statusIsWaiting","statusIsParked",
-              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeProjectStatus","intakeDefaultType","intakeDomains","intakeNotifyTeam","intakeCombined","departmentMeta","maintenanceDutyTypeId",
+              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeProjectStatus","intakeDefaultType","intakeDomains","intakeNotifyTeam","intakeAppendTemplate","intakeCombined","departmentMeta","maintenanceDutyTypeId",
               "externalRequestCategories","assethubConnection","assethubServiceTypeMapping","enabledViews",
               "slackNotify","slaTargets","digestConfig"}
 
