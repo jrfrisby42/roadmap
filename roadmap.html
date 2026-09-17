@@ -2744,7 +2744,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.41.3';
+const APP_VERSION = '6.42.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -6185,6 +6185,7 @@ function openProjectModal(id){
   if(!isAdmin && !isEditor){ if(id) openItemPage(id); return; } // viewers → item page
   if(id && _isListPhone()){ openItemPage(id); return; }         // mobile: existing item → full page, never the edit modal (New Item, id null, still opens the sheet)
   editingId=id;
+  if(typeof _frzStampedHTML!=='undefined') _frzStampedHTML=null;   // TYPE-TEMPLATE-1: reset per-open stamp tracking
   const p=id?projects.find(x=>x.id===id):null;
 
   // Editors cannot edit existing projects that aren't in their owner scope
@@ -6912,6 +6913,24 @@ document.addEventListener('click', function(e){
 // Stage 3: the footer's destination-Space context tracks the same picker.
 document.getElementById('fProduct')?.addEventListener('change', ()=>{ if(!editingId) _frzComposerHeader(null, null); _frzUpdateComposerFooterSpace(); });
 document.getElementById('fType')?.addEventListener('change', _frzUpdateTypeCellIcon);   // COMPOSER-POLISH-1 Part 3
+// TYPE-TEMPLATE-1: stamp the selected Type's description template on CREATE, into an EMPTY description only.
+// Never overwrites user content; never touches existing items (editingId==null guard). Changing Type while
+// the description is still empty (or still the previously-stamped template) swaps the template; once the
+// user has typed, it is left alone. Plain-text-shaped: template lines -> escaped <p> paragraphs.
+var _frzStampedHTML=null;   // the HTML of the last auto-stamp, so a re-stamp only replaces an untouched template
+function _frzTypeTemplateFor(name){ var t=(types||[]).find(function(x){ return x && x.name===name; }); return (t && typeof t.template==='string') ? t.template : ''; }
+function _frzStampTypeTemplate(){
+  if(editingId!=null) return;                                    // create mode only - existing items untouched
+  var fd=document.getElementById('fDesc'); if(!fd) return;
+  var cur=fd.innerHTML;
+  var replaceable = fd.textContent.trim()==='' || (_frzStampedHTML!=null && cur===_frzStampedHTML);
+  if(!replaceable) return;                                       // user has typed content - NEVER overwrite
+  var tmpl=_frzTypeTemplateFor((document.getElementById('fType')||{}).value||'');
+  var html = tmpl.trim() ? tmpl.split('\n').map(function(l){ return '<p>'+(l.trim()?esc(l):'<br>')+'</p>'; }).join('') : '';
+  fd.innerHTML=html; _frzStampedHTML = html || null;
+  try{ fd.dispatchEvent(new Event('input',{bubbles:true})); }catch(e){}
+}
+document.getElementById('fType')?.addEventListener('change', _frzStampTypeTemplate);
 document.getElementById('modalBg')?.addEventListener('click', e=>{
   if(e.target===e.currentTarget){
     // Change 1: the backdrop click uses the SAME unsaved-changes confirm as Escape (set by the shell
@@ -9713,9 +9732,39 @@ function renderTypeList(){
         <input type="checkbox" onchange="toggleTypeMaintenance(${i},this.checked)" ${t.maintenance?'checked':''} style="accent-color:var(--accent);cursor:pointer">
         Maintenance
       </label>
+      <button type="button" onclick="openTypeTemplate(${i}, this)" title="Description template pre-filled into NEW items of this type" style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:${(t.template&&t.template.trim())?'var(--accent)':'var(--muted)'};background:none;border:1px solid var(--border);border-radius:5px;padding:3px 8px;cursor:pointer;flex-shrink:0">Template${(t.template&&t.template.trim())?' •':''}</button>
       ${delBtn}
     </div>`;
   }).join('');
+}
+// TYPE-TEMPLATE-1: author a per-Type description template (plain-text-shaped: one label line per field,
+// no headings/blocks - create mode is a toolbar-less contenteditable, so the authoring surface matches it).
+// Stored on the type OBJECT (types[i].template) so deleteType's splice prunes it - the orphan class cannot occur.
+function openTypeTemplate(i, btn){
+  if(!isAdmin) return;
+  var row=btn.closest('.dev-item'); if(!row) return;
+  var nxt=row.nextElementSibling;
+  if(nxt && nxt.classList.contains('type-tmpl-editor')){ nxt.remove(); return; }   // toggle closed
+  document.querySelectorAll('.type-tmpl-editor').forEach(function(e){ e.remove(); });   // one open at a time
+  var t=types[i];
+  var panel=document.createElement('div'); panel.className='type-tmpl-editor';
+  panel.style.cssText='padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;margin:2px 0 8px';
+  panel.innerHTML=
+    '<div style="font-size:11px;color:var(--muted);margin-bottom:5px">Description template for <b>'+esc(t.name)+'</b> - pre-fills the description of <b>new</b> items of this type. Plain text, one label line per field (no headings). <b>Editing this does not change items that already exist.</b></div>'
+    +'<textarea class="type-tmpl-ta" style="width:100%;min-height:96px;box-sizing:border-box;font-family:\'Lato\',sans-serif;font-size:13px;line-height:1.5;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);resize:vertical" placeholder="Measurements:&#10;Hierarchy:&#10;OneDrive Links:&#10;Project Type:"></textarea>'
+    +'<div style="margin-top:6px;display:flex;gap:6px"><button type="button" class="tmpl-save" style="background:var(--accent);color:#fff;border:none;padding:5px 14px;border-radius:5px;font-family:\'Lato\',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Save</button>'
+    +'<button type="button" class="tmpl-cancel" style="background:none;border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:5px;font-size:12px;cursor:pointer">Cancel</button></div>';
+  row.parentNode.insertBefore(panel, row.nextSibling);
+  panel.querySelector('.type-tmpl-ta').value = t.template || '';
+  panel.querySelector('.tmpl-save').addEventListener('click', function(){ setTypeTemplate(i, panel.querySelector('.type-tmpl-ta').value); });
+  panel.querySelector('.tmpl-cancel').addEventListener('click', function(){ panel.remove(); });
+  panel.querySelector('.type-tmpl-ta').focus();
+}
+function setTypeTemplate(i, val){
+  if(!isAdmin) return;
+  var v=(val||'').replace(/\r\n/g,'\n');
+  if(v.trim()) types[i].template=v; else delete types[i].template;   // empty = absent (default: no template)
+  saveConfig('types', types); renderTypeList(); populateTypeSelect();
 }
 
 function toggleStatusIgnore(i, val){
