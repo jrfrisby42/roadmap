@@ -846,6 +846,18 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .modal.frz-composer .composer-attach-row .ca-remove { flex: 0 0 auto; width: 24px; height: 24px; border: 0; background: transparent; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; border-radius: 4px; }
   .modal.frz-composer .composer-attach-row .ca-remove:hover { color: var(--accent2); background: var(--surface); }
   .modal.frz-composer .composer-attach-asset { margin-top: 8px; font-size: 11px; color: var(--muted); }
+  /* PRECREATE-LINKS-1: create-mode reference links (label + URL rows). Mirrors the attachment control's look. */
+  .modal.frz-composer .composer-links { margin: 10px 0 4px; }
+  .modal.frz-composer .composer-links-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 6px; }
+  .modal.frz-composer .composer-link-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .modal.frz-composer .composer-link-row input { font-family: inherit; font-size: 12px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); box-sizing: border-box; }
+  .modal.frz-composer .composer-link-row .composer-link-label { flex: 0 1 34%; min-width: 90px; }
+  .modal.frz-composer .composer-link-row .composer-link-url { flex: 1 1 45%; min-width: 130px; }
+  .modal.frz-composer .composer-link-row .composer-link-url.is-bad { border-color: var(--accent2); }
+  .modal.frz-composer .composer-link-row .composer-link-del { flex: 0 0 auto; width: 24px; height: 24px; border: 0; background: transparent; color: var(--muted); font-size: 16px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 4px; }
+  .modal.frz-composer .composer-link-row .composer-link-del:hover { color: var(--accent2); background: var(--surface2); }
+  .modal.frz-composer .composer-link-add { background: none; border: 1px solid var(--border); color: var(--accent); font-family: inherit; font-weight: 700; font-size: 11px; padding: 4px 10px; border-radius: 5px; cursor: pointer; }
+  .modal.frz-composer .composer-link-add:hover { border-color: var(--accent); }
 
   /* Collapsible groups: Ownership open on create; Schedule, Relationships, Advanced collapsed. */
   .modal.frz-composer .composer-group { border-top: 1px solid var(--border); padding-top: 4px; }
@@ -2744,7 +2756,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.42.0';
+const APP_VERSION = '6.42.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -5996,7 +6008,9 @@ function _frzRenderCreateAttach(host){
     +   '<span>Drop files here, click to choose, or paste a screenshot</span>'
     + '</div>'
     + '<div class="composer-attach-list" id="composerAttachList"></div>'
-    + '<div class="composer-attach-asset">Linked assets can be added once the item is saved.</div>'
+    // The AssetHub "Linked assets" note only makes sense when this org uses AssetHub. Gate it on the
+    // same server-derived flag that gates all asset UI (edit mode already hides the asset card when off).
+    + (assethubConfigured ? '<div class="composer-attach-asset">Linked assets can be added once the item is saved.</div>' : '')
     + '</div>';
   const zone = document.getElementById('composerAttachZone');
   const input = document.getElementById('composerAttachInput');
@@ -6023,6 +6037,54 @@ function _frzRenderPendingList(){
   list.querySelectorAll('.ca-remove').forEach(b => b.addEventListener('click', () => _frzRemovePendingAtt(+b.getAttribute('data-caidx'))));
 }
 function _frzRemovePendingAtt(i){ if(i>=0 && i<_frzPendingAtts.length){ _frzPendingAtts.splice(i,1); _frzRenderPendingList(); } }
+// ── PRECREATE-LINKS-1: create-mode reference links ───────────────────────────────────────────────
+// {label,url} rows held in memory until Save, which sends `pendingLinks`. The server validates each
+// (shared _normalize_link_fields), drops+reports invalid/over-cap links, and seeds extLinks - a create
+// can never write extLinks directly (it is stripped/server-owned). Cancel discards (composer invariant):
+// the list is reset on the next create-open, and only Save ever sends it. This is the ONLY create-time
+// link path; edit mode uses the item-page link form (_frzSubmitLinkForm), unchanged.
+let _frzPendingLinks = [];
+const _FRZ_MAX_CREATE_LINKS = 20;   // matches the item-page _EXT_LINK_CAP (server is the real guard; over-cap is dropped+reported there too)
+function _frzResetPendingLinks(){ _frzPendingLinks = []; }
+// Client-side scheme hint only (cosmetic). The single client validator is the beta module's
+// _frzLinkSchemeOk, exposed on window; if it is somehow absent, do not flag (the server still drops+reports).
+function _frzCreateLinkBad(u){ u=(u||'').trim(); if(!u) return false; return (typeof window._frzLinkSchemeOk==='function') ? !window._frzLinkSchemeOk(u) : false; }
+function _frzRenderCreateLinks(host){
+  if(!host) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'composer-links';
+  wrap.innerHTML =
+    '<div class="composer-attach-head">Links</div>'
+    + '<div class="composer-links-list" id="composerLinksList"></div>'
+    + '<button type="button" class="composer-link-add" id="composerLinkAdd">+ Add link</button>';
+  host.appendChild(wrap);
+  const addBtn = wrap.querySelector('#composerLinkAdd');
+  if(addBtn) addBtn.addEventListener('click', () => {
+    if(_frzPendingLinks.length >= _FRZ_MAX_CREATE_LINKS){ showToast('You can add up to '+_FRZ_MAX_CREATE_LINKS+' links.','error'); return; }
+    _frzPendingLinks.push({label:'', url:''}); _frzRenderPendingLinks(true);
+  });
+  _frzRenderPendingLinks();
+}
+function _frzRenderPendingLinks(focusLast){
+  const list = document.getElementById('composerLinksList');
+  if(!list) return;
+  if(!_frzPendingLinks.length){ list.innerHTML=''; return; }
+  list.innerHTML = _frzPendingLinks.map((l,i) =>
+    '<div class="composer-link-row" data-i="'+i+'">'
+    + '<input type="text" class="composer-link-label" data-i="'+i+'" placeholder="Label (optional)" value="'+escA(l.label||'')+'">'
+    + '<input type="url" class="composer-link-url'+(_frzCreateLinkBad(l.url)?' is-bad':'')+'" data-i="'+i+'" placeholder="https://..." title="Must start with http:// or https://" value="'+escA(l.url||'')+'">'
+    + '<button type="button" class="composer-link-del" data-i="'+i+'" title="Remove" aria-label="Remove link">&times;</button>'
+    + '</div>').join('');
+  // input handlers update the model only (no re-render -> focus is never stolen mid-typing)
+  list.querySelectorAll('.composer-link-label').forEach(inp => inp.addEventListener('input', function(){ const i=+this.getAttribute('data-i'); if(_frzPendingLinks[i]) _frzPendingLinks[i].label=this.value; }));
+  list.querySelectorAll('.composer-link-url').forEach(inp => {
+    inp.addEventListener('input', function(){ const i=+this.getAttribute('data-i'); if(_frzPendingLinks[i]) _frzPendingLinks[i].url=this.value; });
+    // toggle the bad-scheme hint in place on blur/change (no re-render, so focus is preserved)
+    inp.addEventListener('change', function(){ this.classList.toggle('is-bad', _frzCreateLinkBad(this.value)); });
+  });
+  list.querySelectorAll('.composer-link-del').forEach(b => b.addEventListener('click', function(){ const i=+this.getAttribute('data-i'); if(i>=0 && i<_frzPendingLinks.length){ _frzPendingLinks.splice(i,1); _frzRenderPendingLinks(); } }));
+  if(focusLast){ const urls=list.querySelectorAll('.composer-link-label'); const last=urls[urls.length-1]; if(last){ try{ last.focus(); }catch(_){} } }
+}
 async function _frzUploadDraftAtt(file){
   if(!file) return;
   if(_frzPendingAtts.length >= 10){ showToast('You can attach up to 10 files.','error'); return; }
@@ -6565,7 +6627,7 @@ function openProjectModal(id){
     const _canModalAssets = id && p && typeof window._frzRenderAssetCard==='function'
       && typeof window._frzCanSeeAssets==='function' && window._frzCanSeeAssets(p);
     if(_canModalAssets){ _assetRow.style.display=''; window._frzRenderAssetCard(_assetSec, p); }
-    else if(!id && (isAdmin || isEditor)){ _assetRow.style.display=''; _frzResetPendingAtts(); _frzRenderCreateAttach(_assetSec); }   // PRECREATE-ATTACH-1 Stage A: the working attachment control REPLACES the old interim note in place; the asset half survives as a line inside the control. Contributors can't create -> no control.
+    else if(!id && (isAdmin || isEditor)){ _assetRow.style.display=''; _frzResetPendingAtts(); _frzRenderCreateAttach(_assetSec); _frzResetPendingLinks(); _frzRenderCreateLinks(_assetSec); }   // PRECREATE-ATTACH-1 Stage A: the working attachment control REPLACES the old interim note in place; the asset half survives as a line inside the control. Contributors can't create -> no control. PRECREATE-LINKS-1: the link control APPENDS below it (does not overwrite the attach control's host).
     else { _assetRow.style.display='none'; _assetSec.innerHTML=''; }   // edit but not configured / hidden item / contributor
   }
   // Apply locking rules based on status flags
@@ -7677,10 +7739,19 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
       // yet) are excluded. The list is NOT cleared here - if the save throws, it survives for a retry.
       const _pend = _frzPendingAtts.filter(a => a.key && a.token)
         .map(a => ({ key:a.key, token:a.token, attId:a.attId, name:a.name, size:a.size, contentType:a.type }));
-      const created = await API.post('/api/projects', {...data, pendingAttachments: _pend, _username: getUsername()});
+      // PRECREATE-LINKS-1: send pending reference links (rows with a URL). The server validates + drops
+      // per link; a failed save above never reaches here, so the list survives for a retry (like _pend).
+      const _plinks = _frzPendingLinks
+        .map(l => ({ label:(l.label||'').trim(), url:(l.url||'').trim() }))
+        .filter(l => l.url);
+      const created = await API.post('/api/projects', {...data, pendingAttachments: _pend, pendingLinks: _plinks, _username: getUsername()});
       _frzResetPendingAtts();   // committed - safe to clear (a failed save above never reaches here)
+      _frzResetPendingLinks();
       if(created && Array.isArray(created.attachmentsDropped) && created.attachmentsDropped.length){
         showToast('Saved, but these attachments could not be stored: ' + created.attachmentsDropped.join(', '), 'error');
+      }
+      if(created && Array.isArray(created.linksDropped) && created.linksDropped.length){
+        showToast('Saved, but these links were not added (need http:// or https://): ' + created.linksDropped.join(', '), 'error');
       }
       projects.push(created);
       // Issue 2: offer to create a Jira issue for new items with no ticket
@@ -30165,6 +30236,7 @@ if ('serviceWorker' in navigator) {
   // via import / a restored backup. Only http(s) becomes a real <a href>; anything else (a stored
   // javascript: URL) renders as inert text, so a malicious href can never execute on click.
   function _frzLinkSchemeOk(u){ return /^https?:\/\/[^\s]+/i.test(String(u||'').trim()); }
+  window._frzLinkSchemeOk = _frzLinkSchemeOk;   // PRECREATE-LINKS-1: the classic create composer reuses this exact client checker (one client validator, no second regex)
   function _frzLinkRowHtml(l, canLink){
     var ok=_frzLinkSchemeOk(l.url);
     var label=esc(l.label||l.url||'link');
