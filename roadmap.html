@@ -2756,7 +2756,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.42.2';
+const APP_VERSION = '6.43.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -6984,13 +6984,23 @@ function _frzTypeTemplateFor(name){ var t=(types||[]).find(function(x){ return x
 function _frzStampTypeTemplate(){
   if(editingId!=null) return;                                    // create mode only - existing items untouched
   var fd=document.getElementById('fDesc'); if(!fd) return;
+  // CREATE-EDITOR-1: when the create rich editor is mounted, #fDesc is hidden and the editor owns the
+  // content (_sync keeps fd.innerHTML mirrored, so fd stays a faithful read for the guard below).
+  var host=document.getElementById('frzModalNotes'); var ed=host&&host._frzEd;
   var cur=fd.innerHTML;
   var replaceable = fd.textContent.trim()==='' || (_frzStampedHTML!=null && cur===_frzStampedHTML);
   if(!replaceable) return;                                       // user has typed content - NEVER overwrite
   var tmpl=_frzTypeTemplateFor((document.getElementById('fType')||{}).value||'');
   var html = tmpl.trim() ? tmpl.split('\n').map(function(l){ return '<p>'+(l.trim()?esc(l):'<br>')+'</p>'; }).join('') : '';
-  fd.innerHTML=html; _frzStampedHTML = html || null;
-  try{ fd.dispatchEvent(new Event('input',{bubbles:true})); }catch(e){}
+  if(ed){
+    // Route through the editor's own API - a raw fd.innerHTML write under a mounted Tiptap desyncs its
+    // document model. emitUpdate=true fires the mount's _sync, mirroring the sanitized result into #fDesc.
+    ed.commands.setContent(html || '<p></p>', true);
+    _frzStampedHTML = html ? (fd.innerHTML || null) : null;      // match the POST-sync form on the next Type change
+  } else {
+    fd.innerHTML=html; _frzStampedHTML = html || null;           // editor not mounted yet - the mount reads fd as its initial content
+    try{ fd.dispatchEvent(new Event('input',{bubbles:true})); }catch(e){}
+  }
 }
 document.getElementById('fType')?.addEventListener('change', _frzStampTypeTemplate);
 document.getElementById('modalBg')?.addEventListener('click', e=>{
@@ -30827,7 +30837,8 @@ if ('serviceWorker' in navigator) {
     var oldTb=fd.parentNode && fd.parentNode.querySelector('.frz-rte-tb-modal'); if(oldTb&&oldTb.parentNode) oldTb.parentNode.removeChild(oldTb);
     fd.style.display='';                                   // default: the plain box
     var canEdit=(_val('isAdmin',false)||_val('isEditor',false));
-    if(!root || !frzRteEnabled() || !canEdit || id==null) return;   // rich only for EXISTING items on /beta
+    if(!root || !frzRteEnabled() || !canEdit) return;      // rich only on /beta for admin/editor
+    if(id==null){ frzMountCreateNotes(fd); return; }        // CREATE-EDITOR-1: create mode gets the editor too (no image, no id-deps)
     frzMountModalNotes(id, fd);
   }
   function frzMountModalNotes(id, fd){
@@ -30854,6 +30865,48 @@ if ('serviceWorker' in navigator) {
         fd.innerHTML=frzSanitize(d.innerHTML); }
       ed.on('update', _sync); ed.on('blur', _sync);       // blur fires when the Save button is pressed (before its click reads #fDesc)
       _frzRehydrateEditorImages(ed, id);
+    }).catch(function(){});
+  }
+  // CREATE-EDITOR-1: mount the rich editor in CREATE mode (id==null). Same machinery as
+  // frzMountModalNotes minus everything that needs a stored item: no `p`, the create toolbar (no image
+  // button - not rendered), image paste/drop SWALLOWED (no _frzInsertImage, no half-upload; the composer's
+  // document-level paste listener still attaches a pasted screenshot to the Attachments zone), and no
+  // _frzRehydrateEditorImages (a create item has no stored inline images). _sync mirrors the sanitized
+  // editor HTML into the hidden #fDesc, which the classic save reads - so Cancel still discards (nothing
+  // is written server-side until Save). The Type-template stamp routes through this editor (see
+  // _frzStampTypeTemplate) because a raw #fDesc write under a mounted Tiptap desyncs its model.
+  function frzMountCreateNotes(fd){
+    Promise.all([_frzLoadTiptap(), _frzLoadDOMPurify()]).then(function(r){
+      if(document.getElementById('fDesc')!==fd || !fd.isConnected) return;   // modal changed/closed during load
+      if(_val('editingId',null)!=null) return;                               // switched to edit during load - abort create mount
+      var host=document.getElementById('frzModalNotes');
+      if(host){ if(host._frzEd){ try{ host._frzEd.destroy(); }catch(e){} } host.remove(); }   // no double-mount
+      var T=r[0], Editor=T.core.Editor;
+      var initial=fd.innerHTML;                            // may already hold a Type-template stamp
+      host=document.createElement('div'); host.id='frzModalNotes'; host.className='frz-rte-modal frz-rte';
+      fd.parentNode.insertBefore(host, fd); fd.style.display='none'; host.style.padding='0';
+      var ed=new Editor({
+        element:host, extensions:_frzMakeExtensions(T), content:initial||'',
+        editorProps:{
+          // Image paste is SWALLOWED (return true = handled, no insert, no upload). The event still bubbles
+          // to the composer's document-level paste listener, which attaches the screenshot to the zone.
+          handlePaste:function(view, e){ var it=(e.clipboardData&&e.clipboardData.items)||[]; for(var i=0;i<it.length;i++){ if(it[i].kind==='file'&&/^image\//.test(it[i].type||'')){ return true; } } return false; },
+          // Image drop on the description is SWALLOWED (no upload); intentional attachments use the zone.
+          handleDrop:function(view, e){ var fs=(e.dataTransfer&&e.dataTransfer.files)||[]; var hasImg=[].slice.call(fs).some(function(f){ return /^image\//.test(f.type||''); }); if(hasImg){ e.preventDefault(); return true; } return false; }
+        }
+      });
+      host._frzEd=ed;
+      _frzBuildToolbar(ed, { buttons:_FRZ_TB_CREATE, cls:'frz-rte-tb-modal', place:function(tb){ fd.parentNode.insertBefore(tb, host); } });
+      _frzWireMentions(ed);
+      function _sync(){ var d=document.createElement('div'); d.innerHTML=ed.getHTML();
+        [].slice.call(d.querySelectorAll('img[data-att-key]')).forEach(function(im){ im.removeAttribute('src'); });
+        fd.innerHTML=frzSanitize(d.innerHTML); }
+      ed.on('update', _sync); ed.on('blur', _sync);
+      _sync();                                             // seed #fDesc with the sanitized initial content
+      // Keep the stamp overwrite-guard consistent across the async mount boundary: if a stamp landed in
+      // the plain box before the editor loaded, re-key _frzStampedHTML to the now-mirrored (sanitized) form.
+      if(typeof _frzStampedHTML!=='undefined' && _frzStampedHTML!=null){ _frzStampedHTML = fd.innerHTML || null; }
+      // NO _frzRehydrateEditorImages (create has no stored inline images).
     }).catch(function(){});
   }
 
@@ -30888,6 +30941,9 @@ if ('serviceWorker' in navigator) {
   // visible button OR a menu item, all from the same _FRZ_TB_DEFS. Comment set unchanged.
   var _FRZ_TB_FULL=['bold','italic','strike','sep',{menu:'heading'},'sep',{split:'list'},'code','sep','table','panel','expand','sep',{menu:'more'}];
   var _FRZ_TB_COMMENT=['bold','italic','strike','sep','bullet','ordered','sep','link','image'];   // trimmed: discussion, not documents (no blocks)
+  // CREATE-EDITOR-1: the create-mode description set = the comment set MINUS the image button (inline
+  // image upload needs an item id, which a not-yet-created item lacks; Stage C is parked). No new buttons.
+  var _FRZ_TB_CREATE=['bold','italic','strike','sep','bullet','ordered','sep','link'];
   // Menu groups: key → trigger label/title + the def keys it contains (resolved at open time).
   var _FRZ_TB_MENUS={
     heading:{ key:'heading', title:'Heading', label:'Heading ▾', items:['paragraph','h1','h2','h3'] },
