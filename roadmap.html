@@ -2642,6 +2642,11 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
             </label>
             <div style="font-size:11px;color:var(--muted);margin:-4px 0 2px">Sends an in-app notification to admins and editors, and posts to the team Slack channel if a webhook is configured. Separate from the email above.</div>
             <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:700;cursor:pointer;user-select:none;margin:10px 0 2px">
+              <input type="checkbox" id="tsIntakeAppendTemplate" style="accent-color:var(--accent);width:16px;height:16px;cursor:pointer">
+              Append the item type's template to portal tickets
+            </label>
+            <div style="font-size:11px;color:var(--muted);margin:-4px 0 2px">A portal ticket gets its type's description template appended below the reporter's text, so it carries the same labelled shape a staff-created item does. <b>The template, and anything the team writes into it, is visible to the reporter on the ticket status page</b> - keep genuinely internal notes in Notes or Resolution. Best for portals whose types a reporter classifies correctly.</div>
+            <label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:700;cursor:pointer;user-select:none;margin:10px 0 2px">
               <input type="checkbox" id="tsIntakeCombined" style="accent-color:var(--accent);width:16px;height:16px;cursor:pointer">
               Show this team on the combined request portal
             </label>
@@ -3462,6 +3467,7 @@ let intakeProjectStatus = {};   // optional per-Project DEFAULT STATUS for porta
 let intakeDefaultType = '';     // portal Type preselect ('' = none: reporters must choose when several types are offered). (config)
 let intakeDomains = [];         // allowed reporter email domains for the portal (empty = allow any). (config)
 let intakeNotifyTeam = false;   // notify the team (in-app + Slack channel) on a new portal ticket. (config)
+let intakeAppendTemplate = false;   // INTAKE-TEMPLATE-1: append the item type's template to portal tickets (reporter-visible). (config)
 let intakeCombined = true;      // PORTAL-SCOPE-LOCK-1: show this team on the COMBINED public /report list (default true). (config)
 let departmentMeta = {};        // per-department {name:{color,emails}} - pill color + notify list. (config)
 let productIgnoreConflicts = {}; // { [productName]: bool } - exempt a whole project from capacity-conflict accounting
@@ -8917,6 +8923,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       intakeProjects = Array.isArray(data.intakeProjects) ? data.intakeProjects : [];
       intakeNotifyEmail = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : '';
       intakeNotifyTeam = data.intakeNotifyTeam === true;
+      intakeAppendTemplate = data.intakeAppendTemplate === true;
       intakeCombined = data.intakeCombined !== false;   // PORTAL-SCOPE-LOCK-1: default true; only an explicit false hides from combined
       intakeTypes   = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];
       if(data.intakeProjectEmails && typeof data.intakeProjectEmails === 'object') intakeProjectEmails = data.intakeProjectEmails;
@@ -9852,6 +9859,7 @@ function openTypeTemplate(i, btn){
     '<div style="font-size:11px;color:var(--muted);margin-bottom:5px">Description template for <b>'+esc(t.name)+'</b> - pre-fills the description of <b>new</b> items of this type. '
       +(useRte ? 'Formatting (bold, italic, lists, links) is stamped as authored. ' : 'Plain text, one label line per field. ')
       +'<b>Editing this does not change items that already exist.</b></div>'
+    +'<div style="font-size:10px;color:var(--muted);margin:-2px 0 5px">If this Organization appends templates to portal tickets, this template and anything written into it is visible to the reporter on the ticket status page.</div>'
     +(useRte ? '<div class="type-tmpl-host"></div>' : '')
     +'<textarea class="type-tmpl-ta" style="width:100%;min-height:96px;box-sizing:border-box;font-family:\'Lato\',sans-serif;font-size:13px;line-height:1.5;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);resize:vertical'+(useRte?';display:none':'')+'" placeholder="Measurements:&#10;Hierarchy:&#10;OneDrive Links:&#10;Project Type:"></textarea>'
     +'<div style="margin-top:6px;display:flex;gap:6px"><button type="button" class="tmpl-save" style="background:var(--accent);color:#fff;border:none;padding:5px 14px;border-radius:5px;font-family:\'Lato\',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Save</button>'
@@ -18351,6 +18359,11 @@ function renderIntakePortalSettings(){
     notifyTeam.checked = !!intakeNotifyTeam;
     notifyTeam.onchange = () => { intakeNotifyTeam = notifyTeam.checked; saveConfig('intakeNotifyTeam', intakeNotifyTeam); };
   }
+  const appendTmpl = document.getElementById('tsIntakeAppendTemplate');   // INTAKE-TEMPLATE-1
+  if(appendTmpl){
+    appendTmpl.checked = !!intakeAppendTemplate;
+    appendTmpl.onchange = () => { intakeAppendTemplate = appendTmpl.checked; saveConfig('intakeAppendTemplate', intakeAppendTemplate); };
+  }
   const combined = document.getElementById('tsIntakeCombined');   // PORTAL-SCOPE-LOCK-1
   if(combined){
     combined.checked = !!intakeCombined;
@@ -19257,6 +19270,7 @@ async function boot(){
     maintenanceDutyTypeId = data.maintenanceDutyTypeId || '';   // M1: Maintenance Duty assignment-type mapping
     intakeEnabled         = data.intakeEnabled === true;                                              // public /report portal exposed?
     intakeNotifyTeam      = data.intakeNotifyTeam === true;                                            // notify the team on a new portal ticket
+    intakeAppendTemplate  = data.intakeAppendTemplate === true;                                        // INTAKE-TEMPLATE-1: append the type template to portal tickets
     assethubConfigured    = data.assethubConfigured === true;                                         // FLOW-1: gates all asset UI (mapping + .env credential present)
     assethubBaseUrl       = data.assethubBaseUrl || '';                                               // FLOW-1 item B: host for the asset-tag deep link
     assethubConnection    = (data.assethubConnection && typeof data.assethubConnection==='object') ? data.assethubConnection : {};   // Team Admin
