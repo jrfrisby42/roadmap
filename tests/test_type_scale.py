@@ -55,12 +55,41 @@ def test_typescale_phase1_base_lineheight():
         "Phase 1: body must set a base line-height of var(--lh-body)"
 
 
-def test_typescale_phase1_no_fs_token_consumed():
-    """Phases 1-2 change NO font size, so no --fs-* token may be consumed until Phase 3 (unauthorized).
-    Only line-height tokens are consumed so far."""
+def test_typescale_phase3plus_tokens_not_consumed():
+    """Phase 2 legitimately consumes --fs-label and --fs-micro (the 10px floor). But the Phase 3/4
+    tokens (--fs-body/-strong/-title/-page) must NOT be consumed - those phases are unauthorized."""
     src = _html()
-    fs_consumers = re.findall(r"var\(--fs-(?:micro|label|body|strong|title|page)\)", src)
-    assert fs_consumers == [], f"no --fs-* token may be consumed before Phase 3; found {fs_consumers[:5]}"
+    forbidden = re.findall(r"var\(--fs-(?:body|strong|title|page)\)", src)
+    assert forbidden == [], f"Phase 3/4 tokens must not be consumed yet; found {forbidden[:5]}"
+
+
+# ── Phase 2: the 10px floor + the coupled light muted-label colour lift ────────────────────────────
+def test_typescale_phase2_muted_lifted_light():
+    """The COUPLING (mandatory): raising labels to 12px does not clear AA alone (12px is normal text at
+    the 4.5 bar), so the light muted colours ship lifted. Both light muted tokens are #5a6b7c (measured
+    >=4.5 on white / #f5f5f7 / app-bg); the sub-AA originals (#8298AD @2.98, #7070a0 @4.27-4.36) are gone."""
+    src = _html()
+    assert "--frz-text-muted:#5a6b7c" in src, "light --frz-text-muted must be lifted to #5a6b7c"
+    assert "--muted: #5a6b7c" in src, "light classic --muted must be lifted to #5a6b7c"
+    assert "--frz-text-muted:#8298AD" not in src, "the sub-AA #8298AD (2.98) must be gone"
+    assert "--muted: #7070a0" not in src, "the sub-AA classic --muted #7070a0 must be gone"
+    assert "--frz-text-muted:#9AA1AB" in src, "the DARK --frz-text-muted must be unchanged (light-only lift)"
+
+
+def test_typescale_phase2_labels_to_label_tier():
+    """Content-adjacent uppercase labels (item-page/modal field labels, the shared 10px label pattern)
+    migrate to --fs-label; the old literal 10px uppercase-label pattern is gone."""
+    src = _html()
+    assert ".ctrl-lbl { font-size: var(--fs-label);" in src, "item-page field labels (.ctrl-lbl) must use --fs-label"
+    assert "font-size:var(--fs-label);font-weight:700;color:var(--muted)" in src, "the shared uppercase-label pattern must use --fs-label"
+    assert "font-size:10px;font-weight:700;color:var(--muted)" not in src, "no 10px uppercase-label literal may remain"
+
+
+def test_typescale_phase2_microcopy_to_micro_tier():
+    src = _html()
+    rule = src.split(".frz-cmt-ts {", 1)[1].split("}", 1)[0] if ".frz-cmt-ts {" in src else \
+           src.split(".frz-cmt-ts{", 1)[1].split("}", 1)[0]
+    assert "var(--fs-micro)" in rule, "timestamps (.frz-cmt-ts) must use --fs-micro"
 
 
 def test_typescale_phase1_pills_bumped():

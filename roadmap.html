@@ -36,7 +36,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     --surface2: #eaeaef;
     --border: #d8d8e0;
     --text: #1a1a2e;
-    --muted: #7070a0;
+    --muted: #5a6b7c;   /* TYPE-SCALE-1 Phase 2: light muted lifted #7070a0 -> #5a6b7c for AA (was 4.27-4.36 on light surfaces, now >=4.5); coupled with the --frz-text-muted lift. Dark --muted unchanged. */
     --accent: #0059A9;
     --accent2: #e8394a;
     --today-line: #000000;
@@ -295,7 +295,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .topbar-title { font-size: 17px; font-weight: 900; color: var(--text); letter-spacing: -0.2px; }
   .topbar-div { width: 1px; height: 22px; background: var(--border); flex-shrink: 0; }
   .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; flex: 1; }
-  .ctrl-lbl { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+  .ctrl-lbl { font-size: var(--fs-label); font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }   /* TYPE-SCALE-1 Phase 2: item-page/modal field labels 11 -> label tier (12px) */
   select, button {
     background: #fff; border: 1px solid var(--border); color: var(--text);
     padding: 6px 11px; border-radius: 6px; font-family: 'Lato', sans-serif;
@@ -433,7 +433,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     position: relative;
     z-index: 2;          /* always above the translated rows */
   }
-  .col-lbl { font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: 0.8px; text-transform: uppercase; }
+  .col-lbl { font-size:var(--fs-label); font-weight: 700; color: var(--muted); letter-spacing: 0.8px; text-transform: uppercase; }
   .col-lbl.proj  { flex: 1; }
   .col-lbl.stat  { width: 88px; text-align: center; }
   .col-lbl.sched { width: 90px; text-align: center; font-size: 9px; }
@@ -514,10 +514,10 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   /* COUNTER-ALIGN-1: same fix as the rail - the group label flexes/truncates (min-width:0 load-bearing)
      so a long group name can't push the count off; the count is a fixed 2-digit box, centred + shrink-proof. */
   .grp-lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 900; color: var(--accent); }
-  .grp-cnt { flex-shrink: 0; box-sizing: border-box; min-width: 24px; text-align: center; font-size: 10px; color: var(--muted); background: var(--surface2); border-radius: 10px; padding: 1px 7px; }
+  .grp-cnt { flex-shrink: 0; box-sizing: border-box; min-width: 24px; text-align: center; font-size:var(--fs-micro); color: var(--muted); background: var(--surface2); border-radius: 10px; padding: 1px 7px; }
   .grp-tog { flex-shrink: 0; font-size: 9px; color: var(--muted); }
   .proj-name { flex: 1; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .sbadge { width: 88px; text-align: center; padding: 2px 5px; border-radius: 4px; font-size: 10px; font-weight: 700; flex-shrink: 0; }
+  .sbadge { width: 88px; text-align: center; padding: 2px 5px; border-radius: 4px; font-size:var(--fs-micro); font-weight: 700; flex-shrink: 0; }
   /* Semantic status badge colors - used by statusCls() */
   .s-released   { background: rgba(29,184,106,0.12);  color: #1a9a59; border: 1px solid rgba(29,184,106,0.3); }
   .s-inprogress { background: rgba(0,144,212,0.10);   color: #0078b8; border: 1px solid rgba(0,144,212,0.25); }
@@ -897,10 +897,10 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .modal.frz-composer .composer-act-main { flex: 1; min-width: 0; }
   .modal.frz-composer .composer-act-top { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
   .modal.frz-composer .composer-act-type { font-size: 10px; font-weight: 900; text-transform: uppercase; }
-  .modal.frz-composer .composer-act-ts { font-size: 10px; color: var(--muted); margin-left: auto; }
+  .modal.frz-composer .composer-act-ts { font-size:var(--fs-micro); color: var(--muted); margin-left: auto; }
   .modal.frz-composer .composer-act-msg { font-size: 12px; color: var(--text); }
-  .modal.frz-composer .composer-act-by { font-size: 10px; color: var(--muted); margin-top: 2px; }
-  .modal.frz-composer .composer-act-done { font-size: 10px; color: #22b96e; margin-top: 2px; }
+  .modal.frz-composer .composer-act-by { font-size:var(--fs-micro); color: var(--muted); margin-top: 2px; }
+  .modal.frz-composer .composer-act-done { font-size:var(--fs-micro); color: #22b96e; margin-top: 2px; }
 
   /* ── ITEM-COMPOSER-1 Stage 4B: comments in the modal (edit-only, beta-only) ── */
   .modal.frz-composer .composer-comments { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
@@ -953,7 +953,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .modal.frz-composer .composer-cmt-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
   .modal.frz-composer .composer-cmt-who { display: inline-flex; align-items: center; gap: 7px; }
   .modal.frz-composer .composer-cmt-author { font-size: 12px; font-weight: 700; color: var(--text); }
-  .modal.frz-composer .composer-cmt-ts { font-size: 10px; color: var(--muted); }
+  .modal.frz-composer .composer-cmt-ts { font-size:var(--fs-micro); color: var(--muted); }
   .modal.frz-composer .composer-cmt-body { font-size: 13px; color: var(--text); line-height: 1.5; }
 
   /* ── ITEM-COMPOSER-1 Stage 5 (A1): the locked-Delay reason, surfaced inline (reads without a hover,
@@ -1521,17 +1521,17 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       <thead>
         <tr id="listHeadRow" style="background:var(--surface);text-align:left">
           <th style="padding:8px 10px;width:32px"><input type="checkbox" id="listSelectAll" title="Select all on this page"></th>
-          <th class="list-sort" data-sort="item_key" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Key<span class="sort-arrow"></span></th>
-          <th class="list-sort" data-sort="type" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Type<span class="sort-arrow"></span></th>
-          <th class="list-sort" data-sort="name" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Name<span class="sort-arrow"></span></th>
-          <th style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap">Description</th>
-          <th class="list-sort" data-sort="status" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Status<span class="sort-arrow"></span></th>
-          <th class="list-sort" data-sort="priority" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Priority<span class="sort-arrow"></span></th>
-          <th class="list-sort" data-sort="owner" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Team<span class="sort-arrow"></span></th>
-          <th class="list-sort" data-sort="assignee" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Assignee<span class="sort-arrow"></span></th>
-          <th class="list-sort" data-sort="story_points" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap;text-align:center">Points<span class="sort-arrow"></span></th>
-          <th class="list-sort" data-sort="sprint_id" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Sprint<span class="sort-arrow"></span></th>
-          <th class="list-sort" data-sort="product" style="padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Space<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="item_key" style="padding:8px 10px;font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Key<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="type" style="padding:8px 10px;font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Type<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="name" style="padding:8px 10px;font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Name<span class="sort-arrow"></span></th>
+          <th style="padding:8px 10px;font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap">Description</th>
+          <th class="list-sort" data-sort="status" style="padding:8px 10px;font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Status<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="priority" style="padding:8px 10px;font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Priority<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="owner" style="padding:8px 10px;font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Team<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="assignee" style="padding:8px 10px;font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Assignee<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="story_points" style="padding:8px 10px;font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap;text-align:center">Points<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="sprint_id" style="padding:8px 10px;font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Sprint<span class="sort-arrow"></span></th>
+          <th class="list-sort" data-sort="product" style="padding:8px 10px;font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;cursor:pointer;user-select:none;white-space:nowrap">Space<span class="sort-arrow"></span></th>
         </tr>
       </thead>
       <tbody id="listBody"></tbody>
@@ -2303,13 +2303,13 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       </div>
       <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">
         <div style="flex:1;min-width:200px">
-          <label style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px">Reason <span style="color:var(--accent2)">*</span></label>
+          <label style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px">Reason <span style="color:var(--accent2)">*</span></label>
           <select id="fChangeReason" aria-label="Change reason" style="width:100%;padding:7px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none">
             <option value="">- Select reason -</option>
           </select>
         </div>
         <div style="flex:2;min-width:200px">
-          <label style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px">
+          <label style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:4px">
             Notes <span id="changeNoteRequired" style="color:var(--accent2);display:none">*</span>
           </label>
           <input type="text" id="fChangeNote" placeholder="Optional details…" aria-label="Change note"
@@ -2744,7 +2744,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.41.2';
+const APP_VERSION = '6.41.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -5720,7 +5720,7 @@ function updateDelayDateLabels(){
     delayLbl.style.fontWeight = hasDelay ? '900' : '';
     delayLbl.style.color      = hasDelay ? 'var(--accent2)' : '';
     delayLbl.innerHTML = hasDelay
-      ? 'New Due Date <span style="font-size:10px;font-weight:700;color:var(--muted)">(delay applied)</span>'
+      ? 'New Due Date <span style="font-size:var(--fs-label);font-weight:700;color:var(--muted)">(delay applied)</span>'
       : 'Delay Date';
   }
   // Also mark the due date preview to show "Original Due"
@@ -8924,7 +8924,7 @@ function startEditUser(i){
     `<option value="${escA(d)}" ${ownerFilterVal===d?'selected':''}>${d||'- All owners -'}</option>`).join('');
   const ownerRow = canChangeRole
     ? `<div id="uei_owner_wrap_${i}" style="${role==='viewer'?'display:none':''}">
-         <label style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:3px">Team <span style="font-weight:400;text-transform:none">(optional - buckets this user's items and assignments to a team; an editor with a team set sees only that team's items)</span></label>
+         <label style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:3px">Team <span style="font-weight:400;text-transform:none">(optional - buckets this user's items and assignments to a team; an editor with a team set sees only that team's items)</span></label>
          <select class="dev-edit-inp" id="uei_owner_${i}" style="padding:5px 8px">${ownerOptions}</select>
        </div>`
     : role !== 'viewer' && ownerFilterVal
@@ -9132,7 +9132,7 @@ function renderStatusList(){
   // Hint: the drag order is the authoritative workflow rank
   const orderHint = `<div style="padding:8px 13px 10px;font-size:11px;color:var(--muted);line-height:1.5">Drag the <b>⠿</b> handle to reorder - this order is the status <b>workflow sequence/rank</b>. <b>Approved</b> sets the readiness floor (items ordered before it are promoted when added to a sprint); <b>Terminal</b> marks completion.</div>`;
   // Header row
-  list.innerHTML = orderHint + `<div style="display:flex;align-items:center;padding:6px 13px;border-bottom:2px solid var(--border);font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;gap:8px">
+  list.innerHTML = orderHint + `<div style="display:flex;align-items:center;padding:6px 13px;border-bottom:2px solid var(--border);font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;gap:8px">
     <span style="width:20px"></span>
     <span style="flex:1">Status</span>
     <span style="width:56px;text-align:center" title="Drives locking rules when item has a team">Active</span>
@@ -9330,7 +9330,7 @@ function renderAssignmentTypesList(){
   const types = _assignmentTypes || [];
   const hint = `<div style="padding:8px 13px 10px;font-size:11px;color:var(--muted);line-height:1.5">Drag the <b>⠿</b> handle to reorder - display order controls calendar stacking and conflict priority. <b>Blocks Work</b> warns against overlapping tickets; <b>Exclusive</b> warns against another entry overlapping. <b>Capacity Impact</b> is subtracted from the team's effective capacity.</div>`;
   if(!types.length){ list.innerHTML = hint + '<div class="dev-empty">No entry types yet.</div>'; return; }
-  const header = `<div style="display:flex;align-items:center;padding:6px 13px;border-bottom:2px solid var(--border);font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;gap:8px">
+  const header = `<div style="display:flex;align-items:center;padding:6px 13px;border-bottom:2px solid var(--border);font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;gap:8px">
     <span style="width:20px"></span>
     <span style="flex:1;min-width:150px">Type</span>
     <span style="width:50px;text-align:center" title="Available for new entries">Active</span>
@@ -10004,7 +10004,7 @@ function startEditProduct(i){
         <div id="pei_swatches_${i}" style="display:flex;gap:6px;flex-wrap:wrap">${PROJECT_PALETTE.map(c=>`<button type="button" onclick="pickProductColor(${i},'${c}')" data-sw="${c}" title="${c}" style="width:20px;height:20px;border-radius:50%;background:${c};cursor:pointer;border:2px solid ${(p.color||'').toLowerCase()===c.toLowerCase()?'var(--text)':'transparent'};box-shadow:0 0 0 1px var(--border);padding:0"></button>`).join('')}</div>
       </div>
       <div>
-        <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Workflow Statuses (used in Kanban columns)</div>
+        <div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Workflow Statuses (used in Kanban columns)</div>
         <div id="pei_statuses_${i}" style="display:flex;flex-wrap:wrap;align-items:center">${statusCheckboxes}</div>
         <div style="font-size:10px;color:var(--muted);margin-top:3px">Leave all unchecked to use all statuses</div>
       </div>
@@ -12257,7 +12257,7 @@ function _listTh(id, opts){
   // Only Name + Description are width-constrained (position:relative anchors the grip;
   // width/max-width/overflow applied ONLY once a width is stored). Every other column
   // is untouched → keeps auto-sizing exactly as today.
-  let base='padding:8px 10px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap'+(c.center?';text-align:center':'');
+  let base='padding:8px 10px;font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap'+(c.center?';text-align:center':'');
   if(resizable) base+=';position:relative';
   if(w) base+=`;width:${w}px;max-width:${w}px;overflow:hidden;text-overflow:ellipsis`;
   const grip=resizable?`<span class="list-resizer" data-col="${id}" title="Drag to resize" style="position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize;user-select:none"></span>`:'';
@@ -14402,8 +14402,8 @@ function renderManageSavedViewsList(){
     </div>`).join('')
     : `<div style="font-size:12px;color:var(--muted);padding:8px 0">No custom views yet.</div>`;
   container.innerHTML =
-    `<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">System Views</div>${sysHtml}` +
-    `<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-top:12px;margin-bottom:4px">My Views</div>${userHtml}`;
+    `<div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">System Views</div>${sysHtml}` +
+    `<div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-top:12px;margin-bottom:4px">My Views</div>${userHtml}`;
 }
 
 function saveCurrentView(){
@@ -16715,7 +16715,7 @@ function renderCapacityHeatmap(items){
   if(!owners.length) return `<div style="color:var(--muted);font-size:13px;padding:16px 0">Set owner capacities in Admin → Owners to see the heat-map.</div>`;
 
   const headerCells = weeks.map(w =>
-    `<th style="padding:6px 8px;font-size:10px;font-weight:700;color:var(--muted);text-align:center;white-space:nowrap;border-bottom:2px solid var(--border)">${w.label}</th>`
+    `<th style="padding:6px 8px;font-size:var(--fs-label);font-weight:700;color:var(--muted);text-align:center;white-space:nowrap;border-bottom:2px solid var(--border)">${w.label}</th>`
   ).join('');
 
   const rows = owners.map(owner => {
@@ -16785,7 +16785,7 @@ function renderCapacityHeatmap(items){
 
   return `<table style="border-collapse:collapse;width:100%;font-size:12px">
     <thead><tr>
-      <th style="padding:6px 12px;font-size:10px;font-weight:700;color:var(--muted);text-align:left;border-bottom:2px solid var(--border);white-space:nowrap">Team / Today</th>
+      <th style="padding:6px 12px;font-size:var(--fs-label);font-weight:700;color:var(--muted);text-align:left;border-bottom:2px solid var(--border);white-space:nowrap">Team / Today</th>
       ${headerCells}
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -16859,7 +16859,7 @@ function ipField(label, value, opts={}){
   if(!value && !opts.always) return '';
   const muted = opts.muted ? `color:var(--muted)` : `color:var(--text)`;
   return `<div>
-    <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">${label}</div>
+    <div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">${label}</div>
     <div style="font-size:13px;font-weight:${opts.bold?'700':'400'};${muted}">${value||'-'}</div>
   </div>`;
 }
@@ -16871,7 +16871,7 @@ function ipEditField(field, label, displayHtml, kind, opts={}){
   // Server-enforced; this just shows/hides the click-to-edit affordance.
   if(!editable && !opts.readonly && isContributor && contributorCanEditField(projects.find(x=>x.id===_itemPageId), field)) editable = true;
   const val = (displayHtml===''||displayHtml==null) ? '<span style="color:var(--muted)">-</span>' : displayHtml;
-  const lbl = `<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">${label}</div>`;
+  const lbl = `<div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">${label}</div>`;
   const vs  = `font-size:13px;font-weight:${opts.bold?'700':'400'};color:var(--text)`;
   if(!editable) return `<div>${lbl}<div style="${vs}">${val}</div></div>`;
   return `<div>${lbl}<div class="ip-edit" data-field="${field}" data-kind="${kind}" title="Click to edit" style="${vs};cursor:text;border-radius:4px;padding:2px 5px;margin:-2px -5px" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">${val}</div></div>`;
@@ -17290,8 +17290,8 @@ function _ipTypedLinksHtml(p, canEdit){
     const meta = IP_LINK_TYPES[l.type]||IP_LINK_TYPES.related;
     rows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
       ${canEdit
-        ? `<select onchange="ipChangeTypedLinkType(${l.id}, this.value)" title="Relationship type" style="font-size:10px;font-weight:700;color:var(--muted);width:104px;flex-shrink:0;border:1px solid var(--border);border-radius:5px;background:var(--bg);padding:2px 4px;cursor:pointer">${typeOpts(l.type)}</select>`
-        : `<span style="font-size:10px;font-weight:700;color:var(--muted);width:104px;flex-shrink:0">${esc(meta.fwd)}</span>`}
+        ? `<select onchange="ipChangeTypedLinkType(${l.id}, this.value)" title="Relationship type" style="font-size:var(--fs-label);font-weight:700;color:var(--muted);width:104px;flex-shrink:0;border:1px solid var(--border);border-radius:5px;background:var(--bg);padding:2px 4px;cursor:pointer">${typeOpts(l.type)}</select>`
+        : `<span style="font-size:var(--fs-label);font-weight:700;color:var(--muted);width:104px;flex-shrink:0">${esc(meta.fwd)}</span>`}
       <button onclick="openItemPage(${t.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0;text-align:left;flex:1">${esc(t.name)}</button>
       ${canEdit
         ? `<button onclick="ipRemoveTypedLink(${l.id})" title="Remove link" style="background:none;border:none;color:var(--accent2);cursor:pointer;font-size:14px;padding:0 2px;line-height:1">✕</button>`
@@ -17305,7 +17305,7 @@ function _ipTypedLinksHtml(p, canEdit){
       if(l.id!==p.id) return;
       const meta = IP_LINK_TYPES[l.type]||IP_LINK_TYPES.related;
       rows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border);opacity:.85">
-        <span style="font-size:10px;font-weight:700;color:var(--muted);width:104px;flex-shrink:0">${esc(meta.inv)}</span>
+        <span style="font-size:var(--fs-label);font-weight:700;color:var(--muted);width:104px;flex-shrink:0">${esc(meta.inv)}</span>
         <button onclick="openItemPage(${x.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0;text-align:left;flex:1">${esc(x.name)}</button>
       </div>`);
     });
@@ -17325,7 +17325,7 @@ function _ipTypedLinksHtml(p, canEdit){
       </div></div>`;
   }
   if(!rows.length && !add) return '';
-  return `<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:6px">Relationships</div>` + rows.join('') + add;
+  return `<div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:6px">Relationships</div>` + rows.join('') + add;
 }
 function ipShowAddTypedLink(){ const r=document.getElementById('ipAddTypedRow'); if(r){ r.style.display='flex'; const s=document.getElementById('ipTypedItem'); if(s) s.focus(); } }
 function ipAddTypedLink(){
@@ -17497,7 +17497,7 @@ function renderItemPage(p){
     ipEditField('dueWeeks',          'Time Estimate',      p.dueWeeks ? fmtEstimate(p.dueWeeks) : '', 'number', {readonly:timeRO}),
     ipEditField('testWeeks',         'Test Period',        (p.testWeeks!==undefined && p.testWeeks!=='') ? fmtEstimate(p.testWeeks) : '', 'number', {readonly:timeRO}),
     ipEditField('parallelResources', 'Parallel Resources', String(p.parallelResources||1), 'number', {readonly:prRO}),
-    p.featureFlags?.length ? `<div><div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:5px">Feature Flags</div><div style="display:flex;flex-wrap:wrap;gap:4px">${renderFeatureFlagsInline(p.featureFlags||[], new Set(p.jiraFeatureFlags||[]))}</div></div>` : '',
+    p.featureFlags?.length ? `<div><div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:5px">Feature Flags</div><div style="display:flex;flex-wrap:wrap;gap:4px">${renderFeatureFlagsInline(p.featureFlags||[], new Set(p.jiraFeatureFlags||[]))}</div></div>` : '',
   ].join('');
 
   // Code Complete date (effective end minus test weeks - accounts for delay)
@@ -17561,7 +17561,7 @@ function renderItemPage(p){
   if(p.requires){
     const req = projects.find(x=>x.id===p.requires);
     if(req) depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
-      <span style="font-size:10px;font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Depends On</span>
+      <span style="font-size:var(--fs-label);font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Depends On</span>
       <button onclick="openItemPage(${req.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0;text-align:left;flex:1">${esc(req.name)}</button>
       ${depCanEdit
         ? `<button onclick="saveItemPagePatch({parallel:${!p.parallel}})" title="Toggle parallel / sequential" style="font-size:11px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:5px;padding:1px 8px;cursor:pointer">${p.parallel?'Parallel':'Sequential'}</button>
@@ -17569,16 +17569,16 @@ function renderItemPage(p){
         : `<span style="font-size:11px;color:var(--muted);margin-left:auto">${p.parallel?'Parallel':'Sequential'}</span>`}
     </div>`);
     else if(_relatedStubs[p.requires]) depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
-      <span style="font-size:10px;font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Depends On</span>${_relStub(p.requires)}</div>`);
+      <span style="font-size:var(--fs-label);font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Depends On</span>${_relStub(p.requires)}</div>`);
   }
   if(p.parent){
     const par = projects.find(x=>x.id===p.parent);
     if(par) depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
-      <span style="font-size:10px;font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Parent</span>
+      <span style="font-size:var(--fs-label);font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Parent</span>
       <button onclick="openItemPage(${par.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0">${esc(par.name)}</button>
     </div>`);
     else if(_relatedStubs[p.parent]) depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
-      <span style="font-size:10px;font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Parent</span>${_relStub(p.parent)}</div>`);
+      <span style="font-size:var(--fs-label);font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Parent</span>${_relStub(p.parent)}</div>`);
   }
   // Children now render in their own Subtasks card (renderItemPageSubtasks).
   // Ignore conflicts pairs
@@ -17586,7 +17586,7 @@ function renderItemPage(p){
     p.ignoreConflictsWith.forEach(xId => {
       const xi = projects.find(x=>x.id===xId);
       if(xi) depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
-        <span style="font-size:10px;font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Ignore Conflict</span>
+        <span style="font-size:var(--fs-label);font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Ignore Conflict</span>
         <button onclick="openItemPage(${xi.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text);padding:0">${esc(xi.name)}</button>
       </div>`);
     });
@@ -17652,7 +17652,7 @@ function renderItemPage(p){
       // rhythm. The button is the toggle and shows current state; the label says what it controls
       // ("Gantt visibility") so "Visible" is unambiguous. Behaviour (ipToggleHidden) unchanged.
       `<div>
-        <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">Gantt visibility</div>
+        <div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">Gantt visibility</div>
         <button onclick="ipToggleHidden(${p.id})" title="'Hidden' removes this item from the Gantt only - it still shows in Kanban, List, Planning and Dashboard. Click to toggle."
           style="padding:5px 12px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:12px;font-weight:700;background:${p.hidden?'var(--accent)':'var(--surface)'};color:${p.hidden?'#fff':'var(--text)'}">
           ${p.hidden?'Hidden':'Visible'}
@@ -17704,7 +17704,7 @@ function _ipTransferSlotInner(p){
   const lbl = ref ? esc(ref.targetLabel || teamLabel(ref.targetTeam||'')) : '';
   if(ref && ref.status==='linked'){
     return `<div style="padding:8px 10px;background:var(--surface2);border-radius:6px;border:1px solid var(--border)">
-      <div style="font-size:10px;font-weight:700;color:var(--muted);margin-bottom:4px">TRANSFERRED</div>
+      <div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);margin-bottom:4px">TRANSFERRED</div>
       <div style="font-size:12px;color:var(--text)">Moved to <b>${lbl}</b>${ref.number?' · '+esc(ref.number):''}</div>
       <div style="font-size:11px;color:var(--muted);margin-top:3px">Open it from the ${lbl} team (you don't have access to that team from here).</div>
     </div>`;
@@ -17725,7 +17725,7 @@ function _ipTransferSlotInner(p){
   // UI-POLISH-1: label-above-control (one card rhythm); auto-width + secondary, so Transfer reads
   // as an available action, not the card's headline. Caption kept. Behaviour unchanged.
   return `<div>
-    <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">Transfer</div>
+    <div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">Transfer</div>
     <button onclick="openTransferModal(${p.id})" style="padding:5px 12px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Transfer to another Organization</button>
     <div style="font-size:10px;color:var(--muted);margin-top:4px">Move a misrouted ticket to the correct team + project</div>
   </div>`;
@@ -18696,7 +18696,7 @@ function renderJiraIssueCard(d, canEdit){
   const catColor  = JCAT[d.statusCategory]||'#aaa';
   const childrenHtml = d.children?.length
     ? `<div style="margin-top:6px;border-top:1px solid var(--border);padding-top:6px">
-        <div style="font-size:10px;font-weight:700;color:var(--muted);margin-bottom:4px">CHILD ISSUES</div>
+        <div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);margin-bottom:4px">CHILD ISSUES</div>
         <div style="display:flex;flex-wrap:wrap;gap:4px">${
           d.children.map(c=>`<a href="${escA(esc(d.url.replace(d.key,c)))}" target="_blank" rel="noopener"
             style="font-size:10px;font-weight:700;color:var(--accent);background:rgba(0,89,169,0.07);padding:2px 7px;border-radius:5px;text-decoration:none">${esc(c)}</a>`
@@ -19394,7 +19394,7 @@ if ('serviceWorker' in navigator) {
   <div class="modal" style="width:560px;max-height:85vh;overflow-y:auto">
     <h2><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg> Manage Views</h2>
     <div style="margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)">
-      <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Theme</div>
+      <div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Theme</div>
       <div style="display:flex;gap:8px">
         <button id="themeLightBtn" onclick="setTheme('light')"
           style="flex:1;padding:8px;border:2px solid var(--accent);border-radius:8px;background:var(--accent);color:#fff;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">
@@ -19655,7 +19655,7 @@ if ('serviceWorker' in navigator) {
     --frz-border:#E1E8F0; --frz-border-strong:#C9D6E3;
     --frz-accent:#0059A9; --frz-accent-hover:#004A8F; --frz-accent-soft:#E7F1FA;
     --frz-accent-soft-border:#C3DCF1; --frz-sky:#65B1E3;
-    --frz-text:#14283F; --frz-text-secondary:#4A6178; --frz-text-muted:#8298AD; --frz-danger:#C0362C;
+    --frz-text:#14283F; --frz-text-secondary:#4A6178; --frz-text-muted:#5a6b7c; --frz-danger:#C0362C;
     /* BELL-1: --frz-alert (solid "something new") duplicates #e8394a, also in JS as _FRZ_FLAG_COLORS Blocked/
        At Risk; --frz-warn (outlined "outstanding") duplicates #e8a000, _frzFlagColor()'s fallback + conflict/
        unsaved-Save amber. Both values are also literals in _FRZ_FLAG_COLORS - a future unification of the
@@ -20231,7 +20231,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rpt-aggs { column-width:210px; column-gap:12px; padding:14px 16px; margin-bottom:14px; border:1px solid var(--frz-border); border-radius:12px; background:var(--frz-bg-surface); box-shadow:var(--frz-shadow-card); }
   .frz-beta .frz-rpt-agg { break-inside:avoid; width:100%; margin-bottom:12px; border:1px solid var(--frz-border); border-radius:8px; overflow:hidden; }
   .frz-beta .frz-rpt-agg:last-child { margin-bottom:0; }
-  .frz-beta .frz-rpt-agg-h { padding:6px 10px; background:var(--frz-bg-sunken); font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); }
+  .frz-beta .frz-rpt-agg-h { padding:6px 10px; background:var(--frz-bg-sunken); font-size:var(--fs-label); font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); }
   .frz-beta .frz-rpt-aggrow { display:flex; justify-content:space-between; gap:8px; padding:4px 10px; font-size:12px; border-top:1px solid var(--frz-border); }
   .frz-beta .frz-rpt-aggn { font-weight:800; color:var(--frz-accent); }
   /* SLA-GATE-1 4a + C2: bound the wrap height so overflow-y ENGAGES (the box grew to full content
@@ -20348,7 +20348,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-plan-body--single { display:block; overflow-y:auto; }
   .frz-beta .frz-tbl { border:1px solid var(--frz-border); border-radius:10px; overflow:hidden; background:var(--frz-bg-surface); }
   .frz-beta .frz-tbl-head, .frz-beta .frz-tbl-row { display:grid; grid-template-columns:2fr 1.4fr .9fr .7fr .9fr .8fr; gap:8px; align-items:center; padding:9px 14px; }
-  .frz-beta .frz-tbl-head { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); border-bottom:1px solid var(--frz-border); background:var(--frz-bg-app); }
+  .frz-beta .frz-tbl-head { font-size:var(--fs-label); font-weight:700; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); border-bottom:1px solid var(--frz-border); background:var(--frz-bg-app); }
   /* COUNTER-ALIGN-1: HEADER cells only truncate (single-line labels) so a long metric label like
      "Time Spent (hrs)" can't force its grid column wider and distort the row. Data rows are untouched
      (their name cell keeps its own min-width:0 wrapper + actions). Full label is on the cell's title. */
@@ -20613,7 +20613,7 @@ if ('serviceWorker' in navigator) {
      amber is a LIGHT disc carrying DARK text - so they stay obviously different objects under deuteranopia
      (desaturate both and the dark-vs-light disc still separates them); a `title` states the exact composition
      so meaning never depends on colour. box-sizing:border-box keeps sizing stable across states. */
-  .frz-beta .frz-bell-badge { position:absolute; top:1px; right:1px; box-sizing:border-box; min-width:16px; height:16px; padding:0 4px; border-radius:999px; font-size:10px; font-weight:800; line-height:16px; text-align:center; }
+  .frz-beta .frz-bell-badge { position:absolute; top:1px; right:1px; box-sizing:border-box; min-width:16px; height:16px; padding:0 4px; border-radius:999px; font-size:var(--fs-micro); font-weight:800; line-height:16px; text-align:center; }
   .frz-beta .frz-bell-badge.is-alert { background:var(--frz-alert); color:#fff; border:0; }
   /* BADGE-1: .is-warn is a SOLID amber disc (--frz-warn #e8a000) with dark navy text, NOT an outlined ring.
      The differentiator from the red state is inverted lightness polarity, not solid-vs-outline: red disc
@@ -20773,7 +20773,7 @@ if ('serviceWorker' in navigator) {
     --frz-bg-app:#F5F8FB; --frz-bg-surface:#FFFFFF; --frz-bg-rail:#FAFCFE; --frz-bg-elevated:#FFFFFF; --frz-bg-sunken:#E6EEF6; --frz-shadow-card:0 2px 8px rgba(20,40,63,.06); --frz-header-tint:#ECF3FB;
     --frz-border:#E1E8F0; --frz-border-strong:#C9D6E3;
     --frz-accent:#0059A9; --frz-accent-hover:#004A8F; --frz-accent-soft:#E7F1FA; --frz-accent-soft-border:#C3DCF1;
-    --frz-text:#14283F; --frz-text-secondary:#4A6178; --frz-text-muted:#8298AD; --frz-danger:#C0362C;
+    --frz-text:#14283F; --frz-text-secondary:#4A6178; --frz-text-muted:#5a6b7c; --frz-danger:#C0362C;
     --frz-alert:#e8394a; --frz-warn:#e8a000;
     --frz-warn-text:#c06000;
   }
@@ -21005,10 +21005,10 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-cmt-hd { display:flex; align-items:center; justify-content:space-between; margin-bottom:5px; }
   .frz-beta .frz-cmt-author { font-size:12px; font-weight:700; color:var(--frz-accent); }
   .frz-beta .frz-cmt-meta { display:flex; align-items:center; gap:8px; }
-  .frz-beta .frz-cmt-ts { font-size:10px; color:var(--frz-text-muted); }
+  .frz-beta .frz-cmt-ts { font-size:var(--fs-micro); color:var(--frz-text-muted); }
   .frz-beta .frz-cmt-del { background:none; border:0; cursor:pointer; color:var(--frz-text-muted); opacity:.6; padding:0 2px; font-size:12px; line-height:1; }
   .frz-beta .frz-cmt-del:hover { opacity:1; color:#e8394a; }
-  .frz-beta .frz-cmt-edited { font-size:10px; color:var(--frz-text-muted); font-style:italic; }
+  .frz-beta .frz-cmt-edited { font-size:var(--fs-micro); color:var(--frz-text-muted); font-style:italic; }
   .frz-beta .frz-cmt-edit { background:none; border:0; cursor:pointer; color:var(--frz-text-muted); opacity:.6; padding:0 2px; line-height:0; display:inline-flex; align-items:center; }
   .frz-beta .frz-cmt-edit:hover { opacity:1; color:var(--frz-accent); }
   .frz-beta .frz-cmt-edit svg { display:block; }
@@ -25311,7 +25311,7 @@ if ('serviceWorker' in navigator) {
     // Uses --muted/--text (remapped to the beta tokens) so it matches every other rail row.
     if(cBody && p && p.createdAt){
       var _cr=document.createElement('div');
-      _cr.innerHTML='<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">Created</div>'
+      _cr.innerHTML='<div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">Created</div>'
         +'<div style="font-size:13px;color:var(--text)">'+esc(_call('fmtTS', p.createdAt)||'-')+'</div>';
       cBody.appendChild(_cr);
     }
@@ -29160,7 +29160,7 @@ if ('serviceWorker' in navigator) {
     var canEdit = (_val('isAdmin',false)||_val('isEditor',false));
     var wrap=document.getElementById('frzReleaseField');
     if(!wrap){ wrap=document.createElement('div'); wrap.id='frzReleaseField'; wrap.style.cssText='display:flex;flex-direction:column;gap:3px'; fields.appendChild(wrap); }
-    var lbl='<span style="font-size:10px;font-weight:700;color:var(--frz-text-muted);text-transform:uppercase;letter-spacing:.4px">Release</span>';
+    var lbl='<span style="font-size:var(--fs-label);font-weight:700;color:var(--frz-text-muted);text-transform:uppercase;letter-spacing:.4px">Release</span>';
     if(canEdit){
       var opts='<option value="">- None -</option>'+_releases.map(function(r){ return '<option value="'+escA(r.id)+'" '+(p.release===r.id?'selected':'')+'>'+esc(r.name)+'</option>'; }).join('');
       wrap.innerHTML=lbl+'<select id="frzReleaseSel" style="font:inherit;font-size:13px;border:1px solid var(--frz-border-strong);border-radius:6px;padding:5px 8px;color:var(--frz-text);background:var(--frz-bg-surface)">'+opts+'</select>';
@@ -29197,7 +29197,7 @@ if ('serviceWorker' in navigator) {
     var wrap=document.getElementById('frzDeptField');
     if(!wrap){ wrap=document.createElement('div'); wrap.id='frzDeptField'; wrap.style.cssText='display:flex;flex-direction:column;gap:5px'; fields.appendChild(wrap); }
     var depts=Array.isArray(p.departments)?p.departments.filter(Boolean):[];
-    var lbl='<span style="font-size:10px;font-weight:700;color:var(--frz-text-muted);text-transform:uppercase;letter-spacing:.4px">Departments</span>';
+    var lbl='<span style="font-size:var(--fs-label);font-weight:700;color:var(--frz-text-muted);text-transform:uppercase;letter-spacing:.4px">Departments</span>';
     var chips=depts.map(function(d){
       return '<span style="display:inline-flex;align-items:center;gap:4px;'+_deptChipStyle(d)+';border-radius:10px;padding:2px 4px 2px 9px;font-size:12px;font-weight:600">'+esc(d)+
         (canEdit?'<button type="button" class="frz-dept-x" data-dept="'+escA(d)+'" title="Remove" style="border:0;background:none;color:inherit;opacity:0.8;cursor:pointer;font-size:14px;line-height:1;padding:0 2px">×</button>':'')+'</span>';
@@ -29570,7 +29570,7 @@ if ('serviceWorker' in navigator) {
       fields.appendChild(wrap);
     }
     var cc=(!p.hidden && !p.archived && Array.isArray(p.ccList))?p.ccList:[];
-    var lbl='<span style="font-size:10px;font-weight:700;color:var(--frz-text-muted);text-transform:uppercase;letter-spacing:.4px">Notify</span>';
+    var lbl='<span style="font-size:var(--fs-label);font-weight:700;color:var(--frz-text-muted);text-transform:uppercase;letter-spacing:.4px">Notify</span>';
     var chips=cc.map(function(r){
       var del=canEdit?'<button type="button" class="frz-cc-x" data-cc="'+escA(r.id)+'" title="Remove" style="border:0;background:none;color:inherit;opacity:.7;cursor:pointer;font-size:14px;line-height:1;padding:0 2px;flex:0 0 auto">×</button>':'';
       return '<span title="'+escA(r.email||'')+'" style="display:inline-flex;align-items:center;gap:4px;max-width:100%;background:var(--frz-bg-surface);border:1px solid var(--frz-border);color:var(--frz-text);border-radius:10px;padding:2px 4px 2px 9px;font-size:12px;font-weight:600"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_frzCcDisplay(r.email)+'</span>'+del+'</span>';
