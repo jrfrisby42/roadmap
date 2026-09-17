@@ -7067,6 +7067,11 @@ document.getElementById('modalBg')?.addEventListener('click', e=>{
     document.addEventListener('keydown', escH, true);
   }
   function onClose(){
+    // OVERLAY-DISMISS-2: close overlays at the MODAL-close boundary (the mention menu, closePop popovers
+    // and filter dropdowns are body/shell children the modal teardown otherwise leaves floating). This
+    // observer is the single funnel for EVERY close path (Cancel, X, Escape, backdrop, save, programmatic),
+    // so one call here covers them all. Reuses OVERLAY-DISMISS-1's closer (guarded, safe when nothing open).
+    try{ if(window._frzCloseOverlays) window._frzCloseOverlays(); }catch(e){}
     document.documentElement.classList.remove('composer-lock');
     if(trapH) mb.removeEventListener('keydown', trapH);
     if(escH) document.removeEventListener('keydown', escH, true);
@@ -26025,6 +26030,7 @@ if ('serviceWorker' in navigator) {
     closePop();                             // beta popover (state.pop) + its mousedown capture listener
     _closeMention();                        // frz-mention-menu (body-level; neither of the above touches it)
   }
+  window._frzCloseOverlays = _frzCloseOverlays;   // OVERLAY-DISMISS-2: the classic composer teardown (onClose) reuses this beta-scoped closer at the modal-close boundary (same closer OVERLAY-DISMISS-1 uses at the route boundary)
   function navigate(url, replace){
     _frzCloseOverlays();   // OVERLAY-DISMISS-1: close BEFORE the /item early-return below, or a deep link leaves them open
     var u = new URL(url, location.origin);

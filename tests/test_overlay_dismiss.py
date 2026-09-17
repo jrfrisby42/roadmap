@@ -70,3 +70,31 @@ def test_three_mechanisms_not_unified_invariant():
 def test_client_only_no_server_symbol():
     py = SERVER.read_text(encoding="utf-8", errors="replace")
     assert "_frzCloseOverlays" not in py, "OVERLAY-DISMISS-1 is client-only; no symbol in server.py"
+
+
+# ── OVERLAY-DISMISS-2: close overlays at the modal-close boundary ───────────────────────────────────
+def test_overlay_dismiss_2_invoked_from_modal_teardown():
+    """The closer also runs at the single modal-close funnel (onClose). Revert: remove the call and the
+    mention menu survives closing the item modal (the reported bug)."""
+    src = _html()
+    oc = src.split("function onClose(){", 1)[1].split("\n  }", 1)[0]
+    assert "_frzCloseOverlays" in oc, "onClose (the single modal-close funnel) must invoke the closer"
+
+
+def test_overlay_dismiss_2_window_export():
+    """_frzCloseOverlays is beta-scoped; onClose is classic, so it must be exposed on window. Revert: drop
+    the export and the classic teardown can't reach the closer."""
+    src = _html()
+    assert "window._frzCloseOverlays = _frzCloseOverlays" in src, \
+        "the closer must be exposed on window for the classic modal teardown to reach it"
+
+
+def test_overlay_dismiss_1_route_calls_still_intact_invariant():
+    """INVARIANT: OVERLAY-DISMISS-1's three route call sites are untouched by this modal-boundary fix."""
+    src = _html()
+    nav = src.split("function navigate(url, replace){", 1)[1].split("function lastView(", 1)[0]
+    assert "_frzCloseOverlays()" in nav and nav.index("_frzCloseOverlays()") < nav.index("openItem(")
+    rfl = src.split("function routeFromLocation(initial){", 1)[1][:400]
+    assert "_frzCloseOverlays()" in rfl
+    ps = src.split("window.addEventListener('popstate', function(e){", 1)[1][:400]
+    assert "_frzCloseOverlays()" in ps
