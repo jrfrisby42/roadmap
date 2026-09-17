@@ -3461,6 +3461,27 @@ def set_own_avatar(body: dict = Body(...), auth: dict = Depends(require_auth)):
     return {"ok": True, "avatarInitials": user.get("avatarInitials", ""),
             "avatarColor": user.get("avatarColor", "")}
 
+@app.post("/api/users/self/topbar-views")
+def set_own_topbar_views(body: dict = Body(...), auth: dict = Depends(require_auth)):
+    """Self-scoped: the caller sets their OWN top-bar-views preference (any role). Writes an EXPLICIT
+    boolean to the caller's record - true = the view switcher lives in the top bar as icons, false = the
+    old left rail. Mirrors set_own_avatar: never touches another user, and is deliberately NOT the
+    admin-gated `PUT /api/config/users` array. The read default (absent) is ON - see /api/all."""
+    team     = auth["team"]
+    username = auth["username"]
+    val      = bool(body.get("enabled"))
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+        if not row:
+            raise HTTPException(404, "User store not found")
+        users = json.loads(row["value"])
+        user = next((u for u in users if u["username"] == username), None)
+        if not user:
+            raise HTTPException(404, "User not found")
+        user["topbarViews"] = val
+        c.execute("UPDATE config SET value=? WHERE key='users'", (json.dumps(users),))
+    return {"ok": True, "topbarViews": val}
+
 @app.post("/api/users/{target_username}/password")
 def admin_change_user_password(
     target_username: str,

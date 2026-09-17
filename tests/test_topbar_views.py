@@ -7,8 +7,11 @@ config['users']. TOPBAR-DEFAULT-1 flipped the default to ON (opt-OUT): an absent
 doesn't carry the flag must not silently drop an explicit value - true OR false - (inherited on save).
 """
 import json
+import pathlib
 
 import server
+
+HTML = pathlib.Path(__file__).resolve().parent.parent / "roadmap.html"
 
 
 def _hdr(team, user, role="admin"):
@@ -86,3 +89,36 @@ def test_topbar_views_explicit_optout_survives_unrelated_edit(client, team, admi
     optout = next(u for u in _users(team) if u["username"] == "optout")
     assert optout.get("topbarViews") is False   # opt-out preserved, not wiped to the default
     assert client.get("/api/all", headers=_hdr(team, "optout")).json()["topbarViews"] is False
+
+
+# ── SELF-TOPBAR-TOGGLE: the caller sets their OWN preference (My Settings > Appearance) ─────────────
+def test_self_topbar_views_sets_own_preference(client, team):
+    """Any role can set their own top-bar-views preference; it persists as an explicit boolean and reads
+    back via /api/all. Revert: gate the endpoint behind admin and a viewer's own save 403s."""
+    _set_user(team, "vx", role="viewer")   # the caller must exist in the roster
+    h = _hdr(team, "vx", "viewer")
+    assert client.post("/api/users/self/topbar-views", json={"enabled": False}, headers=h).json()["topbarViews"] is False
+    assert client.get("/api/all", headers=h).json()["topbarViews"] is False
+    assert client.post("/api/users/self/topbar-views", json={"enabled": True}, headers=h).json()["topbarViews"] is True
+    assert client.get("/api/all", headers=h).json()["topbarViews"] is True
+
+
+def test_self_topbar_views_only_touches_the_caller(client, team, admin_headers):
+    """Self-scoped: setting my own preference must not touch another user's record."""
+    _set_user(team, "other", topbarViews=True)
+    assert client.post("/api/users/self/topbar-views", json={"enabled": False}, headers=admin_headers).status_code == 200
+    assert next(u for u in _users(team) if u["username"] == "other").get("topbarViews") is True   # untouched
+    assert next(u for u in _users(team) if u["username"] == "admin").get("topbarViews") is False  # my own, explicit
+
+
+def test_self_topbar_views_unknown_caller_404(client, team):
+    # a token for a username not in the roster cannot write a preference (no phantom record created)
+    assert client.post("/api/users/self/topbar-views", json={"enabled": True},
+                       headers=_hdr(team, "ghost", "viewer")).status_code == 404
+
+
+def test_self_topbar_toggle_client_wired():
+    src = HTML.read_text(encoding="utf-8", errors="replace")
+    assert "/api/users/self/topbar-views" in src, "the Appearance toggle must call the self endpoint"
+    assert 'id="frzNavSeg"' in src, "the Navigation row must be in the Appearance panel"
+    assert "window._topbarViews = want" in src, "the toggle applies the new value to the shell before reload"

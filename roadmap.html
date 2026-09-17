@@ -32837,6 +32837,13 @@ if ('serviceWorker' in navigator) {
               '</div>'+
             '</div>'+
             '<div class="frz-set-row">'+
+              '<div><div class="frz-set-row-title">Navigation</div><div class="frz-set-row-sub">Where the view switcher lives (desktop). Top bar shows Gantt / List / Kanban as icons; side rail is the classic left menu.</div></div>'+
+              '<div class="frz-theme-seg" id="frzNavSeg">'+
+                '<button type="button" data-nav="top">Top bar</button>'+
+                '<button type="button" data-nav="side">Side rail</button>'+
+              '</div>'+
+            '</div>'+
+            '<div class="frz-set-row">'+
               '<div><div class="frz-set-row-title">Avatar</div><div class="frz-set-row-sub">Your initials (up to 3, blank uses your name) and color.</div></div>'+
               '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:10px">'+
                 '<div style="display:flex;align-items:center;gap:10px">'+
@@ -32867,6 +32874,25 @@ if ('serviceWorker' in navigator) {
       var syncThemeSeg=function(){ var dark=document.body.classList.contains('dark-mode'); seg.querySelectorAll('button').forEach(function(b){ b.classList.toggle('is-active', b.getAttribute('data-theme')===(dark?'dark':'light')); }); };
       seg.querySelectorAll('button').forEach(function(b){ b.addEventListener('click', function(){ _call('setTheme', b.getAttribute('data-theme')); syncThemeSeg(); }); });
       syncThemeSeg();
+    }
+    // Appearance tab - top-bar-views (SHELL-IA) navigation preference. Self-scoped save (POST
+    // /api/users/self/topbar-views), then reload to re-mount the shell in the chosen mode. Reflects
+    // window._topbarViews (the server-provided per-user flag). Phones ignore the layout, but the
+    // preference is real and applies on desktop, so the row stays visible.
+    var navSeg=bg.querySelector('#frzNavSeg');
+    if(navSeg){
+      var syncNav=function(v){ navSeg.querySelectorAll('button').forEach(function(b){ b.classList.toggle('is-active', b.getAttribute('data-nav')===v); }); };
+      syncNav(window._topbarViews ? 'top' : 'side');
+      navSeg.querySelectorAll('button').forEach(function(b){ b.addEventListener('click', function(){
+        var want = b.getAttribute('data-nav')==='top';
+        if(want === !!window._topbarViews) return;               // no change - already in that mode
+        navSeg.querySelectorAll('button').forEach(function(x){ x.disabled=true; });
+        API.post('/api/users/self/topbar-views', {enabled:want}).then(function(){
+          window._topbarViews = want; syncNav(want ? 'top' : 'side');
+          _call('showToast', want ? 'Top bar navigation on - reloading...' : 'Side rail navigation on - reloading...');
+          setTimeout(function(){ location.reload(); }, 600);      // re-mount the shell in the new IA mode
+        }).catch(function(err){ navSeg.querySelectorAll('button').forEach(function(x){ x.disabled=false; }); _call('showToast', (err&&err.message)||'Could not save the navigation preference','error'); });
+      }); });
     }
     // Appearance tab - avatar initials + color. Self-scoped save (POST
     // /api/users/self/avatar). Blank initials -> derive from username; the "Auto"
