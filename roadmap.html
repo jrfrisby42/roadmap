@@ -26015,7 +26015,18 @@ if ('serviceWorker' in navigator) {
     if(r && r.indexOf('/admin')!==0){ navigate(r, false); }
     else { navigate('/my-home', false); }
   };
+  // OVERLAY-DISMISS-1: one closer invoked at every route boundary so dropdowns, popovers and the mention
+  // selector never float over the next page. It CALLS the three independent dismissal mechanisms (it does
+  // not unify them). Each is safe when nothing is open - closeAllDropdowns is optional-chained no-ops,
+  // closePop guards on state.pop, _closeMention guards on _mentionMenu - so running it on every route
+  // change (far more often closed than open) is harmless.
+  function _frzCloseOverlays(){
+    try{ closeAllDropdowns(); }catch(e){}   // classic global (filter dropdowns + planning/cal panels)
+    closePop();                             // beta popover (state.pop) + its mousedown capture listener
+    _closeMention();                        // frz-mention-menu (body-level; neither of the above touches it)
+  }
   function navigate(url, replace){
+    _frzCloseOverlays();   // OVERLAY-DISMISS-1: close BEFORE the /item early-return below, or a deep link leaves them open
     var u = new URL(url, location.origin);
     var path = u.pathname.replace(/\/+$/,'');
     var m = path.match(/^\/item\/(\d+)/);
@@ -26048,6 +26059,7 @@ if ('serviceWorker' in navigator) {
   }
   function lastView(){ return ls('frazil_beta_lastview_'+uname()); }
   function routeFromLocation(initial){
+    _frzCloseOverlays();   // OVERLAY-DISMISS-1: also before this function's /item early-return
     var path = location.pathname.replace(/\/+$/,'');
     var m = path.match(/^\/item\/(\d+)/);
     var qItem = new URLSearchParams(location.search).get('item');
@@ -26114,6 +26126,7 @@ if ('serviceWorker' in navigator) {
   }
   window.addEventListener('popstate', function(e){
     if (!root) return;
+    _frzCloseOverlays();   // OVERLAY-DISMISS-1: back/forward is the third route entry - close overlays on both branches below
     var st = e.state||{};
     if (st.frzItem){ state.itemFromApp=true; openItem(st.frzItem, {push:false}); }
     else {
