@@ -43,15 +43,48 @@ def test_template_stamps_create_only_never_overwrites():
     assert "_frzStampedHTML" in stamp, "stamp must track the prior auto-stamp so a Type change only replaces an untouched template"
 
 
-def test_template_authoring_is_plain_text_shaped():
-    """2.2: the authoring surface is plain-text (a textarea), not a rich editor - it must not offer a
-    capability the toolbar-less create surface cannot maintain."""
+def test_template_authoring_is_the_rich_editor():
+    """TYPE-TEMPLATE-2 reverses TYPE-TEMPLATE-1's plain-text-shaped choice: CREATE-EDITOR-1 gave create
+    mode a maintainable editor, so authoring now uses the SAME create-toolbar editor - what an admin
+    authors is exactly what stamps (2.2 symmetry, now pointing the other way). Revert: swap the mount back
+    for the bare textarea and the two surfaces diverge again."""
     src = _html()
-    assert "class=\"type-tmpl-ta\"" in src and "<textarea" in src.split("function openTypeTemplate", 1)[1][:1200], \
-        "template authoring must be a plain textarea (plain-text-shaped)"
-    assert "does not change items that already exist" in src, "the admin note about non-propagation must be present"
+    ot = src.split("function openTypeTemplate", 1)[1].split("function setTypeTemplate", 1)[0]
+    assert "window._frzMountTemplateEditor(" in ot, "template authoring must mount the rich editor"
+    assert "_frzTemplateToHTML(t.template" in ot, "an existing template loads through the plain->HTML converter"
+    assert "does not change items that already exist" in src, "the admin note about non-propagation must stay"
+    # the mount uses the CREATE toolbar, never the full set (headings/tables/panels are not maintainable here)
+    mt = src.split("function _frzMountTemplateEditor(", 1)[1].split("\n  }", 1)[0]
+    assert "buttons:_FRZ_TB_CREATE" in mt and "_FRZ_TB_FULL" not in mt, "authoring must use _FRZ_TB_CREATE, never _FRZ_TB_FULL"
 
 
 def test_template_client_only():
     py = SERVER.read_text(encoding="utf-8", errors="replace")
     assert "_frzStampTypeTemplate" not in py and "setTypeTemplate" not in py, "TYPE-TEMPLATE-1 is client-only; no symbol in server.py"
+
+
+# ── TYPE-TEMPLATE-2: templates carry formatting ────────────────────────────────────────────────────
+def test_stamp_stops_escaping_carries_html():
+    """TYPE-TEMPLATE-2: the stamp no longer escapes - templates carry HTML via _frzTemplateToHTML. Revert:
+    re-introduce esc() per line and bold/list formatting stamps as visible literal text (proof case 1 fails)."""
+    src = _html()
+    st = src.split("function _frzStampTypeTemplate(){", 1)[1].split("\n}", 1)[0]
+    assert "_frzTemplateToHTML(tmpl)" in st, "the stamp must build HTML via _frzTemplateToHTML"
+    assert "esc(l)" not in st, "the stamp must NOT escape template lines any more (formatting must survive)"
+
+
+def test_template_to_html_converter_has_both_paths():
+    """_frzTemplateToHTML: an already-HTML template passes through; a legacy plain-line template converts to
+    paragraphs (no data migration). Revert: drop the plain branch and every legacy plain template collapses
+    to one line on stamp."""
+    src = _html()
+    fn = src.split("function _frzTemplateToHTML(", 1)[1].split("\n}", 1)[0]
+    assert "return tmpl;" in fn, "an already-HTML template must be stamped as-is"
+    assert "split('\\n')" in fn and "'<p>'+" in fn, "legacy plain lines must convert to paragraphs"
+    assert "esc(" not in fn, "no escaping - templates carry HTML (frzSanitize runs on save)"
+
+
+def test_sanitize_wrapper_exposed_for_authoring_save():
+    """Authoring saves through the exposed frzSanitize wrapper (same store shape as the composer)."""
+    src = _html()
+    assert "window._frzSanitizeHTML=" in src, "the sanitize wrapper must be exposed for the template save path"

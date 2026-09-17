@@ -6981,6 +6981,16 @@ document.getElementById('fType')?.addEventListener('change', _frzUpdateTypeCellI
 // user has typed, it is left alone. Plain-text-shaped: template lines -> escaped <p> paragraphs.
 var _frzStampedHTML=null;   // the HTML of the last auto-stamp, so a re-stamp only replaces an untouched template
 function _frzTypeTemplateFor(name){ var t=(types||[]).find(function(x){ return x && x.name===name; }); return (t && typeof t.template==='string') ? t.template : ''; }
+// TYPE-TEMPLATE-2: a template now carries HTML (authored in the create-toolbar editor). A template that
+// already contains markup is used AS-IS; a legacy TYPE-TEMPLATE-1 template (plain newline-separated label
+// lines) is converted to paragraphs so it still renders exactly as before - no data migration. frzSanitize
+// runs on save, so this widens nothing that can be STORED. Shared by the stamp and the authoring surface.
+function _frzTemplateToHTML(tmpl){
+  tmpl = (tmpl==null ? '' : String(tmpl)).trim();
+  if(!tmpl) return '';
+  if(/<(p|div|ul|ol|li|h[1-6]|strong|em|s|a|br|blockquote|code|pre|span|mark)\b/i.test(tmpl)) return tmpl;   // already HTML - stamp as authored
+  return tmpl.split('\n').map(function(l){ return '<p>'+(l.trim()? l : '<br>')+'</p>'; }).join('');            // legacy plain lines -> paragraphs (no escaping now)
+}
 function _frzStampTypeTemplate(){
   if(editingId!=null) return;                                    // create mode only - existing items untouched
   var fd=document.getElementById('fDesc'); if(!fd) return;
@@ -6991,7 +7001,7 @@ function _frzStampTypeTemplate(){
   var replaceable = fd.textContent.trim()==='' || (_frzStampedHTML!=null && cur===_frzStampedHTML);
   if(!replaceable) return;                                       // user has typed content - NEVER overwrite
   var tmpl=_frzTypeTemplateFor((document.getElementById('fType')||{}).value||'');
-  var html = tmpl.trim() ? tmpl.split('\n').map(function(l){ return '<p>'+(l.trim()?esc(l):'<br>')+'</p>'; }).join('') : '';
+  var html = _frzTemplateToHTML(tmpl);   // TYPE-TEMPLATE-2: templates carry HTML (legacy plain lines -> paragraphs); no more escaping
   if(ed){
     // Route through the editor's own API - a raw fd.innerHTML write under a mounted Tiptap desyncs its
     // document model. emitUpdate=true fires the mount's _sync, mirroring the sanitized result into #fDesc.
@@ -9828,18 +9838,36 @@ function openTypeTemplate(i, btn){
   if(nxt && nxt.classList.contains('type-tmpl-editor')){ nxt.remove(); return; }   // toggle closed
   document.querySelectorAll('.type-tmpl-editor').forEach(function(e){ e.remove(); });   // one open at a time
   var t=types[i];
+  // TYPE-TEMPLATE-2: author in the SAME create-toolbar editor the composer uses (so what an admin authors
+  // is exactly what stamps). The plain <textarea> stays as the rte-off fallback.
+  var useRte = (typeof window.frzRteEnabled==='function' ? window.frzRteEnabled() : false) && typeof window._frzMountTemplateEditor==='function';
   var panel=document.createElement('div'); panel.className='type-tmpl-editor';
   panel.style.cssText='padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;margin:2px 0 8px';
   panel.innerHTML=
-    '<div style="font-size:11px;color:var(--muted);margin-bottom:5px">Description template for <b>'+esc(t.name)+'</b> - pre-fills the description of <b>new</b> items of this type. Plain text, one label line per field (no headings). <b>Editing this does not change items that already exist.</b></div>'
-    +'<textarea class="type-tmpl-ta" style="width:100%;min-height:96px;box-sizing:border-box;font-family:\'Lato\',sans-serif;font-size:13px;line-height:1.5;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);resize:vertical" placeholder="Measurements:&#10;Hierarchy:&#10;OneDrive Links:&#10;Project Type:"></textarea>'
+    '<div style="font-size:11px;color:var(--muted);margin-bottom:5px">Description template for <b>'+esc(t.name)+'</b> - pre-fills the description of <b>new</b> items of this type. '
+      +(useRte ? 'Formatting (bold, italic, lists, links) is stamped as authored. ' : 'Plain text, one label line per field. ')
+      +'<b>Editing this does not change items that already exist.</b></div>'
+    +(useRte ? '<div class="type-tmpl-host"></div>' : '')
+    +'<textarea class="type-tmpl-ta" style="width:100%;min-height:96px;box-sizing:border-box;font-family:\'Lato\',sans-serif;font-size:13px;line-height:1.5;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);resize:vertical'+(useRte?';display:none':'')+'" placeholder="Measurements:&#10;Hierarchy:&#10;OneDrive Links:&#10;Project Type:"></textarea>'
     +'<div style="margin-top:6px;display:flex;gap:6px"><button type="button" class="tmpl-save" style="background:var(--accent);color:#fff;border:none;padding:5px 14px;border-radius:5px;font-family:\'Lato\',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Save</button>'
     +'<button type="button" class="tmpl-cancel" style="background:none;border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:5px;font-size:12px;cursor:pointer">Cancel</button></div>';
   row.parentNode.insertBefore(panel, row.nextSibling);
   panel.querySelector('.type-tmpl-ta').value = t.template || '';
-  panel.querySelector('.tmpl-save').addEventListener('click', function(){ setTypeTemplate(i, panel.querySelector('.type-tmpl-ta').value); });
-  panel.querySelector('.tmpl-cancel').addEventListener('click', function(){ panel.remove(); });
-  panel.querySelector('.type-tmpl-ta').focus();
+  var hostEl = useRte ? panel.querySelector('.type-tmpl-host') : null;
+  if(useRte){ window._frzMountTemplateEditor(hostEl, _frzTemplateToHTML(t.template||'')); }
+  panel.querySelector('.tmpl-save').addEventListener('click', function(){
+    var val;
+    var ed = hostEl && hostEl._frzEd;
+    if(ed){
+      var txt = (ed.getText ? ed.getText() : '').trim();
+      val = txt ? window._frzSanitizeHTML(ed.getHTML()) : '';   // empty editor -> no template (delete)
+    } else {
+      val = panel.querySelector('.type-tmpl-ta').value;         // fallback (rte off, or editor not mounted yet)
+    }
+    setTypeTemplate(i, val);
+  });
+  panel.querySelector('.tmpl-cancel').addEventListener('click', function(){ if(hostEl&&hostEl._frzEd){ try{ hostEl._frzEd.destroy(); }catch(e){} } panel.remove(); });
+  if(!useRte) panel.querySelector('.type-tmpl-ta').focus();
 }
 function setTypeTemplate(i, val){
   if(!isAdmin) return;
@@ -30909,6 +30937,34 @@ if ('serviceWorker' in navigator) {
       // NO _frzRehydrateEditorImages (create has no stored inline images).
     }).catch(function(){});
   }
+  // TYPE-TEMPLATE-2: mount the create-toolbar editor as the Type-template AUTHORING surface (admin only).
+  // Same _FRZ_TB_CREATE set the create composer uses, so what an admin authors is exactly what stamps.
+  // NO mentions (a template is not a place to @notify), no images (paste/drop swallowed). The editor is
+  // stored on host._frzEd; the Save handler reads window._frzSanitizeHTML(host._frzEd.getHTML()).
+  function _frzMountTemplateEditor(host, initialHTML){
+    if(!host) return;
+    Promise.all([_frzLoadTiptap(), _frzLoadDOMPurify()]).then(function(r){
+      if(!host.isConnected) return;
+      if(host._frzEd){ try{ host._frzEd.destroy(); }catch(e){} host._frzEd=null; }
+      var T=r[0], Editor=T.core.Editor;
+      var edHost=document.createElement('div'); edHost.className='frz-rte-modal frz-rte'; edHost.style.padding='0';
+      host.appendChild(edHost);
+      var ed=new Editor({
+        element:edHost, extensions:_frzMakeExtensions(T), content:initialHTML||'',
+        editorProps:{
+          handlePaste:function(view, e){ var it=(e.clipboardData&&e.clipboardData.items)||[]; for(var i=0;i<it.length;i++){ if(it[i].kind==='file'&&/^image\//.test(it[i].type||'')){ return true; } } return false; },
+          handleDrop:function(view, e){ var fs=(e.dataTransfer&&e.dataTransfer.files)||[]; if([].slice.call(fs).some(function(f){ return /^image\//.test(f.type||''); })){ e.preventDefault(); return true; } return false; }
+        }
+      });
+      host._frzEd=ed;
+      _frzBuildToolbar(ed, { buttons:_FRZ_TB_CREATE, cls:'frz-rte-tb-modal', place:function(tb){ host.insertBefore(tb, edHost); } });
+    }).catch(function(){});
+  }
+  window._frzMountTemplateEditor=_frzMountTemplateEditor;
+  window.frzRteEnabled=frzRteEnabled;   // TYPE-TEMPLATE-2: the classic type-template authoring (openTypeTemplate) gates on this beta flag
+  // Sanitize an authored template to what will actually be stored/stamped (strips inline-image src like the
+  // composer's _sync; the template editor blocks images anyway, so this is just the shared save shape).
+  window._frzSanitizeHTML=function(h){ try{ var d=document.createElement('div'); d.innerHTML=(h||''); [].slice.call(d.querySelectorAll('img[data-att-key]')).forEach(function(im){ im.removeAttribute('src'); }); return frzSanitize(d.innerHTML); }catch(e){ return h||''; } };
 
   // Mention typeahead inside the editor - reuses the existing menu + capture-keydown.
   function _frzWireMentions(ed){
