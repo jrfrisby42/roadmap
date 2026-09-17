@@ -1,9 +1,10 @@
 """SHELL-IA-1 Stage 3 - the per-user topbarViews flag (server side).
 
 /api/all returns a per-user `topbarViews` boolean read from the caller's own record in
-config['users']; it defaults false (byte-identical to today); it is exposed per-user in the
-users list so an admin toggle can read it; and an admin edit that doesn't carry the flag must
-not silently drop it (inherited on save).
+config['users']. TOPBAR-DEFAULT-1 flipped the default to ON (opt-OUT): an absent flag reads TRUE
+(top-bar views for everyone, all Organizations, now and for new users/teams); only an explicit
+`false` gives the old left-rail. It is exposed per-user in the users list, and an admin edit that
+doesn't carry the flag must not silently drop an explicit value - true OR false - (inherited on save).
 """
 import json
 
@@ -32,22 +33,28 @@ def _users(team):
         return json.loads(c.execute("SELECT value FROM config WHERE key='users'").fetchone()["value"])
 
 
-def test_topbar_views_defaults_false(client, team, admin_headers):
-    assert client.get("/api/all", headers=admin_headers).json()["topbarViews"] is False
+def test_topbar_views_defaults_true(client, team, admin_headers):
+    """TOPBAR-DEFAULT-1: absent flag => ON for everyone. Revert: change the read default back to False and
+    this fails (a fresh user would be back on the left rail)."""
+    assert client.get("/api/all", headers=admin_headers).json()["topbarViews"] is True
 
 
-def test_topbar_views_reflects_the_caller_record(client, team):
-    _set_user(team, "jr", topbarViews=True)
-    assert client.get("/api/all", headers=_hdr(team, "jr")).json()["topbarViews"] is True
-    # a DIFFERENT user (no flag) still gets false - it is per-user, from the caller's own record
-    assert client.get("/api/all", headers=_hdr(team, "someone")).json()["topbarViews"] is False
+def test_topbar_views_explicit_false_is_the_opt_out(client, team):
+    # per-user, from the caller's own record: an explicit false is the ONLY way back to the left rail;
+    # any other user (no flag) gets the new default ON.
+    _set_user(team, "optout", topbarViews=False)
+    assert client.get("/api/all", headers=_hdr(team, "optout")).json()["topbarViews"] is False
+    assert client.get("/api/all", headers=_hdr(team, "someone")).json()["topbarViews"] is True
 
 
 def test_topbar_views_exposed_per_user_in_the_users_list(client, team, admin_headers):
     _set_user(team, "jr", topbarViews=True)
+    _set_user(team, "optout", topbarViews=False)
     users = client.get("/api/all", headers=admin_headers).json()["users"]
-    jr = next(u for u in users if u["username"] == "jr")
-    assert jr["topbarViews"] is True
+    assert next(u for u in users if u["username"] == "jr")["topbarViews"] is True
+    assert next(u for u in users if u["username"] == "optout")["topbarViews"] is False
+    # admin (no explicit flag) shows the new default ON in the list too
+    assert next(u for u in users if u["username"] == "admin")["topbarViews"] is True
 
 
 def test_topbar_views_inherited_on_an_unrelated_admin_edit(client, team, admin_headers):
@@ -63,3 +70,19 @@ def test_topbar_views_inherited_on_an_unrelated_admin_edit(client, team, admin_h
     assert r.status_code == 200
     jr = next(u for u in _users(team) if u["username"] == "jr")
     assert jr.get("topbarViews") is True   # inherited, not dropped
+
+
+def test_topbar_views_explicit_optout_survives_unrelated_edit(client, team, admin_headers):
+    """Under the ON-by-default flip, an explicit false (opt-out) is the load-bearing stored value. An
+    unrelated admin edit that doesn't carry the flag must NOT silently wipe it back to the ON default.
+    Revert: restore the truthy-only inherit guard and this fails (false gets dropped -> reads ON)."""
+    _set_user(team, "optout", topbarViews=False)
+    users = _users(team)
+    for u in users:
+        if u["username"] == "optout":
+            u["email"] = "optout@x.com"
+            u.pop("topbarViews", None)   # the standard user form doesn't carry it
+    assert client.put("/api/config/users", json=users, headers=admin_headers).status_code == 200
+    optout = next(u for u in _users(team) if u["username"] == "optout")
+    assert optout.get("topbarViews") is False   # opt-out preserved, not wiped to the default
+    assert client.get("/api/all", headers=_hdr(team, "optout")).json()["topbarViews"] is False
