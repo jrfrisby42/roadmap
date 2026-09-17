@@ -282,7 +282,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'Lato', sans-serif; font-size: 13px; min-height: 100vh; }
+  body { background: var(--bg); color: var(--text); font-family: 'Lato', sans-serif; font-size: 13px; min-height: 100vh; line-height: var(--lh-body); }   /* TYPE-SCALE-1 Phase 1: base line-height (was unset -> `normal` ~1.2; now 1.45). Font size unchanged. Explicit line-height:1 / :0 sites (icons, single-glyph badges) keep their own value and are unaffected. */
 
   /* TOP BAR */
   .topbar {
@@ -2744,7 +2744,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.41.1';
+const APP_VERSION = '6.41.2';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -20083,7 +20083,7 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-chip--ghost { border-style:dashed; color:var(--frz-text-muted); }
   .frz-beta .frz-chip--ghost:hover { color:var(--frz-accent); }
   .frz-beta .frz-chip--ghost svg { width:12px; height:12px; stroke-width:2; fill:none; }
-  .frz-beta .frz-viewopt { border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); font:inherit; font-size:12.5px; font-weight:600; color:var(--frz-text-secondary); display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:var(--frz-radius-control); cursor:pointer; white-space:nowrap; }
+  .frz-beta .frz-viewopt { border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); font:inherit; font-size:12.5px; font-weight:600; color:var(--frz-text-secondary); display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:var(--frz-radius-control); cursor:pointer; white-space:nowrap; }   /* TYPE-SCALE-1 Phase 1: pad 4->5px -> ~30px (this pill is font 12.5 + inherited lh 1.45, so it needs LESS padding than the .frz-rte-btn family (12px/lh 1.4, pad 6) to reach the same ~30px; the padding therefore DIFFERS across pills by design, a deliberate accepted consequence of same-target/different-metrics) */
   .frz-beta .frz-viewopt:hover { border-color:var(--frz-accent); color:var(--frz-accent); }
   .frz-beta .frz-viewopt svg { width:13px; height:13px; }
   /* Gantt inline legend (shown only when measured to fit; else the Legend popover button) */
@@ -20958,7 +20958,7 @@ if ('serviceWorker' in navigator) {
   /* Toolbar now lives in the Description card header (next to title + Save). flex:1 takes
      the middle slack; the header itself wraps. Buttons opt out of the header's uppercase. */
   .frz-beta .frz-rte-tb { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:3px; flex:0 1 auto; min-width:0; margin-left:auto; }
-  .frz-beta .frz-rte-btn { background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:5px; padding:3px 8px; font-size:12px; line-height:1.4; cursor:pointer; color:var(--frz-text); font-family:'Lato',sans-serif; font-weight:600; text-transform:none; letter-spacing:normal; }
+  .frz-beta .frz-rte-btn { background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:5px; padding:6px 8px; font-size:12px; line-height:1.4; cursor:pointer; color:var(--frz-text); font-family:'Lato',sans-serif; font-weight:600; text-transform:none; letter-spacing:normal; }   /* TYPE-SCALE-1 Phase 1: pad 3->6px toward ~30px (font unchanged) */
   .frz-beta .frz-rte-btn:hover { background:var(--frz-accent-soft); border-color:var(--frz-accent); }
   /* Active-state sync (description toolbar only): visible mark buttons + the Heading-level */
   /* trigger light up; ⋯ More shows a dot when a hidden action (Highlight/Quote) is active. */
@@ -20992,7 +20992,7 @@ if ('serviceWorker' in navigator) {
   body.frz-beta-active #frzModalNotes .ProseMirror { flex:1; min-height:90px; overflow-y:auto; padding:10px 12px; outline:none; color:var(--text); font-size:13px; line-height:1.6; font-family:'Lato',sans-serif; }
   body.frz-beta-active #frzModalNotes .ProseMirror:focus { outline:none; }
   body.frz-beta-active .frz-rte-tb-modal { display:flex; flex-wrap:wrap; align-items:center; gap:3px; margin:0 0 6px; }
-  body.frz-beta-active .frz-rte-tb-modal .frz-rte-btn { background:var(--surface); border:1px solid var(--border); border-radius:5px; padding:3px 8px; font-size:12px; line-height:1.4; cursor:pointer; color:var(--text); font-family:'Lato',sans-serif; font-weight:600; }
+  body.frz-beta-active .frz-rte-tb-modal .frz-rte-btn { background:var(--surface); border:1px solid var(--border); border-radius:5px; padding:6px 8px; font-size:12px; line-height:1.4; cursor:pointer; color:var(--text); font-family:'Lato',sans-serif; font-weight:600; }   /* TYPE-SCALE-1 Phase 1: pad 3->6px toward ~30px (composer description-toolbar pill; font unchanged) */
   body.frz-beta-active .frz-rte-tb-modal .frz-rte-btn:hover { border-color:var(--accent); color:var(--accent); }
   body.frz-beta-active .frz-rte-tb-modal .frz-rte-sep { width:1px; align-self:stretch; background:var(--border); margin:2px 4px; }
   /* Description relocated full-width to the bottom of the modal (/beta) */

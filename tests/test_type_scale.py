@@ -1,11 +1,14 @@
-"""TYPE-SCALE-1 Phase 0 guard: the six-tier type scale tokens are defined on :root (roadmap.html only).
+"""TYPE-SCALE-1 guards (roadmap.html only). Phases 0-1 shipped; Phases 2-4 not begun.
 
-Phase 0 is additive - it defines twelve tokens (six --fs-* sizes + six --lh-* line heights) on the bare
-:root so they resolve globally (shell, classic <body>-child modals, and classic mode alike; the --frz-*
-tokens are .frz-beta-scoped and would not reach a classic modal). NOTHING consumes them yet, so the
-rendered output is unchanged - verified at source by a zero-consumers check here, and element-level in
-the browser (histogram identical; the tokens read back from getComputedStyle with the values below).
---fs-body is 14 now but is not consumed until Phase 3 (unauthorized). server.py untouched.
+Phase 0 (additive): twelve tokens (six --fs-* sizes + six --lh-* line heights) on the bare :root, so
+they resolve globally (shell, classic <body>-child modals, and classic mode; --frz-* are .frz-beta-scoped).
+Phase 1 (line-height + pill padding, NO font-size change): a base `line-height: var(--lh-body)` on body
+(was unset -> `normal`), and the three cramped pills (.frz-viewopt, .frz-rte-btn, the composer
+.frz-rte-tb-modal .frz-rte-btn) bumped toward ~30px via VERTICAL padding only. The 47 `line-height:1` and
+5 `line-height:0` icon/single-glyph sites are untouched (the survey said 56+8 - that counted the substring,
+which includes 1.x; the exact single-glyph set is 47+5). All size/height claims verified element-level:
+histogram identical across List/item-page/Gantt; pills ~30px; svg.frz-ic h=16 unchanged; column widths
+unchanged; both themes. server.py untouched.
 """
 import re
 import pathlib
@@ -21,11 +24,16 @@ TOKENS = {
     "--lh-strong": "1.4", "--lh-title": "1.3", "--lh-page": "1.25",
 }
 
+# The exact single-glyph / icon line-height counts Phase 1 must not disturb (guard baseline).
+LH1_COUNT = 47
+LH0_COUNT = 5
+
 
 def _html():
     return HTML.read_text(encoding="utf-8", errors="replace")
 
 
+# ── Phase 0: the token layer ─────────────────────────────────────────────────────────────────────
 def test_typescale_tokens_defined():
     src = _html()
     for name, val in TOKENS.items():
@@ -34,19 +42,51 @@ def test_typescale_tokens_defined():
 
 
 def test_typescale_tokens_on_bare_root():
-    """They must live on the bare :root (global), not the .frz-beta scope, so classic modals reach them."""
     src = _html()
     root = src.split(":root {", 1)[1].split("}", 1)[0]
     for name in TOKENS:
         assert name in root, f"{name} must be defined on the bare :root block (global reach)"
 
 
-def test_typescale_phase0_zero_consumers():
-    """Phase 0 is additive: NOTHING consumes the tokens yet, so the render is provably unchanged.
-    (Phases 1-3 introduce consumers; update this guard when Phase 1/2 legitimately add var(--lh-*)/var(--fs-*).)"""
+# ── Phase 1: base line-height + pill padding; NO font-size token consumed yet ─────────────────────
+def test_typescale_phase1_base_lineheight():
     src = _html()
-    consumers = re.findall(r"var\(--(?:fs|lh)-(?:micro|label|body|strong|title|page)\)", src)
-    assert consumers == [], f"Phase 0 must have zero token consumers; found {consumers[:5]}"
+    assert re.search(r"\bbody\s*\{[^}]*line-height:\s*var\(--lh-body\)", src), \
+        "Phase 1: body must set a base line-height of var(--lh-body)"
+
+
+def test_typescale_phase1_no_fs_token_consumed():
+    """Phases 1-2 change NO font size, so no --fs-* token may be consumed until Phase 3 (unauthorized).
+    Only line-height tokens are consumed so far."""
+    src = _html()
+    fs_consumers = re.findall(r"var\(--fs-(?:micro|label|body|strong|title|page)\)", src)
+    assert fs_consumers == [], f"no --fs-* token may be consumed before Phase 3; found {fs_consumers[:5]}"
+
+
+def test_typescale_phase1_pills_bumped():
+    """The three cramped pills are padded toward ~30px. The padding DIFFERS by design: .frz-viewopt
+    (font 12.5 + inherited lh 1.45) needs 5px to hit ~30, while the .frz-rte-btn family (font 12 + lh 1.4)
+    needs 6px - same target, different metrics, so the padding is deliberately not uniform across families."""
+    src = _html()
+    checks = {
+        ".frz-beta .frz-viewopt {": r"padding:\s*5px",
+        ".frz-beta .frz-rte-btn {": r"padding:\s*6px",
+        "body.frz-beta-active .frz-rte-tb-modal .frz-rte-btn {": r"padding:\s*6px",
+    }
+    for sel_fragment, pat in checks.items():
+        rule = src.split(sel_fragment, 1)[1].split("}", 1)[0]
+        assert re.search(pat, rule), f"Phase 1: pill `{sel_fragment}` padding must match {pat}. Rule: {rule[:80]}"
+
+
+def test_typescale_phase1_icon_lineheight_intact():
+    """The load-bearing Phase 1 guard: the base body line-height must NOT knock over the single-glyph /
+    icon line-height:1 / :0 sites (this codebase has paid an icon-alignment tax four times). Their exact
+    counts must be unchanged."""
+    src = _html()
+    n1 = len(re.findall(r"line-height:\s*1(?:\s*[;}!]|\s*$)", src, re.M))
+    n0 = len(re.findall(r"line-height:\s*0(?:\s*[;}!]|\s*$)", src, re.M))
+    assert n1 == LH1_COUNT, f"line-height:1 (icon geometry) count must stay {LH1_COUNT}, got {n1}"
+    assert n0 == LH0_COUNT, f"line-height:0 (icon geometry) count must stay {LH0_COUNT}, got {n0}"
 
 
 def test_typescale_client_only():
