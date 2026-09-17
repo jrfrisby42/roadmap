@@ -4963,6 +4963,7 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     # consumed (validated + promoted post-insert) and never written to the blob.
     body.pop("attachments", None)
     _pending_atts = body.pop("pendingAttachments", None)
+    _pending_links = body.pop("pendingLinks", None)   # PRECREATE-LINKS-1: consumed + validated post-insert, never blob-seeded (extLinks stays server-owned/stripped above)
     with db(team) as c:
         if "assignee" in body:
             body["assignee"] = _resolve_assignee(c, body.get("assignee"))   # display name -> username (import/API safety)
@@ -5010,11 +5011,41 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
                     body["attachments"] = saved
             except Exception as e:
                 log.warning(f"[Attach] create-mode promotion failed for item {body.get('id')}: {e}")
-    _create_changes = None
+    # PRECREATE-LINKS-1: promote pending create-mode reference links. A link is {label, url} - no S3,
+    # no token, no bytes. `extLinks` was stripped above (server-owned); `pendingLinks` is the ONLY
+    # create-time seed and is validated HERE through the shared _normalize_link_fields (the same
+    # non-raising core the item-page endpoints use - one validator, no drift). Drop-and-report per link:
+    # an invalid scheme or an over-cap link never costs the user the item they were creating. Capped at
+    # _EXT_LINK_CAP (20), matching the item-page path. Records get the SAME shape add_item_link writes:
+    # {id, label, url, addedBy, addedAt}. A dropped link is reported by its URL (never a token/secret).
+    _links_dropped = []
+    if isinstance(_pending_links, list) and _pending_links:
+        _link_recs, _lnow = [], datetime.now(timezone.utc).isoformat()
+        for l in _pending_links:
+            _lurl = str((l or {}).get("url") or "link")[:200] if isinstance(l, dict) else "link"
+            if len(_link_recs) >= _EXT_LINK_CAP:          # over-cap: drop + report (2.3)
+                _links_dropped.append(_lurl); continue
+            if not isinstance(l, dict):
+                _links_dropped.append("link"); continue
+            norm = _normalize_link_fields(l)              # None = bad scheme -> drop + report (the load-bearing guard)
+            if norm is None:
+                _links_dropped.append(_lurl); continue
+            _lu, _ll = norm
+            _link_recs.append({"id": secrets.token_hex(6), "label": _ll, "url": _lu,
+                               "addedBy": username, "addedAt": _lnow})
+        if _link_recs:
+            with db(team) as c:
+                c.execute("UPDATE projects SET data=json_set(data, '$.extLinks', json(?)) WHERE id=?",
+                          (json.dumps(_link_recs), body["id"]))
+            body["extLinks"] = _link_recs
+    _create_changes = {}
     if _att_dropped:
-        _create_changes = {"attachmentsDropped": _att_dropped}   # B.5-style fold: staff-discoverable, names not keys
-        body["attachmentsDropped"] = _att_dropped                # response-only; the client tells the user
-    write_audit(team, "create", username, body["id"], body.get("name",""), changes=_create_changes)
+        _create_changes["attachmentsDropped"] = _att_dropped   # B.5-style fold: staff-discoverable, names not keys
+        body["attachmentsDropped"] = _att_dropped              # response-only; the client tells the user
+    if _links_dropped:
+        _create_changes["linksDropped"] = _links_dropped       # same fold: staff-discoverable in the audit
+        body["linksDropped"] = _links_dropped                  # response-only; the client tells the user
+    write_audit(team, "create", username, body["id"], body.get("name",""), changes=(_create_changes or None))
     # DEPT-PICKER-1: the config-growth union is retired - departments were validated against the
     # configured vocabulary above (unknown values 422'd before the insert), so there is nothing to grow.
     # Stage 3b: notifications (post-commit, best-effort - never fail the create)
@@ -6583,17 +6614,27 @@ def _link_scheme_ok(url: str) -> bool:
         return False
     return s.scheme in ("http", "https") and bool(s.netloc)
 
-def _norm_item_link(body: dict) -> tuple:
-    """Validate + normalize an incoming link. 422 on a bad scheme (the save-time guard). A blank
-    label falls back to the URL's HOSTNAME, never the full URL (a SharePoint URL is unreadable)."""
+def _normalize_link_fields(body: dict):
+    """The SOLE link validator/normalizer (non-raising). Returns (url, label) or None if the scheme
+    is not http/https. A blank label falls back to the URL's HOSTNAME, never the full URL (a SharePoint
+    URL is unreadable). Both the item-page endpoints (via _norm_item_link, which raises 422 on None) and
+    create-mode promotion (PRECREATE-LINKS-1, drop-and-report) call this, so the two cannot drift."""
     from urllib.parse import urlparse
     url = str(body.get("url") or "").strip()
     if not _link_scheme_ok(url):
-        raise HTTPException(422, "Link URL must start with http:// or https://")
+        return None
     label = str(body.get("label") or "").strip()[:_EXT_LABEL_MAX]
     if not label:
         label = (urlparse(url).netloc or url)[:_EXT_LABEL_MAX]
     return url, label
+
+def _norm_item_link(body: dict) -> tuple:
+    """Item-page endpoints: 422 on a bad scheme (the save-time guard). Delegates to the shared
+    non-raising _normalize_link_fields so the endpoint and create-mode promotion share one validator."""
+    r = _normalize_link_fields(body)
+    if r is None:
+        raise HTTPException(422, "Link URL must start with http:// or https://")
+    return r
 
 @app.post("/api/items/{pid}/links")
 def add_item_link(pid: int, body: dict = Body(...),
