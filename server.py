@@ -1369,11 +1369,30 @@ def _migrate_config_keys(team: str):
         "slackNotify": {},                 # Slack notifications (Tier 1): {enabled, types}; default OFF. Webhook URL lives in .env (SLACK_WEBHOOK_<TEAM>)
         "slaTargets": {"enabled": False, "resolution": {"1": 4, "2": 24, "3": 72, "4": 168}, "atRiskPct": 80},  # IT/Ops SLA (Stage A): per-priority resolution targets in calendar hours; default OFF
         "digestConfig": {"enabled": False},  # IT/Ops weekly digest (Stage B): {enabled}; recipients reuse intakeNotifyEmail + departmentMeta emails
+        # JIRA-PULL-1 Stage 1 (ships inert; nothing pulls until later stages).
+        # jiraPullFloor: a single ISO timestamp - the point-in-time floor. Only issues created AFTER it
+        #   start a pull. GLOBAL, set once, NEVER rewound and never advanced (set-once via POST
+        #   /api/jira/pull-floor, NOT in VALID_KEYS so the generic PUT cannot move it). "" = not set = no pull.
+        "jiraPullFloor": "",
+        # jiraPullTypes: the JIRA issue-type NAMES selected for pull (decision 3, per-type selection).
+        #   Keyed by JIRA type, NOT Flow type, so it stays correct if two Flow types ever collide onto one
+        #   Jira type in jiraTypeMapping. [] = nothing selected = inert.
+        "jiraPullTypes": [],
+        # jiraAssigneeMap: {jiraAccountId: flowUsername}. Seeded once from Jira display names then read-only
+        #   (never transform at runtime). {} = unresolved (assignee left empty on pulled items).
+        "jiraAssigneeMap": {},
+        # jiraPullStatusMap: {jiraStatus: flowStatus} consulted ONLY by the pull (Stage 4), overlaid on top
+        #   of reverse(jiraStatusMapping). This is the JIRA-PULL-1 1.4 fix: the three statuses cannot be added
+        #   to jiraStatusMapping ({flowStatus: jiraStatus}, single-valued) because their Flow targets are
+        #   already taken (In Dev/In QA/In Prod), and editing that shared map would also change the existing
+        #   linked-item sync. A pull-only map closes the 7 unmapped net-new items without touching push.
+        "jiraPullStatusMap": {"Code Review": "In Progress", "QA Approved": "In Testing", "Released": "Released"},
     }
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
     # an admin who deletes all types isn't re-seeded on next boot.)
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeCombined", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeProjectStatus", "intakeDefaultType", "intakeDomains", "intakeNotifyTeam", "intakeAppendTemplate", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify", "slaTargets", "digestConfig"}
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeCombined", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeProjectStatus", "intakeDefaultType", "intakeDomains", "intakeNotifyTeam", "intakeAppendTemplate", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify", "slaTargets", "digestConfig",
+                          "jiraPullFloor", "jiraPullTypes", "jiraAssigneeMap", "jiraPullStatusMap"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -1731,7 +1750,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.45.0"
+APP_VERSION = "6.46.0"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -3873,6 +3892,11 @@ def get_all(auth: dict = Depends(require_auth)):
             "jiraTypeMapping": cfg("jiraTypeMapping") or {},
             "assethubServiceTypeMapping": cfg("assethubServiceTypeMapping") or {},
             "jiraSyncConfig": cfg("jiraSyncConfig") or {},
+            # JIRA-PULL-1 Stage 1 (inert): floor + per-type selection + assignee map + pull-only status map.
+            "jiraPullFloor": cfg("jiraPullFloor") or "",
+            "jiraPullTypes": cfg("jiraPullTypes") or [],
+            "jiraAssigneeMap": cfg("jiraAssigneeMap") or {},
+            "jiraPullStatusMap": cfg("jiraPullStatusMap") or {},
             # /beta rich-text editor master switch - boolean preserved (default ON when
             # absent) so an admin's explicit False reaches the client and reverts the editor.
             "richTextEditor": cfg_map.get("richTextEditor", True),
@@ -5812,7 +5836,10 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "statusIsOffFlow","statusIsWaiting","statusIsParked",
               "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeProjectStatus","intakeDefaultType","intakeDomains","intakeNotifyTeam","intakeAppendTemplate","intakeCombined","departmentMeta","maintenanceDutyTypeId",
               "externalRequestCategories","assethubConnection","assethubServiceTypeMapping","enabledViews",
-              "slackNotify","slaTargets","digestConfig"}
+              "slackNotify","slaTargets","digestConfig",
+              # JIRA-PULL-1 Stage 1: admin-editable on the Jira admin screen. jiraPullFloor is deliberately
+              # NOT here - it is set-once via POST /api/jira/pull-floor and must never move via the generic PUT.
+              "jiraPullTypes","jiraAssigneeMap","jiraPullStatusMap"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",
@@ -10631,6 +10658,98 @@ def _jira_status_to_roadmap(jira_status: str, team: str) -> str | None:
     # Reverse: {jiraStatus: roadmapStatus}
     rev_map = {v: k for k, v in fwd_map.items() if v}
     return rev_map.get(jira_status)  # None if not found
+
+# ── JIRA-PULL-1 Stage 1: floor + assignee-map seeding (all inert - nothing pulls yet) ────────────────
+_JIRA_SERVICE_ACCOUNT_NAMES = {"claude agent for jira"}   # decision: service accounts resolve to nothing
+
+def _jira_display_to_username(display: str):
+    """Transform a Jira display name 'First Last' to a candidate Flow username 'first.last'.
+    Returns None when it cannot form one (blank, single token, or a known service account).
+    This runs ONLY at seed time; after seeding the pull reads jiraAssigneeMap directly, never this."""
+    d = (display or "").strip()
+    if not d or d.lower() in _JIRA_SERVICE_ACCOUNT_NAMES:
+        return None
+    parts = [p for p in d.split() if p]
+    if len(parts) < 2:
+        return None
+    return f"{parts[0]}.{parts[-1]}".lower()
+
+def _seed_assignee_map(jira_users: list, flow_usernames: list, existing: dict):
+    """Pure: build the additions to jiraAssigneeMap from Jira users.
+    jira_users: [{accountId, displayName}]. Never clobbers an existing accountId (J.R.'s corrections win).
+    Returns (merged, matched_count, unmatched_names, skipped_names)."""
+    flow_lower = {str(u).lower(): str(u) for u in (flow_usernames or [])}
+    merged = dict(existing or {})
+    matched, unmatched, skipped = 0, [], []
+    for u in (jira_users or []):
+        acct = u.get("accountId")
+        name = (u.get("displayName") or "").strip()
+        if not acct or acct in merged:
+            continue                         # unknown row, or already mapped (do not overwrite)
+        if name.lower() in _JIRA_SERVICE_ACCOUNT_NAMES:
+            skipped.append(name); continue   # service account resolves to nothing
+        cand = _jira_display_to_username(name)
+        if cand and cand in flow_lower:
+            merged[acct] = flow_lower[cand]; matched += 1
+        else:
+            unmatched.append(name)
+    return merged, matched, unmatched, skipped
+
+@app.post("/api/jira/pull-floor")
+def set_jira_pull_floor(body: dict = Body({}), auth: dict = Depends(require_role("admin"))):
+    """Set the JIRA-PULL-1 point-in-time floor. SET-ONCE: once a floor exists it is immutable here
+    (never rewound, never advanced - decisions 1-3). Body may carry {value: <ISO>}; default is now (UTC).
+    Returns the effective floor and whether this call changed it. Inert - no pull runs in Stage 1."""
+    team = auth["team"]
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='jiraPullFloor'").fetchone()
+        current = json.loads(row["value"]) if row else ""
+        if current:
+            return {"floor": current, "changed": False}   # already set - immutable
+        val = (body or {}).get("value") or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        c.execute("INSERT INTO config(key,value) VALUES('jiraPullFloor',?) "
+                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(val),))
+    write_audit(team, "jira:set-pull-floor", auth["username"], changes={"floor": val})
+    return {"floor": val, "changed": True}
+
+@app.post("/api/jira/seed-assignee-map")
+def seed_jira_assignee_map(body: dict = Body({}), auth: dict = Depends(require_role("admin"))):
+    """Seed jiraAssigneeMap once from Jira display names (First Last -> first.last matched to Flow
+    usernames). Never clobbers existing entries. Returns matched/unmatched COUNTS (+ unmatched display
+    names for correction) - never email addresses. Service accounts resolve to nothing."""
+    team = auth["team"]
+    if not jira_configured():
+        raise HTTPException(503, "Jira not configured")
+    with db(team) as c:
+        urow = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+        arow = c.execute("SELECT value FROM config WHERE key='jiraAssigneeMap'").fetchone()
+        prow = c.execute("SELECT value FROM config WHERE key='jiraProjectMapping'").fetchone()
+    flow_usernames = [u.get("username") for u in (json.loads(urow["value"]) if urow else []) if u.get("username")]
+    existing = json.loads(arow["value"]) if arow else {}
+    proj_map = json.loads(prow["value"]) if prow else {}
+    proj_keys = sorted({v for v in proj_map.values() if v})   # mapped Jira projects only (Fraznet -> FRAZ)
+    # Collect distinct assignable Jira users across the mapped projects.
+    seen, jira_users = set(), []
+    for pk in proj_keys:
+        try:
+            from urllib.parse import quote
+            res = _jira_req("GET", f"/rest/api/3/user/assignable/search?project={quote(pk)}&maxResults=1000")
+        except Exception as e:
+            log.warning(f"[JiraPull] assignable search failed for {pk}: {e}")
+            continue
+        for u in (res or []):
+            acct = u.get("accountId")
+            if acct and acct not in seen:
+                seen.add(acct)
+                jira_users.append({"accountId": acct, "displayName": u.get("displayName", "")})
+    merged, matched, unmatched, skipped = _seed_assignee_map(jira_users, flow_usernames, existing)
+    with db(team) as c:
+        c.execute("INSERT INTO config(key,value) VALUES('jiraAssigneeMap',?) "
+                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(merged),))
+    write_audit(team, "jira:seed-assignee-map", auth["username"],
+                changes={"matched": matched, "unmatched": len(unmatched), "skipped": len(skipped)})
+    return {"matched": matched, "unmatched": len(unmatched), "unmatchedNames": unmatched,
+            "skipped": len(skipped), "total": len(jira_users), "map": merged}
 
 @app.post("/api/jira/search-raw")
 def jira_search_raw(body: dict = Body(...), auth: dict = Depends(require_role("admin"))):

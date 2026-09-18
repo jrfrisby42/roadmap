@@ -2720,6 +2720,33 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         </div>
       </div>
 
+      <!-- Section 4b: Jira Pull (JIRA-PULL-1) - pull issues Flow has never seen. Ships INERT in Stage 1. -->
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
+        <div style="padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px">
+          Jira Pull (unlinked issues)
+        </div>
+        <div style="padding:14px;display:flex;flex-direction:column;gap:14px">
+          <div style="font-size:11px;color:var(--muted)">Pull Jira issues Flow has never seen into the backlog. Choose which issue types with the <b>Pull</b> checkboxes in the Issue Type Mapping above. Nothing pulls until this is turned on in a later release.</div>
+          <div>
+            <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:4px">Pull floor</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Only issues created <b>after</b> this point start a pull. Set once - it is never moved backward or forward.</div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+              <span id="tsPullFloor" style="font-size:12px;font-weight:700;color:var(--text)"></span>
+              <button type="button" id="tsSetFloorBtn" onclick="tsSetPullFloor()" style="padding:5px 11px;font-size:12px;font-weight:700;border:1px solid var(--accent);border-radius:6px;background:var(--surface);color:var(--accent);cursor:pointer">Set floor to now</button>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:4px">Assignee map</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Maps each Jira person to a Flow user. Seed it from Jira (matching <b>First Last</b> to <b>first.last</b>), then correct any unmatched rows below. Saved with the Save button.</div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+              <button type="button" id="tsSeedAssigneeBtn" onclick="tsSeedAssigneeMap()" style="padding:5px 11px;font-size:12px;font-weight:700;border:1px solid var(--accent);border-radius:6px;background:var(--surface);color:var(--accent);cursor:pointer">Seed from Jira</button>
+              <span id="tsAssigneeStatus" style="font-size:11px;color:var(--muted)"></span>
+            </div>
+            <div id="tsAssigneeMap" style="display:flex;flex-direction:column;gap:6px"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- Section 5: Sync Configuration -->
       <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
         <div style="padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;gap:8px">
@@ -2768,7 +2795,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.45.0';
+const APP_VERSION = '6.46.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -18366,8 +18393,12 @@ let _tsJiraTypes     = []; // fetched from Jira
 let _jiraProjectMapping = {}; // { roadmapProject: jiraProjectKey }
 let _jiraStatusMapping  = {}; // { roadmapStatus: jiraStatus }
 let _jiraTypeMapping    = {}; // { roadmapType: jiraIssueType }
+// JIRA-PULL-1 Stage 1 (inert): edited on this screen, persisted by saveTeamSettings.
+let _jiraPullTypes   = []; // JIRA issue-type NAMES selected for pull (keyed by Jira type = collision-safe)
+let _jiraAssigneeMap = {}; // { jiraAccountId: flowUsername }
+let _jiraPullFloor   = ''; // ISO timestamp; set-once via POST /api/jira/pull-floor (never via saveTeamSettings)
 
-function tsMapRow(label, currentVal, options, inputId, warnIfEmpty){
+function tsMapRow(label, currentVal, options, inputId, warnIfEmpty, extraHtml){
   const hasVal = currentVal && currentVal !== '';
   const warn   = warnIfEmpty && !hasVal;
   return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:${warn?'rgba(232,57,74,0.04)':'var(--surface)'};border:1px solid ${warn?'rgba(232,57,74,0.3)':'var(--border)'};border-radius:6px">
@@ -18378,6 +18409,7 @@ function tsMapRow(label, currentVal, options, inputId, warnIfEmpty){
       ${options.map(o=>`<option value="${escA(o.value||o)}" ${(currentVal===o.value||currentVal===o)?'selected':''}>${esc(o.label||o)}</option>`).join('')}
     </select>
     ${warn?'<span style="font-size:10px;color:var(--accent2);font-weight:700;flex-shrink:0">⚠ No mapping</span>':''}
+    ${extraHtml||''}
   </div>`;
 }
 
@@ -18385,6 +18417,10 @@ async function openTeamSettingsTab(){
   _jiraProjectMapping = {...(window._jiraProjectMappingData||{})};
   _jiraStatusMapping  = {...(window._jiraStatusMappingData||{})};
   _jiraTypeMapping    = {...(window._jiraTypeMappingData||{})};
+  // JIRA-PULL-1 Stage 1 (inert): floor + per-type selection + assignee map.
+  _jiraPullFloor   = window._jiraPullFloorData || '';
+  _jiraPullTypes   = [...(window._jiraPullTypesData||[])];
+  _jiraAssigneeMap = {...(window._jiraAssigneeMapData||{})};
   // Load jiraEnabled state
   const jiraEnabledEl = document.getElementById('tsJiraEnabled');
   if(jiraEnabledEl){
@@ -18622,12 +18658,25 @@ function tsRenderMappings(){
     const jiraTypeOpts = _tsJiraTypes.map(t=>({value:t.name, label:t.name}));
     if(!jiraTypeOpts.length) jiraTypeOpts.push({value:'', label:'- Jira not connected or no issue types found -'});
     const typeNames = types.map(t=>t.name||t);
-    typeEl.innerHTML = typeNames.map((tp,i) =>
-      tsMapRow(tp, _jiraTypeMapping[tp]||'', jiraTypeOpts, `tsType_${i}`, true)
-    ).join('') || '<div style="color:var(--muted);font-size:12px">No item types configured.</div>';
+    typeEl.innerHTML = typeNames.map((tp,i) => {
+      // JIRA-PULL-1 1.2: a "pull this type" checkbox, keyed by the row's mapped JIRA TYPE (not the Flow
+      // type) so it stays correct if two Flow types ever collide onto one Jira type. Disabled (with a
+      // hint) when the row has no mapping - there is no Jira type to pull.
+      const jt = _jiraTypeMapping[tp]||'';
+      const on = jt && _jiraPullTypes.includes(jt);
+      const pull = `<label title="${jt?('Pull Jira "'+escA(jt)+'" issues into Flow'):'Map a Jira type first'}" style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:var(--muted);flex-shrink:0;cursor:${jt?'pointer':'not-allowed'};white-space:nowrap"><input type="checkbox" class="ts-pull-type" data-jira="${escA(jt)}" ${on?'checked':''} ${jt?'':'disabled'} style="accent-color:var(--accent);width:14px;height:14px"> Pull</label>`;
+      return tsMapRow(tp, jt, jiraTypeOpts, `tsType_${i}`, true, pull);
+    }).join('') || '<div style="color:var(--muted);font-size:12px">No item types configured.</div>';
+    typeEl.querySelectorAll('.ts-pull-type').forEach(cb => cb.onchange = () => {
+      const jt = cb.getAttribute('data-jira');
+      if(!jt) return;
+      if(cb.checked){ if(!_jiraPullTypes.includes(jt)) _jiraPullTypes.push(jt); }
+      else { _jiraPullTypes = _jiraPullTypes.filter(x => x !== jt); }
+    });
   }
 
   tsUpdateValidationSummary();
+  tsRenderPullSection();
 }
 
 function tsUpdateValidationSummary(){
@@ -18649,6 +18698,79 @@ function tsUpdateValidationSummary(){
     `<span style="${col(statMissing)}">${statMapped}/${statList.length} statuses mapped${statMissing?` (${statMissing} missing)`:''}</span>`;
   document.getElementById('tsValTypes').innerHTML =
     `<span style="${col(typeMissing)}">${typeMapped}/${typeList.length} types mapped${typeMissing?` (${typeMissing} missing)`:''}</span>`;
+}
+
+// ── JIRA-PULL-1 Stage 1: the Jira Pull section (floor + assignee map). All inert; nothing pulls. ──────
+function tsRenderPullSection(){
+  const floorEl = document.getElementById('tsPullFloor');
+  const setBtn  = document.getElementById('tsSetFloorBtn');
+  if(floorEl){
+    floorEl.textContent = _jiraPullFloor ? fmtTS(_jiraPullFloor) : 'Not set';
+    if(setBtn){ setBtn.disabled = !!_jiraPullFloor; setBtn.style.opacity = _jiraPullFloor ? '0.5' : '1'; setBtn.style.cursor = _jiraPullFloor ? 'not-allowed' : 'pointer'; }
+  }
+  tsRenderAssigneeMap();
+}
+
+function tsRenderAssigneeMap(){
+  const wrap = document.getElementById('tsAssigneeMap');
+  if(!wrap) return;
+  const accts = Object.keys(_jiraAssigneeMap||{});
+  const userOpts = (users||[]).map(u => (u&&u.username)||u).filter(Boolean);
+  if(!accts.length){
+    wrap.innerHTML = '<span style="font-size:12px;color:var(--muted)">No assignees mapped yet. Click "Seed from Jira".</span>';
+    return;
+  }
+  wrap.innerHTML = accts.map(acct => {
+    const uname = _jiraAssigneeMap[acct] || '';
+    return `<div style="display:flex;align-items:center;gap:10px">
+      <span title="Jira accountId" style="font-size:11px;font-family:ui-monospace,Menlo,monospace;color:var(--muted);min-width:150px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(acct)}</span>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" style="flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
+      <select class="ts-assignee-user" data-acct="${escA(acct)}" style="flex:1;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:5px;background:#fff;font-family:'Lato',sans-serif;outline:none">
+        <option value="">- unresolved -</option>
+        ${userOpts.map(u=>`<option value="${escA(u)}" ${u===uname?'selected':''}>${esc(u)}</option>`).join('')}
+      </select>
+    </div>`;
+  }).join('');
+  wrap.querySelectorAll('.ts-assignee-user').forEach(sel => sel.onchange = () => {
+    const acct = sel.getAttribute('data-acct');
+    if(sel.value) _jiraAssigneeMap[acct] = sel.value;
+    else delete _jiraAssigneeMap[acct];   // unresolved -> drop the row on next render, saved on Save
+  });
+}
+
+async function tsSetPullFloor(){
+  if(_jiraPullFloor) return;   // set-once
+  const st = document.getElementById('tsAssigneeStatus');
+  try {
+    const r = await API.post('/api/jira/pull-floor', {});
+    _jiraPullFloor = r.floor || '';
+    window._jiraPullFloorData = _jiraPullFloor;
+    tsRenderPullSection();
+  } catch(e){
+    if(st){ st.textContent = 'Floor error: ' + (e.message||e); st.style.color = 'var(--accent2)'; }
+  }
+}
+
+async function tsSeedAssigneeMap(){
+  const st = document.getElementById('tsAssigneeStatus');
+  const btn = document.getElementById('tsSeedAssigneeBtn');
+  if(st){ st.textContent = 'Seeding from Jira…'; st.style.color = 'var(--muted)'; }
+  if(btn) btn.disabled = true;
+  try {
+    const r = await API.post('/api/jira/seed-assignee-map', {});
+    _jiraAssigneeMap = {...(r.map||{})};
+    if(st){
+      const un = (r.unmatchedNames||[]).length ? ' Unmatched: ' + (r.unmatchedNames||[]).map(esc).join(', ') + '.' : '';
+      st.textContent = `Matched ${r.matched} of ${r.total}, ${r.unmatched} unmatched, ${r.skipped} service.` + un
+        + ' Correct any below, then Save.';
+      st.style.color = 'var(--text)';
+    }
+    tsRenderAssigneeMap();
+  } catch(e){
+    if(st){ st.textContent = 'Seed failed: ' + (e.message||e); st.style.color = 'var(--accent2)'; }
+  } finally {
+    if(btn) btn.disabled = false;
+  }
 }
 
 function tsReadCurrentMappings(){
@@ -18687,6 +18809,9 @@ async function saveTeamSettings(){
     await API.put('/api/config/jiraStatusMapping',  _jiraStatusMapping);
     await API.put('/api/config/jiraTypeMapping',    _jiraTypeMapping);
     await API.put('/api/config/jiraSyncConfig',     _jiraSyncConfig);
+    // JIRA-PULL-1 Stage 1: per-type selection + assignee map (floor is set-once, never saved here).
+    await API.put('/api/config/jiraPullTypes',      _jiraPullTypes);
+    await API.put('/api/config/jiraAssigneeMap',    _jiraAssigneeMap);
     // Update live jiraConfigured flag so UI responds immediately
     jiraConfigured = jiraConfigured && jiraEnabled;
     applyJiraVisibility();
@@ -18702,6 +18827,8 @@ async function saveTeamSettings(){
     window._jiraProjectMappingData = {..._jiraProjectMapping};
     window._jiraStatusMappingData  = {..._jiraStatusMapping};
     window._jiraTypeMappingData    = {..._jiraTypeMapping};
+    window._jiraPullTypesData      = [..._jiraPullTypes];
+    window._jiraAssigneeMapData    = {..._jiraAssigneeMap};
     statusEl.textContent = '✓ Saved';
     statusEl.style.color = '#22b96e';
     tsUpdateValidationSummary();
@@ -19372,6 +19499,10 @@ async function boot(){
     window._jiraStatusMappingData  = data.jiraStatusMapping  || {};
     window._jiraTypeMappingData    = data.jiraTypeMapping    || {};
     window._jiraSyncConfigData     = data.jiraSyncConfig     || {};
+    // JIRA-PULL-1 Stage 1 (inert): floor + per-type selection + assignee map.
+    window._jiraPullFloorData      = data.jiraPullFloor      || '';
+    window._jiraPullTypesData      = Array.isArray(data.jiraPullTypes) ? data.jiraPullTypes : [];
+    window._jiraAssigneeMapData    = (data.jiraAssigneeMap && typeof data.jiraAssigneeMap === 'object') ? data.jiraAssigneeMap : {};
     initJiraSyncConfig(data.jiraSyncConfig || {});
     nextId = projects.reduce((m,p)=>Math.max(m,p.id||0),0) + 1;
     // Populate reason selects now that data is loaded
