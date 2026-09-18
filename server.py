@@ -1750,7 +1750,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.46.1"
+APP_VERSION = "6.46.2"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -10807,12 +10807,11 @@ def _filter_pull_candidates(issues: list, flow_keys: set):
             candidates.append(iss)
     return candidates, already
 
-@app.get("/api/jira/pull-candidates")
-def jira_pull_candidates(auth: dict = Depends(require_role("admin"))):
-    """JIRA-PULL-1 Stage 2: the issues that WOULD start a pull - project + floor + selected types, minus
-    anything Flow already references. Returns a list; creates nothing. The ancestry walk (Stage 3) and the
-    creation (Stage 4) are separate."""
-    team = auth["team"]
+def _jira_compute_candidates(team: str):
+    """Shared Stage 2/3 core: config guards, then the candidate JQL + presence dedupe. Returns
+    {"ready": False, "reason": ...} when the feature is not configured, else {"ready": True, ...} with the
+    raw candidate issue dicts (fields intact, needed for the walk), the flow-key set, and query meta.
+    Raises 503 only when floor+types+project are all set but Jira is not configured."""
     with db(team) as c:
         def _cfg(k, dflt):
             r = c.execute("SELECT value FROM config WHERE key=?", (k,)).fetchone()
@@ -10821,18 +10820,16 @@ def jira_pull_candidates(auth: dict = Depends(require_role("admin"))):
         pull_types = _cfg("jiraPullTypes", [])
         proj_map   = _cfg("jiraProjectMapping", {})
     project_keys = sorted({v for v in proj_map.values() if v})   # mapped Jira projects only (Fraznet -> FRAZ)
-    # Config guards first (answerable without Jira - "floor not set" needs no query).
     if not floor:
-        return {"candidateCount": 0, "reason": "floor not set", "candidates": []}
+        return {"ready": False, "reason": "floor not set"}
     if not pull_types:
-        return {"candidateCount": 0, "reason": "no pull types selected", "candidates": []}
+        return {"ready": False, "reason": "no pull types selected"}
     if not project_keys:
-        return {"candidateCount": 0, "reason": "no Jira project mapped", "candidates": []}
+        return {"ready": False, "reason": "no Jira project mapped"}
     if not jira_configured():
         raise HTTPException(503, "Jira not configured")
-    # Jira interprets a JQL date in the searching account's tz.
     try:
-        tz = (_jira_req("GET", "/rest/api/3/myself") or {}).get("timeZone", "")
+        tz = (_jira_req("GET", "/rest/api/3/myself") or {}).get("timeZone", "")   # JQL date is read in this tz
     except Exception:
         tz = ""
     bound = _pull_floor_to_jql_bound(floor, tz)
@@ -10840,10 +10837,21 @@ def jira_pull_candidates(auth: dict = Depends(require_role("admin"))):
     issues = _jira_search_all(jql, "summary,status,issuetype,parent,created")
     flow_keys = set(_get_all_jira_tickets(team))          # built ONCE per run
     candidates, already = _filter_pull_candidates(issues, flow_keys)
-    # shape + Stage-3 sizing inputs
+    return {"ready": True, "candidates": candidates, "flowKeys": flow_keys,
+            "pullTypes": pull_types, "projectKeys": project_keys, "floor": floor,
+            "bound": bound, "tz": tz, "matched": len(issues), "already": already}
+
+@app.get("/api/jira/pull-candidates")
+def jira_pull_candidates(auth: dict = Depends(require_role("admin"))):
+    """JIRA-PULL-1 Stage 2: the issues that WOULD start a pull - project + floor + selected types, minus
+    anything Flow already references. Returns a list; creates nothing. The ancestry walk (Stage 3) and the
+    creation (Stage 4) are separate."""
+    core = _jira_compute_candidates(auth["team"])
+    if not core.get("ready"):
+        return {"candidateCount": 0, "reason": core["reason"], "candidates": []}
+    candidates = core["candidates"]
     cand_keys = {c["key"] for c in candidates}
-    by_type, parent_outside = {}, 0
-    shaped = []
+    by_type, parent_outside, shaped = {}, 0, []
     for c in candidates:
         f = c.get("fields", {}) or {}
         t = (f.get("issuetype") or {}).get("name", "?")
@@ -10854,11 +10862,89 @@ def jira_pull_candidates(auth: dict = Depends(require_role("admin"))):
         shaped.append({"key": c.get("key"), "type": t,
                        "status": (f.get("status") or {}).get("name", ""),
                        "created": (f.get("created") or "")[:10], "parentKey": pk})
-    return {"floor": floor, "accountTz": tz, "jqlBound": bound,
-            "totalMatched": len(issues), "alreadyInFlow": already,
+    return {"floor": core["floor"], "accountTz": core["tz"], "jqlBound": core["bound"],
+            "totalMatched": core["matched"], "alreadyInFlow": core["already"],
             "candidateCount": len(candidates), "byType": by_type,
             "parentOutsideCandidateSet": parent_outside,
-            "flowKeyIndexSize": len(flow_keys), "candidates": shaped}
+            "flowKeyIndexSize": len(core["flowKeys"]), "candidates": shaped}
+
+# ── JIRA-PULL-1 Stage 3: the ancestry walk (still creates NOTHING; returns the plan) ─────────────────
+_PULL_WALK_CAP = 200                              # measured walk was ~18-34 fetches; ample headroom
+
+class _PullCapExceeded(Exception):
+    def __init__(self, fetches, cap):
+        self.fetches, self.cap = fetches, cap
+
+def _issue_parent_key(iss): return ((iss.get("fields", {}) or {}).get("parent") or {}).get("key")
+def _issue_type_name(iss):  return ((iss.get("fields", {}) or {}).get("issuetype") or {}).get("name", "")
+def _issue_created(iss):    return (iss.get("fields", {}) or {}).get("created", "")
+
+def _jira_ancestry_walk(candidates, flow_keys, pull_type_set, fetch_fn, cap=_PULL_WALK_CAP):
+    """Walk upward from each candidate, admitting a parent whose TYPE is in the pull set (regardless of
+    age), stopping when a parent's type is not selected. Guards, all required:
+      - a GLOBAL visited set: parents repeat across seeds, so this dedupes AND guards cycles across chains;
+      - a per-chain cycle guard (belt-and-suspenders within one upward chain);
+      - a per-run fetch cap that STOPS and reports (raises _PullCapExceeded) - never truncates silently.
+    fetch_fn(key) -> issue dict, injected for testability. Ancestors already in Flow are still traversed
+    (their own parents may be new) but flagged alreadyInFlow (Stage 4 dedupes them out).
+    Returns (ancestors: {key: {type, created, depth, alreadyInFlow}}, meta: {fetches, maxDepth})."""
+    cand_keys = {c.get("key") for c in candidates}
+    ancestors, visited, fetches, max_depth = {}, set(), 0, 0
+    for seed in candidates:
+        pk = _issue_parent_key(seed)
+        depth, chain = 1, set()
+        while pk:
+            if pk in chain:
+                break                                # cycle within this chain
+            chain.add(pk)
+            if pk in visited:
+                break                                # already walked (this or another seed)
+            if fetches >= cap:
+                raise _PullCapExceeded(fetches, cap)
+            pa = fetch_fn(pk); fetches += 1
+            visited.add(pk)
+            ptype = _issue_type_name(pa)
+            if ptype not in pull_type_set:
+                break                                # walk stops at a non-selected type
+            if pk not in cand_keys and pk not in ancestors:
+                ancestors[pk] = {"type": ptype, "created": (_issue_created(pa) or "")[:10],
+                                 "depth": depth, "alreadyInFlow": pk in flow_keys}
+                if depth > max_depth:
+                    max_depth = depth
+            pk = _issue_parent_key(pa)
+            depth += 1
+    return ancestors, {"fetches": fetches, "maxDepth": max_depth}
+
+@app.get("/api/jira/pull-plan")
+def jira_pull_plan(auth: dict = Depends(require_role("admin"))):
+    """JIRA-PULL-1 Stage 3: candidates PLUS the ancestry walk = everything a first run would create.
+    Creates nothing. A fetch-cap trip returns a labelled cap-exceeded result, never a truncated plan."""
+    core = _jira_compute_candidates(auth["team"])
+    if not core.get("ready"):
+        return {"ready": False, "reason": core["reason"], "candidateCount": 0, "firstRunCreateCount": 0}
+    pull_type_set = set(core["pullTypes"])
+    def fetch(key):
+        return _jira_req("GET", f"/rest/api/3/issue/{key}?fields=summary,status,issuetype,parent,created")
+    try:
+        ancestors, wmeta = _jira_ancestry_walk(core["candidates"], core["flowKeys"], pull_type_set, fetch)
+    except _PullCapExceeded as e:
+        return {"ready": True, "status": "cap-exceeded", "fetchCap": e.cap, "fetches": e.fetches,
+                "message": f"Ancestry walk hit the fetch cap of {e.cap}; stopped and reported. Nothing "
+                           f"created. Investigate the parent chains before pulling."}
+    anc_new = {k: v for k, v in ancestors.items() if not v["alreadyInFlow"]}
+    anc_by_type, depth_hist = {}, {}
+    for v in anc_new.values():
+        anc_by_type[v["type"]] = anc_by_type.get(v["type"], 0) + 1
+        depth_hist[v["depth"]] = depth_hist.get(v["depth"], 0) + 1
+    return {"ready": True, "status": "ok", "floor": core["floor"], "accountTz": core["tz"],
+            "candidateCount": len(core["candidates"]),
+            "ancestorsReached": len(ancestors),
+            "ancestorsAlreadyInFlow": sum(1 for v in ancestors.values() if v["alreadyInFlow"]),
+            "ancestorsNetNew": len(anc_new), "ancestorsByTypeNetNew": anc_by_type,
+            "depthDistribution": depth_hist, "maxDepth": wmeta["maxDepth"],
+            "walkFetches": wmeta["fetches"], "fetchCap": _PULL_WALK_CAP,
+            "firstRunCreateCount": len(core["candidates"]) + len(anc_new),
+            "ancestors": [{"key": k, **v} for k, v in ancestors.items()]}
 
 @app.post("/api/jira/search-raw")
 def jira_search_raw(body: dict = Body(...), auth: dict = Depends(require_role("admin"))):
