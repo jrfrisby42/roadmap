@@ -1750,7 +1750,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.46.2"
+APP_VERSION = "6.47.0"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -10795,6 +10795,10 @@ def _jira_search_all(jql: str, fields: str, cap: int = 2000) -> list:
             break
     return out
 
+# Widened fetch (Stage 4 needs labels/assignee/description/dates/project to CONSTRUCT items; the search
+# and the ancestry walk both fetch this set so the plan already carries everything a create needs).
+_PULL_FETCH_FIELDS = "summary,status,issuetype,parent,created,labels,assignee,description,duedate,customfield_10025,project"
+
 def _filter_pull_candidates(issues: list, flow_keys: set):
     """Drop issues Flow already references (PRESENCE only - never assume the mapped id is 'the' item,
     since 93 keys are multi-referenced and the natural index is last-writer-wins). Returns
@@ -10834,7 +10838,7 @@ def _jira_compute_candidates(team: str):
         tz = ""
     bound = _pull_floor_to_jql_bound(floor, tz)
     jql = _jira_pull_jql(bound, pull_types, project_keys)
-    issues = _jira_search_all(jql, "summary,status,issuetype,parent,created")
+    issues = _jira_search_all(jql, _PULL_FETCH_FIELDS)
     flow_keys = set(_get_all_jira_tickets(team))          # built ONCE per run
     candidates, already = _filter_pull_candidates(issues, flow_keys)
     return {"ready": True, "candidates": candidates, "flowKeys": flow_keys,
@@ -10924,7 +10928,7 @@ def jira_pull_plan(auth: dict = Depends(require_role("admin"))):
         return {"ready": False, "reason": core["reason"], "candidateCount": 0, "firstRunCreateCount": 0}
     pull_type_set = set(core["pullTypes"])
     def fetch(key):
-        return _jira_req("GET", f"/rest/api/3/issue/{key}?fields=summary,status,issuetype,parent,created")
+        return _jira_req("GET", f"/rest/api/3/issue/{key}?fields={_PULL_FETCH_FIELDS}")
     try:
         ancestors, wmeta = _jira_ancestry_walk(core["candidates"], core["flowKeys"], pull_type_set, fetch)
     except _PullCapExceeded as e:
@@ -10945,6 +10949,196 @@ def jira_pull_plan(auth: dict = Depends(require_role("admin"))):
             "walkFetches": wmeta["fetches"], "fetchCap": _PULL_WALK_CAP,
             "firstRunCreateCount": len(core["candidates"]) + len(anc_new),
             "ancestors": [{"key": k, **v} for k, v in ancestors.items()]}
+
+# ── JIRA-PULL-1 Stage 4: item construction + insert (the first stage that WRITES) ────────────────────
+_PULL_JIRA_SOURCE = "pull"      # jiraSource marker Stage 5's refresh keys off
+_POD_LABEL_PREFIX = "pod-"      # matched case-insensitively; the value after it is matched to a Flow pod
+
+def _jira_pull_pod(labels, flow_pods):
+    """Pod comes from a `Pod-` LABEL matched to a Flow pod. Match on the PREFIX, never the first label
+    (labels also carry unrelated taxonomy). Two Pod- labels -> empty (ambiguous); a Pod- with no matching
+    Flow pod -> empty. Returns (pod, reason). Pure."""
+    picks = [str(l)[len(_POD_LABEL_PREFIX):] for l in (labels or [])
+             if isinstance(l, str) and l.lower().startswith(_POD_LABEL_PREFIX)]
+    if len(picks) > 1:
+        return "", "multiple-pod-labels"
+    if not picks:
+        return "", "no-pod-label"
+    by_lower = {str(p).lower(): str(p) for p in (flow_pods or [])}
+    hit = by_lower.get(picks[0].lower())
+    return (hit, "matched") if hit else ("", "pod-not-in-flow")
+
+def _adf_text(node):
+    """Visible text of an ADF node subtree; hardBreak -> newline."""
+    t = node.get("type")
+    if t == "text":
+        return node.get("text", "")
+    if t == "hardBreak":
+        return "\n"
+    return "".join(_adf_text(ch) for ch in (node.get("content") or []))
+
+def _adf_to_safe_html(adf):
+    """LOSSY, safe subset of ADF (NOT a full converter): each top-level paragraph -> <p>, line breaks ->
+    <br>, ALL text escaped; every other top-level node type is flattened to its text (and counted). The
+    output carries only <p>/<br> structure with escaped text, so it is safe by construction - strictly
+    stricter than frzSanitize, no source markup survives. Returns (html, flattened_type_counts)."""
+    if not isinstance(adf, dict):
+        return (html.escape(str(adf)), {}) if adf else ("", {})
+    flattened, paras = {}, []
+    for node in (adf.get("content") or []):
+        nt = node.get("type", "")
+        txt = _adf_text(node)
+        if nt != "paragraph":
+            flattened[nt] = flattened.get(nt, 0) + 1     # blockquote/bulletList/table/panel/... -> text
+        if txt.strip() or nt == "paragraph":
+            paras.append(txt)
+    out = ["<p>" + html.escape(p).replace("\n", "<br>") + "</p>" for p in paras if p.strip()]
+    return "".join(out), flattened
+
+def _pull_context(team):
+    """Read every config the construct needs ONCE: reverse type/status/project maps, pods, assignee map."""
+    with db(team) as c:
+        def g(k, d):
+            r = c.execute("SELECT value FROM config WHERE key=?", (k,)).fetchone()
+            return json.loads(r["value"]) if r else d
+        tmap = g("jiraTypeMapping", {}); smap = g("jiraStatusMapping", {})
+        overlay = g("jiraPullStatusMap", {}); pmap = g("jiraProjectMapping", {})
+        pods = g("developers", []); amap = g("jiraAssigneeMap", {})
+    type_rev = {}
+    for k, v in tmap.items():
+        if v:
+            type_rev.setdefault(str(v).strip(), k)       # first mapping wins on a collision (1:1 today)
+    status_eff = {**{v: k for k, v in smap.items() if v}, **overlay}   # jiraPullStatusMap overlay wins
+    proj_rev = {str(v).strip(): k for k, v in pmap.items() if v}       # FRAZ -> Fraznet
+    return {"type_rev": type_rev, "status_eff": status_eff, "overlay": overlay,
+            "proj_rev": proj_rev, "pods": pods, "assignee_map": amap}
+
+def _construct_pull_item(issue, ctx, actor):
+    """Build a Flow item dict from a Jira issue. Returns (item, meta) or (None, {skip:...}) when the Jira
+    TYPE is unmapped (skip and report - never invent a type). Status is left "" when unmapped so the insert
+    chokepoint stamps the Org default - nothing silently dropped."""
+    f = issue.get("fields", {}) or {}
+    jkey = issue.get("key")
+    jtype = (f.get("issuetype") or {}).get("name", "")
+    rtype = ctx["type_rev"].get(str(jtype).strip())
+    if not rtype:
+        return None, {"skip": "unmapped-type", "key": jkey, "jiraType": jtype}
+    jstatus = (f.get("status") or {}).get("name", "")
+    rstatus = ctx["status_eff"].get(jstatus, "")          # "" -> Org default at insert
+    pod, pod_reason = _jira_pull_pod(f.get("labels"), ctx["pods"])
+    acct = (f.get("assignee") or {}).get("accountId", "")
+    assignee = ctx["assignee_map"].get(acct, "") if acct else ""
+    desc_html, flattened = _adf_to_safe_html(f.get("description"))
+    space = ctx["proj_rev"].get((f.get("project") or {}).get("key", ""), "")
+    item = {
+        "name": f.get("summary", "") or jkey,
+        "product": space,                                 # reverse project map: FRAZ -> Fraznet
+        "type": rtype,
+        "status": rstatus,
+        "dev": pod,                                       # pod = the `dev` field (owner)
+        "assignee": assignee,                             # from jiraAssigneeMap ONLY (no runtime transform)
+        "description": desc_html,
+        "start": f.get("customfield_10025") or "",        # Jira "Start date", snapshot
+        "due": f.get("duedate") or "",                    # snapshot
+        "jiraTickets": [jkey],
+        "jiraSource": _PULL_JIRA_SOURCE,
+        "reporter": actor,
+    }
+    meta = {"key": jkey, "pod": pod, "podReason": pod_reason, "assignee": assignee,
+            "assigneeResolved": bool(assignee), "hadJiraAssignee": bool(acct),
+            "jiraStatus": jstatus, "flowStatus": rstatus, "statusUnmapped": rstatus == "",
+            "statusViaOverlay": jstatus in (ctx["overlay"] or {}), "type": rtype,
+            "flattened": flattened, "hasDescription": bool(desc_html)}
+    return item, meta
+
+def _pull_plan_issues(team):
+    """Compute the create set: candidate issue dicts + net-new ancestor issue dicts (full fields).
+    Returns (core, plan_issues) or (core, None) when the feature is not configured."""
+    core = _jira_compute_candidates(team)
+    if not core.get("ready"):
+        return core, None
+    cache = {}
+    def fetch(key):
+        if key not in cache:
+            cache[key] = _jira_req("GET", f"/rest/api/3/issue/{key}?fields={_PULL_FETCH_FIELDS}")
+        return cache[key]
+    ancestors, _wm = _jira_ancestry_walk(core["candidates"], core["flowKeys"], set(core["pullTypes"]), fetch)
+    anc_new = [k for k, v in ancestors.items() if not v["alreadyInFlow"]]
+    return core, list(core["candidates"]) + [cache[k] for k in anc_new if k in cache]
+
+@app.post("/api/jira/pull")
+def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))):
+    """JIRA-PULL-1 Stage 4: construct + insert the pull plan (candidates + net-new ancestors) via the app's
+    own insert path (_assign_item_key + _insert_project), jiraSource-tagged, NO notify hook = notifications
+    suppressed. Body: {keys?: [...] restrict to these Jira keys; dryRun?: bool report what WOULD be created
+    without writing}. dryRun answers Part-1 coverage; keys=[oneKey] is the Phase-A single-item probe."""
+    team = auth["team"]
+    dry = bool((body or {}).get("dryRun"))
+    only = set((body or {}).get("keys") or [])
+    core, plan_issues = _pull_plan_issues(team)
+    if plan_issues is None:
+        return {"ready": False, "reason": core["reason"], "created": [], "createdCount": 0}
+    if only:
+        plan_issues = [i for i in plan_issues if i.get("key") in only]
+    ctx = _pull_context(team)
+    actor = auth["username"]
+    created, skipped = [], []
+    agg = {"podSet": 0, "podEmpty": 0, "podMultiLabel": 0, "podNotInFlow": 0, "podNoLabel": 0,
+           "assigneeResolved": 0, "assigneeUnresolvedJira": 0, "assigneeNone": 0,
+           "statusUnmapped": 0, "statusViaOverlay": 0, "byStatus": {}, "byType": {},
+           "descFlattened": {}, "withDescription": 0}
+    def _tally(meta, eff_status):
+        agg["podSet" if meta["pod"] else "podEmpty"] += 1
+        if not meta["pod"]:
+            agg[{"multiple-pod-labels": "podMultiLabel", "pod-not-in-flow": "podNotInFlow"}
+                .get(meta["podReason"], "podNoLabel")] += 1
+        agg["assigneeResolved" if meta["assigneeResolved"] else
+            ("assigneeUnresolvedJira" if meta["hadJiraAssignee"] else "assigneeNone")] += 1
+        if meta["statusUnmapped"]:
+            agg["statusUnmapped"] += 1
+        if meta["statusViaOverlay"]:
+            agg["statusViaOverlay"] += 1
+        agg["byType"][meta["type"]] = agg["byType"].get(meta["type"], 0) + 1
+        agg["byStatus"][eff_status] = agg["byStatus"].get(eff_status, 0) + 1
+        for nt, n in (meta["flattened"] or {}).items():
+            agg["descFlattened"][nt] = agg["descFlattened"].get(nt, 0) + n
+        if meta["hasDescription"]:
+            agg["withDescription"] += 1
+    if dry:
+        for issue in plan_issues:
+            item, meta = _construct_pull_item(issue, ctx, actor)
+            if item is None:
+                skipped.append(meta); continue
+            _tally(meta, item["status"] or "(Org default)")
+        return {"ready": True, "dryRun": True, "planCount": len(plan_issues),
+                "wouldCreate": len(plan_issues) - len(skipped), "skipped": skipped, "fieldSummary": agg}
+    # WRITE: one transaction; construct + insert each via the app's insert path (no notify hook fires).
+    audits = []
+    with db(team) as c:
+        for issue in plan_issues:
+            item, meta = _construct_pull_item(issue, ctx, actor)
+            if item is None:
+                skipped.append(meta); continue
+            if item["jiraTickets"][0] in core["flowKeys"]:
+                skipped.append({"key": meta["key"], "skip": "already-in-flow"}); continue   # belt-and-suspenders
+            _assign_item_key(c, item)
+            item["id"] = _insert_project(c, item)         # mutates item: stamps default status if "" + itemKey above
+            _tally(meta, item.get("status") or "(Org default)")
+            created.append({"key": meta["key"], "id": item["id"], "itemKey": item.get("itemKey"),
+                            "product": item["product"], "type": item["type"], "status": item.get("status"),
+                            "dev": item["dev"], "assignee": item["assignee"]})
+            audits.append((item["id"], item["name"], meta["key"], item["type"]))
+    # Audits AFTER the insert transaction closes: write_audit opens its OWN db connection, and nesting a
+    # second writer inside the still-open insert transaction self-deadlocks (SQLite = one writer). Best
+    # effort - a failed audit never unwinds a committed create (mirrors _do_sync_children's audit-after).
+    for pid, name, jkey, itype in audits:
+        try:
+            write_audit(team, "jira:pull-create", actor, pid, name,
+                        changes={"jiraKey": jkey, "type": itype, "jiraSource": _PULL_JIRA_SOURCE})
+        except Exception as e:
+            log.warning(f"[JiraPull] audit write failed for {jkey}: {e}")
+    return {"ready": True, "dryRun": False, "createdCount": len(created), "created": created,
+            "skipped": skipped, "fieldSummary": agg}
 
 @app.post("/api/jira/search-raw")
 def jira_search_raw(body: dict = Body(...), auth: dict = Depends(require_role("admin"))):
