@@ -2036,6 +2036,13 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
           <label>Status</label>
           <select id="fStatus"></select>
         </div>
+        <!-- COMPOSER-REFINE-1 Stage 3: the visible reason the Status select is inert while Space is empty
+             (create, unscoped user). A rendered line, not a title attribute and not opacity alone - the
+             Delay-Date dropdown failure taught us a title on a dimmed control reads as broken, not disabled.
+             Hidden the moment a Space is set. -->
+        <div id="composerSpaceGate" class="composer-editor-note" style="display:none">Choose a Space to pick a status.</div>
+        <!-- COMPOSER-REFINE-1 Stage 3.3: inline note when changing Space resets an incompatible status. -->
+        <div id="composerStatusResetNote" class="composer-editor-note" style="display:none"></div>
 
         <!-- Quick-edit grid: current-value tap targets, not labelled select rows. Priority is admin-only
              (grid degrades to Space + Type for editors). Assignee deferred (J.R.). -->
@@ -5488,7 +5495,7 @@ document.getElementById('fStatus')?.addEventListener('change', ()=>{
   warnIfActiveWithoutOwner();
   updateDelayFieldsState(); // re-evaluate delay gate when status changes
 });
-document.getElementById('fProduct')?.addEventListener('change', ()=>{ refreshStatusOptions(); updateJiraFieldVisibility(); });
+document.getElementById('fProduct')?.addEventListener('change', ()=>{ _frzOnComposerSpaceChange(); updateJiraFieldVisibility(); });
 
 function updateJiraFieldVisibility(){
   const product = document.getElementById('fProduct')?.value || '';
@@ -6322,11 +6329,28 @@ function openProjectModal(id){
   } else {
     document.getElementById('fDev').disabled = false;
   }
-  // Default project to first in list for new items
-  const defaultProduct = p?.product || (products.length ? (products[0]?.name || products[0] || '') : '');
-  document.getElementById('fProduct').value  = defaultProduct;
+  // COMPOSER-REFINE-1 Stage 3: seed Space from the rail scope on create, never first-in-list. Edit keeps
+  // the item's own Space. Create seeds from the current Space scope (read across the beta bridge
+  // window._frzListScope) ONLY when it pins a specific, KNOWN Space; an unscoped user (__all__, or classic
+  // with no shell where the bridge is absent) gets an EMPTY, required Space. The old products[0] default was
+  // right ~91% of the time on development and permanently wrong the rest, because Space stamps the immutable
+  // item-key prefix - a wrong Space leaves an item keyed FRZ that a later Space fix never corrects. Empty +
+  // required is the deliberate, user-visible replacement (see _frzApplySpaceGate for the empty-state gating).
+  let seededProduct;
+  if(p){
+    seededProduct = p.product || '';
+  } else {
+    const _scope = (typeof window._frzListScope === 'function') ? window._frzListScope() : '__all__';
+    const _known = _scope && _scope !== '__all__' && products.some(pr => ((pr && pr.name) ? pr.name : pr) === _scope);
+    seededProduct = _known ? _scope : '';
+  }
+  document.getElementById('fProduct').value  = seededProduct;
   // Refresh status options based on the selected project's workflow
   refreshStatusOptions(p?.status || getDefaultStatus());
+  // Stage 3: gate Status + Create while Space is empty (create only), and clear any stale reset note.
+  const _srn = document.getElementById('composerStatusResetNote');
+  if(_srn){ _srn.style.display = 'none'; _srn.textContent = ''; }
+  _frzApplySpaceGate();
   document.getElementById('fType').value     = p?.type||'';
   document.getElementById('fStart').value    = p?.start||'';
   // Back-calculate dueWeeks from stored due date and start date, or use stored dueWeeks, default 2
@@ -7556,6 +7580,11 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
   }
 
   if(!data.name){ _frzRevealComposerField('fName'); return; }   // Stage 3: focus the required name
+
+  // COMPOSER-REFINE-1 Stage 3: Space is required on create (the empty-state gate blocks the button, but this
+  // is the belt-and-suspenders stop if a submit reaches here anyway). Create only - editing the one legacy
+  // no-Space item must still save (its empty product is a pre-existing state, not something to force-fix here).
+  if(!editingId && !data.product){ _frzRevealComposerField('fProduct'); showToast('Choose a Space first', 'error'); return; }
 
   // Guard: test period must be strictly less than the time estimate
   if(data.testWeeks > 0 && data.dueWeeks > 0 && data.testWeeks >= data.dueWeeks){
@@ -14397,6 +14426,53 @@ function refreshStatusOptions(currentStatusValue){
       fSt.value = prev;
     }
   }
+}
+
+// COMPOSER-REFINE-1 Stage 3: while Space is empty (unscoped create) the Status select is inert and Create
+// is blocked, each carrying a VISIBLE reason - the Status-row note (#composerSpaceGate) explains, the
+// disabled Create button states. Create mode only: an existing item always has a Space, and applyModalLocking
+// owns the edit-mode disabled state (Jira / Released), so this never touches those controls in edit mode.
+// Re-run on open and on every #fProduct change.
+function _frzApplySpaceGate(){
+  const empty = !editingId && !(document.getElementById('fProduct')?.value || '');
+  const gate = document.getElementById('composerSpaceGate');
+  if(!editingId){
+    const fSt = document.getElementById('fStatus');
+    const saveBtn = document.getElementById('saveBtn');
+    if(fSt) fSt.disabled = empty;
+    if(saveBtn) saveBtn.disabled = empty;
+  }
+  if(gate) gate.style.display = empty ? '' : 'none';
+}
+
+// COMPOSER-REFINE-1 Stage 3.3: on a Space change, if the currently selected status is not in the new Space's
+// list, reset to that Space's default and say so inline. CREATE MODE ONLY - edit mode keeps its off-workflow
+// retention (the branch above), because a reset there would silently rewrite existing data on a Space change.
+// The default resolves through getDefaultStatus() (the statusIsDefault config flag), falling to the first
+// valid status when the Org default is not in this Space's list. Never hardcodes a status name.
+function _frzOnComposerSpaceChange(){
+  const fPr = document.getElementById('fProduct');
+  const fSt = document.getElementById('fStatus');
+  const note = document.getElementById('composerStatusResetNote');
+  const newSpace = fPr ? (fPr.value || '') : '';
+  if(!editingId && newSpace && fSt){
+    const prev = fSt.value;
+    const valid = getStatusesForProduct(newSpace).filter(s => statuses.includes(s));
+    if(prev && !valid.includes(prev)){
+      let target = (typeof getDefaultStatus === 'function') ? getDefaultStatus() : '';
+      if(!valid.includes(target)) target = valid[0] || '';
+      refreshStatusOptions(target);
+      if(note && target){
+        note.textContent = 'Status reset to ' + target + ' - ' + prev + " isn't used in " + newSpace + '.';
+        note.style.display = '';
+      }
+      _frzApplySpaceGate();
+      return;
+    }
+  }
+  refreshStatusOptions();
+  if(note){ note.style.display = 'none'; note.textContent = ''; }
+  _frzApplySpaceGate();
 }
 
 // ── SAVED VIEWS ──────────────────────────────────────────────────────────────
