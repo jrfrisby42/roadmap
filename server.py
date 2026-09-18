@@ -10751,6 +10751,115 @@ def seed_jira_assignee_map(body: dict = Body({}), auth: dict = Depends(require_r
     return {"matched": matched, "unmatched": len(unmatched), "unmatchedNames": unmatched,
             "skipped": len(skipped), "total": len(jira_users), "map": merged}
 
+# ── JIRA-PULL-1 Stage 2: candidate query + dedupe (returns a list; creates NOTHING) ──────────────────
+def _pull_floor_to_jql_bound(floor_iso: str, account_tz: str) -> str:
+    """Convert the stored floor (ISO, may carry an offset or Z) into the account-timezone wall clock
+    'YYYY-MM-DD HH:mm' that JQL expects - Jira interprets a JQL date in the searching account's tz, so we
+    must express the floor INSTANT in that tz or a date-only boundary drifts by the offset (the off-by-one
+    J.R. flagged). A naive stored value is assumed already account-local."""
+    s = (floor_iso or "").strip()
+    if not s:
+        return ""
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is not None:
+        try:
+            from zoneinfo import ZoneInfo
+            dt = dt.astimezone(ZoneInfo(account_tz)) if account_tz else dt
+        except Exception:
+            pass   # tzdata missing: fall back to the stored offset's wall clock
+    return dt.strftime("%Y-%m-%d %H:%M")
+
+def _jira_pull_jql(floor_bound: str, jira_types: list, project_keys: list) -> str:
+    """Build the candidate JQL - project(s) + created-after-floor + selected issue types, so the filter
+    runs at Jira and the full history is never fetched. Pure (bound already formatted)."""
+    projs = ", ".join(str(p) for p in project_keys if p)
+    types = ", ".join('"' + str(t).replace('"', '') + '"' for t in jira_types if t)
+    parts = [f"project in ({projs})", f'created >= "{floor_bound}"', f"issuetype in ({types})"]
+    return " AND ".join(parts) + " ORDER BY created ASC"
+
+def _jira_search_all(jql: str, fields: str, cap: int = 2000) -> list:
+    """Paginate /rest/api/3/search/jql via nextPageToken. Capped so a mis-built query can't fetch the
+    whole history. Read-only."""
+    from urllib.parse import quote
+    out, token = [], None
+    while True:
+        q = f"/rest/api/3/search/jql?jql={quote(jql)}&fields={fields}&maxResults=100"
+        if token:
+            q += f"&nextPageToken={quote(token)}"
+        res = _jira_req("GET", q)
+        out.extend(res.get("issues", []))
+        token = res.get("nextPageToken")
+        if not token or len(out) >= cap:
+            break
+    return out
+
+def _filter_pull_candidates(issues: list, flow_keys: set):
+    """Drop issues Flow already references (PRESENCE only - never assume the mapped id is 'the' item,
+    since 93 keys are multi-referenced and the natural index is last-writer-wins). Returns
+    (candidates, already_count). Pure."""
+    candidates, already = [], 0
+    for iss in issues:
+        if iss.get("key") in flow_keys:
+            already += 1
+        else:
+            candidates.append(iss)
+    return candidates, already
+
+@app.get("/api/jira/pull-candidates")
+def jira_pull_candidates(auth: dict = Depends(require_role("admin"))):
+    """JIRA-PULL-1 Stage 2: the issues that WOULD start a pull - project + floor + selected types, minus
+    anything Flow already references. Returns a list; creates nothing. The ancestry walk (Stage 3) and the
+    creation (Stage 4) are separate."""
+    team = auth["team"]
+    with db(team) as c:
+        def _cfg(k, dflt):
+            r = c.execute("SELECT value FROM config WHERE key=?", (k,)).fetchone()
+            return json.loads(r["value"]) if r else dflt
+        floor      = _cfg("jiraPullFloor", "") or ""
+        pull_types = _cfg("jiraPullTypes", [])
+        proj_map   = _cfg("jiraProjectMapping", {})
+    project_keys = sorted({v for v in proj_map.values() if v})   # mapped Jira projects only (Fraznet -> FRAZ)
+    # Config guards first (answerable without Jira - "floor not set" needs no query).
+    if not floor:
+        return {"candidateCount": 0, "reason": "floor not set", "candidates": []}
+    if not pull_types:
+        return {"candidateCount": 0, "reason": "no pull types selected", "candidates": []}
+    if not project_keys:
+        return {"candidateCount": 0, "reason": "no Jira project mapped", "candidates": []}
+    if not jira_configured():
+        raise HTTPException(503, "Jira not configured")
+    # Jira interprets a JQL date in the searching account's tz.
+    try:
+        tz = (_jira_req("GET", "/rest/api/3/myself") or {}).get("timeZone", "")
+    except Exception:
+        tz = ""
+    bound = _pull_floor_to_jql_bound(floor, tz)
+    jql = _jira_pull_jql(bound, pull_types, project_keys)
+    issues = _jira_search_all(jql, "summary,status,issuetype,parent,created")
+    flow_keys = set(_get_all_jira_tickets(team))          # built ONCE per run
+    candidates, already = _filter_pull_candidates(issues, flow_keys)
+    # shape + Stage-3 sizing inputs
+    cand_keys = {c["key"] for c in candidates}
+    by_type, parent_outside = {}, 0
+    shaped = []
+    for c in candidates:
+        f = c.get("fields", {}) or {}
+        t = (f.get("issuetype") or {}).get("name", "?")
+        by_type[t] = by_type.get(t, 0) + 1
+        pk = (f.get("parent") or {}).get("key")
+        if pk and pk not in cand_keys:
+            parent_outside += 1
+        shaped.append({"key": c.get("key"), "type": t,
+                       "status": (f.get("status") or {}).get("name", ""),
+                       "created": (f.get("created") or "")[:10], "parentKey": pk})
+    return {"floor": floor, "accountTz": tz, "jqlBound": bound,
+            "totalMatched": len(issues), "alreadyInFlow": already,
+            "candidateCount": len(candidates), "byType": by_type,
+            "parentOutsideCandidateSet": parent_outside,
+            "flowKeyIndexSize": len(flow_keys), "candidates": shaped}
+
 @app.post("/api/jira/search-raw")
 def jira_search_raw(body: dict = Body(...), auth: dict = Depends(require_role("admin"))):
     """Debug: run a raw JQL search against Jira and return the full response."""
