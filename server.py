@@ -1753,7 +1753,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.53.0"
+APP_VERSION = "6.53.1"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -11082,14 +11082,16 @@ def _pull_context(team):
         tmap = g("jiraTypeMapping", {}); smap = g("jiraStatusMapping", {})
         overlay = g("jiraPullStatusMap", {}); pmap = g("jiraProjectMapping", {})
         pods = g("developers", []); amap = g("jiraAssigneeMap", {})
+        released_map = g("statusIsReleased", {})          # CLEANUP-1 Item 1: keyed on Released, NOT Terminal
     type_rev = {}
     for k, v in tmap.items():
         if v:
             type_rev.setdefault(str(v).strip(), k)       # first mapping wins on a collision (1:1 today)
     status_eff = {**{v: k for k, v in smap.items() if v}, **overlay}   # jiraPullStatusMap overlay wins
     proj_rev = {str(v).strip(): k for k, v in pmap.items() if v}       # FRAZ -> Fraznet
+    released = {s for s, v in (released_map or {}).items() if v}       # released Flow status names
     return {"type_rev": type_rev, "status_eff": status_eff, "overlay": overlay,
-            "proj_rev": proj_rev, "pods": pods, "assignee_map": amap}
+            "proj_rev": proj_rev, "pods": pods, "assignee_map": amap, "released": released}
 
 def _construct_pull_item(issue, ctx, actor):
     """Build a Flow item dict from a Jira issue. Returns (item, meta) or (None, {skip:...}) when the Jira
@@ -11244,7 +11246,7 @@ def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))
 # jiraSource, NEVER on jiraTickets being present or on the key matching.
 _PULL_REFRESH_FIELDS = ("status", "dev", "assignee")   # the only three fields the refresh may ever write
 
-def _refresh_one_pulled(current, issue, ctx, all_statuses):
+def _refresh_one_pulled(current, issue, ctx, all_statuses, today=None):
     """Given an item's CURRENT blob and its Jira issue, apply the three refreshed fields in place and
     return {field: (old, new)} for those that actually changed (empty -> nothing to write). Rules:
       - status: forward-only via the pull-effective map (jiraStatusMapping + jiraPullStatusMap overlay);
@@ -11253,7 +11255,12 @@ def _refresh_one_pulled(current, issue, ctx, all_statuses):
         and keeps Flow's last value - a label tidied away in Jira never clears the pod;
       - assignee: applied ONLY when the Jira accountId resolves through jiraAssigneeMap; unassigned or
         unmapped keeps Flow's last value.
-    Description/summary/dates/parent are never read here (J.R.'s decision: create-time snapshot stands)."""
+    CLEANUP-1 Item 1: when `today` is given and THIS run advances the status INTO a released status
+    (ctx['released'], keyed on statusIsReleased not Terminal), stamp `releaseDate=today` ONCE - a release
+    date Flow observed for free. It is gated on the TRANSITION (a status change computed this run whose new
+    value is released), never on the state, so the items already sitting at Released are never stamped; and
+    it is set-once (an existing releaseDate is never overwritten).
+    Description/summary/dates/parent are otherwise never read here (create-time snapshot stands)."""
     changed = {}
     f = issue.get("fields", {}) or {}
     jstatus = (f.get("status") or {}).get("name", "")
@@ -11263,6 +11270,10 @@ def _refresh_one_pulled(current, issue, ctx, all_statuses):
         if mapped != cur_status and _status_rank(mapped, all_statuses) > _status_rank(cur_status, all_statuses):
             current["status"] = mapped
             changed["status"] = (cur_status, mapped)
+            # CLEANUP-1 Item 1: transition INTO a released status, set-once -> observed release date.
+            if today and mapped in (ctx.get("released") or set()) and not current.get("releaseDate"):
+                current["releaseDate"] = today
+                changed["releaseDate"] = ("", today)
     pod, reason = _jira_pull_pod(f.get("labels"), ctx["pods"])
     if reason == "matched":
         cur_pod = current.get("dev", "")
@@ -11300,6 +11311,7 @@ def _jira_refresh_pulled(team, actor):
         srow = c.execute("SELECT value FROM config WHERE key='statuses'").fetchone()
         all_statuses = json.loads(srow["value"]) if srow else []
         rows = c.execute("SELECT id, data FROM projects ORDER BY id").fetchall()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")   # CLEANUP-1 Item 1: observed release date
     pulled, key_for = [], {}
     for r in rows:
         p = json.loads(r["data"])
@@ -11326,7 +11338,7 @@ def _jira_refresh_pulled(team, actor):
             log.warning(f"[JiraRefresh] batch fetch failed, aborting with zero writes: {e}")
             return {**base, "aborted": True, "reason": f"Jira search failed: {e}"}
     base["fetched"] = len(issue_by_key)
-    n_status = n_pod = n_assignee = n_err = 0
+    n_status = n_pod = n_assignee = n_err = n_release = 0
     details, audits = [], []
     with db(team) as c:
         for pid in pulled:
@@ -11343,13 +11355,14 @@ def _jira_refresh_pulled(team, actor):
                 current = json.loads(cur_row["data"])
                 if current.get("jiraSource") != _PULL_JIRA_SOURCE:
                     continue                                      # belt-and-suspenders: never touch a non-pull item
-                chg = _refresh_one_pulled(current, issue, ctx, all_statuses)
+                chg = _refresh_one_pulled(current, issue, ctx, all_statuses, today=today)
                 if not chg:
                     continue                                      # no change -> skip the write, never bump updated_ts
                 _save_project(c, pid, current, None)              # ts=None -> a meaningful change stamps a fresh updated_ts
                 if "status" in chg:   n_status += 1
                 if "dev" in chg:      n_pod += 1
                 if "assignee" in chg: n_assignee += 1
+                if "releaseDate" in chg: n_release += 1
                 details.append({"key": jkey, "id": pid,
                                 "fields": {k: {"from": v[0], "to": v[1]} for k, v in chg.items()}})
                 audits.append((pid, current.get("name", ""), jkey, chg))
@@ -11366,7 +11379,7 @@ def _jira_refresh_pulled(team, actor):
         except Exception as e:
             log.warning(f"[JiraRefresh] audit write failed for {jkey}: {e}")
     return {**base, "changed": len(details), "statusChanged": n_status, "podChanged": n_pod,
-            "assigneeChanged": n_assignee, "errors": n_err, "details": details}
+            "assigneeChanged": n_assignee, "releaseStamped": n_release, "errors": n_err, "details": details}
 
 @app.post("/api/jira/refresh")
 def jira_refresh(auth: dict = Depends(require_role("admin"))):
