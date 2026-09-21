@@ -10862,7 +10862,7 @@ def _jira_search_all(jql: str, fields: str, cap: int = 2000) -> list:
 
 # Widened fetch (Stage 4 needs labels/assignee/description/dates/project to CONSTRUCT items; the search
 # and the ancestry walk both fetch this set so the plan already carries everything a create needs).
-_PULL_FETCH_FIELDS = "summary,status,issuetype,parent,created,labels,assignee,description,duedate,customfield_10025,project"
+_PULL_FETCH_FIELDS = "summary,status,issuetype,parent,created,labels,assignee,description,duedate,customfield_10025,project,customfield_10010"  # customfield_10010 = Sprint (list); JIRA-SPRINT-1 Stage 3 rides it free
 
 def _filter_pull_candidates(issues: list, flow_keys: set):
     """Drop issues Flow already references (PRESENCE only - never assume the mapped id is 'the' item,
@@ -11390,10 +11390,18 @@ def jira_pull_now(body: dict = Body({}), auth: dict = Depends(require_role("admi
         sprint_mirror = _mirror_sprints(auth["team"], auth["username"])
     except Exception as e:
         log.warning(f"[SprintMirror] pull-now hook failed (non-fatal): {e}")
+    # JIRA-SPRINT-1 Stage 3: set item sprintId AFTER the mirror (the mirrored records must exist first).
+    sprint_membership = None
+    try:
+        sprint_membership = _sync_sprint_membership(auth["team"], auth["username"])
+    except Exception as e:
+        log.warning(f"[SprintMembership] pull-now hook failed (non-fatal): {e}")
     return {"ready": create.get("ready", True) and refresh.get("ready", True),
             "create": create, "refresh": refresh, "sprintMirror": sprint_mirror,
+            "sprintMembership": sprint_membership,
             "createdCount": create.get("createdCount", 0), "refreshedCount": refresh.get("changed", 0),
-            "sprintsMirrored": (sprint_mirror or {}).get("mirrored", 0)}
+            "sprintsMirrored": (sprint_mirror or {}).get("mirrored", 0),
+            "membershipChanged": (sprint_membership or {}).get("changed", 0)}
 
 # ── JIRA-PULL-1 Stage 6: parent hierarchy ────────────────────────────────────────────────────────────
 # Set `parent` on pulled items so the Jira hierarchy survives into Flow. Same invariant as Stage 5: only
@@ -11642,6 +11650,111 @@ def jira_mirror_sprints(auth: dict = Depends(require_role("admin"))):
     """JIRA-SPRINT-1 Stage 2: mirror the board's non-closed sprints into Flow as read-only entities.
     Admin only. Entities only - sets no item sprintId (Stage 3)."""
     return _mirror_sprints(auth["team"], auth["username"])
+
+# ── JIRA-SPRINT-1 Stage 3: sprint MEMBERSHIP (set item sprintId from Jira) ───────────────────────────────
+def _item_mirrored_membership(sprint_field, nonclosed_map):
+    """Resolve a Jira issue's list-valued Sprint field (customfield_10010) to a single Flow sprint id.
+    `nonclosed_map` = {jiraSprintId: flowSprintId} for sprints Flow currently mirrors as NON-CLOSED.
+    Returns (flow_sprint_id, reason): exactly one mirrored non-closed sprint -> (id, "one"); more than one
+    -> (None, "multi") [leave unset, never guess]; none -> (None, "none") [caller keeps last]."""
+    hits = []
+    for s in (sprint_field or []):
+        if isinstance(s, dict) and s.get("id") in nonclosed_map:
+            fid = nonclosed_map[s["id"]]
+            if fid not in hits:
+                hits.append(fid)
+    if len(hits) == 1:
+        return hits[0], "one"
+    if len(hits) > 1:
+        return None, "multi"
+    return None, "none"
+
+def _sync_sprint_membership(team, actor):
+    """JIRA-SPRINT-1 Stage 3. Set item `sprintId` from the item's membership in a mirrored NON-CLOSED
+    sprint (matched by jiraSprintId, written as that sprint's Flow id e.g. "jira-1298"). Scope: items with
+    jiraSource=='pull' AND the pushed items that carry a Jira ticket - the pushed writes are the STATED
+    EXCEPTION (decision 4) and are counted + audited. Removal keeps the last value (3.4). Membership rides
+    the existing pull fetch (customfield_10010). Merge-write via re-read + _save_project (only sprintId),
+    no notify/activity, audits after the txn. A search failure aborts zero-writes; a per-item failure skips."""
+    if not jira_configured():
+        raise HTTPException(503, "Jira not configured")
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='jiraEnabled'").fetchone()
+        if row and json.loads(row["value"]) is False:
+            return {"ready": False, "reason": "Jira integration disabled", "changed": 0}
+        sprints = _read_sprints(team)
+        rows = c.execute("SELECT id, data FROM projects").fetchall()
+    # {jiraSprintId -> flowSprintId} for mirrored, NON-CLOSED sprints only
+    nonclosed = {s.get("jiraSprintId"): s.get("id") for s in sprints
+                 if isinstance(s, dict) and s.get("jiraSource") == _MIRROR_SPRINT_SOURCE
+                 and s.get("state") in ("Active", "Planned") and s.get("jiraSprintId") is not None}
+    targets, key_for, is_pull = [], {}, {}
+    for r in rows:
+        p = json.loads(r["data"])
+        t = (p.get("jiraTickets") or [None])[0]
+        if not t:
+            continue
+        targets.append(r["id"]); key_for[r["id"]] = t
+        is_pull[r["id"]] = (p.get("jiraSource") == _PULL_JIRA_SOURCE)
+    base = {"ready": True, "scanned": len(targets), "changed": 0, "pulledWrites": 0, "pushedWrites": 0,
+            "multiMirrored": 0, "errors": 0, "nonClosedMirrored": len(nonclosed), "details": []}
+    if not nonclosed or not targets:
+        return base
+    # ONE batched search over all linked keys (chunked for URL length), Sprint field only.
+    issue_by_key, keys = {}, sorted({k for k in key_for.values()})
+    try:
+        for i in range(0, len(keys), 80):
+            jql = "key in (" + ", ".join(keys[i:i + 80]) + ")"
+            for it in _jira_search_all(jql, "customfield_10010"):
+                issue_by_key[it.get("key")] = it
+    except Exception as e:
+        log.warning(f"[SprintMembership] batch fetch failed, aborting zero-writes: {e}")
+        return {**base, "aborted": True, "reason": f"Jira search failed: {e}"}
+    audits, n_pull, n_push, n_multi, n_err, details = [], 0, 0, 0, 0, []
+    with db(team) as c:
+        for pid in targets:
+            try:
+                iss = issue_by_key.get(key_for.get(pid))
+                if iss is None:
+                    continue
+                fid, reason = _item_mirrored_membership((iss.get("fields", {}) or {}).get("customfield_10010"), nonclosed)
+                if reason == "multi":
+                    n_multi += 1; continue                       # in >1 mirrored non-closed sprint -> leave unset
+                if fid is None:
+                    continue                                     # in none -> keep last (3.4 removal)
+                cur_row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+                if not cur_row:
+                    continue
+                cur = json.loads(cur_row["data"])
+                if cur.get("sprintId") == fid:
+                    continue                                     # already set -> no-op (idempotent)
+                old = cur.get("sprintId")
+                cur["sprintId"] = fid
+                _save_project(c, pid, cur, None)
+                if is_pull.get(pid):
+                    n_pull += 1
+                else:
+                    n_push += 1                                  # STATED EXCEPTION: a non-jiraSource item written
+                details.append({"id": pid, "key": key_for.get(pid), "from": old, "to": fid,
+                                "pushed": not is_pull.get(pid)})
+                audits.append((pid, cur.get("name", ""), key_for.get(pid), old, fid, not is_pull.get(pid)))
+            except Exception as e:
+                n_err += 1
+                log.warning(f"[SprintMembership] item {pid} failed (skipped): {e}")
+    for pid, name, jkey, old, fid, pushed in audits:
+        try:
+            write_audit(team, "jira:sprint-membership", actor, pid, name,
+                        changes={"jiraKey": jkey, "sprintId": {"from": old, "to": fid}, "pushedException": pushed})
+        except Exception as e:
+            log.warning(f"[SprintMembership] audit write failed for {jkey}: {e}")
+    return {**base, "changed": len(audits), "pulledWrites": n_pull, "pushedWrites": n_push,
+            "multiMirrored": n_multi, "errors": n_err, "details": details}
+
+@app.post("/api/jira/sync-sprint-membership")
+def jira_sync_sprint_membership(auth: dict = Depends(require_role("admin"))):
+    """JIRA-SPRINT-1 Stage 3: set item sprintId from membership in a mirrored non-closed sprint. Admin
+    only. Writes the 566 pushed items too (the stated exception, counted + audited)."""
+    return _sync_sprint_membership(auth["team"], auth["username"])
 
 @app.post("/api/jira/search-raw")
 def jira_search_raw(body: dict = Body(...), auth: dict = Depends(require_role("admin"))):
