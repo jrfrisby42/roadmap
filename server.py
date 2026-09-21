@@ -1753,7 +1753,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.50.0"
+APP_VERSION = "6.51.0"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -6068,6 +6068,24 @@ def put_sprints(body = Body(...), auth: dict = Depends(require_role("admin", "ed
             active += 1
     if active > 1:
         raise HTTPException(422, "only one sprint may be Active at a time")
+    # JIRA-SPRINT-1 Stage 1: a MIRRORED sprint (jiraSource set) is read-only via this endpoint - Jira owns
+    # it, so Flow cannot edit, rename, re-state, complete, discard or remove it here. The Stage 2 mirror
+    # writes mirrored sprints through its OWN internal path (like the item refresh vs update_project), so
+    # this gate never blocks the mirror - only client edits. A client also cannot FORGE the marker onto a
+    # Flow sprint or a new one. Flow-made sprints (no marker) are unaffected.
+    stored = {s.get("id"): s for s in _read_sprints(team) if isinstance(s, dict)}
+    incoming_ids = set()
+    for s in sprints:
+        sid = s.get("id"); incoming_ids.add(sid)
+        st = stored.get(sid)
+        if st and st.get("jiraSource"):
+            if s != st:
+                raise HTTPException(409, f"sprint {sid!r} is mirrored from Jira and is read-only")
+        elif s.get("jiraSource"):
+            raise HTTPException(409, "cannot set a Jira mirror marker on a Flow sprint")
+    for sid, st in stored.items():
+        if st.get("jiraSource") and sid not in incoming_ids:
+            raise HTTPException(409, f"sprint {sid!r} is mirrored from Jira and cannot be removed")
     with db(team) as c:
         c.execute("INSERT INTO config(key,value) VALUES('sprints',?) "
                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -11998,6 +12016,13 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
 
     # ── SPRINT: Sprint items → first Active status + start date ───────────────
     if stype == "Sprint":
+        # JIRA-SPRINT-1 Stage 1 (decision 5): Flow must not set readiness / plan a sprint Jira owns. If the
+        # active sprint is a mirrored one, refuse the Sprint-type session. (Inert until a sprint is mirrored.)
+        _active_mirror = next((s for s in (cfg_rows.get("sprints", []) or [])
+                               if isinstance(s, dict) and s.get("state") == "Active" and s.get("jiraSource")), None)
+        if _active_mirror:
+            raise HTTPException(409, "the active sprint is mirrored from Jira and is read-only; "
+                                     "Flow cannot run a Sprint planning session on it")
         active_status = first_active()
         for item in body.get("sprint_items", []):
             item_id = item.get("id")

@@ -2807,7 +2807,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.50.0';
+const APP_VERSION = '6.51.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -22878,6 +22878,10 @@ if ('serviceWorker' in navigator) {
       .catch(function(e){ _call('showToast','Sprint save failed: '+(e&&e.message||''),'error'); throw e; });
   }
   function sprintById(id){ return _sprints.filter(function(s){ return s.id===id; })[0] || null; }
+  // JIRA-SPRINT-1 Stage 1: a MIRRORED sprint (jiraSource set) is Jira-owned and read-only in Flow - it is
+  // excluded from Flow's sprint edit/complete/discard and from the add-to-sprint pickers. Inert until the
+  // Stage 2 mirror creates one.
+  function _sprintIsMirrored(sp){ return !!(sp && sp.jiraSource); }
   function sprintByName(n){ return _sprints.filter(function(s){ return s.name===n; })[0] || null; }
   function activeSprint(){ return _sprints.filter(function(s){ return s.state==='Active'; })[0] || null; }
   function plannedSprint(){ return _sprints.filter(function(s){ return s.state==='Planned'; })[0] || null; }
@@ -25784,8 +25788,10 @@ if ('serviceWorker' in navigator) {
     openPop(anchor, function(pop){
       function opt(label, fn, danger){ var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt'; if(danger) b.style.color='#C0392B'; b.textContent=label; b.addEventListener('click', function(){ closePop(); fn(); }); return b; }
       var cur=p.sprintId ? sprintById(p.sprintId) : null;
-      if(p.sprintId && (!cur || cur.state!=='Completed')) pop.appendChild(opt('None (remove from sprint)', function(){ _ipClearSprint(p); }, true));
-      var list=_sprints.filter(function(s){ return (s.state==='Planned'||s.state==='Active') && s.id!==p.sprintId; });
+      // JIRA-SPRINT-1: a mirrored sprint's membership is Jira-owned - no "remove" here, and mirrored
+      // sprints are not offered as add targets (Flow neither sets nor clears membership on a Jira sprint).
+      if(p.sprintId && (!cur || (cur.state!=='Completed' && !_sprintIsMirrored(cur)))) pop.appendChild(opt('None (remove from sprint)', function(){ _ipClearSprint(p); }, true));
+      var list=_sprints.filter(function(s){ return (s.state==='Planned'||s.state==='Active') && s.id!==p.sprintId && !_sprintIsMirrored(s); });
       if(!list.length && !p.sprintId){ var d=document.createElement('div'); d.className='frz-pop-opt'; d.style.color='var(--frz-text-muted)'; d.textContent='No Planned or Active sprints'; pop.appendChild(d); }
       list.forEach(function(s){ pop.appendChild(opt(s.name+(s.state==='Active'?' · Active':''), function(){ _ipAddToSprint(p, s); })); });
     });
@@ -28764,6 +28770,7 @@ if ('serviceWorker' in navigator) {
   function addToSprint(id){
     var sprint = currentSprint();
     if(!sprint){ _call('showToast','Plan a sprint first'); return; }
+    if(_sprintIsMirrored(sprint)){ _call('showToast','The current sprint is mirrored from Jira - membership is set from Jira, not in Flow'); return; }   // JIRA-SPRINT-1 decision 5
     var ps=_val('projects',[])||[]; var p=ps.filter(function(x){return x.id===id;})[0]; if(!p) return;
     var need = sprintReady(p, sprint);
     if(!need.any){ applySprintReady(p, sprint, {}); return; }   // already ready → add silently
@@ -29062,6 +29069,7 @@ if ('serviceWorker' in navigator) {
   }
   function completeSprint(){
     var sp=currentSprint(); if(!sp || sp.state!=='Active') return;
+    if(_sprintIsMirrored(sp)){ _call('showToast','This sprint is mirrored from Jira and is read-only in Flow'); return; }   // JIRA-SPRINT-1 decision 5
     var items=sprintItems(sp.id);
     var unfinished=items.filter(function(p){ return !isTerm(p.status); });
     if(!unfinished.length){ doCompleteSprint(sp, [], 'none'); return; }
@@ -29165,11 +29173,14 @@ if ('serviceWorker' in navigator) {
     if(!sprints.length){ host.innerHTML='<div class="frz-plan-stub">No sprints yet - plan one from the Plan tab.</div>'; return; }
     var rows=sprints.map(function(sp){
       var st=sprintStats(sp);
-      var badge='<span class="frz-sprint-badge" style="'+(SPRINT_BADGE[sp.state]||'')+'">'+esc(sp.state)+'</span>';
+      var mirrored=_sprintIsMirrored(sp);   // JIRA-SPRINT-1: Jira-owned = read-only, no edit/discard
+      var badge='<span class="frz-sprint-badge" style="'+(SPRINT_BADGE[sp.state]||'')+'">'+esc(sp.state)+'</span>'+
+        (mirrored?' <span class="frz-sprint-badge" style="background:var(--frz-accent-soft);color:var(--frz-accent)" title="Mirrored from Jira - read-only in Flow">Jira</span>':'');
       var acts='';
       if(sp.state==='Planned' || sp.state==='Active') acts+='<button class="frz-sprint-act" type="button" data-boardsprint="'+escA(sp.id)+'" title="View on board">'+_SPRINT_BOARD+'</button>';
-      if(sp.state==='Planned' || sp.state==='Active') acts+='<button class="frz-sprint-act" type="button" data-editsprint="'+escA(sp.id)+'" title="Edit sprint">'+_SPRINT_PEN+'</button>';
-      if(sp.state==='Planned') acts+='<button class="frz-sprint-act" type="button" data-discardsprint="'+escA(sp.id)+'" title="Discard sprint">'+_SPRINT_TRASH+'</button>';
+      // edit + discard are suppressed for a mirrored sprint (Jira owns it); "View on board" stays (read-only nav).
+      if(!mirrored && (sp.state==='Planned' || sp.state==='Active')) acts+='<button class="frz-sprint-act" type="button" data-editsprint="'+escA(sp.id)+'" title="Edit sprint">'+_SPRINT_PEN+'</button>';
+      if(!mirrored && sp.state==='Planned') acts+='<button class="frz-sprint-act" type="button" data-discardsprint="'+escA(sp.id)+'" title="Discard sprint">'+_SPRINT_TRASH+'</button>';
       return '<div class="frz-tbl-row'+(sp.state==='Active'?' is-active':'')+'" data-sprintrow="'+escA(sp.id)+'">'+
         '<div class="frz-tbl-c frz-tbl-name"><div class="frz-sprint-namewrap"><div style="min-width:0"><div class="frz-tbl-title">'+esc(sp.name)+'</div>'+(sp.goal?'<div class="frz-tbl-sub" title="'+escA(sp.goal)+'">'+esc(sp.goal)+'</div>':'')+(sp.maintenanceDutyPod?'<div class="frz-tbl-sub frz-sprint-duty">Maintenance: '+esc(sp.maintenanceDutyPod)+'</div>':'')+'</div>'+(acts?'<div class="frz-sprint-actions">'+acts+'</div>':'')+'</div></div>'+
         '<div class="frz-tbl-c">'+(sp.startDate?fmtD(sp.startDate):'-')+' → '+(sp.endDate?fmtD(sp.endDate):'-')+'</div>'+
