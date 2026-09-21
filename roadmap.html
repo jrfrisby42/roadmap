@@ -2695,6 +2695,12 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         <div style="padding:14px">
           <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Map each Flow Space to a Jira project key.</div>
           <div id="tsProjectMapping" style="display:flex;flex-direction:column;gap:8px"></div>
+          <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+            <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px">Sprint board id (scrum board)</label>
+            <input type="text" id="tsSprintBoardId" placeholder="e.g. 1 - leave blank to disable"
+              style="width:180px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:5px;background:var(--surface);font-family:'Lato',sans-serif;outline:none">
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">Items in this board's <b>active or future</b> sprints are pulled even if their type is not selected above. The pull floor still applies. Blank = off.</div>
+          </div>
         </div>
       </div>
 
@@ -18427,6 +18433,9 @@ async function openTeamSettingsTab(){
   _jiraPullFloor   = window._jiraPullFloorData || '';
   _jiraPullTypes   = [...(window._jiraPullTypesData||[])];
   _jiraAssigneeMap = {...(window._jiraAssigneeMapData||{})};
+  // JIRA-SPRINT-FILL: the configured scrum board (blank = off).
+  const sprintBoardEl = document.getElementById('tsSprintBoardId');
+  if(sprintBoardEl) sprintBoardEl.value = window._jiraSprintBoardIdData || '';
   // Load jiraEnabled state
   const jiraEnabledEl = document.getElementById('tsJiraEnabled');
   if(jiraEnabledEl){
@@ -18818,6 +18827,10 @@ async function saveTeamSettings(){
     // JIRA-PULL-1 Stage 1: per-type selection + assignee map (floor is set-once, never saved here).
     await API.put('/api/config/jiraPullTypes',      _jiraPullTypes);
     await API.put('/api/config/jiraAssigneeMap',    _jiraAssigneeMap);
+    // JIRA-SPRINT-FILL: the sprint board id (trimmed; blank = off).
+    const _sprintBoardId = (document.getElementById('tsSprintBoardId')?.value || '').trim();
+    await API.put('/api/config/jiraSprintBoardId',  _sprintBoardId);
+    window._jiraSprintBoardIdData = _sprintBoardId;
     // Update live jiraConfigured flag so UI responds immediately
     jiraConfigured = jiraConfigured && jiraEnabled;
     applyJiraVisibility();
@@ -19550,6 +19563,7 @@ async function boot(){
     window._jiraPullFloorData      = data.jiraPullFloor      || '';
     window._jiraPullTypesData      = Array.isArray(data.jiraPullTypes) ? data.jiraPullTypes : [];
     window._jiraAssigneeMapData    = (data.jiraAssigneeMap && typeof data.jiraAssigneeMap === 'object') ? data.jiraAssigneeMap : {};
+    window._jiraSprintBoardIdData  = (typeof data.jiraSprintBoardId === 'string') ? data.jiraSprintBoardId : '';  // JIRA-SPRINT-FILL
     initJiraSyncConfig(data.jiraSyncConfig || {});
     nextId = projects.reduce((m,p)=>Math.max(m,p.id||0),0) + 1;
     // Populate reason selects now that data is loaded
