@@ -11236,8 +11236,17 @@ def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))
         except Exception as e:
             log.warning(f"[JiraPull] audit write failed for {jkey}: {e}")
     _write_parent_audits(team, actor, parent_audits)   # Stage 6: parent-link audits, also after the txn
+    # CLEANUP-1 Item 2: cross-run parent linking. The Stage-6 pass above links the NEW items' parents
+    # (same-run ordering). This links any EXISTING flat pulled item whose parent has since arrived in a
+    # later run - bounded by the flat set, so it does not re-walk everything. Best-effort (own try/except).
+    cross_run = None
+    try:
+        cross_run = _link_pull_parents(team, actor, scope="flat")
+    except Exception as e:
+        log.warning(f"[JiraParent] cross-run flat link failed (non-fatal): {e}")
     return {"ready": True, "dryRun": False, "createdCount": len(created), "created": created,
-            "skipped": skipped, "fieldSummary": agg, "parentLinks": parent_counts}
+            "skipped": skipped, "fieldSummary": agg, "parentLinks": parent_counts,
+            "crossRunParents": cross_run}
 
 # ── JIRA-PULL-1 Stage 5: the refresh pass + triggers ─────────────────────────────────────────────────
 # THE ONE LINE THAT MATTERS: the refresh touches items with jiraSource == _PULL_JIRA_SOURCE and NOTHING
@@ -11520,25 +11529,27 @@ def _write_parent_audits(team, actor, audits):
         except Exception as e:
             log.warning(f"[JiraParent] audit write failed for {jkey}: {e}")
 
-@app.post("/api/jira/backfill-parents")
-def jira_backfill_parents(auth: dict = Depends(require_role("admin"))):
-    """JIRA-PULL-1 Stage 6, 2.2: the one-time (idempotent, re-runnable) backfill. For every
-    jiraSource=='pull' item, resolve its Jira parent key to a Flow item and set `parent`. A pushed (565)
-    parent IS linked (the hierarchy is a fact about the work); a parent not in Flow stays flat. Only pulled
-    items are modified. No notifications. Admin only. A search failure aborts with zero writes."""
-    team = auth["team"]
+def _link_pull_parents(team, actor, scope="all"):
+    """Resolve Jira parents to Flow ids and set `parent` on pulled items. scope='all' = every
+    jiraSource=='pull' item (the one-time backfill); scope='flat' = only the pulled items that currently
+    have NO parent - the cheap CROSS-RUN pass (CLEANUP-1 Item 2): a child pulled before its parent stays
+    flat until the parent arrives in a later run, so each pull re-attempts the flat set (bounded by it,
+    not a full re-walk). A search failure aborts with zero writes. No notifications; audits after the txn."""
     if not jira_configured():
         raise HTTPException(503, "Jira not configured")
     with db(team) as c:
         row = c.execute("SELECT value FROM config WHERE key='jiraEnabled'").fetchone()
         if row and json.loads(row["value"]) is False:
-            return {"ready": False, "reason": "Jira integration disabled", "pulled": 0, "changed": 0}
+            return {"ready": False, "reason": "Jira integration disabled", "scope": scope, "pulled": 0, "changed": 0}
         pulled = []
         for r in c.execute("SELECT id, data FROM projects"):
             p = json.loads(r["data"])
-            if p.get("jiraSource") == _PULL_JIRA_SOURCE:
-                pulled.append((r["id"], (p.get("jiraTickets") or [None])[0]))
-    base = {"ready": True, "pulled": len(pulled), "changed": 0}
+            if p.get("jiraSource") != _PULL_JIRA_SOURCE:
+                continue
+            if scope == "flat" and _pid_or_none(p.get("parent")) is not None:
+                continue                                          # already linked - skip (cross-run bound)
+            pulled.append((r["id"], (p.get("jiraTickets") or [None])[0]))
+    base = {"ready": True, "scope": scope, "pulled": len(pulled), "changed": 0}
     if not pulled:
         return base
     keys = sorted({k for _, k in pulled if k})
@@ -11548,13 +11559,20 @@ def jira_backfill_parents(auth: dict = Depends(require_role("admin"))):
         for iss in _jira_search_all(jql, _PULL_FETCH_FIELDS):
             issue_by_key[iss.get("key")] = iss
     except Exception as e:
-        log.warning(f"[JiraParent] backfill batch fetch failed, aborting with zero writes: {e}")
+        log.warning(f"[JiraParent] {scope} parent-link batch fetch failed, aborting with zero writes: {e}")
         return {**base, "aborted": True, "reason": f"Jira search failed: {e}"}
     with db(team) as c:
         key2id, pulled_ids = _pull_maps(c)
-        audits, counts = _apply_pull_parents(c, pulled, issue_by_key, key2id, pulled_ids, auth["username"])
-    _write_parent_audits(team, auth["username"], audits)
+        audits, counts = _apply_pull_parents(c, pulled, issue_by_key, key2id, pulled_ids, actor)
+    _write_parent_audits(team, actor, audits)
     return {**base, "changed": len(audits), **counts}
+
+@app.post("/api/jira/backfill-parents")
+def jira_backfill_parents(auth: dict = Depends(require_role("admin"))):
+    """JIRA-PULL-1 Stage 6, 2.2: the one-time (idempotent, re-runnable) backfill over EVERY pulled item.
+    A pushed (565) parent IS linked (the hierarchy is a fact); a parent not in Flow stays flat. Only pulled
+    items are modified. No notifications. Admin only. A search failure aborts with zero writes."""
+    return _link_pull_parents(auth["team"], auth["username"], scope="all")
 
 # ── JIRA-SPRINT-1 Stage 2: mirror the sprint ENTITIES (read-only, Jira-owned) ────────────────────────────
 _MIRROR_SPRINT_SOURCE = "jira"          # the sprint jiraSource marker (Stage 1); a Flow sprint has none
