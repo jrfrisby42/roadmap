@@ -2766,9 +2766,15 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
             <label style="font-size:11px;color:var(--muted)">minutes (min 2)</label>
           </div>
           <div id="tsSyncStatus" style="font-size:11px;color:var(--muted)"></div>
-          <button onclick="runManualPullSyncAll()" style="width:fit-content;padding:6px 14px;font-size:12px;background:none;border:1px solid var(--border);border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif;font-weight:700;color:var(--text)">
-            Sync All Now
-          </button>
+          <div id="tsPullStatus" style="font-size:11px;color:var(--muted)"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button onclick="runManualPullSyncAll()" style="width:fit-content;padding:6px 14px;font-size:12px;background:none;border:1px solid var(--border);border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif;font-weight:700;color:var(--text)">
+              Sync All Now
+            </button>
+            <button onclick="runManualPullNow()" style="width:fit-content;padding:6px 14px;font-size:12px;background:none;border:1px solid var(--border);border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif;font-weight:700;color:var(--text)">
+              Pull from Jira Now
+            </button>
+          </div>
         </div>
       </div>
 
@@ -2795,7 +2801,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.47.0';
+const APP_VERSION = '6.48.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -18859,6 +18865,34 @@ async function runManualPullSyncAll(){
   }
 }
 
+// JIRA-PULL-1 Stage 5, trigger 2.1: admin "Pull from Jira Now" = create new items + refresh the existing
+// pulled ones, reporting both. Calls /api/jira/pull-now (the same endpoint the background timer uses), so
+// the button proves exactly what the timer will do.
+async function runManualPullNow(){
+  const statusEl = document.getElementById('tsPullStatus');
+  if(statusEl) statusEl.textContent = 'Pulling from Jira (create + refresh)…';
+  try {
+    const r = await API.post('/api/jira/pull-now', {});
+    _jiraSyncLastRun = new Date().toISOString();
+    const c = r.createdCount||0, ref = r.refreshedCount||0;
+    const rf = r.refresh || {};
+    const parts = [`${c} created`,
+                   `${ref} refreshed (${rf.statusChanged||0} status, ${rf.podChanged||0} pod, ${rf.assigneeChanged||0} assignee)`];
+    if(rf.aborted) parts.push('refresh aborted (Jira search failed) - no partial writes');
+    if(rf.errors)  parts.push(`${rf.errors} item error(s) skipped`);
+    if(statusEl) statusEl.textContent = `Done - ${parts.join(' · ')} · ${fmtTS(_jiraSyncLastRun)}`;
+    if(c > 0 || ref > 0){
+      if(_frzTeamChangedSinceBoot()){ location.reload(); return; }
+      const data = await API.get('/api/all');
+      projects = data.projects || projects;
+      render();
+      if(_itemPageId){ const p = projects.find(x=>x.id===_itemPageId); if(p) renderItemPage(p); }
+    }
+  } catch(e){
+    if(statusEl) statusEl.textContent = 'Pull failed: ' + (e.message||String(e));
+  }
+}
+
 // ── JIRA INTEGRATION ENGINE ───────────────────────────────────────────────────
 
 // Roadmap → Jira: called after every item save
@@ -19230,16 +19264,29 @@ function _startBackgroundJiraSync(){
 
 async function runBackgroundJiraSync(){
   if(!jiraConfigured) return;
+  let touched = false;
   try {
     const result = await API.post('/api/jira/pull-all', {});
     _jiraSyncLastRun = new Date().toISOString();
-    if(result.changes > 0){
+    if(result.changes > 0) touched = true;
+  } catch(e){ /* silent - pull-all's own errors don't stop the pull-now below */ }
+  // JIRA-PULL-1 Stage 5: after the linked-item forward sync, run the pull (create new + refresh the
+  // existing pulled items). INDEPENDENT of pull-all (own try/catch) and safe in either order: pull-all
+  // never writes dev/assignee, and both status advances are forward-only + idempotent, so the fixpoint is
+  // the same regardless of order. Admin-only server-side; a 403 for non-admins is swallowed silently.
+  try {
+    const pr = await API.post('/api/jira/pull-now', {});
+    _jiraSyncLastRun = new Date().toISOString();
+    if((pr.createdCount||0) > 0 || (pr.refreshedCount||0) > 0) touched = true;
+  } catch(e){ /* silent - non-admins get 403; Jira outage already logged server-side */ }
+  if(touched){
+    try {
       const data = await API.get('/api/all');
       projects = data.projects || projects;
       render();
       if(_itemPageId){ const p = projects.find(x=>x.id===_itemPageId); if(p) renderItemPage(p); }
-    }
-  } catch(e){ /* silent */ }
+    } catch(e){ /* silent */ }
+  }
 }
 
 async function syncJiraFromItemPage(silent=false){

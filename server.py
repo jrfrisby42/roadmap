@@ -1750,7 +1750,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.47.0"
+APP_VERSION = "6.48.0"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -11139,6 +11139,155 @@ def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))
             log.warning(f"[JiraPull] audit write failed for {jkey}: {e}")
     return {"ready": True, "dryRun": False, "createdCount": len(created), "created": created,
             "skipped": skipped, "fieldSummary": agg}
+
+# ── JIRA-PULL-1 Stage 5: the refresh pass + triggers ─────────────────────────────────────────────────
+# THE ONE LINE THAT MATTERS: the refresh touches items with jiraSource == _PULL_JIRA_SOURCE and NOTHING
+# ELSE. The 565 items that carry a Jira ticket but were created in Flow and pushed have no jiraSource, so
+# they are excluded by construction - their pod and assignee are Flow's decisions, never Jira's. Scope on
+# jiraSource, NEVER on jiraTickets being present or on the key matching.
+_PULL_REFRESH_FIELDS = ("status", "dev", "assignee")   # the only three fields the refresh may ever write
+
+def _refresh_one_pulled(current, issue, ctx, all_statuses):
+    """Given an item's CURRENT blob and its Jira issue, apply the three refreshed fields in place and
+    return {field: (old, new)} for those that actually changed (empty -> nothing to write). Rules:
+      - status: forward-only via the pull-effective map (jiraStatusMapping + jiraPullStatusMap overlay);
+      - pod (dev): applied ONLY when a `Pod-` label resolves to a Flow pod (reason 'matched'); every other
+        reason ('no-pod-label'/'pod-not-in-flow'/'multiple-pod-labels') means "absent/ambiguous in Jira"
+        and keeps Flow's last value - a label tidied away in Jira never clears the pod;
+      - assignee: applied ONLY when the Jira accountId resolves through jiraAssigneeMap; unassigned or
+        unmapped keeps Flow's last value.
+    Description/summary/dates/parent are never read here (J.R.'s decision: create-time snapshot stands)."""
+    changed = {}
+    f = issue.get("fields", {}) or {}
+    jstatus = (f.get("status") or {}).get("name", "")
+    mapped  = ctx["status_eff"].get(jstatus, "")
+    if mapped:
+        cur_status = current.get("status", "")
+        if mapped != cur_status and _status_rank(mapped, all_statuses) > _status_rank(cur_status, all_statuses):
+            current["status"] = mapped
+            changed["status"] = (cur_status, mapped)
+    pod, reason = _jira_pull_pod(f.get("labels"), ctx["pods"])
+    if reason == "matched":
+        cur_pod = current.get("dev", "")
+        if pod != cur_pod:
+            current["dev"] = pod
+            changed["dev"] = (cur_pod, pod)
+    acct = (f.get("assignee") or {}).get("accountId", "")
+    if acct:
+        mapped_a = ctx["assignee_map"].get(acct, "")
+        if mapped_a:
+            cur_a = current.get("assignee", "")
+            if mapped_a != cur_a:
+                current["assignee"] = mapped_a
+                changed["assignee"] = (cur_a, mapped_a)
+    return changed
+
+def _jira_refresh_pulled(team, actor):
+    """The refresh pass over every jiraSource=='pull' item. One batched JQL search fetches the current
+    Jira state for all of them; forward-only status + matched pod + mapped assignee are applied via the
+    same read-merge-save path jira_pull_sync uses (re-read the live blob inside the write txn so a user
+    edit that landed during the multi-second search is not clobbered; merge ONLY the three fields).
+    Failure discipline (stated, not left open):
+      - a SEARCH failure aborts the run with ZERO writes  -> a Jira outage leaves no partial state;
+      - a per-ITEM apply failure skips that one item and keeps its last-known values -> one bad issue
+        never stops the other eighty.
+    No notifications fire (81 items on a 15-minute timer must not spam watchers). Audits run AFTER the
+    write txn closes: write_audit opens its own DB connection and nesting a second writer inside the still
+    open txn self-deadlocks (SQLite = one writer; the Stage-4 Phase-A trap)."""
+    if not jira_configured():
+        raise HTTPException(503, "Jira not configured")
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='jiraEnabled'").fetchone()
+        if row and json.loads(row["value"]) is False:
+            return {"ready": False, "reason": "Jira integration disabled", "scanned": 0, "changed": 0}
+        srow = c.execute("SELECT value FROM config WHERE key='statuses'").fetchone()
+        all_statuses = json.loads(srow["value"]) if srow else []
+        rows = c.execute("SELECT id, data FROM projects ORDER BY id").fetchall()
+    pulled, key_for = [], {}
+    for r in rows:
+        p = json.loads(r["data"])
+        if p.get("jiraSource") != _PULL_JIRA_SOURCE:
+            continue
+        t = (p.get("jiraTickets") or [None])[0]
+        pulled.append(r["id"])
+        if t:
+            key_for[r["id"]] = t
+    base = {"ready": True, "scanned": len(pulled), "fetched": 0, "changed": 0,
+            "statusChanged": 0, "podChanged": 0, "assigneeChanged": 0, "errors": 0, "details": []}
+    if not pulled:
+        return base
+    ctx = _pull_context(team)
+    keys = sorted({k for k in key_for.values()})
+    issue_by_key = {}
+    if keys:
+        try:
+            jql = "key in (" + ", ".join(keys) + ") ORDER BY key ASC"
+            for iss in _jira_search_all(jql, _PULL_FETCH_FIELDS):
+                issue_by_key[iss.get("key")] = iss
+        except Exception as e:
+            # SEARCH failure -> abort with zero writes. No partial state.
+            log.warning(f"[JiraRefresh] batch fetch failed, aborting with zero writes: {e}")
+            return {**base, "aborted": True, "reason": f"Jira search failed: {e}"}
+    base["fetched"] = len(issue_by_key)
+    n_status = n_pod = n_assignee = n_err = 0
+    details, audits = [], []
+    with db(team) as c:
+        for pid in pulled:
+            try:
+                jkey = key_for.get(pid)
+                issue = issue_by_key.get(jkey) if jkey else None
+                if not issue:
+                    continue                                      # ticket not returned (deleted/moved) - keep last
+                # Re-read the live blob INSIDE the write txn (T3: the batched search took seconds; a user
+                # edit may have landed). Merge only the three refreshed fields onto the current blob.
+                cur_row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+                if not cur_row:
+                    continue
+                current = json.loads(cur_row["data"])
+                if current.get("jiraSource") != _PULL_JIRA_SOURCE:
+                    continue                                      # belt-and-suspenders: never touch a non-pull item
+                chg = _refresh_one_pulled(current, issue, ctx, all_statuses)
+                if not chg:
+                    continue                                      # no change -> skip the write, never bump updated_ts
+                _save_project(c, pid, current, None)              # ts=None -> a meaningful change stamps a fresh updated_ts
+                if "status" in chg:   n_status += 1
+                if "dev" in chg:      n_pod += 1
+                if "assignee" in chg: n_assignee += 1
+                details.append({"key": jkey, "id": pid,
+                                "fields": {k: {"from": v[0], "to": v[1]} for k, v in chg.items()}})
+                audits.append((pid, current.get("name", ""), jkey, chg))
+            except Exception as e:
+                n_err += 1
+                log.warning(f"[JiraRefresh] item {pid} apply failed (skipped, kept last-known): {e}")
+    # Audits AFTER the write txn closes (write_audit opens its own connection). Best effort - a failed
+    # audit never unwinds a committed refresh.
+    for pid, name, jkey, chg in audits:
+        try:
+            write_audit(team, "jira:pull-refresh", actor, pid, name,
+                        changes={"jiraKey": jkey,
+                                 "fields": {k: {"from": v[0], "to": v[1]} for k, v in chg.items()}})
+        except Exception as e:
+            log.warning(f"[JiraRefresh] audit write failed for {jkey}: {e}")
+    return {**base, "changed": len(details), "statusChanged": n_status, "podChanged": n_pod,
+            "assigneeChanged": n_assignee, "errors": n_err, "details": details}
+
+@app.post("/api/jira/refresh")
+def jira_refresh(auth: dict = Depends(require_role("admin"))):
+    """JIRA-PULL-1 Stage 5: refresh status/pod/assignee on the jiraSource=='pull' items only (never the
+    565 pushed-but-linked items). Creates nothing. Testable alone; also called by /api/jira/pull-now."""
+    return _jira_refresh_pulled(auth["team"], auth["username"])
+
+@app.post("/api/jira/pull-now")
+def jira_pull_now(body: dict = Body({}), auth: dict = Depends(require_role("admin"))):
+    """JIRA-PULL-1 Stage 5, trigger 2.1/2.2: "make Flow match Jira" = create the new items then refresh
+    the existing pulled ones, reporting BOTH counts. One button (and the background timer) call this; the
+    two underlying endpoints (/api/jira/pull create, /api/jira/refresh) stay separate so each is testable
+    alone. Admin only."""
+    create = jira_pull(body={}, auth=auth)
+    refresh = _jira_refresh_pulled(auth["team"], auth["username"])
+    return {"ready": create.get("ready", True) and refresh.get("ready", True),
+            "create": create, "refresh": refresh,
+            "createdCount": create.get("createdCount", 0), "refreshedCount": refresh.get("changed", 0)}
 
 @app.post("/api/jira/search-raw")
 def jira_search_raw(body: dict = Body(...), auth: dict = Depends(require_role("admin"))):
