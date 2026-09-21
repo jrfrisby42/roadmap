@@ -1387,12 +1387,15 @@ def _migrate_config_keys(team: str):
         #   already taken (In Dev/In QA/In Prod), and editing that shared map would also change the existing
         #   linked-item sync. A pull-only map closes the 7 unmapped net-new items without touching push.
         "jiraPullStatusMap": {"Code Review": "In Progress", "QA Approved": "In Testing", "Released": "Released"},
+        # jiraSprintBoardId: JIRA-SPRINT-FILL. The scrum board whose non-closed sprints admit sprinted
+        # items of an unselected type (Option B). "" = unset = inert (the pull behaves exactly as today).
+        "jiraSprintBoardId": "",
     }
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
     # an admin who deletes all types isn't re-seeded on next boot.)
     presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeCombined", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeProjectStatus", "intakeDefaultType", "intakeDomains", "intakeNotifyTeam", "intakeAppendTemplate", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify", "slaTargets", "digestConfig",
-                          "jiraPullFloor", "jiraPullTypes", "jiraAssigneeMap", "jiraPullStatusMap"}
+                          "jiraPullFloor", "jiraPullTypes", "jiraAssigneeMap", "jiraPullStatusMap", "jiraSprintBoardId"}
 
     with db(team) as c:
         existing = {r[0]: json.loads(r[1]) for r in c.execute("SELECT key,value FROM config").fetchall()}
@@ -1750,7 +1753,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.49.0"
+APP_VERSION = "6.50.0"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -3897,6 +3900,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "jiraPullTypes": cfg("jiraPullTypes") or [],
             "jiraAssigneeMap": cfg("jiraAssigneeMap") or {},
             "jiraPullStatusMap": cfg("jiraPullStatusMap") or {},
+            "jiraSprintBoardId": cfg("jiraSprintBoardId") or "",
             # /beta rich-text editor master switch - boolean preserved (default ON when
             # absent) so an admin's explicit False reaches the client and reverts the editor.
             "richTextEditor": cfg_map.get("richTextEditor", True),
@@ -5839,7 +5843,10 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "slackNotify","slaTargets","digestConfig",
               # JIRA-PULL-1 Stage 1: admin-editable on the Jira admin screen. jiraPullFloor is deliberately
               # NOT here - it is set-once via POST /api/jira/pull-floor and must never move via the generic PUT.
-              "jiraPullTypes","jiraAssigneeMap","jiraPullStatusMap"}
+              "jiraPullTypes","jiraAssigneeMap","jiraPullStatusMap",
+              # JIRA-SPRINT-FILL: the scrum board whose non-closed sprints admit sprinted items of an
+              # unselected type (Option B). Admin-editable beside the project mapping; "" = inert.
+              "jiraSprintBoardId"}
 
 @app.put("/api/config/{key}")
 def set_config(key: str, body = Body(...), username: str = "",
@@ -10771,13 +10778,40 @@ def _pull_floor_to_jql_bound(floor_iso: str, account_tz: str) -> str:
             pass   # tzdata missing: fall back to the stored offset's wall clock
     return dt.strftime("%Y-%m-%d %H:%M")
 
-def _jira_pull_jql(floor_bound: str, jira_types: list, project_keys: list) -> str:
+def _jira_pull_jql(floor_bound: str, jira_types: list, project_keys: list, sprint_ids: list = None) -> str:
     """Build the candidate JQL - project(s) + created-after-floor + selected issue types, so the filter
-    runs at Jira and the full history is never fetched. Pure (bound already formatted)."""
+    runs at Jira and the full history is never fetched. Pure (bound already formatted).
+
+    JIRA-SPRINT-FILL (Option B): when `sprint_ids` is non-empty, a member of one of those sprints is
+    admitted even if its type is not selected - the type clause becomes `(issuetype in (...) OR sprint in
+    (...))`. The floor stays a top-level AND and is NEVER overridden. `sprint_ids` are the configured
+    board's NON-CLOSED (active+future) sprint ids only, so a stale closed-only membership never matches.
+    Empty/None -> the type clause alone = today's behaviour (the inert default when no board is set)."""
     projs = ", ".join(str(p) for p in project_keys if p)
     types = ", ".join('"' + str(t).replace('"', '') + '"' for t in jira_types if t)
-    parts = [f"project in ({projs})", f'created >= "{floor_bound}"', f"issuetype in ({types})"]
+    type_clause = f"issuetype in ({types})"
+    if sprint_ids:
+        sids = ", ".join(str(int(s)) for s in sprint_ids)
+        type_clause = f"(issuetype in ({types}) OR sprint in ({sids}))"
+    parts = [f"project in ({projs})", f'created >= "{floor_bound}"', type_clause]
     return " AND ".join(parts) + " ORDER BY created ASC"
+
+def _board_open_sprint_ids(board_id) -> list:
+    """The configured board's NON-CLOSED (active + future) sprint ids, via the Agile API. This is how
+    Option B expresses "in a non-closed sprint" given the Sprint field is list-valued: the candidate JQL
+    scopes `sprint in (...)` to THESE ids, so an issue whose sprint history contains only closed sprints is
+    never admitted. Read-only; paginated. Raises on an Agile error (e.g. a kanban board 400s) - the caller
+    catches it and falls back to the inert (type-only) query."""
+    ids, start = [], 0
+    while True:
+        res = _jira_req("GET", f"/rest/agile/1.0/board/{board_id}/sprint?state=active,future&startAt={start}&maxResults=50")
+        for s in res.get("values", []):
+            if s.get("id") is not None:
+                ids.append(s["id"])
+        if res.get("isLast", True) or not res.get("values"):
+            break
+        start += 50
+    return ids
 
 def _jira_search_all(jql: str, fields: str, cap: int = 2000) -> list:
     """Paginate /rest/api/3/search/jql via nextPageToken. Capped so a mis-built query can't fetch the
@@ -10823,6 +10857,7 @@ def _jira_compute_candidates(team: str):
         floor      = _cfg("jiraPullFloor", "") or ""
         pull_types = _cfg("jiraPullTypes", [])
         proj_map   = _cfg("jiraProjectMapping", {})
+        board_id   = _cfg("jiraSprintBoardId", "") or ""     # JIRA-SPRINT-FILL: unset -> inert (type-only)
     project_keys = sorted({v for v in proj_map.values() if v})   # mapped Jira projects only (Fraznet -> FRAZ)
     if not floor:
         return {"ready": False, "reason": "floor not set"}
@@ -10836,14 +10871,26 @@ def _jira_compute_candidates(team: str):
         tz = (_jira_req("GET", "/rest/api/3/myself") or {}).get("timeZone", "")   # JQL date is read in this tz
     except Exception:
         tz = ""
+    # JIRA-SPRINT-FILL (Option B): resolve the configured board's NON-CLOSED sprint ids so a sprinted item
+    # of an unselected type is admitted (floor still applies). Board unset, or ANY Agile error (a kanban
+    # board 400s), -> [] -> the query stays exactly as today. This is the reported inert default.
+    sprint_ids = []
+    if board_id:
+        try:
+            sprint_ids = _board_open_sprint_ids(board_id)
+        except Exception as e:
+            log.warning(f"[SprintFill] open-sprint fetch failed for board {board_id!r} - falling back to "
+                        f"type-only (inert): {e}")
+            sprint_ids = []
     bound = _pull_floor_to_jql_bound(floor, tz)
-    jql = _jira_pull_jql(bound, pull_types, project_keys)
+    jql = _jira_pull_jql(bound, pull_types, project_keys, sprint_ids)
     issues = _jira_search_all(jql, _PULL_FETCH_FIELDS)
     flow_keys = set(_get_all_jira_tickets(team))          # built ONCE per run
     candidates, already = _filter_pull_candidates(issues, flow_keys)
     return {"ready": True, "candidates": candidates, "flowKeys": flow_keys,
             "pullTypes": pull_types, "projectKeys": project_keys, "floor": floor,
-            "bound": bound, "tz": tz, "matched": len(issues), "already": already}
+            "bound": bound, "tz": tz, "matched": len(issues), "already": already,
+            "sprintBoardId": board_id, "openSprintIds": sprint_ids}
 
 @app.get("/api/jira/pull-candidates")
 def jira_pull_candidates(auth: dict = Depends(require_role("admin"))):
@@ -11023,6 +11070,14 @@ def _construct_pull_item(issue, ctx, actor):
     rtype = ctx["type_rev"].get(str(jtype).strip())
     if not rtype:
         return None, {"skip": "unmapped-type", "key": jkey, "jiraType": jtype}
+    # JIRA-SPRINT-FILL (Option B) config-dependence, READ THIS BEFORE ENABLING ON ANOTHER ORGANIZATION:
+    # an item admitted ONLY because it is in a non-closed sprint may be an otherwise-excluded type (Jira
+    # Task -> Flow "Task", Jira Bug -> Flow "Bug Fix"). Whether that item lands on the Gantt / in the
+    # capacity engine is governed ENTIRELY by the per-Org `typeScheduled` map (client `isScheduledType`:
+    # missing = scheduled, fail-safe). On development Task and Bug Fix are typeScheduled=false, so they stay
+    # OFF the Gantt and OUT of capacity - the intended outcome. A team that leaves Task at the scheduled
+    # default WOULD get admitted Tasks in the Gantt and capacity, which is exactly what excluding the type
+    # was meant to avoid. This construct does not gate on it; `typeScheduled` is the lever.
     jstatus = (f.get("status") or {}).get("name", "")
     rstatus = ctx["status_eff"].get(jstatus, "")          # "" -> Org default at insert
     pod, pod_reason = _jira_pull_pod(f.get("labels"), ctx["pods"])
