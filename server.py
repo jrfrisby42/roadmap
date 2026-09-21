@@ -10831,6 +10831,19 @@ def _board_open_sprint_ids(board_id) -> list:
         start += 50
     return ids
 
+def _board_open_sprints(board_id) -> list:
+    """JIRA-SPRINT-1 Stage 2: the configured board's NON-CLOSED (active + future) sprint OBJECTS (not just
+    ids), paginated. Raises on an Agile error (kanban board 400 / outage) so the mirror aborts with zero
+    writes. Read-only."""
+    out, start = [], 0
+    while True:
+        res = _jira_req("GET", f"/rest/agile/1.0/board/{board_id}/sprint?state=active,future&startAt={start}&maxResults=50")
+        out.extend(res.get("values", []))
+        if res.get("isLast", True) or not res.get("values"):
+            break
+        start += 50
+    return out
+
 def _jira_search_all(jql: str, fields: str, cap: int = 2000) -> list:
     """Paginate /rest/api/3/search/jql via nextPageToken. Capped so a mis-built query can't fetch the
     whole history. Read-only."""
@@ -11369,9 +11382,18 @@ def jira_pull_now(body: dict = Body({}), auth: dict = Depends(require_role("admi
     alone. Admin only."""
     create = jira_pull(body={}, auth=auth)
     refresh = _jira_refresh_pulled(auth["team"], auth["username"])
+    # JIRA-SPRINT-1 Stage 2: mirror the sprint entities too, AFTER create+refresh, INDEPENDENTLY (own
+    # try/except). Safe in any order: it writes only sprint config entities, never items, so it cannot
+    # collide with the pull or the refresh. Inert when no board is configured.
+    sprint_mirror = None
+    try:
+        sprint_mirror = _mirror_sprints(auth["team"], auth["username"])
+    except Exception as e:
+        log.warning(f"[SprintMirror] pull-now hook failed (non-fatal): {e}")
     return {"ready": create.get("ready", True) and refresh.get("ready", True),
-            "create": create, "refresh": refresh,
-            "createdCount": create.get("createdCount", 0), "refreshedCount": refresh.get("changed", 0)}
+            "create": create, "refresh": refresh, "sprintMirror": sprint_mirror,
+            "createdCount": create.get("createdCount", 0), "refreshedCount": refresh.get("changed", 0),
+            "sprintsMirrored": (sprint_mirror or {}).get("mirrored", 0)}
 
 # ── JIRA-PULL-1 Stage 6: parent hierarchy ────────────────────────────────────────────────────────────
 # Set `parent` on pulled items so the Jira hierarchy survives into Flow. Same invariant as Stage 5: only
@@ -11512,6 +11534,114 @@ def jira_backfill_parents(auth: dict = Depends(require_role("admin"))):
         audits, counts = _apply_pull_parents(c, pulled, issue_by_key, key2id, pulled_ids, auth["username"])
     _write_parent_audits(team, auth["username"], audits)
     return {**base, "changed": len(audits), **counts}
+
+# ── JIRA-SPRINT-1 Stage 2: mirror the sprint ENTITIES (read-only, Jira-owned) ────────────────────────────
+_MIRROR_SPRINT_SOURCE = "jira"          # the sprint jiraSource marker (Stage 1); a Flow sprint has none
+def _mirror_sprint_flow_id(jira_sprint_id):
+    return f"jira-{jira_sprint_id}"     # stable Flow id derived from the Jira sprint id (re-mirror updates, never dupes)
+
+def _jira_state_to_flow(state):
+    s = (state or "").lower()
+    return "Active" if s == "active" else ("Planned" if s == "future" else "Completed")
+
+def _mirror_sprints(team, actor):
+    """JIRA-SPRINT-1 Stage 2. Mirror the configured board's NON-CLOSED sprints into the `sprints` config
+    blob as read-only, Jira-owned records (jiraSource='jira'). Writes through this INTERNAL path, NOT
+    put_sprints (which is read-only for mirrored sprints since Stage 1). Never reads, writes or reorders a
+    Flow-made sprint (decision 1). Entities only - NO item sprintId (that is Stage 3). No notifications /
+    activities; audits after the write. A board unset -> inert; any Agile error -> abort with zero writes."""
+    if not jira_configured():
+        raise HTTPException(503, "Jira not configured")
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='jiraEnabled'").fetchone()
+        if row and json.loads(row["value"]) is False:
+            return {"ready": False, "reason": "Jira integration disabled", "mirrored": 0}
+        brow = c.execute("SELECT value FROM config WHERE key='jiraSprintBoardId'").fetchone()
+        board_id = (json.loads(brow["value"]) if brow else "") or ""
+        stored = _read_sprints(team)
+    if not board_id:
+        return {"ready": True, "reason": "no sprint board configured", "mirrored": 0, "created": 0,
+                "updated": 0, "completedOnAbsence": 0, "flowActiveCollision": 0}
+    try:
+        jira_sprints = _board_open_sprints(board_id)
+    except Exception as e:
+        log.warning(f"[SprintMirror] board {board_id!r} fetch failed, aborting with zero writes: {e}")
+        return {"ready": True, "aborted": True, "reason": f"Agile fetch failed: {e}", "mirrored": 0}
+
+    flow_owned = [s for s in stored if isinstance(s, dict) and not s.get("jiraSource")]
+    prev_mirror = {s.get("jiraSprintId"): s for s in stored if isinstance(s, dict) and s.get("jiraSource") == _MIRROR_SPRINT_SOURCE}
+    flow_active = any(s.get("state") == "Active" for s in flow_owned)   # decision 1: never demote a Flow sprint
+
+    # Build the mirrored records from the fetch. Tiebreak: if Jira returns >1 active (it does not today),
+    # the last-created wins - Jira sprint ids are monotonic, so the highest id is the newest.
+    actives = sorted([s for s in jira_sprints if (s.get("state") or "").lower() == "active"],
+                     key=lambda s: s.get("id") or 0)
+    winner_active_id = actives[-1].get("id") if actives else None
+    collision = 0
+    new_mirror = {}
+    created = updated = 0
+    for js in jira_sprints:
+        jid = js.get("id")
+        if jid is None:
+            continue
+        state = _jira_state_to_flow(js.get("state"))
+        rec = {"id": _mirror_sprint_flow_id(jid), "name": js.get("name") or f"Sprint {jid}",
+               "startDate": (js.get("startDate") or "")[:10], "endDate": (js.get("endDate") or "")[:10],
+               "state": state, "jiraSource": _MIRROR_SPRINT_SOURCE, "jiraSprintId": jid}
+        if state == "Active":
+            if jid != winner_active_id:
+                rec["state"] = "Planned"                       # lost the last-created-wins tiebreak
+                rec["jiraState"] = "active"
+            elif flow_active:
+                # A Flow-made sprint is Active: do NOT demote it (decision 1). Record Jira's truth, keep
+                # this mirror Planned so <=1 Active holds. Reported, not silent. Unreachable today (0 Flow actives).
+                rec["state"] = "Planned"
+                rec["jiraState"] = "active"
+                collision += 1
+        new_mirror[jid] = rec
+        if jid in prev_mirror:
+            if prev_mirror[jid] != rec:
+                updated += 1
+        else:
+            created += 1
+
+    # A previously-mirrored sprint that is no longer in the non-closed fetch left the window -> Completed
+    # (mirror state follows Jira; keeps it as history rather than resurrecting or deleting it).
+    completed_absent = 0
+    carried = []
+    for jid, old in prev_mirror.items():
+        if jid not in new_mirror:
+            rec = {**old, "state": "Completed"}
+            rec.pop("jiraState", None)
+            carried.append(rec)
+            if old.get("state") != "Completed":
+                completed_absent += 1
+
+    final = flow_owned + list(new_mirror.values()) + carried
+    active_ct = sum(1 for s in final if s.get("state") == "Active")
+    if active_ct > 1:   # invariant backstop - should never trip given the tiebreak + collision handling
+        log.error(f"[SprintMirror] {active_ct} Active after mirror for team {team!r}; aborting to protect the one-Active rule")
+        return {"ready": True, "aborted": True, "reason": f"would leave {active_ct} Active sprints", "mirrored": 0}
+
+    with db(team) as c:
+        c.execute("INSERT INTO config(key,value) VALUES('sprints',?) "
+                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(final),))
+    try:
+        write_audit(team, "jira:sprint-mirror", actor,
+                    changes={"board": board_id, "mirrored": len(new_mirror), "created": created,
+                             "updated": updated, "completedOnAbsence": completed_absent,
+                             "flowActiveCollision": collision})
+    except Exception as e:
+        log.warning(f"[SprintMirror] audit write failed: {e}")
+    return {"ready": True, "mirrored": len(new_mirror), "created": created, "updated": updated,
+            "completedOnAbsence": completed_absent, "flowActiveCollision": collision,
+            "activeSprintId": winner_active_id if (winner_active_id and not flow_active) else None}
+
+@app.post("/api/jira/mirror-sprints")
+def jira_mirror_sprints(auth: dict = Depends(require_role("admin"))):
+    """JIRA-SPRINT-1 Stage 2: mirror the board's non-closed sprints into Flow as read-only entities.
+    Admin only. Entities only - sets no item sprintId (Stage 3)."""
+    return _mirror_sprints(auth["team"], auth["username"])
 
 @app.post("/api/jira/search-raw")
 def jira_search_raw(body: dict = Body(...), auth: dict = Depends(require_role("admin"))):
