@@ -526,21 +526,23 @@ def test_6399a_jira_and_planning_refreshes_guarded_but_timer_excluded():
     # sync timer (runBackgroundJiraSync) unguarded - a timer tick must not trigger a surprise reload;
     # the intersection hardening backstops the composer there.
     src = _html()
-    # the four guarded functions each contain the guard
-    for fn in ("runManualPullSyncAll", "syncJiraFromItemPage"):
+    # the guarded MANUAL functions each contain the guard (runManualPullNow is the JIRA-PULL-1 Stage 5
+    # admin "Pull from Jira Now" path - a manual admin refresh, guarded like runManualPullSyncAll).
+    for fn in ("runManualPullSyncAll", "syncJiraFromItemPage", "runManualPullNow"):
         m = re.search(r"async function " + fn + r"\(.*?\)\{.*?\n\}", src, re.DOTALL)
         assert m, fn + " not found"
         assert "_frzTeamChangedSinceBoot()" in m.group(0), fn + " must carry the team-change guard"
-    # background timer stays unguarded but still does a projects-only import
+    # background timer stays unguarded but still does a projects-only import. JIRA-PULL-1 Stage 5 adds a
+    # pull-now call to the timer, but it too must NOT reload on a tick - it uses the projects-only import.
     mb = re.search(r"async function runBackgroundJiraSync\(\)\{.*?\n\}", src, re.DOTALL)
     assert mb, "runBackgroundJiraSync not found"
     assert "_frzTeamChangedSinceBoot()" not in mb.group(0), \
         "the background Jira sync timer must NOT trigger a reload on a tick"
     assert "projects = data.projects || projects" in mb.group(0), \
         "the background timer still does its projects-only import (backstopped by the intersection fix)"
-    # total guard call sites across the file (3 core + 4 extended = 7)
-    assert src.count("if(_frzTeamChangedSinceBoot()){ location.reload()") == 7, \
-        "expected 7 team-change reload guards (3 core + 4 extended; timer excluded)"
+    # total guard call sites across the file (3 core + 4 extended + 1 Stage-5 pull-now = 8; timer excluded)
+    assert src.count("if(_frzTeamChangedSinceBoot()){ location.reload()") == 8, \
+        "expected 8 team-change reload guards (3 core + 4 extended + 1 pull-now; timer excluded)"
 
 
 # ── STAGE 6: schedule + the change-reason workflow (preservation stage) ──────────────────────────────
