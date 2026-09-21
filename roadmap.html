@@ -43,6 +43,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     --bar-green: #22b96e;
     --bar-red:   #e8394a;
     --row-sep:   #ebebf0;
+    --caution-bg: #fff8f0;   /* CLEANUP-1 Item 6: the amber caution tint (admin/deferred/transfer/duplicate surfaces). Tokenised so it can later follow the dark theme; same value light + dark today = no visual change. */
     --row-h: 38px;
     --left-w: 480px;
     /* TYPE-SCALE-1 Phase 0: the six-tier type scale + its line heights (approved design
@@ -775,6 +776,9 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     .modal.frz-composer .composer-foot-space { flex: 1 0 100%; order: -1; margin: 0 0 2px; }
     .modal.frz-composer .modal-actions .btn-cancel { min-height: 48px; flex: 0 0 auto; }
     .modal.frz-composer .modal-actions #saveBtn { min-height: 48px; flex: 1 1 auto; font-size: 15px; }
+    /* CLEANUP-1 Item 5: a disabled Create/Save must LOOK disabled (it was opacity:1 = looked enabled -
+       the Delay-Date shape). One dim; the inline note still explains why. */
+    #saveBtn:disabled { opacity: .55; cursor: not-allowed; }
     /* PRECREATE-ATTACH-1 Stage A: touch-sized attachment control on the full-screen mobile sheet */
     .modal.frz-composer .composer-attach-zone { min-height: 64px; display: flex; align-items: center; justify-content: center; }
     .modal.frz-composer .composer-attach-row { padding: 9px 10px; }
@@ -1633,12 +1637,12 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     <div id="planningRightPanel" style="width:340px;flex-shrink:0;display:flex;flex-direction:column;overflow:hidden">
       <!-- Default layout (no session or non-Review): single Deferred bucket -->
       <div id="planningBucketDeferred" style="flex:1;display:flex;flex-direction:column;overflow:hidden">
-        <div style="padding:12px 16px;background:#fff8f0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0">
+        <div style="padding:12px 16px;background:var(--caution-bg);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#e8a000" stroke-width="2" stroke-linecap="round"><path d="M18.364 5.636a9 9 0 1 1-12.728 0M12 2v7"/></svg>
           <span style="font-size:13px;font-weight:900;color:#c06000">Deferred / Back Burner</span>
           <span id="planningDeferredCount" style="font-size:11px;color:var(--muted);background:rgba(0,0,0,0.06);padding:1px 7px;border-radius:8px"></span>
         </div>
-        <div style="padding:8px 10px;font-size:11px;color:var(--muted);background:#fff8f0;border-bottom:1px solid var(--border);flex-shrink:0">
+        <div style="padding:8px 10px;font-size:11px;color:var(--muted);background:var(--caution-bg);border-bottom:1px solid var(--border);flex-shrink:0">
           Drag items here to defer. Each deferral requires a reason.
         </div>
         <div id="planningDeferred" style="flex:1;overflow-y:auto;padding:10px"></div>
@@ -2807,7 +2811,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.53.2';
+const APP_VERSION = '6.53.3';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -17929,7 +17933,7 @@ function renderItemPage(p){
         </button>
         <div style="font-size:10px;color:var(--muted);margin-top:4px;text-align:center">Creates subitems from linked Jira subtasks</div>
       </div>` : '',
-      p.deferred ? `<div style="padding:8px 10px;background:#fff8f0;border-radius:6px;border:1px solid #e8a000">
+      p.deferred ? `<div style="padding:8px 10px;background:var(--caution-bg);border-radius:6px;border:1px solid #e8a000">
         <div style="font-size:10px;font-weight:700;color:#c06000;margin-bottom:4px">DEFERRED</div>
         <div style="font-size:12px;color:var(--text)">${esc(stripHtml(p.deferReason||''))}${p.deferNote?' - '+esc(stripHtml(p.deferNote)):''}</div>
         ${p.deferRevisit?`<div style="font-size:11px;color:var(--muted);margin-top:3px">Revisit: ${p.deferRevisit}</div>`:''}
@@ -17996,7 +18000,7 @@ function _ipTransferSlotInner(p){
     </div>`;
   }
   if(ref && ref.status==='pending'){
-    return `<div style="padding:8px 10px;background:#fff8f0;border-radius:6px;border:1px solid #e8a000">
+    return `<div style="padding:8px 10px;background:var(--caution-bg);border-radius:6px;border:1px solid #e8a000">
       <div style="font-size:10px;font-weight:700;color:#c06000;margin-bottom:4px">TRANSFER PENDING</div>
       <div style="font-size:12px;color:var(--text)">A transfer to <b>${lbl}</b> did not finish - this item may be live on both teams.</div>
       <button onclick="retryTransfer(${p.id})" style="margin-top:6px;padding:6px 12px;border-radius:6px;border:1px solid #c06000;background:#c06000;color:#fff;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Retry transfer</button>
@@ -18418,7 +18422,14 @@ function tsMapRow(label, currentVal, options, inputId, warnIfEmpty, extraHtml){
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" style="flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
     <select id="${inputId}" style="flex:1;padding:5px 8px;font-size:12px;border:1px solid ${warn?'var(--accent2)':'var(--border)'};border-radius:5px;background:#fff;font-family:'Lato',sans-serif;outline:none">
       <option value="">- Not mapped -</option>
-      ${options.map(o=>`<option value="${escA(o.value||o)}" ${(currentVal===o.value||currentVal===o)?'selected':''}>${esc(o.label||o)}</option>`).join('')}
+      ${options.map(o=>{
+        // CLEANUP-1 Item 4: never stringify an option OBJECT into the value. When Jira is disconnected the
+        // options include a placeholder object with no `.value`; the old `o.value||o` fell back to the
+        // object, which serialised to "[object Object]" and got saved into the mapping. Normalise first.
+        const val = (o && typeof o === 'object') ? (o.value != null ? o.value : '') : o;
+        const lbl = (o && typeof o === 'object') ? (o.label != null ? o.label : (o.value != null ? o.value : '')) : o;
+        return `<option value="${escA(val)}" ${currentVal===val?'selected':''}>${esc(lbl)}</option>`;
+      }).join('')}
     </select>
     ${warn?'<span style="font-size:10px;color:var(--accent2);font-weight:700;flex-shrink:0">⚠ No mapping</span>':''}
     ${extraHtml||''}
@@ -20054,7 +20065,7 @@ if ('serviceWorker' in navigator) {
 
         <!-- Admin-only sidebar -->
         <div id="ipAdminCard" style="display:none;border:1px solid var(--border);border-radius:10px;overflow:hidden">
-          <div style="padding:10px 14px;background:#fff8f0;border-bottom:1px solid var(--border);font-size:11px;font-weight:900;color:#c06000;text-transform:uppercase;letter-spacing:0.5px">Admin Controls</div>
+          <div style="padding:10px 14px;background:var(--caution-bg);border-bottom:1px solid var(--border);font-size:11px;font-weight:900;color:#c06000;text-transform:uppercase;letter-spacing:0.5px">Admin Controls</div>
           <div id="ipAdmin" style="padding:14px;display:flex;flex-direction:column;gap:8px"></div>
         </div>
 
@@ -21376,7 +21387,7 @@ if ('serviceWorker' in navigator) {
      the production card headers AND the rail group gheads - so none can drift.
      Accent-blue label (token, mode-correct), NO filled bar, 12px/700, consistent
      letter-spacing; keeps the existing hairline border-bottom. Admin's header
-     (literal #fff8f0, not var(--surface)) is unmatched → keeps its amber tint. */
+     (var(--caution-bg), not var(--surface)) is unmatched → keeps its amber tint. */
   .frz-beta .frz-rail-ghead,
   .frz-beta #itemPageOverlay [style*="text-transform:uppercase"][style*="background:var(--surface)"] {
     background:var(--frz-header-tint) !important; color:var(--frz-accent) !important;
@@ -30139,7 +30150,7 @@ if ('serviceWorker' in navigator) {
     });
     var sel=null;
     var warn = (p.sprintId || (p.sprintHistory&&p.sprintHistory.length) || p.release || p.releaseNumber)
-      ? '<div style="margin-top:10px;padding:8px 10px;background:#fff8f0;border:1px solid #e8a000;border-radius:6px;font-size:12px;color:#c06000">Heads up: this item is in a sprint or linked to a release. Closing it as a duplicate removes it from those counts.</div>' : '';
+      ? '<div style="margin-top:10px;padding:8px 10px;background:var(--caution-bg);border:1px solid #e8a000;border-radius:6px;font-size:12px;color:#c06000">Heads up: this item is in a sprint or linked to a release. Closing it as a duplicate removes it from those counts.</div>' : '';
     var ov=document.createElement('div'); ov.id='frzDupOverlay';
     ov.style.cssText='position:fixed;inset:0;background:rgba(20,40,63,.45);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;font-family:\'Lato\',system-ui,sans-serif';
     ov.innerHTML='<div style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:12px;max-width:460px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,.3);overflow:hidden">'

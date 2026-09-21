@@ -77,8 +77,10 @@ def test_modalsurface_invariants():
     # the shell elevation token VALUES are unchanged (only which token the modal points at changed)
     assert "--frz-bg-elevated:#232A3A;" in src and "--frz-bg-app:#11151D;" in src and "--frz-bg-surface:#1C2230;" in src, \
         "the --frz-bg-* dark ladder values (rail/topbar/cards/shell) must be unchanged"
-    # the #fff8f0 caution tint is OUT OF SCOPE and must be untouched (still present, not tokenised here)
-    assert "background:#fff8f0" in src, "the #fff8f0 caution tint must be left untouched (separate change)"
+    # the #fff8f0 caution tint was OUT OF SCOPE for MODAL-SURFACE-1; CLEANUP-1 Item 6 is that separate
+    # change - it is now the --caution-bg token (same value), so the literal is gone.
+    assert "background:#fff8f0" not in src, "the caution tint is now tokenised (--caution-bg)"
+    assert "background:var(--caution-bg)" in src, "the caution surfaces point at --caution-bg (CLEANUP-1 Item 6)"
     # client-only stage
     py = SERVER.read_text(encoding="utf-8", errors="replace")
     assert "frz-bg-elevated" not in py and "composer-cmt-ph" not in py, "MODAL-SURFACE-1 is client-only; no symbol in server.py"
