@@ -1750,7 +1750,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.48.0"
+APP_VERSION = "6.49.0"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -11128,6 +11128,16 @@ def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))
                             "product": item["product"], "type": item["type"], "status": item.get("status"),
                             "dev": item["dev"], "assignee": item["assignee"]})
             audits.append((item["id"], item["name"], meta["key"], item["type"]))
+        # Stage 6 (2.1): set `parent` on the newly-created items as a LINK PASS after all inserts, still in
+        # this txn. key2id is built from the connection so it sees the rows just inserted - so a child
+        # constructed before its parent in the same run still resolves (the ancestry walk pulls parent and
+        # child together). A child is never dropped for a not-yet-existing parent; unresolved -> stays flat.
+        parent_audits, parent_counts = [], {}
+        if created:
+            key2id, pulled_ids = _pull_maps(c)
+            issue_by_key = {i.get("key"): i for i in plan_issues}
+            targets = [(cr["id"], cr["key"]) for cr in created]
+            parent_audits, parent_counts = _apply_pull_parents(c, targets, issue_by_key, key2id, pulled_ids, actor)
     # Audits AFTER the insert transaction closes: write_audit opens its OWN db connection, and nesting a
     # second writer inside the still-open insert transaction self-deadlocks (SQLite = one writer). Best
     # effort - a failed audit never unwinds a committed create (mirrors _do_sync_children's audit-after).
@@ -11137,8 +11147,9 @@ def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))
                         changes={"jiraKey": jkey, "type": itype, "jiraSource": _PULL_JIRA_SOURCE})
         except Exception as e:
             log.warning(f"[JiraPull] audit write failed for {jkey}: {e}")
+    _write_parent_audits(team, actor, parent_audits)   # Stage 6: parent-link audits, also after the txn
     return {"ready": True, "dryRun": False, "createdCount": len(created), "created": created,
-            "skipped": skipped, "fieldSummary": agg}
+            "skipped": skipped, "fieldSummary": agg, "parentLinks": parent_counts}
 
 # ── JIRA-PULL-1 Stage 5: the refresh pass + triggers ─────────────────────────────────────────────────
 # THE ONE LINE THAT MATTERS: the refresh touches items with jiraSource == _PULL_JIRA_SOURCE and NOTHING
@@ -11288,6 +11299,146 @@ def jira_pull_now(body: dict = Body({}), auth: dict = Depends(require_role("admi
     return {"ready": create.get("ready", True) and refresh.get("ready", True),
             "create": create, "refresh": refresh,
             "createdCount": create.get("createdCount", 0), "refreshedCount": refresh.get("changed", 0)}
+
+# ── JIRA-PULL-1 Stage 6: parent hierarchy ────────────────────────────────────────────────────────────
+# Set `parent` on pulled items so the Jira hierarchy survives into Flow. Same invariant as Stage 5: only
+# jiraSource=='pull' items are MODIFIED; a pushed (565) item may be REFERENCED as a parent but never
+# written. The Jira parent key is resolved to a Flow item id through the team's jiraTickets index.
+def _pid_or_none(v):
+    """Normalize a stored `parent` (int id, "" or None) to an int id or None."""
+    if v is None or v == "":
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+def _pull_maps(c):
+    """One pass over the projects table (on THIS connection, so it sees uncommitted inserts in a create
+    txn): {jiraKey -> item_id} (last-writer-wins, matching the existing natural index) and the set of
+    jiraSource=='pull' item ids."""
+    key2id, pulled_ids = {}, set()
+    for r in c.execute("SELECT id, data FROM projects"):
+        p = json.loads(r["data"])
+        for k in (p.get("jiraTickets") or []):
+            if k:
+                key2id[k] = r["id"]
+        if p.get("jiraSource") == _PULL_JIRA_SOURCE:
+            pulled_ids.add(r["id"])
+    return key2id, pulled_ids
+
+def _pull_issue_parent_key(issue):
+    return ((issue.get("fields", {}) or {}).get("parent") or {}).get("key")
+
+def _pull_would_cycle(c, child_id, parent_id, cache):
+    """True if making parent_id the parent of child_id would put child_id in its own ancestor chain.
+    Walks up parent links from parent_id; `cache` memoizes id->parent across calls in a run."""
+    seen, cur = set(), parent_id
+    while cur is not None:
+        if cur == child_id:
+            return True
+        if cur in seen:
+            return False                       # a pre-existing cycle elsewhere - not one we are creating
+        seen.add(cur)
+        if cur in cache:
+            cur = cache[cur]; continue
+        row = c.execute("SELECT data FROM projects WHERE id=?", (cur,)).fetchone()
+        nxt = _pid_or_none(json.loads(row["data"]).get("parent")) if row else None
+        cache[cur] = nxt
+        cur = nxt
+    return False
+
+def _apply_pull_parents(c, targets, issue_by_key, key2id, pulled_ids, actor):
+    """Set `parent` on each target pulled item whose Jira parent resolves to a Flow item. In-txn, merge-
+    write (re-read the live blob, set only `parent`, _save_project). Guards, all counted, none fatal:
+      - target is not jiraSource=='pull' -> skip (never modify a pushed item);
+      - `requires` already set -> skip (parent/requires are mutually exclusive);
+      - parent resolves to self -> skip;
+      - the link would create a cycle -> skip.
+    `targets` is a list of (pid, jiraKey). Returns (audits, counts). Notifications never fire here."""
+    counts = {"linkedToPulled": 0, "linkedToPushed": 0, "alreadyLinked": 0, "noParentKey": 0,
+              "parentNotInFlow": 0, "skippedRequires": 0, "skippedSelf": 0, "skippedCycle": 0,
+              "skippedNonPull": 0, "errors": 0}
+    audits, cache = [], {}
+    for pid, jkey in targets:
+        try:
+            issue = issue_by_key.get(jkey) if jkey else None
+            pkey = _pull_issue_parent_key(issue) if issue else None
+            if not pkey:
+                counts["noParentKey"] += 1; continue
+            parent_id = key2id.get(pkey)
+            if parent_id is None:
+                counts["parentNotInFlow"] += 1; continue      # below the floor / excluded type - stays flat, correct
+            row = c.execute("SELECT data FROM projects WHERE id=?", (pid,)).fetchone()
+            if not row:
+                continue
+            cur = json.loads(row["data"])
+            if cur.get("jiraSource") != _PULL_JIRA_SOURCE:     # belt-and-suspenders: never write a non-pull item
+                counts["skippedNonPull"] += 1; continue
+            if parent_id == pid:
+                counts["skippedSelf"] += 1; continue
+            if cur.get("requires"):
+                counts["skippedRequires"] += 1; continue       # parent (containment) vs requires (scheduling) are exclusive
+            if _pid_or_none(cur.get("parent")) == parent_id:
+                counts["alreadyLinked"] += 1; continue          # idempotent
+            if _pull_would_cycle(c, pid, parent_id, cache):
+                counts["skippedCycle"] += 1; continue
+            cur["parent"] = parent_id
+            _save_project(c, pid, cur, None)
+            cache.pop(pid, None)                                # its parent changed; drop stale cache
+            kind = "pulled" if parent_id in pulled_ids else "pushed"
+            counts["linkedToPulled" if kind == "pulled" else "linkedToPushed"] += 1
+            audits.append((pid, cur.get("name", ""), jkey, pkey, parent_id, kind))
+        except Exception as e:
+            counts["errors"] += 1
+            log.warning(f"[JiraParent] link failed for item {pid} ({jkey}): {e}")
+    return audits, counts
+
+def _write_parent_audits(team, actor, audits):
+    """After the txn closes (write_audit opens its own connection - the Stage-4 deadlock trap)."""
+    for pid, name, jkey, pkey, parent_id, kind in audits:
+        try:
+            write_audit(team, "jira:pull-parent", actor, pid, name,
+                        changes={"jiraKey": jkey, "jiraParentKey": pkey, "parentId": parent_id,
+                                 "parentKind": kind})
+        except Exception as e:
+            log.warning(f"[JiraParent] audit write failed for {jkey}: {e}")
+
+@app.post("/api/jira/backfill-parents")
+def jira_backfill_parents(auth: dict = Depends(require_role("admin"))):
+    """JIRA-PULL-1 Stage 6, 2.2: the one-time (idempotent, re-runnable) backfill. For every
+    jiraSource=='pull' item, resolve its Jira parent key to a Flow item and set `parent`. A pushed (565)
+    parent IS linked (the hierarchy is a fact about the work); a parent not in Flow stays flat. Only pulled
+    items are modified. No notifications. Admin only. A search failure aborts with zero writes."""
+    team = auth["team"]
+    if not jira_configured():
+        raise HTTPException(503, "Jira not configured")
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='jiraEnabled'").fetchone()
+        if row and json.loads(row["value"]) is False:
+            return {"ready": False, "reason": "Jira integration disabled", "pulled": 0, "changed": 0}
+        pulled = []
+        for r in c.execute("SELECT id, data FROM projects"):
+            p = json.loads(r["data"])
+            if p.get("jiraSource") == _PULL_JIRA_SOURCE:
+                pulled.append((r["id"], (p.get("jiraTickets") or [None])[0]))
+    base = {"ready": True, "pulled": len(pulled), "changed": 0}
+    if not pulled:
+        return base
+    keys = sorted({k for _, k in pulled if k})
+    issue_by_key = {}
+    try:
+        jql = "key in (" + ", ".join(keys) + ") ORDER BY key ASC"
+        for iss in _jira_search_all(jql, _PULL_FETCH_FIELDS):
+            issue_by_key[iss.get("key")] = iss
+    except Exception as e:
+        log.warning(f"[JiraParent] backfill batch fetch failed, aborting with zero writes: {e}")
+        return {**base, "aborted": True, "reason": f"Jira search failed: {e}"}
+    with db(team) as c:
+        key2id, pulled_ids = _pull_maps(c)
+        audits, counts = _apply_pull_parents(c, pulled, issue_by_key, key2id, pulled_ids, auth["username"])
+    _write_parent_audits(team, auth["username"], audits)
+    return {**base, "changed": len(audits), **counts}
 
 @app.post("/api/jira/search-raw")
 def jira_search_raw(body: dict = Body(...), auth: dict = Depends(require_role("admin"))):
