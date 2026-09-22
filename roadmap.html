@@ -4368,7 +4368,11 @@ function buildCapacityUsageMap(){
   window._capDetailMap = {};
   projects.forEach(p => {
     if(p.hidden || !p.start || !p.dev) return;
-    if(isTerminalStatus(p.status)) return;
+    // CAPACITY-HISTORY-1: NO terminal filter here (display path). itemCapacityOnDay is date-aware and
+    // status-blind, so a finished item lights the PAST across its span and contributes 0 from today on.
+    // The other filters stay - they exclude work that NEVER consumes capacity (a different thing from
+    // work that has FINISHED): statusIgnoreConflicts / productIgnoreConflicts / non-scheduled types /
+    // hidden. Conflicts (computeConflictingIds) keep their own terminal filter, so no past alerts fire.
     if(statusIgnoreConflicts[p.status]) return;
     if(productIgnoreConflicts[p.product]) return;
     if(!isScheduledType(p.type || '')) return;   // Stage 3: non-scheduled types consume no capacity
@@ -8141,7 +8145,11 @@ function capacityHealthClass(owner, dateStr){
   let totalUnits = 0;
   projects.forEach(p => {
     if(p.hidden || p.dev !== owner || !p.start) return;
-    if(isTerminalStatus(p.status)) return;
+    // CAPACITY-HISTORY-1: NO terminal filter here, so the per-day cell colour matches the capacity bars
+    // (buildCapacityUsageMap) - both display finished work as historical load. itemCapacityOnDay is
+    // date-aware, so a finished item colours the PAST and adds 0 from today on. Other filters stay (they
+    // exclude work that NEVER consumes capacity, not work that has finished). Conflicts are separate and
+    // keep their own terminal filter.
     if(statusIgnoreConflicts[p.status]) return;
     if(productIgnoreConflicts[p.product]) return;
     if(!isScheduledType(p.type || '')) return;   // Stage 3: non-scheduled types consume no capacity
