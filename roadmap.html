@@ -11557,6 +11557,12 @@ function openFlagIssue(itemId){
   // all four exactly as before.
   var _canFlag = (typeof isAdmin!=='undefined' && isAdmin) || (typeof isEditor!=='undefined' && isEditor);
   var _fg=document.getElementById('flagTypeFlagGroup'); if(_fg) _fg.hidden = !_canFlag;
+  // FLAG-BLOCKED-2: only offer Blocked when a Blocked status is configured. Without one, getBlockedStatus()
+  // returns '' and submitFlagIssue's Blocked branch is skipped, so flagging Blocked would write an activity
+  // and silently change nothing. Filtered here (the single modal all entry points open), not per surface;
+  // an admin who wants it configures a statusIsBlocked. The other types + Reminder are untouched.
+  var _blockedOpt=document.querySelector('#flagType option[value="Blocked"]');
+  if(_blockedOpt){ var _hasBlocked=!!getBlockedStatus(); _blockedOpt.hidden=!_hasBlocked; _blockedOpt.disabled=!_hasBlocked; }
   document.getElementById('flagType').value = _canFlag ? 'At Risk' : 'Reminder';
   _flagTypeChanged();   // REM-2: sync modal shape (Note vs Date, heading, save label, message copy) to the type
   document.getElementById('flagIssueBg').classList.add('open');
