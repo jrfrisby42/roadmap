@@ -3468,6 +3468,8 @@ let blockedReasons = []; // BLOCK-REASON-1: admin-managed coded Blocked reasons 
 let locations = [];       // FIELDS-1: per-team Location value list. EMPTY = the Location field is hidden EVERYWHERE.
 let resolutionTypes = []; // FIELDS-1: per-team Resolution Type value list. EMPTY = the field is hidden EVERYWHERE.
 let metricLabel = 'Story Points'; // METRIC-LABEL-1: team-defined display label for the storyPoints metric (field key unchanged; only the label is configurable)
+let handoffLabel = 'Handoff';     // CAL-DATES-1: per-Org label for the item handoff (devEnd) milestone badge on the Calendar
+let dueLabel = 'Due';             // CAL-DATES-1: per-Org label for the item due milestone badge on the Calendar
 let departments   = []; // shared master list of departments (free-text, grows on item save)
 // Capacity & conflict config (side-data, doesn't restructure core arrays)
 let ownerCapacity = {};        // { [ownerName]: number }  e.g. { "Tyler": 2 }  (FIXED-mode base per pod)
@@ -8967,6 +8969,8 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
     resolutionTypes = Array.isArray(data.resolutionTypes) ? data.resolutionTypes : [];  // FIELDS-1
     hasSprints = !!data.hasSprints; hasReleases = !!data.hasReleases;   // FIELDS-2 (secondary data-apply)
     metricLabel   = data.metricLabel   || metricLabel;   // METRIC-LABEL-1 (secondary data-apply path)
+    handoffLabel  = data.handoffLabel  || handoffLabel;  // CAL-DATES-1
+    dueLabel      = data.dueLabel      || dueLabel;       // CAL-DATES-1
     departments   = data.departments   || departments;
       products     = data.products     || products;
       if(data.ownerCapacity)         ownerCapacity         = data.ownerCapacity;
@@ -20457,6 +20461,35 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-cal-tg .frz-cal-capcell { font-size:9px; padding:2px 0; }
   /* Stage 6d: item type icon left of the key in Week ticket chips */
   .frz-beta .frz-cal-chip-item svg { margin-right:3px; vertical-align:middle; }
+  /* CAL-DATES-1: item milestone (handoff/due) badges. Deliberately UNLIKE availability pills - a
+     squared chip with a flag/diamond glyph, never a person-tinted 999px pill - so a handoff date
+     never reads as "someone is out". Rides --frz-* tokens (dark values built in); only the amber
+     handoff tint gets a dark override (below). */
+  .frz-beta .frz-cal-mile { display:inline-flex; align-items:center; gap:3px; max-width:100%; box-sizing:border-box; font-size:10px; font-weight:700; line-height:1.4; border-radius:5px; padding:1px 6px; border:1px solid var(--frz-border); background:var(--frz-bg-app); font-family:ui-monospace,Menlo,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+  .frz-beta .frz-cal-mile-g { flex-shrink:0; font-size:10px; line-height:1; }
+  .frz-beta .frz-cal-mile-l { font-weight:800; }
+  .frz-beta .frz-cal-mile-due { color:var(--frz-accent); border-color:var(--frz-accent-soft); }
+  .frz-beta .frz-cal-mile-due .frz-cal-mile-g { color:var(--frz-accent); }
+  .frz-beta .frz-cal-mile-ho  { color:#8a5a00; border-color:#e6c07a; }
+  .frz-beta .frz-cal-mile-ho .frz-cal-mile-g { color:#c8860a; }
+  .frz-beta .frz-cal-mile:hover { border-color:var(--frz-accent); }
+  /* Month + Week milestone lane: own row(s) below the availability chips, hairline-separated, with
+     their OWN "+N items" overflow so the availability "+N more" is never touched. */
+  .frz-beta .frz-cal-mo-miles, .frz-beta .frz-cal-wk-miles { display:flex; flex-direction:column; gap:3px; margin-top:3px; padding-top:3px; border-top:1px dashed var(--frz-border); }
+  .frz-beta .frz-cal-mo-miles .frz-cal-mile, .frz-beta .frz-cal-wk-miles .frz-cal-mile { display:flex; }
+  .frz-beta .frz-cal-mile-more { border:0; background:none; text-align:left; font-size:10px; font-weight:700; color:var(--frz-text-muted); cursor:pointer; padding:0 4px; }
+  .frz-beta .frz-cal-mile-more:hover { color:var(--frz-accent); }
+  /* Timeline milestone marker: a thin full-height tick at the day column with a glyph head on top;
+     unobtrusive over the availability bars, clearly a date line, click-through via data-item. */
+  .frz-beta .frz-cal-tl-mile { position:absolute; top:0; bottom:0; width:0; border-left:2px solid var(--frz-accent); z-index:4; cursor:pointer; }
+  .frz-beta .frz-cal-tl-mile.frz-cal-mile-ho { border-left-color:#c8860a; }
+  .frz-beta .frz-cal-tl-mile-h { position:absolute; top:-1px; left:-6px; font-size:11px; line-height:1; color:var(--frz-accent); }
+  .frz-beta .frz-cal-tl-mile.frz-cal-mile-ho .frz-cal-tl-mile-h { color:#c8860a; }
+  /* Dark mode: accent/due ride tokens; only the amber handoff tint is remapped. */
+  body.dark-mode .frz-beta .frz-cal-mile-ho { color:#e6b866; border-color:#7a5c1e; }
+  body.dark-mode .frz-beta .frz-cal-mile-ho .frz-cal-mile-g { color:#e6b866; }
+  body.dark-mode .frz-beta .frz-cal-tl-mile.frz-cal-mile-ho { border-left-color:#e6b866; }
+  body.dark-mode .frz-beta .frz-cal-tl-mile.frz-cal-mile-ho .frz-cal-tl-mile-h { color:#e6b866; }
   /* Stage 6b: dark-mode fixes for the capacity health cells (the global .cap-health-* dark
      override is scoped to .cap-cal-cell only) and the assignment-modal warning/delete reds.
      Everything else on the calendar rides the --frz-* tokens, which already have dark values. */
@@ -24961,6 +24994,80 @@ if ('serviceWorker' in navigator) {
     var e=((p.revised||p.due||p.start)||'').slice(0,10);
     return s<=win.to && e>=win.from;
   }
+  // ── CAL-DATES-1: item milestone dates (handoff + due) as Calendar badges ──────────
+  // Read-only: no item is ever written and no existing date arithmetic is touched. These badges
+  // overlay the availability calendar; availability/PTO/holidays/work-days are untouched.
+  // An item qualifies when it is a SCHEDULED type, has a DUE date, is NOT terminal (J.R.'s 1.5
+  // decision - the Calendar is forward-looking), NOT hidden, and is in the active Space scope.
+  // (Owner/user/shared-Devs scoping is applied where the tab knows the owner/assignee.)
+  function _calItemQualifies(p){
+    if(!p || p.hidden) return false;
+    if(isTerminalStatus(p.status)) return false;
+    if(!isScheduledType(p.type || '')) return false;
+    if(!p.due) return false;
+    if(!inScope(p)) return false;
+    return true;
+  }
+  // The two milestone Date objects for a qualified item, using the SAME arithmetic the Gantt and
+  // capacity map use (nextMonday weekend-roll; revised wins over due where set). testWeeks ABSENT is
+  // treated as 0 -> handoff == due -> a single collapsed badge, per prompt 1.4. This is the ONE
+  // deliberate divergence from the Gantt/capacity `?? 2` default: a team that never sets testWeeks
+  // (e.g. marketing) gets one Due badge, not a fabricated handoff two weeks early. Nothing recomputed
+  // differently - the formula is devEnd = due - testWeeks, read from the item, not from the Gantt.
+  function _calItemMilestones(p){
+    var dueD=nextMonday(parseD(p.due)); if(!dueD) return null;
+    var effDue=p.revised ? nextMonday(parseD(p.revised)) : dueD;   // 1.3/build: revised wins over due where set
+    var tw=parseFloat(p.testWeeks) || 0;                            // absent -> 0 (collapse), NOT the Gantt ?? 2
+    var handoff = tw>0 ? nextMonday(addDays(effDue, -tw*7)) : effDue;
+    return { handoff:handoff, due:effDue, collapsed:(tw<=0) };
+  }
+  // An assignment-TYPE filter focuses the view on that assignment type; item milestones are unrelated
+  // to assignment types, so they follow the SAME rule the availability tickets do (suppressed) - keeps
+  // a type-focused calendar uncluttered. Owner/user/Space scope are applied where the badge is placed.
+  function _calMilesSuppressed(){ return !!_calFilterState().type; }
+  // Owner/user + shared-Devs scoping for an item (used by the Month grid, which has no owner/user rows).
+  function _calItemMatchesScope(p){
+    var f=_calFilterState();
+    var shDev=(typeof getSelectedDevs==='function') ? getSelectedDevs() : null;
+    if(shDev && shDev.indexOf(p.dev||'')<0) return false;
+    if(f.owner && p.dev!==f.owner) return false;
+    if(f.user && p.assignee!==f.user) return false;
+    return true;
+  }
+  // Qualifying items for one (owner, assignee) row - used by Week/Timeline/Mobile (owner->user views).
+  // Empty when milestones are suppressed (assignment-type focus) or the row has no user (pod row).
+  function _calUserItems(owner, user){
+    if(_calMilesSuppressed() || !user) return [];
+    return (_val('projects',[])||[]).filter(function(p){ return p.dev===owner && p.assignee===user && _calItemQualifies(p); });
+  }
+  // Which milestone badges land on day `ds` for a qualified item. Collapse (handoff==due) yields a
+  // single 'both' badge - never two stacked (prompt: "one deliberate badge").
+  function _calItemBadgesOnDay(p, ds){
+    var m=_calItemMilestones(p); if(!m) return [];
+    var hd=_ymdLocal(m.handoff), dd=_ymdLocal(m.due);
+    if(hd===dd) return hd===ds ? [{p:p, kind:'both'}] : [];
+    var out=[];
+    if(hd===ds) out.push({p:p, kind:'handoff'});
+    if(dd===ds) out.push({p:p, kind:'due'});
+    return out;
+  }
+  // Milestone badge markup. Visually distinct from availability pills (a flag/diamond glyph + label +
+  // key on a squared neutral chip, never a person-tinted rounded pill), so a handoff never reads as
+  // someone being out. Carries frz-cal-chip-item + data-item so the click-through wiring at the end of
+  // renderCalendar opens the item (prompt: reuse the existing handler). `compact` drops the label text
+  // (kept in the tooltip) for the dense Week/Timeline cells. `kind`: 'handoff' | 'due' | 'both'.
+  function _calMileBadge(p, kind, compact){
+    var isHo=(kind==='handoff');
+    var lbl=isHo ? handoffLabel : dueLabel;                    // 'both' -> due label (the deliberate single badge)
+    var cls=isHo ? 'frz-cal-mile-ho' : 'frz-cal-mile-due';
+    var glyph=isHo ? '▸' : '◆';                      // ▸ handoff (leaves hands) / ◆ due (comes back)
+    var ic=(typeIconHTML(p.type,{size:11})||'');
+    var key=p.itemKey || p.name || ('#'+p.id);
+    var tip=(kind==='both' ? (handoffLabel+' + '+dueLabel) : lbl)+' · '+(p.itemKey?p.itemKey+' · ':'')+(p.name||'');
+    return '<span class="frz-cal-mile '+cls+(compact?' frz-cal-mile-cmp':'')+' frz-cal-chip-item" data-item="'+p.id+'" title="'+escA(tip)+'">'+
+      '<span class="frz-cal-mile-g" aria-hidden="true">'+glyph+'</span>'+ic+
+      (compact?'':'<span class="frz-cal-mile-l">'+esc(lbl)+'</span> ')+esc(key)+'</span>';
+  }
   // Stage 3a: "+N more" popover listing a day's mixed entries ({k:'a',a} assignment /
   // {k:'t',p} ticket). Reuses the app popover (openPop); rows wire to edit / item page.
   function _calEntriesPop(anchor, ds, entries, typeById, canEdit){
@@ -24971,6 +25078,9 @@ if ('serviceWorker' in navigator) {
         if(e.k==='a'){
           row.innerHTML=_calAsgChip(e.a,typeById,false)+'<span>'+esc(_calWho(e.a))+'</span>';
           if(canEdit) row.addEventListener('click', function(){ closePop(); openAssignmentModal(e.a); });
+        } else if(e.k==='m'){                                    // CAL-DATES-1: milestone badge row
+          row.innerHTML=_calMileBadge(e.p, e.kind, false)+'<span>'+esc(e.p.name||'')+'</span>';
+          row.addEventListener('click', function(){ closePop(); openItem(e.p.id); });
         } else {
           row.innerHTML=_calTicketChip(e.p)+'<span>'+esc(e.p.name||'')+'</span>';
           row.addEventListener('click', function(){ closePop(); openItem(e.p.id); });
@@ -25149,6 +25259,7 @@ if ('serviceWorker' in navigator) {
   // apply. Capacity + project filters don't apply on Month (no capacity, assignments have no
   // project) - they're inert here by design. Multi-day assignments chip on each covered day.
   var _CAL_MO_MAX=3;
+  var _CAL_MO_MILE_MAX=2;   // CAL-DATES-1: item milestone badges per Month cell before "+N items" (own lane)
   function _calMoTypeVisible(t){ return !(t && t.show_on_calendar===false); }
   function _calMoChip(a, types, canEdit){
     var t=types[a.type_id]||{};
@@ -25181,6 +25292,19 @@ if ('serviceWorker' in navigator) {
     });
     var workDays=_calWorkDaysOn();   // per-user preference; default work days (Mon-Fri)
     var DOW=workDays?['Mon','Tue','Wed','Thu','Fri']:['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    // CAL-DATES-1: bucket qualifying item milestone badges by day, in their OWN lane below the
+    // availability chips (their own overflow, so the availability "+N more" is untouched). Scoped by
+    // Space + owner/user + shared-Devs; suppressed under an assignment-type focus (like tickets).
+    var mileByDay={};
+    if(!_calMilesSuppressed()){
+      (_val('projects',[])||[]).forEach(function(p){
+        if(!_calItemQualifies(p) || !_calItemMatchesScope(p)) return;
+        var m=_calItemMilestones(p); if(!m) return;
+        var hd=_ymdLocal(m.handoff), dd=_ymdLocal(m.due);
+        var put=function(dsk, kind){ if(dsk<fromStr||dsk>toStr) return; (mileByDay[dsk]=mileByDay[dsk]||[]).push({p:p, kind:kind}); };
+        if(hd===dd) put(hd,'both'); else { put(hd,'handoff'); put(dd,'due'); }
+      });
+    }
     var html='<div class="frz-cal-mo'+(canEdit?' frz-cal-mo--edit':'')+(workDays?' frz-cal-mo--wd':'')+'"><div class="frz-cal-mo-hd">'+
       DOW.map(function(d){ return '<span>'+d+'</span>'; }).join('')+'</div><div class="frz-cal-mo-grid">';
     var d=new Date(gridStart);
@@ -25191,8 +25315,12 @@ if ('serviceWorker' in navigator) {
       var cls='frz-cal-mo-cell'+(d.getMonth()!==mm?' is-other':'')+(ds===todayStr?' is-today':'');
       var chips=items.slice(0,_CAL_MO_MAX).map(function(a){ return _calMoChip(a, types, canEdit); }).join('');
       var more=(items.length>_CAL_MO_MAX)?('<button class="frz-cal-mo-more" data-more="'+ds+'">+'+(items.length-_CAL_MO_MAX)+' more</button>'):'';
+      var miles=mileByDay[ds]||[];
+      var mchips=miles.slice(0,_CAL_MO_MILE_MAX).map(function(x){ return _calMileBadge(x.p, x.kind, false); }).join('');
+      var mmore=(miles.length>_CAL_MO_MILE_MAX)?('<button class="frz-cal-mile-more" data-milemore="'+ds+'">+'+(miles.length-_CAL_MO_MILE_MAX)+' items</button>'):'';
+      var mlane=miles.length?('<div class="frz-cal-mo-miles">'+mchips+mmore+'</div>'):'';
       html+='<div class="'+cls+'" data-date="'+ds+'"><div class="frz-cal-mo-daynum">'+d.getDate()+'</div>'+
-        '<div class="frz-cal-mo-chips">'+chips+more+'</div></div>';
+        '<div class="frz-cal-mo-chips">'+chips+more+'</div>'+mlane+'</div>';
       d=addDays(d,1);
     }
     html+='</div></div>';
@@ -25215,11 +25343,19 @@ if ('serviceWorker' in navigator) {
         });
       });
     });
+    // CAL-DATES-1: item-milestone "+N items" -> popover listing that day's milestone badges.
+    body.querySelectorAll('.frz-cal-mile-more').forEach(function(btn){
+      btn.addEventListener('click', function(e){
+        e.stopPropagation();
+        var ds=btn.getAttribute('data-milemore');
+        _calEntriesPop(btn, ds, (mileByDay[ds]||[]).map(function(x){ return {k:'m', p:x.p, kind:x.kind}; }), types, false);
+      });
+    });
     // Empty-cell click -> New Assignment prefilled with that date (Stage 1 behavior intact).
     if(canEdit){
       body.querySelectorAll('.frz-cal-mo-cell').forEach(function(cell){
         cell.addEventListener('click', function(e){
-          if(e.target.closest('.frz-cal-chip-asg,.frz-cal-mo-more')) return;   // chip/more handle themselves
+          if(e.target.closest('.frz-cal-chip-asg,.frz-cal-mo-more,.frz-cal-chip-item,.frz-cal-mile-more')) return;   // chip/more/badge handle themselves (CAL-DATES-1: exclude item badges + milestone more)
           var ds=cell.getAttribute('data-date');
           openAssignmentModal({ start_date:ds, end_date:ds });
         });
@@ -25230,6 +25366,7 @@ if ('serviceWorker' in navigator) {
   // (type-color tint, no initials) AND ticket chips (neutral KEY badge) active that day,
   // capped at 2 + a "+N more" popover. Same table/header/gutter as before - only cells fill.
   var _CAL_WK_MAX=2;
+  var _CAL_WK_MILE_MAX=2;   // CAL-DATES-1: item milestone badges per Week cell before "+N items" (own lane, compact)
   // Stage 3.5.2: Week is ONE grid (.frz-cal-wg) - a single sticky Mon-Sun header, then owner
   // bands + user rows, all sharing the grid's column definition. Cell content (assignment +
   // ticket chips, cap 2 + "+N more") is unchanged from Stage 3.
@@ -25245,6 +25382,8 @@ if ('serviceWorker' in navigator) {
       if(!o.unassigned) html+=_calCapRow(o.owner, dayStrs, todayStr);   // Stage 4b: per-day capacity row (no-op if owner has no configured base)
       if(!o.users.length){ html+='<div class="frz-cal-emptyrow">No one scheduled.</div>'; return; }
       o.users.forEach(function(u){
+        // CAL-DATES-1: this user's qualifying items (milestones key off assignee; pod rows have none).
+        var uMiles = u.pod ? [] : _calUserItems(o.owner, u.user);
         html+= u.pod ? _calPodGut(o.owner) : ('<div class="frz-cal-gut">'+avatarHTML(u.user,18)+'<span title="'+escA(displayName(u.user))+'">'+esc(displayName(u.user))+'</span></div>');
         dayStrs.forEach(function(ds){
           var asgs=u.assigns.filter(function(a){ return _calMoTypeVisible(o.typeById[a.type_id]) && (a.start_date||'')<=ds && (a.end_date||a.start_date||'')>=ds; });
@@ -25253,6 +25392,13 @@ if ('serviceWorker' in navigator) {
           var cell='';
           entries.slice(0,_CAL_WK_MAX).forEach(function(e){ cell += e.k==='a' ? _calAsgChip(e.a,o.typeById,canEdit) : _calTicketChip(e.p); });
           if(entries.length>_CAL_WK_MAX){ var id='wk'+(mi++); moreReg[id]={ds:ds, entries:entries, typeById:o.typeById}; cell+='<button class="frz-cal-mo-more frz-cal-wk-more" data-wkmore="'+id+'">+'+(entries.length-_CAL_WK_MAX)+' more</button>'; }
+          // CAL-DATES-1: milestone lane below availability (own overflow; availability "+N more" untouched).
+          var dm=[]; uMiles.forEach(function(p){ _calItemBadgesOnDay(p, ds).forEach(function(b){ dm.push(b); }); });
+          if(dm.length){
+            var mcell=dm.slice(0,_CAL_WK_MILE_MAX).map(function(b){ return _calMileBadge(b.p, b.kind, true); }).join('');
+            if(dm.length>_CAL_WK_MILE_MAX){ var mid='wm'+(mi++); moreReg[mid]={ds:ds, entries:dm.map(function(b){ return {k:'m',p:b.p,kind:b.kind}; }), typeById:o.typeById}; mcell+='<button class="frz-cal-mo-more frz-cal-wk-more" data-wkmore="'+mid+'">+'+(dm.length-_CAL_WK_MILE_MAX)+' items</button>'; }
+            cell+='<div class="frz-cal-wk-miles">'+mcell+'</div>';
+          }
           html+='<div class="frz-cal-wcell'+(ds===todayStr?' frz-cal-is-today':'')+'">'+cell+'</div>';
         });
       });
@@ -25286,7 +25432,9 @@ if ('serviceWorker' in navigator) {
     days.forEach(function(ds){ html+='<div class="frz-cal-hcell'+(ds===todayStr?' frz-cal-is-today':'')+'">'+parseInt(ds.slice(8,10),10)+'</div>'; });
     data.forEach(function(o){
       var typeById=o.typeById;
-      var users=o.users.filter(function(u){ return u.assigns.some(function(a){ return _calMoTypeVisible(typeById[a.type_id]); }); });   // rows only for users with visible assignments
+      // CAL-DATES-1: a user also earns a row when they have a qualifying milestone in the window (so a
+      // handoff/due badge is never dropped just because that person has no availability assignment).
+      var users=o.users.filter(function(u){ return u.assigns.some(function(a){ return _calMoTypeVisible(typeById[a.type_id]); }) || (!u.pod && _calUserItems(o.owner, u.user).length); });
       html+=_calBand(o, canEdit);
       if(!o.unassigned) html+=_calCapRow(o.owner, days, todayStr);   // Stage 4c/6c: per-day capacity strip on the same (workday) axis
       if(!users.length){ html+='<div class="frz-cal-emptyrow">No one scheduled.</div>'; return; }
@@ -25308,9 +25456,23 @@ if ('serviceWorker' in navigator) {
           bars+='<span class="frz-cal-tl-bar'+(canEdit?' frz-cal-chip-asg':'')+(clipL?' is-clipL':'')+(clipR?' is-clipR':'')+'" '+(canEdit?'data-aid="'+a.id+'" ':'')+
             'style="left:'+left+'%;width:'+width+'%;top:'+top+'px;'+_calPillStyle(_calAsgFill(a,t), t.color, dark)+'" title="'+escA(ttl)+'">'+esc(t.name||a.type_id)+'</span>';
         });
+        // CAL-DATES-1: milestone markers - thin full-height ticks at the handoff/due day columns (no
+        // tickets/bars added; availability bars untouched). Distinct glyph head; click-through via data-item.
+        var mbars='';
+        (u.pod ? [] : _calUserItems(o.owner, u.user)).forEach(function(p){
+          var mm2=_calItemMilestones(p); if(!mm2) return;
+          var hd=_ymdLocal(mm2.handoff), dd=_ymdLocal(mm2.due);
+          var mark=function(dsk, kind){
+            if(!(dsk in idxOf)) return;
+            var lft=idxOf[dsk]/N*100, isHo=(kind==='handoff');
+            var tip=(kind==='both'?(handoffLabel+' + '+dueLabel):(isHo?handoffLabel:dueLabel))+' · '+(p.itemKey?p.itemKey+' · ':'')+(p.name||'');
+            mbars+='<span class="frz-cal-tl-mile '+(isHo?'frz-cal-mile-ho':'frz-cal-mile-due')+' frz-cal-chip-item" data-item="'+p.id+'" style="left:'+lft+'%" title="'+escA(tip)+'"><span class="frz-cal-tl-mile-h" aria-hidden="true">'+(isHo?'▸':'◆')+'</span></span>';
+          };
+          if(hd===dd) mark(hd,'both'); else { mark(hd,'handoff'); mark(dd,'due'); }
+        });
         var h=PAD+Math.max(1,lanes.length)*LANE;
         html+= (u.pod ? _calPodGut(o.owner) : ('<div class="frz-cal-gut">'+avatarHTML(u.user,18)+'<span title="'+escA(displayName(u.user))+'">'+esc(displayName(u.user))+'</span></div>'))+
-          '<div class="frz-cal-track" style="min-height:'+h+'px;background:'+trackBg+'">'+bars+'</div>';
+          '<div class="frz-cal-track" style="min-height:'+h+'px;background:'+trackBg+'">'+bars+mbars+'</div>';
       });
     });
     html+='</div>';
@@ -25331,8 +25493,16 @@ if ('serviceWorker' in navigator) {
       (sec.users||[]).forEach(function(u){
         var who = u.pod ? (esc(sec.owner)+' <span class="frz-cal-podtag">pool</span>')
           : (u.user ? esc(displayName(u.user)) : 'Unassigned');
+        // CAL-DATES-1: milestone badges for this user's qualifying items falling in the month window.
+        var mchips='';
+        (u.pod ? [] : _calUserItems(sec.owner, u.user)).forEach(function(p){
+          var m=_calItemMilestones(p); if(!m) return;
+          var hd=_ymdLocal(m.handoff), dd=_ymdLocal(m.due), within=function(dsk){ return dsk>=win.from && dsk<=win.to; };
+          if(hd===dd){ if(within(hd)) mchips+=_calMileBadge(p,'both',false); }
+          else { if(within(hd)) mchips+=_calMileBadge(p,'handoff',false); if(within(dd)) mchips+=_calMileBadge(p,'due',false); }
+        });
         var chips = (u.assigns||[]).map(function(a){ return _calAsgChip(a, typeById, canEdit); }).join('')
-                  + (u.tickets||[]).map(_calTicketChip).join('');
+                  + (u.tickets||[]).map(_calTicketChip).join('') + mchips;
         html+='<div class="frz-cal-ag-row"><div class="frz-cal-ag-who">'+who+'</div>'+
           '<div class="frz-cal-ag-chips">'+(chips||'<span class="frz-cal-ag-none">-</span>')+'</div></div>';
       });

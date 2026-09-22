@@ -1225,6 +1225,12 @@ def init_team_db(team: str):
             # today's most common wording. NOTE: the same field can't be an estimate AND an actual for one
             # team, and cross-team sums are meaningless once two teams mean different things by the number.
             "metricLabel": "Story Points",
+            # CAL-DATES-1: per-Organization labels for the two item milestone badges shown on the Calendar.
+            # handoffLabel names the devEnd milestone ("Handoff"); dueLabel names the due milestone ("Due").
+            # Neutral defaults on purpose - development can set "Code complete", marketing "Goes to print".
+            # Field keys are unchanged; only presentation is configurable (same pattern as metricLabel).
+            "handoffLabel": "Handoff",
+            "dueLabel": "Due",
                                      # false = reachable ONLY at its own /report?team=X (still a transfer target).
             "intakeProjects": [],  # which projects (products) are exposed; empty = all
             "intakeNotifyEmail": "",  # team inbox that gets a copy of each portal ticket
@@ -1350,6 +1356,8 @@ def _migrate_config_keys(team: str):
         # default anyway. So a plain migration entry is correct: it backfills the key for existing teams and
         # never clobbers an admin's non-empty custom label. (Finding per Part 1: re-seed is safe here.)
         "metricLabel":      "Story Points",
+        "handoffLabel":     "Handoff",   # CAL-DATES-1: same non-presence-only reasoning as metricLabel (a label is a non-empty string; "" falls back to the default anyway)
+        "dueLabel":         "Due",       # CAL-DATES-1
         "intakeProjects":   [],
         "intakeTypes":      [],
         "intakeNotifyEmail": "",
@@ -3907,6 +3915,8 @@ def get_all(auth: dict = Depends(require_auth)):
             "intakeEnabled": cfg_map.get("intakeEnabled", False),
             "intakeCombined": bool(cfg_map.get("intakeCombined", True)),   # PORTAL-SCOPE-LOCK-1: default true; explicit False reaches the client
             "metricLabel": (cfg_map.get("metricLabel") or "Story Points"),   # METRIC-LABEL-1: empty/missing -> default so the client never renders a blank label
+            "handoffLabel": (cfg_map.get("handoffLabel") or "Handoff"),      # CAL-DATES-1: empty/missing -> default (client never renders a blank badge label)
+            "dueLabel": (cfg_map.get("dueLabel") or "Due"),                  # CAL-DATES-1
             "intakeProjects": cfg_map.get("intakeProjects", []),
             "intakeTypes": cfg_map.get("intakeTypes", []),
             "intakeNotifyEmail": cfg_map.get("intakeNotifyEmail", ""),
@@ -5834,7 +5844,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "statusIsDefault","statusIsDeferred",
               "changeReasons","deferReasons","blockedReasons","departments",
               "locations","resolutionTypes",
-              "metricLabel",
+              "metricLabel","handoffLabel","dueLabel",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow","statusIsWaiting","statusIsParked",
