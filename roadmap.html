@@ -613,6 +613,13 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     box-sizing: border-box;
   }
   .bar.testing-bar:hover { filter: none; border-color: #006fa8; height: 18px; z-index: 20; }
+  /* PARENT-ROLLUP-1: a DERIVED (inferred-from-children) bar. Deliberately UNLIKE a scoped bar - a dashed
+     neutral outline + reduced opacity, NO new fill colour (the green/blue/maroon phase palette is settled),
+     so an exec can tell an inferred schedule from a real one. Rides theme tokens for dark mode. */
+  .bar.derived { background: var(--surface2); border: 1.5px dashed var(--muted); opacity: 0.6; box-sizing: border-box; border-radius: 4px; }
+  .bar.derived:hover { opacity: 0.85; }
+  .rollup-team { font-size: 9px; font-weight: 700; color: var(--muted); background: var(--surface2); border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; margin-left: 6px; white-space: nowrap; vertical-align: middle; }
+  .rollup-noschedule { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); font-size: 10px; font-style: italic; color: var(--muted); opacity: 0.7; pointer-events: none; }
 
   /* EXPECTED DATE DIAMOND */
   .diamond {
@@ -4919,9 +4926,46 @@ function render(){
     return false;
   }
 
+  // PARENT-ROLLUP-1: an UNSCOPED parent (has children, lacks its own start OR due) shows values DERIVED
+  // from its children FOR DISPLAY ONLY - never written, never counted. Capacity stays safe because
+  // buildCapacityUsageMap reads the STORED start+dev (absent on these parents) and the row render below
+  // assigns nothing back to the item. Own value wins: a parent with its own dates is left entirely
+  // as-is (Decision 5). Duplicate (off-list, rank 999) is excluded explicitly, not just out-ranked.
+  const _kidsByParent = {};
+  projects.forEach(c => { const pr=c.parent; if(pr!=null && pr!=='') (_kidsByParent[pr]=_kidsByParent[pr]||[]).push(c); });
+  const _rollupCache = {};
+  function _computeRollup(p){
+    const kids = _kidsByParent[p.id];
+    if(!kids || !kids.length) return null;
+    if(p.start && p.due) return null;                       // own-dated -> untouched (Decision 5)
+    const starts = kids.map(c=>c.start).filter(Boolean).sort();
+    const dues   = kids.map(c=>c.revised||c.due).filter(Boolean).sort();   // revised wins over due
+    // status: lowest (least-progressed) child status by the `statuses` order, EXCLUDING off-flow and the
+    // off-list Duplicate. None qualify (all off-flow) -> the parent's own stored status, else blank (Dec 3).
+    const ranked = kids.map(c=>c.status)
+      .filter(s => s && s!=='Duplicate' && !statusIsOffFlow[s] && statuses.indexOf(s)>=0)
+      .map(s => ({s, i:statuses.indexOf(s)})).sort((a,b)=>a.i-b.i);
+    const status = ranked.length ? ranked[0].s : (p.status || '');
+    const allReleased = kids.every(c => statusIsReleased[c.status]);       // release date only if EVERY child released
+    const rels = kids.map(c=>c.releaseDate).filter(Boolean).sort();
+    const podCt = {}; kids.forEach(c => { if(c.dev) podCt[c.dev]=(podCt[c.dev]||0)+1; });
+    const pods = Object.keys(podCt).sort((a,b)=> (podCt[b]-podCt[a]) || a.localeCompare(b));   // most children wins, alpha tie-break
+    const asg = {}; kids.forEach(c => { if(c.assignee) asg[c.assignee]=1; });
+    const ak = Object.keys(asg);
+    return { start:starts[0]||'', due:(dues.length?dues[dues.length-1]:''), status,
+      release:(allReleased && rels.length)?rels[rels.length-1]:'',
+      dev:(pods[0]||''), teamLabel:(pods.length>1?(pods[0]+' +'+(pods.length-1)):(pods[0]||'')),
+      multiPod:pods.length>1, assignee:(ak.length===1?ak[0]:(ak.length>1?'Multiple':'')),
+      empty:!(starts.length || dues.length) };
+  }
+  function _rollupOf(p){ if(!(p.id in _rollupCache)) _rollupCache[p.id]=_computeRollup(p); return _rollupCache[p.id]; }
+  // Placement dev for the filter + grouping ONLY (the one place a derived value may steer grouping, per
+  // the prompt). Everywhere else derived values stay out of filters, sorts, counts and exports.
+  function _rollupDev(p){ const r=_rollupOf(p); return (r && r.dev) || ''; }
+
   const list = projects.filter(p =>
     (showHidden || !isEffectivelyHidden(p)) &&
-    (!fDev  || fDev.includes(p.dev || '')) &&
+    (!fDev  || fDev.includes(p.dev || _rollupDev(p) || '')) &&
     (!fSt   || fSt.includes(p.status)) &&
     (!fAsg  || fAsg.includes(p.assignee || '')) &&   // Stage 2: assignee parity (sole classic touch; no-op when fAsg null)
     (!fProd || fProd.includes(p.product || '')) &&
@@ -4977,7 +5021,7 @@ function render(){
     const map = {};
     list.forEach(p => {
       let k;
-      if(groupBy==='developer')      k = p.dev || 'Unassigned';
+      if(groupBy==='developer')      k = p.dev || _rollupDev(p) || 'Unassigned';   // PARENT-ROLLUP-1: place an unscoped parent under its dominant child pod
       else if(groupBy==='assignee')  k = p.assignee ? displayName(p.assignee) : 'Unassigned';
       else if(groupBy==='product')   k = p.product || 'No space';   // GANTT-GROUP-1: align with the List
       else if(groupBy==='type')      k = p.type || 'No type';         // GANTT-GROUP-1
@@ -5116,6 +5160,38 @@ function render(){
         // hasChildren: check both within-group childMap AND all projects globally
         const hasChildren = !!childMap[p.id] || projects.some(x => x.parent === p.id);
         const parentCollapsed = collapsedParents[p.id];
+
+        // PARENT-ROLLUP-1: an unscoped parent draws a DERIVED, dashed bar from its children (display only)
+        // instead of the normal phase bars. It reads _rollupOf (which returns null for own-dated parents
+        // and non-parents), assigns NOTHING to p, and returns before the phase engine - so capacity, which
+        // reads the item's stored start/dev, can never see any of this.
+        const _ru = _rollupOf(p);
+        if(_ru && !isChild){
+          const _pc = collapsedParents[p.id];
+          const _caret = hasChildren ? `<button class="caret-btn" data-parent="${p.id}" title="${_pc?'Expand':'Collapse'} children">${_caretSvg(_pc)}</button>` : '';
+          const _tchip = _ru.multiPod ? `<span class="rollup-team" title="Children span multiple teams; placed under the pod with the most">${esc(_ru.teamLabel)}</span>` : '';
+          const _stBadge = _ru.status ? `<span class="sbadge ${statusCls(_ru.status)}">${esc(_ru.status)}</span>` : `<span class="sbadge" style="opacity:.5">-</span>`;
+          const _ds=parseD(_ru.start), _dd=_ru.due?nextMonday(parseD(_ru.due)):null;
+          const _schedTxt = _dd ? _dd.toLocaleDateString('en-US',{timeZone:MT_TZ,month:'short',day:'numeric'}) : '-';
+          lRows += `<div class="left-row rollup-row" data-id="${p.id}">
+            <span class="proj-name" title="${escA(p.name)}">${(()=>{const ic=typeIconHTML(p.type);return ic?ic+' ':'';})()}${esc(p.name)}${_tchip}</span>
+            ${priorityDot(p.priority)}
+            ${_stBadge}
+            <span class="sched-date muted-sched">${_schedTxt}</span>
+            ${_caret}
+          </div>`;
+          let _bar;
+          if(_ds && _dd){
+            _bar = `<div class="bar derived" data-id="${p.id}" title="Inferred from children (display only)" style="left:${px(_ds).toFixed(1)}px;width:${pxW(_ds,_dd).toFixed(1)}px"></div>`;
+            if(_ru.release){ const _rl=parseD(_ru.release); if(_rl) _bar += `<div class="plane-marker" data-id="${p.id}" title="All children released: ${fmtD(_rl)}" style="left:${px(_rl).toFixed(1)}px">${PLANE_SVG}</div>`; }
+          } else {
+            _bar = `<span class="rollup-noschedule" title="No schedule - children have no dates yet">no schedule</span>`;   // Decision 4: deliberate marker, not an empty lane
+          }
+          cH += `<div class="chart-row rollup-row" style="width:${totalPx}px">${wCells}<div class="bar-layer">${_bar}</div></div>`;
+          rowPositions[p.id] = { rowIndex, midY: 50 + rowIndex*38 + 19, startPx: _ds?px(_ds):null, endPx: _dd?px(_dd):null };
+          rowIndex++;
+          return;
+        }
 
         const s=parseD(p.start);
         const d=nextMonday(parseD(p.due));
