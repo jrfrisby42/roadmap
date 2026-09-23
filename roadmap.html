@@ -4383,7 +4383,7 @@ function buildCapacityUsageMap(){
     if(!window._capDetailMap[owner]) window._capDetailMap[owner] = {};
 
     const parallel  = roundUpToQuarter(p.parallelResources ?? 1);
-    const testWks   = parseFloat(p.testWeeks ?? 2) || 0;
+    const testWks   = parseFloat(p.testWeeks) || 0;   // TESTWEEKS-ZERO-1: absent testWeeks means NO testing period (0), never an invented 2 - the dev bar fills to the due date
     const dueD      = nextMonday(parseD(p.due));
     const revisedD  = p.revised ? nextMonday(parseD(p.revised)) : null;
     const startD    = parseD(p.start);
@@ -4693,7 +4693,7 @@ function itemCapacityOnDay(p, dateObj){
   const startD  = parseD(p.start);
   const dueD    = nextMonday(parseD(p.due));
   if(!startD || !dueD) return 0;
-  const testWks = parseFloat(p.testWeeks ?? 2) || 0;
+  const testWks = parseFloat(p.testWeeks) || 0;   // TESTWEEKS-ZERO-1: absent -> 0 (no test phase), not an invented 2. A real 0 and an absent value behave identically, which is correct.
   const devEndD = testWks > 0 ? nextMonday(addDays(dueD, -testWks * 7)) : dueD;
   const revisedD = p.revised ? nextMonday(parseD(p.revised)) : null;
   const finalEnd = (revisedD && revisedD > dueD) ? revisedD : dueD;
@@ -5123,7 +5123,7 @@ function render(){
         const e=parseD(p.expected);
         const rl=parseD(p.releaseDate);
         const hasDelay = s && d && r && r > d;
-        const testWeeks = p.testWeeks ?? 2;
+        const testWeeks = parseFloat(p.testWeeks) || 0;   // TESTWEEKS-ZERO-1: absent -> 0 (solid dev bar to due, no blue test hatch and no "code:" label before the item starts)
         const testDays  = testWeeks * 7;
         const parallel  = roundUpToQuarter(p.parallelResources ?? 1);
         const isParallel = parallel > 1;
@@ -5840,7 +5840,7 @@ function parentWorkEnd(p){
   // With delay: testStart = revised - testWks (testing is last segment of delayed bar)
   // No delay:   testStart = due - testWks
   if(!p) return null;
-  const tw = (p.testWeeks ?? 2);
+  const tw = parseFloat(p.testWeeks) || 0;   // TESTWEEKS-ZERO-1: absent -> 0 testing weeks (no test segment)
   const getDue = () => {
     if(p.start && p.dueWeeks){
       const s = parseD(p.start); if(!s) return null;
@@ -13599,11 +13599,11 @@ function renderKanban(){
         const r = nextMonday(parseD(p.revised));
         const e = parseD(p.expected);
         const barEnd = (d && r && r > d) ? r : d;
-        const tw = p.testWeeks ?? 2;
+        const tw = parseFloat(p.testWeeks) || 0;   // TESTWEEKS-ZERO-1: absent -> 0 (this var is currently unused here; kept aligned so no stray ?? 2 default lingers)
         const sched = barEnd;
         if(sched) return sched.toLocaleDateString('en-US',{month:'short',day:'numeric'});
         if(e) return e.toLocaleDateString('en-US',{month:'short',day:'numeric'});
-        if(p.dueWeeks) return `${(p.dueWeeks||0)+(p.testWeeks||2)}wk`;
+        if(p.dueWeeks) return `${(p.dueWeeks||0)+(parseFloat(p.testWeeks)||0)}wk`;   // TESTWEEKS-ZERO-1: absent test weeks add 0 to the estimate
         return '';
       })();
       const isLocked = isLockedActive(p);
@@ -14404,7 +14404,7 @@ function buildTooltipHTML(p){
   const d = nextMonday(parseD(p.due));
   const r = nextMonday(parseD(p.revised));
   const hasDelay = d && r && r > d;
-  const testWeeks = p.testWeeks ?? 2;
+  const testWeeks = parseFloat(p.testWeeks) || 0;   // TESTWEEKS-ZERO-1: absent -> 0 (no test phase)
   const pr = roundUpToQuarter(p.parallelResources ?? 1);
   const isParallel = pr > 1;
   const scheduledDate = (hasDelay && r) ? r : d;
@@ -15166,7 +15166,7 @@ function planningCard(p, rank, isDeferred, isApproved=false, isSprint=false, isA
   const jiraBadge = jiraCount ? `<span style="font-size:9px;background:rgba(0,82,204,0.08);color:#0052cc;padding:1px 6px;border-radius:8px;font-weight:700;white-space:nowrap">${jiraCount === 1 ? esc(p.jiraTickets[0]) : jiraCount + ' tickets'}</span>` : '';
 
   // Code Complete badge (only when testWeeks > 0 and has a due date)
-  const ccTestWks = p.testWeeks ?? 2;
+  const ccTestWks = parseFloat(p.testWeeks) || 0;   // TESTWEEKS-ZERO-1: absent -> 0, so no Code Complete badge when there is no test period (was showing a date before the start)
   const ccDue = parseD(p.due);
   const ccRevised = parseD(p.revised);
   const ccEffEnd = (ccRevised && ccDue && ccRevised > ccDue) ? ccRevised : ccDue;
@@ -17809,7 +17809,7 @@ function renderItemPage(p){
   ].join('');
 
   // Code Complete date (effective end minus test weeks - accounts for delay)
-  const ipTestWks = p.testWeeks ?? 2;
+  const ipTestWks = parseFloat(p.testWeeks) || 0;   // TESTWEEKS-ZERO-1: absent -> 0 (no code-complete date shown for a no-test item)
   const ipEffEnd = (revD && dueD && revD > dueD) ? revD : dueD;
   const ipCodeComplete = (ipTestWks > 0 && ipEffEnd) ? addDays(ipEffEnd, -ipTestWks * 7) : null;
 
