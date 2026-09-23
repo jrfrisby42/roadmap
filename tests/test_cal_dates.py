@@ -202,8 +202,9 @@ def test_timeline_markers_and_rows():
     b = _fn_body("_calTimeline")
     assert "frz-cal-tl-mile" in b
     assert "frz-cal-chip-item" in b                    # click-through on the marker
-    # a user with a milestone but no assignment still earns a row
-    assert "_calUserItems(o.owner, u.user).length" in b
+    # a user with a milestone but no assignment still earns a row (CAL-DATES-2 refined this to a
+    # window check so an out-of-window qualifying item no longer forces an empty row)
+    assert "_calUserItems(o.owner, u.user).some" in b
     # invariant: timeline still adds NO ticket/span chips for items (thin markers only, no bars)
     assert "_calTicketChip" not in b
 
@@ -220,7 +221,7 @@ def test_css_present():
     h = _html()
     assert ".frz-beta .frz-cal-mile {" in h
     assert ".frz-beta .frz-cal-tl-mile {" in h
-    assert "body.dark-mode .frz-beta .frz-cal-mile-ho" in h        # amber needs a dark remap
+    assert "body.dark-mode .frz-beta { --frz-mile" in h            # CAL-DATES-2: dark handling is token-based now
 
 
 # ── Invariants: availability builders + no write path ───────────────────────────

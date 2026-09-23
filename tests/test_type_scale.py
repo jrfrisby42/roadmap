@@ -25,7 +25,11 @@ TOKENS = {
 }
 
 # The exact single-glyph / icon line-height counts Phase 1 must not disturb (guard baseline).
-LH1_COUNT = 47
+# 49 (was 47): CAL-DATES-1 (6.54.0) added two intentional single-glyph icon sites - the milestone
+# badge glyph (.frz-cal-mile-g) and the timeline marker head (.frz-cal-tl-mile-h) - both correct
+# icon geometry. The baseline was not bumped then (a `pytest | tail` pipeline masked the failing
+# exit code on that deploy); it is corrected here. CAL-DATES-2 adds zero new line-height:1 sites.
+LH1_COUNT = 49
 LH0_COUNT = 5
 
 
