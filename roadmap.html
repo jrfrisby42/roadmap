@@ -2811,7 +2811,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.56.0';
+const APP_VERSION = '6.56.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -14798,8 +14798,12 @@ function initSearch(){
 function itemMatchesSearch(p, query){
   if(!query) return true;
   // Match the FTS5 search semantics: item key + name + description, multi-term AND.
+  // JIRA-LOOKUP-1 (2.3): the linked Jira key(s) also join the haystack so a pasted key filters the
+  // Gantt/Kanban to the item, matching the top-bar lookup. Additive - ordinary text matching is
+  // unchanged (jiraTickets only ever ADDS matches; it never removes an existing text match).
   const hay = ((p.itemKey || '') + ' ' + (p.name || '') + ' ' +
-               (p.description || '').replace(/<[^>]*>/g, '')).toLowerCase();
+               (p.description || '').replace(/<[^>]*>/g, '') + ' ' +
+               ((p.jiraTickets || []).join(' '))).toLowerCase();
   return query.toLowerCase().split(/\s+/).filter(Boolean).every(t => hay.includes(t));
 }
 
@@ -21465,6 +21469,8 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-search-results { position:absolute; top:calc(100% + 5px); right:0; width:340px; max-width:70vw; background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:8px; box-shadow:0 10px 30px rgba(20,40,63,.18); max-height:360px; overflow-y:auto; z-index:60; }
   .frz-beta .frz-search-res { display:flex; align-items:center; gap:8px; padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--frz-border); }
   .frz-beta .frz-search-res:last-child { border-bottom:0; }
+  /* JIRA-LOOKUP-1: header above a multi-match Jira-key result list */
+  .frz-beta .frz-search-hd { padding:6px 12px; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; color:var(--frz-text-muted); background:var(--frz-bg-app); border-bottom:1px solid var(--frz-border); font-family:ui-monospace,Menlo,monospace; }
   .frz-beta .frz-search-res:hover, .frz-beta .frz-search-res.is-active { background:var(--frz-bg-app); }
   .frz-beta .frz-search-empty { padding:11px 12px; font-size:12px; color:var(--frz-text-muted); }
   /* Stage 2: project-color dot (single source: projectColor); never tints key text */
@@ -27573,20 +27579,68 @@ if ('serviceWorker' in navigator) {
     if(_searchGlobal()){ fs.placeholder='Search items…'; fs.value=''; }
     else { fs.placeholder='Filter items…'; var prod=document.getElementById('itemSearch'); fs.value=(prod&&prod.value)||''; }
   }
+  // JIRA-LOOKUP-1: one Jira key in, the linked Flow item out. Resolved in memory against projects[]
+  // (no schema, no backfill, no server call - Option B). See _frzResolveJira for the primary rule.
+  // Valid prefixes come from the Org's project mapping VALUES (not a hardcoded pattern), so an Org with
+  // no mapping yields none and the lookup never triggers - the data's absence is its own gate (ungated).
+  function _frzJiraPrefixes(){
+    var m = window._jiraProjectMappingData || {}, s = {};
+    Object.keys(m).forEach(function(k){ var v=(m[k]||'').toString().trim().toUpperCase(); if(v) s[v]=1; });
+    return s;
+  }
+  // Detect a Jira-key-shaped query: a pasted /browse/ URL, or a bare KEY-123 whose prefix is configured
+  // and which is the WHOLE query (so an embedded key never hijacks an ordinary text search). Case- and
+  // whitespace-tolerant (people paste). Returns the normalized uppercase KEY or null.
+  function _frzJiraKeyFromQuery(q){
+    q=(q||'').trim(); if(!q) return null;
+    var mu=q.match(/\/browse\/([A-Za-z][A-Za-z0-9_]*-\d+)/);   // pasted Jira browse URL
+    if(mu) return mu[1].toUpperCase();
+    var mk=q.match(/^([A-Za-z][A-Za-z0-9_]*)-(\d+)$/);          // bare KEY-123, whole query only
+    if(mk && _frzJiraPrefixes()[mk[1].toUpperCase()]) return (mk[1]+'-'+mk[2]).toUpperCase();
+    return null;
+  }
+  // Resolve a Jira key to Flow item(s). Hidden synced-children are set aside (they are not what a person
+  // pasting a key wants). Primary rule (J.R.: my recommendation): a SINGLE non-hidden match -> jump; 0 or
+  // >=2 -> a short list (visible ones if any, else the hidden ones), most-recent first. id desc is the
+  // recency proxy (the in-memory blob carries no updated_ts). Returns {jump:id} | {list:[...]} | null.
+  function _frzResolveJira(key){
+    var all=(_val('projects',[])||[]).filter(function(p){
+      return (p.jiraTickets||[]).some(function(k){ return String(k).toUpperCase()===key; });
+    });
+    if(!all.length) return null;
+    var vis=all.filter(function(p){ return !p.hidden; });
+    if(vis.length===1) return {jump: vis[0].id};
+    var list=(vis.length?vis:all).slice().sort(function(a,b){ return (b.id||0)-(a.id||0); });
+    return {list:list};
+  }
+  function _frzSearchRowHtml(it){
+    return '<div class="frz-search-res" data-id="'+it.id+'">'+
+      (_call('typeIconHTML',it.type,{size:15})||'')+
+      (it.itemKey?'<span style="font-family:monospace;font-size:11px;color:var(--frz-text-muted);flex-shrink:0">'+esc(it.itemKey)+'</span>':'')+
+      '<span style="font-size:13px;color:var(--frz-text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.name||'Untitled')+'</span>'+
+      '<span style="font-size:11px;color:var(--frz-text-muted);flex-shrink:0">'+esc(it.status||'')+'</span>'+
+    '</div>';
+  }
   function frzGlobalSearch(q){
     var box=document.getElementById('frzSearchResults'); if(!box) return;
     q=(q||'').trim();
     if(!q){ box.hidden=true; box.innerHTML=''; return; }
+    // JIRA-LOOKUP-1: a pasted Jira key (or browse URL) jumps to, or lists, the linked Flow item(s).
+    var jkey=_frzJiraKeyFromQuery(q);
+    if(jkey){
+      var res=_frzResolveJira(jkey);
+      if(res && res.jump){ _frzSearchJump(res.jump); return; }
+      if(res && res.list){
+        box.innerHTML='<div class="frz-search-hd">'+esc(jkey)+' · '+res.list.length+' linked items</div>'+
+          res.list.map(_frzSearchRowHtml).join('');
+        box.hidden=false; return;
+      }
+      // key detected but nothing linked -> fall through to the text search (the key may appear in text)
+    }
     API.get('/api/items?q='+encodeURIComponent(q)+'&page_size=8&sort=updated_ts:desc').then(function(data){
       var items=(data&&data.items)||[];
-      box.innerHTML = items.length ? items.map(function(it){
-        return '<div class="frz-search-res" data-id="'+it.id+'">'+
-          (_call('typeIconHTML',it.type,{size:15})||'')+
-          (it.itemKey?'<span style="font-family:monospace;font-size:11px;color:var(--frz-text-muted);flex-shrink:0">'+esc(it.itemKey)+'</span>':'')+
-          '<span style="font-size:13px;color:var(--frz-text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(it.name||'Untitled')+'</span>'+
-          '<span style="font-size:11px;color:var(--frz-text-muted);flex-shrink:0">'+esc(it.status||'')+'</span>'+
-        '</div>';
-      }).join('') : '<div class="frz-search-empty">No matches for "'+esc(q)+'"</div>';
+      box.innerHTML = items.length ? items.map(_frzSearchRowHtml).join('')
+        : '<div class="frz-search-empty">No matches for "'+esc(q)+'"</div>';
       box.hidden=false;
     }).catch(function(){ box.hidden=true; });
   }
