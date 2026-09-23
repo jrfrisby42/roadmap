@@ -88,15 +88,23 @@ def test_overdue_uses_mt_key_not_raw_date():
     assert "new Date(" not in b          # must not compare against a raw Date at the day boundary
 
 
-def test_overdue_excludes_terminal_and_handoff():
+def test_overdue_excludes_terminal():
     b = _fn_body("_calMileOverdue")
     assert "isTerminalStatus(p.status)" in b      # nothing completed renders red (invariant)
-    assert "kind==='handoff'" in b and "return false" in b   # handoff reserved for J.R.'s decision
+
+
+def test_overdue_handoff_enabled_uses_handoff_date():
+    # J.R. enabled handoff overdue: a slipped handoff is judged against the handoff date, due/collapsed
+    # against the effective due (revised folded into m.due). No early handoff short-circuit remains.
+    b = _fn_body("_calMileOverdue")
+    assert "kind==='handoff') ? m.handoff : m.due" in b
+    assert "kind==='handoff') return false" not in b
 
 
 def test_overdue_uses_revised_due():
     b = _fn_body("_calMileOverdue")
-    # m.due already folds revised-wins-over-due, so overdue is judged against the effective due date
+    # m.due already folds revised-wins-over-due, so a due/collapsed badge is judged against the
+    # effective due date
     assert "_calItemMilestones(p)" in b and "m.due" in b
 
 

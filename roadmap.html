@@ -25045,16 +25045,18 @@ if ('serviceWorker' in navigator) {
     var handoff = tw>0 ? nextMonday(addDays(effDue, -tw*7)) : effDue;
     return { handoff:handoff, due:effDue, collapsed:(tw<=0) };
   }
-  // CAL-DATES-2: a DUE badge is overdue when its date is in the past (MT day-key, so the <= boundary
-  // lands at Mountain midnight - never a raw new Date()) and the item is not terminal. Terminal items
-  // are already excluded upstream (_calItemQualifies); this re-check is belt-and-suspenders so nothing
-  // completed can ever render red. HANDOFF overdue is deliberately NOT applied here - it is reserved
-  // for J.R.'s decision (Part 2); flipping it on is a one-line change in this helper.
+  // CAL-DATES-2: a badge is overdue when its milestone date is in the past (MT day-key, so the <
+  // boundary lands at Mountain midnight - never a raw new Date()) and the item is not terminal.
+  // Terminal items are already excluded upstream (_calItemQualifies); this re-check is belt-and-
+  // suspenders so nothing completed can ever render red. HANDOFF overdue is ENABLED (J.R.'s decision,
+  // Part 2): a slipped handoff is judged against the handoff date, a due/collapsed badge against the
+  // effective due date (revised already folded into m.due). So a passed handoff can go red while its
+  // still-future due stays blue.
   function _calMileOverdue(p, kind){
-    if(kind==='handoff') return false;                 // reserved (recommendation in the report)
     if(isTerminalStatus(p.status)) return false;
     var m=_calItemMilestones(p); if(!m) return false;
-    return _ymdLocal(m.due) < _frzTodayMTKey();        // revised already folded into m.due
+    var mdate = (kind==='handoff') ? m.handoff : m.due;
+    return _ymdLocal(mdate) < _frzTodayMTKey();
   }
   // CAL-DATES-2: does a qualified item have a handoff or due landing inside the displayed window?
   // (Used when the Availability layer is off, to show only the rows/users that actually carry a badge.)
