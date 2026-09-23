@@ -53,6 +53,27 @@ def _today_mt_key(now_utc=None):
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(_MT_ZONE).date().isoformat()
 
+def _mt_day_from_iso(iso):
+    """RELEASE-DATE-1: an ISO timestamp with an offset (e.g. Jira's resolutiondate) -> Mountain-Time
+    'YYYY-MM-DD'. Uses the SAME America/Denver zone as _today_mt_key - never a naive slice - so a
+    resolution at 11pm UTC lands on the correct Mountain day. Handles Jira's colon-less offset (-0600)
+    and a trailing Z. Returns None on blank/unparseable input."""
+    s = (iso or "").strip().replace("Z", "+00:00")
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        if len(s) >= 5 and s[-5] in "+-" and s[-3] != ":":   # -0600 -> -06:00
+            s = s[:-2] + ":" + s[-2:]
+        try:
+            dt = datetime.fromisoformat(s)
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_MT_ZONE).date().isoformat()
+
 # ── Litestream backup config (multi-tenant SQLite -> S3) ──────────────────────
 # Flow stores one SQLite DB per team (/data/tenants/{team}/roadmap.db) and teams are
 # created at runtime, but Litestream needs every DB enumerated in its config. These
@@ -1761,7 +1782,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.55.0"
+APP_VERSION = "6.55.1"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -10872,7 +10893,7 @@ def _jira_search_all(jql: str, fields: str, cap: int = 2000) -> list:
 
 # Widened fetch (Stage 4 needs labels/assignee/description/dates/project to CONSTRUCT items; the search
 # and the ancestry walk both fetch this set so the plan already carries everything a create needs).
-_PULL_FETCH_FIELDS = "summary,status,issuetype,parent,created,labels,assignee,description,duedate,customfield_10025,project,customfield_10010"  # customfield_10010 = Sprint (list); JIRA-SPRINT-1 Stage 3 rides it free
+_PULL_FETCH_FIELDS = "summary,status,issuetype,parent,created,labels,assignee,description,duedate,customfield_10025,project,customfield_10010,resolution,resolutiondate"  # customfield_10010 = Sprint (list, JIRA-SPRINT-1 Stage 3); resolution+resolutiondate = RELEASE-DATE-1 (Done-only releaseDate). All ride the call the pull already makes.
 
 def _filter_pull_candidates(issues: list, flow_keys: set):
     """Drop issues Flow already references (PRESENCE only - never assume the mapped id is 'the' item,
@@ -11103,6 +11124,16 @@ def _pull_context(team):
     return {"type_rev": type_rev, "status_eff": status_eff, "overlay": overlay,
             "proj_rev": proj_rev, "pods": pods, "assignee_map": amap, "released": released}
 
+def _release_date_from_fields(f):
+    """RELEASE-DATE-1: the MT-day releaseDate a Jira issue's fields imply, or None. DONE-ONLY (J.R.'s
+    decision): resolutiondate fires on any resolution incl. Won't Do / Duplicate, and stamping a release
+    date on abandoned work is worse than blank - so we stamp only when resolution == 'Done'. `updated` is
+    never used (comments/labels/sprint moves push it past the real resolution)."""
+    f = f or {}
+    if ((f.get("resolution") or {}).get("name") or "") != "Done":
+        return None
+    return _mt_day_from_iso(f.get("resolutiondate"))
+
 def _construct_pull_item(issue, ctx, actor):
     """Build a Flow item dict from a Jira issue. Returns (item, meta) or (None, {skip:...}) when the Jira
     TYPE is unmapped (skip and report - never invent a type). Status is left "" when unmapped so the insert
@@ -11138,6 +11169,7 @@ def _construct_pull_item(issue, ctx, actor):
         "description": desc_html,
         "start": f.get("customfield_10025") or "",        # Jira "Start date", snapshot
         "due": f.get("duedate") or "",                    # snapshot
+        "releaseDate": _release_date_from_fields(f) or "", # RELEASE-DATE-1: Done-only resolutiondate at create (6.53.1 only ever caught post-create transitions)
         "jiraTickets": [jkey],
         "jiraSource": _PULL_JIRA_SOURCE,
         "reporter": actor,
@@ -11289,10 +11321,19 @@ def _refresh_one_pulled(current, issue, ctx, all_statuses, today=None):
         if mapped != cur_status and _status_rank(mapped, all_statuses) > _status_rank(cur_status, all_statuses):
             current["status"] = mapped
             changed["status"] = (cur_status, mapped)
-            # CLEANUP-1 Item 1: transition INTO a released status, set-once -> observed release date.
-            if today and mapped in (ctx.get("released") or set()) and not current.get("releaseDate"):
-                current["releaseDate"] = today
-                changed["releaseDate"] = ("", today)
+    # RELEASE-DATE-1: set releaseDate ONCE. Jira's Done resolutiondate wins where present (the accurate
+    # fact, and it works even without a transition this run). The CLEANUP-1 6.53.1 observed-transition
+    # stamp is KEPT as the FALLBACK for the case Jira has no resolutiondate but Flow watched the move into
+    # a released status this run (the recon found 4 terminal items with no resolutiondate, so the case is
+    # real, not dead code). Set-once: an existing releaseDate is never overwritten.
+    if not current.get("releaseDate"):
+        _jrd = _release_date_from_fields(f)
+        if _jrd:
+            current["releaseDate"] = _jrd
+            changed["releaseDate"] = ("", _jrd)
+        elif today and "status" in changed and changed["status"][1] in (ctx.get("released") or set()):
+            current["releaseDate"] = today
+            changed["releaseDate"] = ("", today)
     pod, reason = _jira_pull_pod(f.get("labels"), ctx["pods"])
     if reason == "matched":
         cur_pod = current.get("dev", "")
@@ -11434,6 +11475,111 @@ def jira_pull_now(body: dict = Body({}), auth: dict = Depends(require_role("admi
             "createdCount": create.get("createdCount", 0), "refreshedCount": refresh.get("changed", 0),
             "sprintsMirrored": (sprint_mirror or {}).get("mirrored", 0),
             "membershipChanged": (sprint_membership or {}).get("changed", 0)}
+
+# ── RELEASE-DATE-1: one-time backfill of releaseDate from Jira's Done resolutiondate ──────────────────
+def _jira_backfill_release_dates(team, actor, dry=False):
+    """One-time, idempotent, re-runnable backfill. Scope: terminal items with a Jira ticket and NO
+    releaseDate - PULLED and PUSHED. Writing releaseDate to a pushed (non-jiraSource) item is a STATED
+    exception to "never modify a non-jiraSource item" (exactly as sprint membership was); every pushed
+    write is counted + audited. DONE-ONLY (skips Won't Do / Duplicate / unresolved). Never overwrites an
+    existing releaseDate. App write path (_save_project), and the item's updated_ts is PRESERVED so a few
+    hundred backfilled items do not churn "Recent". No notifications, no activity. Failure discipline:
+      - a SEARCH failure aborts with ZERO writes (a Jira outage leaves no partial state);
+      - a per-ITEM failure skips that one and continues.
+    Audits run AFTER the write txn closes (write_audit opens its own connection; a second writer nested in
+    the still-open txn self-deadlocks - the Stage-4 Phase-A trap)."""
+    if not jira_configured():
+        raise HTTPException(503, "Jira not configured")
+    with db(team) as c:
+        rows = c.execute("SELECT id, data, updated_ts FROM projects ORDER BY id").fetchall()
+    cand, no_ticket = [], 0
+    for r in rows:
+        p = json.loads(r["data"])
+        if not _is_terminal(p.get("status") or "", team):
+            continue
+        if p.get("releaseDate"):
+            continue
+        t = (p.get("jiraTickets") or [None])[0]
+        if not t:
+            no_ticket += 1
+            continue
+        cand.append((r["id"], t, p.get("jiraSource") == _PULL_JIRA_SOURCE, r["updated_ts"]))
+    base = {"ready": True, "dryRun": dry, "candidates": len(cand), "noTicket": no_ticket,
+            "toWrite": 0, "toWritePulled": 0, "toWritePushed": 0,
+            "skippedNotDone": 0, "skippedNoDate": 0, "written": 0, "pulled": 0, "pushed": 0,
+            "skippedNowHasDate": 0, "errors": 0}
+    if not cand:
+        return base
+    keys = sorted({t for _, t, _, _ in cand})
+    issue_by_key = {}
+    for i in range(0, len(keys), 90):
+        chunk = keys[i:i + 90]
+        jql = "key in (" + ", ".join(chunk) + ")"
+        try:
+            for iss in _jira_search_all(jql, _PULL_FETCH_FIELDS):
+                issue_by_key[iss.get("key")] = iss
+        except Exception as e:
+            log.warning(f"[RelDateBackfill] search failed, aborting with zero writes: {e}")
+            return {**base, "aborted": True, "reason": f"Jira search failed: {e}"}
+    plan = []   # (pid, jkey, is_pulled, updated_ts, rdate)
+    for pid, jkey, is_pulled, uts in cand:
+        iss = issue_by_key.get(jkey)
+        if not iss:
+            base["skippedNoDate"] += 1   # ticket not returned (deleted/moved)
+            continue
+        f = iss.get("fields") or {}
+        if ((f.get("resolution") or {}).get("name") or "") != "Done":
+            base["skippedNotDone"] += 1
+            continue
+        rd = _mt_day_from_iso(f.get("resolutiondate"))
+        if not rd:
+            base["skippedNoDate"] += 1
+            continue
+        plan.append((pid, jkey, is_pulled, uts, rd))
+    base["toWrite"] = len(plan)
+    base["toWritePulled"] = sum(1 for x in plan if x[2])
+    base["toWritePushed"] = sum(1 for x in plan if not x[2])
+    if dry:
+        return base
+    audits = []
+    with db(team) as c:
+        for pid, jkey, is_pulled, uts, rd in plan:
+            try:
+                cur = c.execute("SELECT data, updated_ts FROM projects WHERE id=?", (pid,)).fetchone()
+                if not cur:
+                    continue
+                p = json.loads(cur["data"])
+                if not _is_terminal(p.get("status") or "", team):   # re-check in txn
+                    continue
+                if p.get("releaseDate"):                            # never overwrite (idempotent re-run)
+                    base["skippedNowHasDate"] += 1
+                    continue
+                p["releaseDate"] = rd
+                _save_project(c, pid, p, cur["updated_ts"])         # preserve updated_ts; only releaseDate changes
+                base["written"] += 1
+                if is_pulled:
+                    base["pulled"] += 1
+                else:
+                    base["pushed"] += 1
+                audits.append((pid, p.get("name", ""), jkey, rd, is_pulled))
+            except Exception as e:
+                base["errors"] += 1
+                log.warning(f"[RelDateBackfill] item {pid} ({jkey}) failed (skipped): {e}")
+    for pid, name, jkey, rd, is_pulled in audits:
+        try:
+            write_audit(team, "release-date:backfill", actor, pid, name,
+                        changes={"releaseDate": rd, "jiraKey": jkey,
+                                 "jiraSource": (_PULL_JIRA_SOURCE if is_pulled else "pushed-exception")})
+        except Exception as e:
+            log.warning(f"[RelDateBackfill] audit write failed for {jkey}: {e}")
+    return base
+
+@app.post("/api/jira/backfill-release-dates")
+def jira_backfill_release_dates(body: dict = Body({}), auth: dict = Depends(require_role("admin"))):
+    """RELEASE-DATE-1: one-time idempotent backfill of releaseDate from Jira's Done resolutiondate over
+    terminal items with a ticket and no releaseDate (pulled + pushed - pushed is a stated exception,
+    counted + audited). {dryRun?: bool} reports the write plan without writing. Admin only. No notifications."""
+    return _jira_backfill_release_dates(auth["team"], auth["username"], dry=bool((body or {}).get("dryRun")))
 
 # ── JIRA-PULL-1 Stage 6: parent hierarchy ────────────────────────────────────────────────────────────
 # Set `parent` on pulled items so the Jira hierarchy survives into Flow. Same invariant as Stage 5: only
