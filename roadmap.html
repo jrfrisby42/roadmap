@@ -2818,7 +2818,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.57.0';
+const APP_VERSION = '6.58.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -4934,10 +4934,27 @@ function render(){
   const _kidsByParent = {};
   projects.forEach(c => { const pr=c.parent; if(pr!=null && pr!=='') (_kidsByParent[pr]=_kidsByParent[pr]||[]).push(c); });
   const _rollupCache = {};
+  // PARENT-ROLLUP-2 Defect B: gather a parent's TRANSITIVE descendants (bottom-up), so an Epic's dated
+  // grandchildren reach its Roadmap Item. The `seen` set is the cycle guard - a malformed A->B->A parent
+  // chain terminates because a node is never revisited (Stage 6's _pull_would_cycle should keep the data
+  // acyclic, but the walk protects itself rather than trusting that). Depth-agnostic (3 levels exist today).
+  function _rollupDescendants(pid, seen){
+    seen = seen || new Set();
+    let out = [];
+    (_kidsByParent[pid] || []).forEach(c => {
+      if(seen.has(c.id)) return;                            // cycle guard
+      seen.add(c.id); out.push(c);
+      out = out.concat(_rollupDescendants(c.id, seen));
+    });
+    return out;
+  }
   function _computeRollup(p){
-    const kids = _kidsByParent[p.id];
-    if(!kids || !kids.length) return null;
+    if(!(_kidsByParent[p.id] && _kidsByParent[p.id].length)) return null;
     if(p.start && p.due) return null;                       // own-dated -> untouched (Decision 5)
+    const kids = _rollupDescendants(p.id);                  // Defect B: whole subtree, not just direct children
+    if(!kids.length) return null;
+    // Defect A (real cause was the render gate, not this math): undated descendants are skipped, never
+    // poisoning the min/max - filter(Boolean) drops them, so a mix of dated + undated still derives a span.
     const starts = kids.map(c=>c.start).filter(Boolean).sort();
     const dues   = kids.map(c=>c.revised||c.due).filter(Boolean).sort();   // revised wins over due
     // status: lowest (least-progressed) child status by the `statuses` order, EXCLUDING off-flow and the
@@ -5166,14 +5183,18 @@ function render(){
         // and non-parents), assigns NOTHING to p, and returns before the phase engine - so capacity, which
         // reads the item's stored start/dev, can never see any of this.
         const _ru = _rollupOf(p);
-        if(_ru && !isChild){
+        // PARENT-ROLLUP-2 Defect A: draw the derived branch even when the parent is itself a child (a
+        // mid-tier Epic under a Roadmap Item). The old `!isChild` gate skipped those, so an Epic with
+        // dated children drew nothing at all. _ru is non-null ONLY for an unscoped parent, so a scoped
+        // child or a leaf still falls through to the normal render.
+        if(_ru){
           const _pc = collapsedParents[p.id];
           const _caret = hasChildren ? `<button class="caret-btn" data-parent="${p.id}" title="${_pc?'Expand':'Collapse'} children">${_caretSvg(_pc)}</button>` : '';
           const _tchip = _ru.multiPod ? `<span class="rollup-team" title="Children span multiple teams; placed under the pod with the most">${esc(_ru.teamLabel)}</span>` : '';
           const _stBadge = _ru.status ? `<span class="sbadge ${statusCls(_ru.status)}">${esc(_ru.status)}</span>` : `<span class="sbadge" style="opacity:.5">-</span>`;
           const _ds=parseD(_ru.start), _dd=_ru.due?nextMonday(parseD(_ru.due)):null;
           const _schedTxt = _dd ? _dd.toLocaleDateString('en-US',{timeZone:MT_TZ,month:'short',day:'numeric'}) : '-';
-          lRows += `<div class="left-row rollup-row" data-id="${p.id}">
+          lRows += `<div class="left-row rollup-row${isChild?' child-row':''}" data-id="${p.id}">
             <span class="proj-name" title="${escA(p.name)}">${(()=>{const ic=typeIconHTML(p.type);return ic?ic+' ':'';})()}${esc(p.name)}${_tchip}</span>
             ${priorityDot(p.priority)}
             ${_stBadge}
