@@ -2818,7 +2818,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.58.0';
+const APP_VERSION = '6.58.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -28739,7 +28739,7 @@ if ('serviceWorker' in navigator) {
       var s2=document.getElementById('frzBlSearch'); if(s2) s2.focus();
     });
   }
-  function _blSearchMatch(p){ if(!_blSearch) return true; var q=_blSearch.toLowerCase(); return (((p.itemKey||'')+' '+(p.name||'')).toLowerCase().indexOf(q) >= 0); }
+  function _blSearchMatch(p){ if(!_blSearch) return true; var q=_blSearch.toLowerCase(); return (((p.itemKey||'')+' '+(p.name||'')+' '+((p.jiraTickets||[]).join(' '))).toLowerCase().indexOf(q) >= 0); }   // PLANNING-JIRA-SEARCH-1: linked Jira key(s) join the haystack (filter only, substring - a pasted FRAZ-9199 or a partial 9199 both match; ordinary text unchanged)
   function _blUnprioritized(p){ return !(p.priority && PRIO_LBL[p.priority]); }   // no visible priority label
   // M1 1c: muted parent crumb for a parented backlog item (truncated, title tooltip).
   function _parentCrumb(p){
@@ -29905,7 +29905,7 @@ if ('serviceWorker' in navigator) {
     }
     function render(){
       var q=(searchEl.value||'').trim().toLowerCase();
-      var shown=cands.filter(function(p){ if(!q) return true; return String(p.name||'').toLowerCase().indexOf(q)>=0 || String(p.itemKey||'').toLowerCase().indexOf(q)>=0; });
+      var shown=cands.filter(function(p){ if(!q) return true; return String(p.name||'').toLowerCase().indexOf(q)>=0 || String(p.itemKey||'').toLowerCase().indexOf(q)>=0 || (p.jiraTickets||[]).join(' ').toLowerCase().indexOf(q)>=0; });   // PLANNING-JIRA-SEARCH-1: release-pane search also matches the linked Jira key(s) (filter only)
       listEl.innerHTML = shown.length ? shown.map(rowHtml).join('') : '<div class="frz-plan-empty">No matching items.</div>';
       listEl.querySelectorAll('[data-rpid]').forEach(function(cb){ cb.addEventListener('change', function(){ var id=cb.getAttribute('data-rpid'); if(cb.checked) sel[id]=true; else delete sel[id]; updateBtn(); }); });
     }
