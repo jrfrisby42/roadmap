@@ -89,7 +89,7 @@ def test_placement_in_filter_and_grouping():
 def test_render_branch_draws_derived_or_marker():
     h = _html()
     assert "const _ru = _rollupOf(p);" in h
-    assert "if(_ru && !isChild){" in h
+    assert "if(_ru){" in h                             # PARENT-ROLLUP-2: mid-tier parents (isChild) now draw too
     assert 'class="bar derived"' in h
     assert "rollup-noschedule" in h                          # Decision 4 empty marker
     assert "statusCls(_ru.status)" in h                      # derived status badge
