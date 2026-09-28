@@ -1765,14 +1765,20 @@ def _check_rate_limit(ip: str, message: str = None):
 # ── Audit logging ─────────────────────────────────────────────────────────────
 def write_audit(team: str, action: str, username: str = "", project_id=None,
                 project_name: str = "", changes: dict = None):
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     with db(team) as c:
-        c.execute(
-            "INSERT INTO audit_log(ts,username,action,project_id,project_name,changes)"
-            " VALUES(?,?,?,?,?,?)",
-            (ts, username or "unknown", action,
-             project_id, project_name, json.dumps(changes) if changes else None)
-        )
+        _write_audit_c(c, action, username, project_id, project_name, changes)
+
+def _write_audit_c(c, action: str, username: str = "", project_id=None,
+                   project_name: str = "", changes: dict = None):
+    """write_audit on an OPEN connection, so the row commits atomically with the caller's txn. Use this
+    (not write_audit) from inside a write txn - write_audit opens a second writer, which self-deadlocks."""
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    c.execute(
+        "INSERT INTO audit_log(ts,username,action,project_id,project_name,changes)"
+        " VALUES(?,?,?,?,?,?)",
+        (ts, username or "unknown", action,
+         project_id, project_name, json.dumps(changes) if changes else None)
+    )
 
 def _audit_actor(requested, auth):
     """Resolve the attribution/actor for a mutation. A client may request ONLY the
@@ -9730,6 +9736,35 @@ def _get_all_jira_tickets(team: str) -> dict:
             mapping[t] = r["id"]
     return mapping
 
+# ── JIRA-DEDUPE-1: keys a Jira-creating path must never create again ────────────────────────────────
+# Two duplicate sources on development (2026-09-28): (1) two pulls racing across the gunicorn workers
+# (every admin tab runs its own pull timer) both saw a key as absent and both inserted it (FRZ-1033/1034);
+# (2) a user UNLINKED the key from a pulled item and the next pull, no longer seeing it in Flow, created it
+# again (FRZ-1025 -> FRZ-1026). The rule (J.R.): a key the pull has EVER created is never pulled again -
+# not after an unlink, not after a delete. The durable record is the pull's own `jira:pull-create` audit
+# rows (audit_log is never pruned, and it lives in the same team DB), so no new state is needed.
+def _jira_keys_in_flow(c) -> set:
+    """Every Jira key any item references, read on THIS connection (so inside a write txn it sees rows a
+    concurrent run just committed, and rows this run inserted but has not committed)."""
+    keys = set()
+    for r in c.execute("SELECT data FROM projects"):
+        for k in (json.loads(r["data"]).get("jiraTickets") or []):
+            if k:
+                keys.add(k)
+    return keys
+
+def _jira_keys_pulled_before(c) -> set:
+    """Every Jira key the pull has ever created an item for, from its `jira:pull-create` audit rows."""
+    keys = set()
+    for r in c.execute("SELECT changes FROM audit_log WHERE action='jira:pull-create'"):
+        try:
+            k = (json.loads(r["changes"] or "{}") or {}).get("jiraKey")
+        except (TypeError, ValueError):
+            k = None
+        if k:
+            keys.add(k)
+    return keys
+
 # ── Jira Metadata (for Team Settings) ────────────────────────────────────────
 @app.get("/api/jira/projects")
 def list_jira_projects(auth: dict = Depends(require_role("admin"))):
@@ -9870,6 +9905,26 @@ def create_jira_issue(body: dict = Body(...),
     result = _jira_req("POST", "/rest/api/3/issue", payload)
     new_key = result.get("key","")
     if not new_key: raise HTTPException(500, "Jira did not return an issue key")
+
+    # JIRA-DEDUPE-1: link the new key onto the item HERE, server-side, the moment Jira returns it. It used
+    # to be linked only by the client's follow-up PUT; if that PUT failed (stale edit, 422, closed tab) the
+    # Jira issue existed with no Flow item pointing at it, and the next pull imported it as a second item.
+    # updated_ts is preserved so the client's next guarded edit does not 409 against this write; the
+    # client's own PUT still runs and carries the same jiraTickets list. Best-effort: a failure here is
+    # logged and the client PUT remains the fallback (never fail the call after the Jira issue exists).
+    if item_id:
+        try:
+            with db(team) as c:
+                c.execute("BEGIN IMMEDIATE")
+                row = c.execute("SELECT data, updated_ts FROM projects WHERE id=?", (item_id,)).fetchone()
+                if row:
+                    p = json.loads(row["data"])
+                    tix = list(p.get("jiraTickets") or [])
+                    if new_key not in tix:
+                        p["jiraTickets"] = tix + [new_key]
+                        _save_project(c, item_id, p, row["updated_ts"])
+        except Exception as e:
+            log.warning(f"[Jira] server-side link of {new_key} to item {item_id} failed (client PUT is the fallback): {e}")
 
     # Add remote link back to roadmap item
     if item_id:
@@ -10424,10 +10479,21 @@ def _do_sync_children(pid: int, p: dict, team: str, username: str) -> dict:
                     "recurrence_parent": pid,
                     "hidden":            True,   # hidden by default - review before showing on roadmap
                 }
+                # JIRA-DEDUPE-1: the dedupe above only sees THIS parent's children, so a sub-issue already
+                # in Flow elsewhere (a pulled item, a previous occurrence's child, a manual link) was copied
+                # again - the 2026-04-20 burst on development. Refuse any key ANY item holds, checked under
+                # the write lock so a concurrent sync on the other worker cannot slip in between.
                 with db(team) as c:
-                    child_id = _insert_project(c, child)
-                    _save_project(c, child_id, {**child, "id": child_id})
+                    c.execute("BEGIN IMMEDIATE")
+                    if sub_key in _jira_keys_in_flow(c):
+                        child_id = None
+                    else:
+                        child_id = _insert_project(c, child)
+                        _save_project(c, child_id, {**child, "id": child_id})
                 existing_jira_keys.add(sub_key)
+                if child_id is None:
+                    skipped_count += 1
+                    continue
                 created_ids.append(child_id)
                 write_audit(team, "create", username, child_id, sub_summary,
                             changes={"jiraChild": sub_key, "syncedFrom": pid,
@@ -10947,7 +11013,12 @@ def _jira_compute_candidates(team: str):
     bound = _pull_floor_to_jql_bound(floor, tz)
     jql = _jira_pull_jql(bound, pull_types, project_keys, sprint_ids)
     issues = _jira_search_all(jql, _PULL_FETCH_FIELDS)
-    flow_keys = set(_get_all_jira_tickets(team))          # built ONCE per run
+    # JIRA-DEDUPE-1: "already in Flow" = referenced by an item now OR ever pull-created (an unlinked or
+    # deleted pulled item is never re-created). This read is the PLAN only; jira_pull re-checks both sets
+    # inside its write txn, which is what actually stops a racing run.
+    with db(team) as c:
+        pulled_before = _jira_keys_pulled_before(c)
+    flow_keys = set(_get_all_jira_tickets(team)) | pulled_before   # built ONCE per run
     candidates, already = _filter_pull_candidates(issues, flow_keys)
     return {"ready": True, "candidates": candidates, "flowKeys": flow_keys,
             "pullTypes": pull_types, "projectKeys": project_keys, "floor": floor,
@@ -11243,21 +11314,32 @@ def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))
         return {"ready": True, "dryRun": True, "planCount": len(plan_issues),
                 "wouldCreate": len(plan_issues) - len(skipped), "skipped": skipped, "fieldSummary": agg}
     # WRITE: one transaction; construct + insert each via the app's insert path (no notify hook fires).
-    audits = []
     with db(team) as c:
+        # JIRA-DEDUPE-1: take the write lock BEFORE deciding what is new. A second pull (the other gunicorn
+        # worker, another admin tab's timer, the button) blocks here until this txn commits, then re-reads
+        # and sees these rows - so two runs can never both insert a key. The plan above was computed
+        # outside any txn and may be stale; the sets below are the authority.
+        c.execute("BEGIN IMMEDIATE")
+        taken = _jira_keys_in_flow(c) | _jira_keys_pulled_before(c)
         for issue in plan_issues:
             item, meta = _construct_pull_item(issue, ctx, actor)
             if item is None:
                 skipped.append(meta); continue
-            if item["jiraTickets"][0] in core["flowKeys"]:
-                skipped.append({"key": meta["key"], "skip": "already-in-flow"}); continue   # belt-and-suspenders
+            jkey = item["jiraTickets"][0]
+            if jkey in taken:
+                skipped.append({"key": meta["key"], "skip": "already-in-flow"}); continue
+            taken.add(jkey)                               # also dedupes a key repeated within this plan
             _assign_item_key(c, item)
             item["id"] = _insert_project(c, item)         # mutates item: stamps default status if "" + itemKey above
             _tally(meta, item.get("status") or "(Org default)")
             created.append({"key": meta["key"], "id": item["id"], "itemKey": item.get("itemKey"),
                             "product": item["product"], "type": item["type"], "status": item.get("status"),
                             "dev": item["dev"], "assignee": item["assignee"]})
-            audits.append((item["id"], item["name"], meta["key"], item["type"]))
+            # JIRA-DEDUPE-1: the pull-create audit row IS the never-re-pull record, so it commits in THIS
+            # txn with the item (on this connection - no second writer). Previously best-effort after the
+            # txn; a lost row would have let an unlinked item be re-created.
+            _write_audit_c(c, "jira:pull-create", actor, item["id"], item["name"],
+                           changes={"jiraKey": meta["key"], "type": item["type"], "jiraSource": _PULL_JIRA_SOURCE})
         # Stage 6 (2.1): set `parent` on the newly-created items as a LINK PASS after all inserts, still in
         # this txn. key2id is built from the connection so it sees the rows just inserted - so a child
         # constructed before its parent in the same run still resolves (the ancestry walk pulls parent and
@@ -11268,15 +11350,8 @@ def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))
             issue_by_key = {i.get("key"): i for i in plan_issues}
             targets = [(cr["id"], cr["key"]) for cr in created]
             parent_audits, parent_counts = _apply_pull_parents(c, targets, issue_by_key, key2id, pulled_ids, actor)
-    # Audits AFTER the insert transaction closes: write_audit opens its OWN db connection, and nesting a
-    # second writer inside the still-open insert transaction self-deadlocks (SQLite = one writer). Best
-    # effort - a failed audit never unwinds a committed create (mirrors _do_sync_children's audit-after).
-    for pid, name, jkey, itype in audits:
-        try:
-            write_audit(team, "jira:pull-create", actor, pid, name,
-                        changes={"jiraKey": jkey, "type": itype, "jiraSource": _PULL_JIRA_SOURCE})
-        except Exception as e:
-            log.warning(f"[JiraPull] audit write failed for {jkey}: {e}")
+    # Parent audits AFTER the insert transaction closes: write_audit opens its OWN db connection, and
+    # nesting a second writer inside the still-open txn self-deadlocks (SQLite = one writer).
     _write_parent_audits(team, actor, parent_audits)   # Stage 6: parent-link audits, also after the txn
     # CLEANUP-1 Item 2: cross-run parent linking. The Stage-6 pass above links the NEW items' parents
     # (same-run ordering). This links any EXISTING flat pulled item whose parent has since arrived in a
