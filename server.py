@@ -5467,6 +5467,7 @@ def delete_project(pid: int, username: str = "",
         c.execute("DELETE FROM activities WHERE item_id=?", (pid,))
         c.execute("DELETE FROM item_assets WHERE item_id=?", (pid,))   # FLOW-1: drop reverse-lookup rows
         c.execute("DELETE FROM item_departments WHERE item_id=?", (pid,))   # drop department filter-index rows
+        c.execute("DELETE FROM watchers WHERE item_id=?", (pid,))   # ACT-NOISE-2: was missed (16 orphan rows on development)
         c.execute("DELETE FROM projects WHERE id=?", (pid,))
         _fts_delete(c, pid)
     write_audit(team, "delete", username, pid, name)
@@ -8717,8 +8718,31 @@ def _insert_activity(body: dict, team: str) -> dict:
     # re-raised it straight back into the queue.
     is_rule = (body.get("source") == "System" and activity_type in SYSTEM_RULE_TYPES
                and item_id is not None)
+    # ACT-NOISE-2: a Capacity Conflict is identified by its team (owner) + the set of conflicting items
+    # (the client's groupKey, sent as note) - NOT by item_id, which is just the first item in the set. Keying
+    # it on item_id merged two different conflicts that shared a first item, overwrote the stored groupKey
+    # with the message, and the client then auto-cleared + re-created the row every load (941 Auto-Cleared
+    # rows on development). Matched here, the row is refreshed in place (no ts bump, note kept), and a
+    # Dismissed one for the same team + item set stays quiet for RULE_ALERT_SNOOZE_DAYS.
+    cap_key = activity_type == "Capacity Conflict" and body.get("note")
     with db(team) as c:
-        if activity_type and item_id is not None:
+        if cap_key:
+            c.execute("BEGIN IMMEDIATE")
+            owner = body.get("owner", "")
+            existing = c.execute(
+                "SELECT id FROM activities WHERE activity_type='Capacity Conflict' AND owner=? AND note=?"
+                " AND status IN ('Open','Read') LIMIT 1", (owner, cap_key)).fetchone()
+            if existing:
+                c.execute("UPDATE activities SET message=?, new_value=?, previous_value=? WHERE id=?",
+                          (body.get("message", ""), body.get("new_value"), body.get("previous_value"), existing["id"]))
+                return dict(c.execute("SELECT * FROM activities WHERE id=?", (existing["id"],)).fetchone())
+            closed = c.execute(
+                "SELECT * FROM activities WHERE activity_type='Capacity Conflict' AND owner=? AND note=?"
+                " AND status='Dismissed' ORDER BY id DESC LIMIT 1", (owner, cap_key)).fetchone()
+            closed_at = _parse_any_ts(closed["resolved_ts"]) if closed else None
+            if closed_at and (datetime.now(timezone.utc) - closed_at).total_seconds() <= RULE_ALERT_SNOOZE_DAYS * 86400:
+                return dict(closed)
+        elif activity_type and item_id is not None:
             c.execute("BEGIN IMMEDIATE")
             existing = c.execute(
                 "SELECT id FROM activities WHERE activity_type=? AND item_id=? AND status IN ('Open','Read') LIMIT 1",

@@ -133,3 +133,62 @@ def test_concurrent_rule_posts_converge_on_one_row(client, team, admin_headers):
     for t in threads: t.join()
     assert not errors
     assert len(_open_rows(team, pid)) == 1
+
+
+# ── ACT-NOISE-2: Capacity Conflict identity = team + item set, not the first item ─────────────────────
+def _cap(client, headers, item_id, group, owner="Wasatch", message="over"):
+    return client.post("/api/activities", headers=headers, json={
+        "activity_type": "Capacity Conflict", "source": "System", "item_id": item_id, "owner": owner,
+        "item_name": f"{owner} capacity conflict", "note": group, "message": message,
+        "previous_value": "[]", "new_value": "a, b", "status": "Open"}).json()
+
+
+def _open_caps(team):
+    with server.db(team) as c:
+        return [dict(r) for r in c.execute(
+            "SELECT * FROM activities WHERE activity_type='Capacity Conflict' AND status IN ('Open','Read')").fetchall()]
+
+
+def test_capacity_conflicts_sharing_a_first_item_stay_separate(client, team, admin_headers):
+    pid = _mk(client, admin_headers)
+    a = _cap(client, admin_headers, pid, f"{pid},900")
+    b = _cap(client, admin_headers, pid, f"{pid},901")
+    assert a["id"] != b["id"]
+    assert {r["note"] for r in _open_caps(team)} == {f"{pid},900", f"{pid},901"}
+
+
+def test_capacity_repost_refreshes_in_place_keeping_its_group_key(client, team, admin_headers):
+    pid = _mk(client, admin_headers)
+    a = _cap(client, admin_headers, pid, "1,2", message="old")
+    _set(team, "UPDATE activities SET created_ts=? WHERE id=?", ("2026-05-01 00:00:00 UTC", a["id"]))
+    b = _cap(client, admin_headers, pid, "1,2", message="new")
+    assert b["id"] == a["id"] and b["note"] == "1,2" and b["message"] == "new"
+    assert b["created_ts"] == "2026-05-01 00:00:00 UTC"
+    assert len(_open_caps(team)) == 1
+
+
+def test_same_item_set_for_another_team_is_its_own_conflict(client, team, admin_headers):
+    pid = _mk(client, admin_headers)
+    a = _cap(client, admin_headers, pid, "1,2", owner="Wasatch")
+    b = _cap(client, admin_headers, pid, "1,2", owner="Uinta")
+    assert a["id"] != b["id"]
+
+
+def test_dismissed_capacity_conflict_is_not_re_raised_for_the_same_set(client, team, admin_headers):
+    pid = _mk(client, admin_headers)
+    a = _cap(client, admin_headers, pid, "1,2")
+    _close(client, admin_headers, a["id"], "Dismissed")
+    assert _cap(client, admin_headers, pid, "1,2")["id"] == a["id"]
+    assert _open_caps(team) == []
+    c = _cap(client, admin_headers, pid, "1,2,3")            # a different set is a new conflict
+    assert c["id"] != a["id"] and c["status"] == "Open"
+
+
+def test_delete_item_removes_its_watchers(client, team, admin_headers):
+    pid = _mk(client, admin_headers)
+    assert client.post(f"/api/items/{pid}/watch", headers=admin_headers).status_code == 200
+    with server.db(team) as c:
+        assert c.execute("SELECT COUNT(*) FROM watchers WHERE item_id=?", (pid,)).fetchone()[0] == 1
+    assert client.delete(f"/api/projects/{pid}", headers=admin_headers).status_code == 200
+    with server.db(team) as c:
+        assert c.execute("SELECT COUNT(*) FROM watchers WHERE item_id=?", (pid,)).fetchone()[0] == 0

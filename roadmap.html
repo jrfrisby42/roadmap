@@ -7629,7 +7629,7 @@ function openCapacityConflictsScreen(){
 }
 
 async function ignoreConflictActivity(id){
-  const a = activities.find(x=>x.id===id);
+  const a = _acFind(id);
   if(!a) return;
   // Parse item IDs from the activity's previous_value (JSON array of IDs)
   try {
@@ -7641,7 +7641,7 @@ async function ignoreConflictActivity(id){
 }
 
 function viewConflictingItems(id){
-  const a = activities.find(x=>x.id===id);
+  const a = _acFind(id);
   if(!a) return;
   closeActivityCenter();
   setTimeout(()=>{ openCapacityConflictsScreen(); }, 300);
@@ -11346,6 +11346,13 @@ async function loadActivities(){
   updateActivityBadge();
 }
 
+// ACT-NOISE-2: Activity Center action handlers look a row up by id. The Open tab renders from the uncapped
+// _openActs, so a row aged out of the capped `activities` window was not found there and e.g. "Ignore
+// Conflict" silently did nothing. Look in both.
+function _acFind(id){
+  return activities.find(x=>x.id===id) || (_openActs || []).find(x=>x.id===id);
+}
+
 function openActivities(){
   // ACT-WINDOW-1: sourced from the uncapped open set, not the latest-500 `activities` window.
   const scope = isEditor ? getCurrentOwnerFilter() : null;
@@ -11896,23 +11903,40 @@ async function runAutoNotifications(){
   const openSet = _openActs;
   const RULE_DATE_CHECK_DAYS = 7;   // Needs Date Check: only when the due date is this close (or past)
 
+  const openByItem = new Map();
+  for(const a of (openSet || [])){
+    if(a.status !== 'Open' && a.status !== 'Read') continue;
+    if(!openByItem.has(a.item_id)) openByItem.set(a.item_id, []);
+    openByItem.get(a.item_id).push(a);
+  }
+  // ACT-NOISE-2: an item the rules no longer evaluate (finished, hidden, excluded status/space, no dates)
+  // used to be skipped BEFORE the auto-clear step, so an alert raised while it was in flight stayed open
+  // forever once it shipped (12 open Needs Date Check on Released items on development). Clear its System
+  // rule alerts instead. User-raised alerts are never touched.
+  const clearStranded = (p, why) => {
+    for(const a of (openByItem.get(p.id) || [])){
+      if(a.source !== 'System') continue;
+      if(!['At Risk','Needs Decision','Needs Date Check'].includes(a.activity_type)) continue;
+      API.put('/api/activities/'+a.id, {status:'Auto-Cleared', action_taken:'Auto-cleared: '+why, resolved_by:'System'}).catch(()=>{});
+    }
+  };
+
   for(const p of (openSet === null ? [] : projects)){
-    if(p.hidden) continue;
-    if(isTerminalStatus(p.status)) continue;
-    if(statusIgnoreConflicts[p.status]) continue;
-    if(productIgnoreConflicts[p.product]) continue;
-    if(!p.start) continue;
+    if(p.hidden){ clearStranded(p, 'item is hidden'); continue; }
+    if(isTerminalStatus(p.status)){ clearStranded(p, 'item is finished'); continue; }
+    if(statusIgnoreConflicts[p.status] || productIgnoreConflicts[p.product]){ clearStranded(p, 'status or space is excluded from alerts'); continue; }
+    if(!p.start){ clearStranded(p, 'item has no start date'); continue; }
 
     const start = parseD(p.start);
     const projEnd = conflictEndDate(p) || parseD(p.expected) || parseD(p.due);
-    if(!start || !projEnd) continue;
+    if(!start || !projEnd){ clearStranded(p, 'item has no schedule'); continue; }
 
     const duePlain    = nextMonday(parseD(p.due));
     const revisedPlain = nextMonday(parseD(p.revised));
     const due = (revisedPlain && revisedPlain > duePlain) ? revisedPlain : duePlain;
 
     // Check for existing open notifications for this item
-    const existing = openSet.filter(a => a.item_id===p.id && (a.status==='Open'||a.status==='Read'));
+    const existing = openByItem.get(p.id) || [];
     const hasAtRisk         = existing.some(a=>a.activity_type==='At Risk' && a.source==='System');
     const hasDateCheck      = existing.some(a=>a.activity_type==='Needs Date Check');
     const hasTestingRisk    = existing.some(a=>a.activity_type==='At Risk' && a.source==='System' && a.message?.includes('testing period'));
@@ -12052,7 +12076,11 @@ async function runAutoNotifications(){
 
 // ── CAPACITY CONFLICT ACTIVITY GENERATION ────────────────────────────────────
 async function runCapacityConflictNotifications(){
-  if(!activities.length) await loadActivities();
+  if(!activities.length || _openActs === null) await loadActivities();
+  // ACT-NOISE-2: match + auto-clear against the UNCAPPED open set, not the latest-500 window (an aged-out
+  // open conflict was neither found - so re-posted - nor auto-cleared). No open set -> do nothing.
+  if(_openActs === null) return;
+  const openSet = _openActs;
 
   // Phase 5: use computeOwnerConflictDays (phased units, override-aware capacity)
   const ownerConflictGroups = {}; // { owner: { spans, groupKey } }
@@ -12105,7 +12133,7 @@ async function runCapacityConflictNotifications(){
       const { items, start, end, maxUnits, groupKey } = span;
       processedGroupKeys.add(`${owner}::${groupKey}`);
 
-      const existingAct = activities.find(a =>
+      const existingAct = openSet.find(a =>
         a.activity_type === 'Capacity Conflict' &&
         a.owner === owner &&
         (a.status === 'Open' || a.status === 'Read') &&
@@ -12135,7 +12163,7 @@ async function runCapacityConflictNotifications(){
   }
 
   // Auto-clear resolved conflict activities
-  const openConflictActs = activities.filter(a =>
+  const openConflictActs = openSet.filter(a =>
     a.activity_type === 'Capacity Conflict' && (a.status === 'Open' || a.status === 'Read')
   );
   for(const a of openConflictActs){
@@ -14238,7 +14266,7 @@ async function markActivitiesRead(){
 function renderResolveDropdown(a){
   const type = a.activity_type;
   // ACT-NOISE-1: a dismissed System rule alert is snoozed server-side (_rule_alert_snoozed), so it sticks.
-  const snoozable = a.source === 'System' && ['At Risk','Needs Decision','Needs Date Check'].includes(type);
+  const snoozable = a.source === 'System' && ['At Risk','Needs Decision','Needs Date Check','Capacity Conflict'].includes(type);
   let actions = [];
   if(type === 'At Risk' || type === 'Flagged Issue'){
     // Editors: only Accept Risk and Flag Item; Admins: full set
@@ -14355,7 +14383,7 @@ async function dismissActivity(id){
 }
 
 async function acceptRisk(id){
-  const a = activities.find(x=>x.id===id);
+  const a = _acFind(id);
   await API.put('/api/activities/'+id, {status:'Resolved', action_taken:'Accepted Risk', resolved_by: getUsername()});
   if(a?.item_id) logActionOnItem(a.item_id, a.item_name||'', a.owner||'', a.project||'',
     `Risk accepted by ${getUsername()}`, null, null);
@@ -14363,7 +14391,7 @@ async function acceptRisk(id){
 }
 
 async function confirmDates(id){
-  const a = activities.find(x=>x.id===id);
+  const a = _acFind(id);
   await API.put('/api/activities/'+id, {status:'Resolved', action_taken:'Confirmed Dates', resolved_by: getUsername()});
   if(a?.item_id) logActionOnItem(a.item_id, a.item_name||'', a.owner||'', a.project||'',
     `Dates confirmed by ${getUsername()}`, null, null);
@@ -14371,7 +14399,7 @@ async function confirmDates(id){
 }
 
 function inlineUpdateExpected(id){
-  const a = activities.find(x=>x.id===id);
+  const a = _acFind(id);
   if(!a) return;
   const container = document.getElementById(`acInline_${id}`) || (() => {
     const el = document.createElement('div');
@@ -14388,7 +14416,7 @@ function inlineUpdateExpected(id){
 }
 
 async function applyExpectedDate(id){
-  const a = activities.find(x=>x.id===id);
+  const a = _acFind(id);
   const dateVal = document.getElementById(`acExpDate_${id}`)?.value;
   if(!dateVal || !a) return;
   const p = projects.find(x=>x.id===a.item_id);
@@ -14406,7 +14434,7 @@ async function applyExpectedDate(id){
 }
 
 function inlineDueDateChange(id){
-  const a = activities.find(x=>x.id===id);
+  const a = _acFind(id);
   if(!a) return;
   const container = document.getElementById(`acInline_${id}`) || (() => {
     const el = document.createElement('div');
@@ -14437,7 +14465,7 @@ function applyInlineDueDate(id, offsetDays){
 }
 
 async function applyInlineDueDateConfirm(id){
-  const a = activities.find(x=>x.id===id);
+  const a = _acFind(id);
   const dateVal = document.getElementById(`acDueDate_${id}`)?.value;
   if(!dateVal || !a) return;
   const p = projects.find(x=>x.id===a.item_id);
@@ -14453,7 +14481,7 @@ async function applyInlineDueDateConfirm(id){
 }
 
 function inlineChangeOwner(id){
-  const a = activities.find(x=>x.id===id);
+  const a = _acFind(id);
   if(!a) return;
   const container = document.getElementById(`acInline_${id}`) || (() => {
     const el = document.createElement('div');
@@ -14473,7 +14501,7 @@ function inlineChangeOwner(id){
 }
 
 async function applyOwnerChange(id){
-  const a = activities.find(x=>x.id===id);
+  const a = _acFind(id);
   const newOwner = document.getElementById(`acOwner_${id}`)?.value;
   if(!newOwner || !a) return;
   const p = projects.find(x=>x.id===a.item_id);
