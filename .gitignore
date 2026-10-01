@@ -42,3 +42,16 @@ Thumbs.db
 # PWA icon previews (regenerable via tools/gen_pwa_icons.py; bytes live in server.py)
 tools/preview/
 
+
+# Local working material (kept on disk, not versioned)
+completed prompts/
+hold prompts/
+docs/
+screenshots/
+spike.html
+spike-sanitize.html
+design/Flow Object Rosetta.html
+design/Flow Object Rosetta_files/
+design/flow-item-modal-mockup.html
+design/phase0-pitch-and-interview-kit.md
+design/type-scale-migration.md
