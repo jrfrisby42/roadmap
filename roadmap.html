@@ -11362,10 +11362,36 @@ function openActivities(){
   });
 }
 
+// ── AC-AUDIENCE-1: who an Activity Center alert is FOR ─────────────────────────
+// J.R. 2026-10-01: admins get every alert; everyone else gets the alerts on items ASSIGNED to them
+// (a Capacity Conflict counts if any of its conflicting items is theirs). This drives the bell's
+// Activity Center section, the badges, what "opening the AC" marks Read, and the panel's default
+// "Mine" view (with an "All" toggle). The team-wide work-queue consumers (Dashboard tiles, Planning
+// at-risk bucket, sys_atrisk view, indicator dots) deliberately keep openActivities().
+let _acShowAll = false;   // panel toggle for non-admins; reset to Mine each time the panel opens
+function _acIsMine(a, byId){
+  const me = getUsername();
+  const mine = id => { const p = byId.get(id); return !!(p && me && p.assignee === me); };
+  if(a.activity_type === 'Capacity Conflict'){
+    let ids = []; try { ids = JSON.parse(a.previous_value || '[]'); } catch(e){}
+    return (Array.isArray(ids) ? ids : []).some(mine) || mine(a.item_id);
+  }
+  return a.item_id != null && mine(a.item_id);
+}
+function _acMineFilter(list){
+  if(isAdmin) return list;
+  const byId = new Map(projects.map(p => [p.id, p]));
+  return list.filter(a => _acIsMine(a, byId));
+}
+function myActivities(){ return _acMineFilter(openActivities()); }
+function _acPanelActs(){ return (isAdmin || _acShowAll) ? openActivities() : myActivities(); }
+function _acSetShowAll(v){ _acShowAll = !!v; renderAcOpen(); updateActivityBadge(); }
+
 // updateActivityBadge defined below (unread-only version)
 
 function openActivityCenter(){
   closeHamburger();
+  _acShowAll = false;   // AC-AUDIENCE-1: non-admins always land on "Mine"
   loadActivities().then(()=>{
     markActivitiesRead();
     renderAcOpen();
@@ -11438,7 +11464,7 @@ function renderAcOpen(){
   // Sort: user-generated first (by severity then newest), system-generated at bottom (newest)
   const isSystemActivity = a => a.source === 'System' || a.created_by === 'System';
   const projScope = window._acProjectScope || '';   // set by /beta from the rail project (item 6); empty = all
-  let items = openActivities()
+  let items = _acPanelActs()
     .filter(a => !ownerFilter || a.owner === ownerFilter)
     .filter(a => !projScope || a.project === projScope)
     .sort((a,b) => {
@@ -11451,14 +11477,33 @@ function renderAcOpen(){
       return new Date(b.created_ts) - new Date(a.created_ts);
     });
 
+  // AC-AUDIENCE-1: non-admins choose Mine / All. Counts honour the same project scope as the list.
+  let scopeBar = '';
+  let mineN = 0, allN = 0;
+  if(!isAdmin){
+    const inScope = a => (!ownerFilter || a.owner === ownerFilter) && (!projScope || a.project === projScope);
+    mineN = myActivities().filter(inScope).length;
+    allN  = openActivities().filter(inScope).length;
+    const pill = (on, label, v) => `<button onclick="_acSetShowAll(${v})" aria-pressed="${on}" style="padding:4px 12px;border-radius:14px;border:1px solid ${on?'var(--accent)':'var(--border)'};background:${on?'var(--accent)':'var(--surface)'};color:${on?'#fff':'var(--text)'};font-size:12px;font-weight:700;cursor:pointer;font-family:'Lato',sans-serif">${label}</button>`;
+    scopeBar = `<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+      ${pill(!_acShowAll, `Assigned to me (${mineN})`, false)}${pill(_acShowAll, `All (${allN})`, true)}</div>`;
+  }
+
+  if(!items.length && !isAdmin && !_acShowAll && allN > 0){
+    pane.innerHTML = scopeBar + `<div style="text-align:center;padding:40px 20px;color:var(--muted)">
+      <strong>Nothing assigned to you needs attention</strong>
+      <div style="margin-top:10px"><button onclick="_acSetShowAll(true)" style="padding:6px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer">Show all (${allN})</button></div></div>`;
+    return;
+  }
+
   if(!items.length){
-    pane.innerHTML = `<div style="text-align:center;padding:48px 20px;color:var(--muted)">
+    pane.innerHTML = scopeBar + `<div style="text-align:center;padding:48px 20px;color:var(--muted)">
       <div style="margin-bottom:12px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0" style='color:#22b96e;display:block;margin:0 auto'><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
       <strong>All clear - no open items</strong></div>`;
     return;
   }
 
-  pane.innerHTML = items.map(a => {
+  pane.innerHTML = scopeBar + items.map(a => {
     const color = AC_STATUS_COLOR[a.activity_type] || '#888';
     const isUnread = a.status === 'Open';
     const newBadge = isUnread ? `<span style="font-size:9px;background:#22b96e;color:#fff;padding:2px 7px;border-radius:8px;font-weight:700;white-space:nowrap">NEW</span>` : '';
@@ -14217,10 +14262,12 @@ function unreadActivities(){
   // ACT-WINDOW-1: unread count is a work-queue signal, so it reads the uncapped open set, not the
   // latest-500 `activities` window (an unread Open activity aged out of that window was undercounted).
   const scope2 = isEditor ? getCurrentOwnerFilter() : null;
-  return (_openActs || []).filter(a => {
+  // AC-AUDIENCE-1: and to "mine" for non-admins, so the badge counts only their alerts and opening the AC
+  // marks only those Read (Read is shared, so a non-admin must not clear the admins' NEW markers).
+  return _acMineFilter((_openActs || []).filter(a => {
     if(scope2 && a.owner !== scope2) return false;
     return a.status === 'Open';
-  }); // unread = Open, scoped for editors
+  })); // unread = Open, scoped for editors
 }
 
 function updateActivityBadge(){
@@ -14243,7 +14290,7 @@ function updateActivityBadge(){
     // Match the scoped list (item 6): when /beta scopes the Activity Center to a
     // project, the count reflects only that project's open items.
     const projScope = window._acProjectScope || '';
-    const openN = openActivities().filter(a => !projScope || a.project === projScope).length;
+    const openN = _acPanelActs().filter(a => !projScope || a.project === projScope).length;   // AC-AUDIENCE-1: matches the list shown
     openEl.textContent = openN > 0 ? String(openN) : '';
   }
   // ACTIVITY-MERGE: the Flow shell now surfaces unread Activity Center items in the bell, so let it refresh
@@ -32953,7 +33000,7 @@ if ('serviceWorker' in navigator) {
     if(raw==null) return null;                                   // tri-state MUST stay: loading / cold-error -> nothing.
     // openActivities() returns [] for a null _openActs, which would read as "loaded and empty" - so the
     // null check above runs BEFORE delegating, or the loading state would wrongly render "Activity Center (0)".
-    return _call('openActivities') || [];
+    return _call('myActivities') || [];   // AC-AUDIENCE-1: admins all, everyone else their assigned items
   }
   function _frzBacklogCount(){ var a=_frzBacklogActs(); return a?a.length:0; }
   // BELL-1 title: the composition, so the meaning never depends on colour. Singulars kept; a zero half omitted.

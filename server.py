@@ -2134,17 +2134,29 @@ def _intake_notify_usernames(team: str, item: dict, pid) -> set:
             pass
     return targets
 
-def _intake_team_usernames(team: str) -> list:
-    """Triage roles to notify (in-app + Slack) about a NEW portal ticket: admins + editors. A
-    portal ticket has no assignee/owner yet, so 'the team' = the people who triage. Best-effort."""
+def _intake_team_usernames(team: str, roles=("admin", "editor")) -> list:
+    """Users holding one of `roles` (default the triage roles, admins + editors). Best-effort."""
     out = []
     try:
         for u in (_cfg_val(team, "users", []) or []):
             un = u.get("username")
-            if un and (u.get("role") in ("admin", "editor")):
+            if un and (u.get("role") in roles):
                 out.append(un)
     except Exception:
         pass
+    return out
+
+def _intake_new_ticket_usernames(team: str, item: dict) -> list:
+    """AC-AUDIENCE-1 (J.R. 2026-10-01): who gets the in-app bell for a NEW portal ticket. Admins always;
+    plus the ticket's assignee when it arrives with one. With NO assignee nobody owns it yet, so the
+    editors are included to triage it (the prior behaviour: admins + editors). The Slack channel post is
+    separate (one channel message per ticket) and unaffected."""
+    assignee = (item.get("assignee") or "").strip()
+    if not assignee:
+        return _intake_team_usernames(team)
+    out = _intake_team_usernames(team, roles=("admin",))
+    if assignee not in out:
+        out.append(assignee)
     return out
 
 def _intake_departments(team: str) -> list:
@@ -2443,7 +2455,7 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
         if _cfg_val(team, "intakeNotifyTeam", False):
             reporter = (item.get("reporter") or "").strip()
             msg = "New portal ticket: " + title + (f" (from {reporter})" if reporter else "")
-            _notify(team, _intake_team_usernames(team), "intake", item["id"], title, msg, "Portal")
+            _notify(team, _intake_new_ticket_usernames(team, item), "intake", item["id"], title, msg, "Portal")
     except Exception as e:
         log.warning(f"[Intake] team-notify hook failed for item {item.get('id')}: {e}")
     return {"ok": True, "itemKey": item.get("itemKey"), "id": item["id"],

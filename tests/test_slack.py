@@ -100,3 +100,31 @@ def test_intake_team_usernames_admins_editors(team, admin_headers, client):
     ], headers=admin_headers)
     got = set(server._intake_team_usernames(team))
     assert got == {"boss", "dev1"}   # admins + editors only
+
+
+# ── AC-AUDIENCE-1: new portal ticket bell = admins + assignee; no assignee -> admins + editors ──────────
+def _users(client, admin_headers):
+    client.put("/api/config/users", json=[
+        {"username": "boss", "role": "admin"},
+        {"username": "dev1", "role": "editor"},
+        {"username": "dev2", "role": "editor"},
+        {"username": "looker", "role": "viewer"},
+    ], headers=admin_headers)
+
+
+def test_new_ticket_with_assignee_notifies_admins_and_assignee_only(team, admin_headers, client):
+    _users(client, admin_headers)
+    got = set(server._intake_new_ticket_usernames(team, {"assignee": "dev2"}))
+    assert got == {"boss", "dev2"}          # dev1 (an unrelated editor) is no longer notified
+
+
+def test_new_ticket_without_assignee_falls_back_to_admins_and_editors(team, admin_headers, client):
+    _users(client, admin_headers)
+    assert set(server._intake_new_ticket_usernames(team, {"assignee": ""})) == {"boss", "dev1", "dev2"}
+    assert set(server._intake_new_ticket_usernames(team, {})) == {"boss", "dev1", "dev2"}
+
+
+def test_new_ticket_assigned_to_an_admin_is_not_doubled(team, admin_headers, client):
+    _users(client, admin_headers)
+    got = server._intake_new_ticket_usernames(team, {"assignee": "boss"})
+    assert sorted(got) == ["boss"]
