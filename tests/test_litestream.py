@@ -152,3 +152,37 @@ def test_init_team_db_accepts_a_precreated_wal_file(team):
         mode = c.execute("PRAGMA journal_mode").fetchone()[0]
     assert "projects" in tbls and "config" in tbls   # schema landed onto the pre-created file
     assert mode.lower() == "wal"                      # WAL mode preserved for the replica
+
+
+def test_retention_defaults_to_30_days_with_daily_snapshots(tmp_path, monkeypatch):
+    """LITESTREAM-RETENTION-1: Litestream 0.3.x defaults retention to 24h (no real history). Every
+    replica now carries 30 days of retention + a daily snapshot unless the env overrides it."""
+    tenants = tmp_path / "tenants"; tenants.mkdir()
+    _mk_team(str(tenants), "acme"); _mk_team(str(tenants), "globex")
+    cfg = tmp_path / "ls.yml"
+    monkeypatch.setenv("LITESTREAM_FLOW_CONFIG", str(cfg))
+    monkeypatch.setenv("LITESTREAM_S3_BUCKET", "b")
+    monkeypatch.delenv("LITESTREAM_RETENTION", raising=False)
+    monkeypatch.delenv("LITESTREAM_SNAPSHOT_INTERVAL", raising=False)
+    assert server.sync_litestream_config(tenants_dir=str(tenants), do_reload=False) is True
+    t = cfg.read_text()
+    assert t.count("        retention: 720h") == 2            # one per replica, replica-level indent
+    assert t.count("        snapshot-interval: 24h") == 2
+
+
+def test_retention_env_override_and_opt_out(tmp_path, monkeypatch):
+    tenants = tmp_path / "tenants"; tenants.mkdir()
+    _mk_team(str(tenants), "acme")
+    cfg = tmp_path / "ls.yml"
+    monkeypatch.setenv("LITESTREAM_FLOW_CONFIG", str(cfg))
+    monkeypatch.setenv("LITESTREAM_S3_BUCKET", "b")
+    monkeypatch.setenv("LITESTREAM_RETENTION", "168h")
+    monkeypatch.setenv("LITESTREAM_SNAPSHOT_INTERVAL", "6h")
+    assert server.sync_litestream_config(tenants_dir=str(tenants), do_reload=False) is True
+    t = cfg.read_text()
+    assert "retention: 168h" in t and "snapshot-interval: 6h" in t
+    monkeypatch.setenv("LITESTREAM_RETENTION", "")
+    monkeypatch.setenv("LITESTREAM_SNAPSHOT_INTERVAL", "")
+    assert server.sync_litestream_config(tenants_dir=str(tenants), do_reload=False) is True
+    t = cfg.read_text()
+    assert "retention:" not in t and "snapshot-interval:" not in t
