@@ -1788,7 +1788,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.58.2"
+APP_VERSION = "6.58.3"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -8658,6 +8658,37 @@ def get_activities(status: Optional[str] = None, auth: dict = Depends(require_au
             rows = [r for r in rows if r["item_id"] is None or r["item_id"] in readable]
     return [dict(r) for r in rows]
 
+# ACT-NOISE-1: System alerts raised by the client rules engine (runAutoNotifications). A re-post of one of
+# these is a re-evaluation of a standing condition, so _insert_activity never bumps it and honours a human close.
+SYSTEM_RULE_TYPES = ("At Risk", "Needs Decision", "Needs Date Check")
+RULE_ALERT_SNOOZE_DAYS = 14
+
+def _parse_any_ts(v):
+    """Parse an activity ts ('YYYY-MM-DD HH:MM:SS UTC') or an item updated_ts (isoformat) to aware UTC."""
+    if not v:
+        return None
+    s = str(v).strip()
+    if s.endswith(" UTC"):
+        s = s[:-4] + "+00:00"
+    try:
+        d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+def _rule_alert_snoozed(c, closed, item_id) -> bool:
+    """True while a human-closed rule alert should keep its condition quiet: closed within the snooze
+    window AND the item not updated since (a real change to the item re-opens the question)."""
+    closed_at = _parse_any_ts(closed["resolved_ts"])
+    if not closed_at:
+        return False
+    if (datetime.now(timezone.utc) - closed_at).total_seconds() > RULE_ALERT_SNOOZE_DAYS * 86400:
+        return False
+    row = c.execute("SELECT updated_ts FROM projects WHERE id=?", (item_id,)).fetchone()
+    upd = _parse_any_ts(row["updated_ts"]) if row else None
+    # Activity ts are whole seconds; compare at that precision so a same-second write doesn't read as "after".
+    return not (upd and upd.replace(microsecond=0) > closed_at)
+
 @app.post("/api/activities")
 def create_activity(body: dict = Body(...), x_team: Optional[str] = Header(None),
                     auth: dict = Depends(require_role("admin", "editor"))):
@@ -8678,26 +8709,39 @@ def _insert_activity(body: dict, team: str) -> dict:
     # (the 3-in-an-hour "Needs Decision" bug). 'Open','Read' == the client's own open-queue definition
     # (renderAcOpen shows both); Dismissed / Auto-Cleared / Resolved stay excluded so a genuinely new
     # occurrence after the user closes one still creates a fresh alert.
-    if activity_type and item_id is not None:
-        with db(team) as c:
+    # ACT-NOISE-1: the check-then-insert runs under BEGIN IMMEDIATE so every tab's rules engine firing at
+    # once converges on ONE row. For a System rule alert the re-post is a re-evaluation, not a new event:
+    # it refreshes the message only (bumping created_ts made month-old alerts read as "just now" on every
+    # page load). And a rule alert a human closed (Dismissed / Resolved, e.g. "Confirm Dates") stays closed
+    # while the item is unchanged, for up to RULE_ALERT_SNOOZE_DAYS - before this, the next page load
+    # re-raised it straight back into the queue.
+    is_rule = (body.get("source") == "System" and activity_type in SYSTEM_RULE_TYPES
+               and item_id is not None)
+    with db(team) as c:
+        if activity_type and item_id is not None:
+            c.execute("BEGIN IMMEDIATE")
             existing = c.execute(
                 "SELECT id FROM activities WHERE activity_type=? AND item_id=? AND status IN ('Open','Read') LIMIT 1",
                 (activity_type, item_id)
             ).fetchone()
-        if existing:
-            if body.get("message"):
-                note = body["message"]
-            else:
-                note = body.get("note", "")
-            with db(team) as c:
-                c.execute(
-                    "UPDATE activities SET note=?, message=?, new_value=?, created_ts=? WHERE id=?",
-                    (note, body.get("message", ""), body.get("new_value"), ts, existing["id"])
-                )
-                row = c.execute("SELECT * FROM activities WHERE id=?", (existing["id"],)).fetchone()
-            return dict(row)
-
-    with db(team) as c:
+            if existing:
+                if is_rule:
+                    c.execute("UPDATE activities SET message=?, new_value=? WHERE id=?",
+                              (body.get("message", ""), body.get("new_value"), existing["id"]))
+                else:
+                    note = body["message"] if body.get("message") else body.get("note", "")
+                    c.execute(
+                        "UPDATE activities SET note=?, message=?, new_value=?, created_ts=? WHERE id=?",
+                        (note, body.get("message", ""), body.get("new_value"), ts, existing["id"])
+                    )
+                return dict(c.execute("SELECT * FROM activities WHERE id=?", (existing["id"],)).fetchone())
+            if is_rule:
+                closed = c.execute(
+                    "SELECT * FROM activities WHERE activity_type=? AND item_id=? AND status IN ('Dismissed','Resolved')"
+                    " ORDER BY id DESC LIMIT 1", (activity_type, item_id)
+                ).fetchone()
+                if closed and _rule_alert_snoozed(c, closed, item_id):
+                    return dict(closed)
         cur = c.execute(
             "INSERT INTO activities(activity_type,source,item_id,item_name,owner,project,"
             "created_by,created_ts,note,status,message,previous_value,new_value)"
