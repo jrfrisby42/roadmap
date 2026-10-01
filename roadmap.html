@@ -11886,11 +11886,17 @@ document.getElementById('dueDateApprovalBg')?.addEventListener('click', e=>{ if(
 
 // ── AUTOMATIC NOTIFICATIONS ──────────────────────────────────────────────────
 async function runAutoNotifications(){
-  if(!activities.length) await loadActivities();
+  if(!activities.length || _openActs === null) await loadActivities();
   const now = new Date();
   const testingStatus = getTestingStatus(); // e.g. "In Testing"
+  // ACT-NOISE-1: the rules read the UNCAPPED open set (_openActs), not the latest-500 `activities`
+  // window. On a busy team open alerts age out of that window, so the rules could neither see them
+  // (re-posting every alert on every load) nor auto-clear them (fixed alerts piled up). If the open set
+  // failed to load, skip the rules entirely rather than re-raise everything blind.
+  const openSet = _openActs;
+  const RULE_DATE_CHECK_DAYS = 7;   // Needs Date Check: only when the due date is this close (or past)
 
-  for(const p of projects){
+  for(const p of (openSet === null ? [] : projects)){
     if(p.hidden) continue;
     if(isTerminalStatus(p.status)) continue;
     if(statusIgnoreConflicts[p.status]) continue;
@@ -11904,15 +11910,16 @@ async function runAutoNotifications(){
     const duePlain    = nextMonday(parseD(p.due));
     const revisedPlain = nextMonday(parseD(p.revised));
     const due = (revisedPlain && revisedPlain > duePlain) ? revisedPlain : duePlain;
-    const totalDays = (projEnd - start) / 86400000;
-    const elapsed   = (now  - start)   / 86400000;
 
     // Check for existing open notifications for this item
-    const existing = activities.filter(a => a.item_id===p.id && (a.status==='Open'||a.status==='Read'));
+    const existing = openSet.filter(a => a.item_id===p.id && (a.status==='Open'||a.status==='Read'));
     const hasAtRisk         = existing.some(a=>a.activity_type==='At Risk' && a.source==='System');
     const hasDateCheck      = existing.some(a=>a.activity_type==='Needs Date Check');
     const hasTestingRisk    = existing.some(a=>a.activity_type==='At Risk' && a.source==='System' && a.message?.includes('testing period'));
-    const hasNeedsDecision  = existing.some(a=>a.activity_type==='Needs Decision' && a.source==='System' && a.message?.includes('start date'));
+    // ACT-NOISE-1: case-insensitive. The message reads "Start date (...)"; the old lowercase includes()
+    // never matched, so a Needs Decision alert was never seen as existing and NEVER auto-cleared.
+    const isStartDateMsg    = a => /start date/i.test(a.message || '');
+    const hasNeedsDecision  = existing.some(a=>a.activity_type==='Needs Decision' && a.source==='System' && isStartDateMsg(a));
 
     // ── RULE 1: AT RISK - projected end > effective due date ─────────────────
     const isNowAtRisk = !!(due && projEnd > due);
@@ -11944,12 +11951,16 @@ async function runAutoNotifications(){
     // ── RULE 3: NEEDS DECISION - start date arrived but status not active ─────
     // Fires when today >= start AND the item is not in any active status
     // Excludes: active statuses, terminal (released/done), testing, and deferred/backlogged
+    // ACT-NOISE-1: and only for COMMITTED work - an Approved-status item or one in a non-completed sprint.
+    // A backlog item whose start date simply passed (e.g. a Jira-pulled item) is not a decision anyone owes.
     const startArrived    = !!(start && now >= start);
     const isActive        = isActiveStatus(p.status);
     const isDeferred      = !!(statusIsDeferred[p.status]);
     const isTesting       = !!(statusIsTesting[p.status]);
     const isTerminal      = isTerminalStatus(p.status);
-    const needsDecisionNow = startArrived && !isActive && !isDeferred && !isTesting && !isTerminal;
+    const isCommitted     = !!statusIsApproved[p.status] ||
+      (typeof window._frzInOpenSprint === 'function' ? window._frzInOpenSprint(p) : !!p.sprintId);
+    const needsDecisionNow = startArrived && isCommitted && !isActive && !isDeferred && !isTesting && !isTerminal;
 
     if(needsDecisionNow && !hasNeedsDecision){
       await API.post('/api/activities', {
@@ -11960,20 +11971,27 @@ async function runAutoNotifications(){
         status:'Open'
       });
     } else if(!needsDecisionNow && hasNeedsDecision){
-      const toClose = existing.filter(a=>a.activity_type==='Needs Decision' && a.source==='System' && a.message?.includes('start date'));
+      const toClose = existing.filter(a=>a.activity_type==='Needs Decision' && a.source==='System' && isStartDateMsg(a));
       for(const a of toClose){
         API.put('/api/activities/'+a.id, {status:'Auto-Cleared', action_taken:'Auto-cleared: item status changed or start date updated', resolved_by:'System'}).catch(()=>{});
       }
     }
 
-    // ── RULE 4: NEEDS DATE CHECK - 90% through duration ──────────────────────
-    const isNowDateCheck = !isNowAtRisk && totalDays>0 && elapsed/totalDays >= 0.9;
+    // ── RULE 4: NEEDS DATE CHECK - due date close (or passed), no expected date ──
+    // ACT-NOISE-1: was "90% through planned duration", which fired weeks early on long items that were
+    // simply on schedule. Now: work has started, the effective due date is within RULE_DATE_CHECK_DAYS
+    // (or already past), and nobody has set an expected date (setting one IS the date check). At Risk
+    // still takes precedence.
+    const daysToDue = due ? Math.ceil((due - now) / 86400000) : null;
+    const isNowDateCheck = !isNowAtRisk && startArrived && !p.expected && daysToDue !== null && daysToDue <= RULE_DATE_CHECK_DAYS;
     if(isNowDateCheck && !hasDateCheck){
       await API.post('/api/activities', {
         activity_type:'Needs Date Check', source:'System',
         item_id:p.id, item_name:p.name, owner:p.dev||'', project:p.product||'',
         created_by:'System',
-        message:`Item is ${Math.round(elapsed/totalDays*100)}% through planned duration - confirm dates`,
+        message: daysToDue < 0
+          ? `Due date (${fmtD(due)}) has passed - confirm dates`
+          : `Due ${daysToDue === 0 ? 'today' : 'in '+daysToDue+' day'+(daysToDue===1?'':'s')} (${fmtD(due)}) - confirm dates`,
         status:'Open'
       });
     } else if(!isNowDateCheck && hasDateCheck){
@@ -14219,6 +14237,8 @@ async function markActivitiesRead(){
 // ── RESOLVE ACTIONS (EXTENDED) ────────────────────────────────────────────────
 function renderResolveDropdown(a){
   const type = a.activity_type;
+  // ACT-NOISE-1: a dismissed System rule alert is snoozed server-side (_rule_alert_snoozed), so it sticks.
+  const snoozable = a.source === 'System' && ['At Risk','Needs Decision','Needs Date Check'].includes(type);
   let actions = [];
   if(type === 'At Risk' || type === 'Flagged Issue'){
     // Editors: only Accept Risk and Flag Item; Admins: full set
@@ -14260,8 +14280,8 @@ function renderResolveDropdown(a){
   ).join('') +
     `<button onclick="dismissActivity(${a.id});event.stopPropagation();"
       style="display:block;width:100%;text-align:left;padding:7px 12px;background:none;border:none;cursor:pointer;font-size:12px;font-family:'Lato',sans-serif;color:var(--muted);border-top:1px solid var(--border);white-space:nowrap"
-      title="Will reappear until resolved"
-      onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">Dismiss (may reappear)</button>`;
+      title="${snoozable ? 'Stays hidden for 14 days, or until the item changes' : 'Will reappear until resolved'}"
+      onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">${snoozable ? 'Dismiss' : 'Dismiss (may reappear)'}</button>`;
 
   return `<div style="position:relative;display:inline-block" class="resolve-wrap">
     <button onclick="toggleResolveMenu(this)" style="font-size:11px;padding:4px 8px;background:none;border:1px solid var(--border);border-radius:5px;cursor:pointer;font-family:'Lato',sans-serif;font-weight:700">
@@ -27919,6 +27939,9 @@ if ('serviceWorker' in navigator) {
     // Display fix: let the block-0 List Sprint column resolve id -> name via the Flow module's
     // sprints config. Returns '' for unknown/closed ids so the caller falls back to the raw id.
     window._frzSprintName = function(id){ var s=sprintById(id); return (s && s.name) ? s.name : ''; };
+    // ACT-NOISE-1: the Needs Decision rule (block B) only fires for committed work. An unknown sprint id
+    // (sprints not loaded yet) counts as in-sprint, so a cold load never auto-clears a still-valid alert.
+    window._frzInOpenSprint = function(p){ if(!p || !p.sprintId) return false; var s=sprintById(p.sprintId); return s ? s.state!=='Completed' : true; };
     // What-if: block-0 _scenarioRerender calls this. Refresh the toolbar highlight (Phase 0),
     // the Plan tab so the sprint gauge recomputes, and the scenario panel (Phase 1a).
     window._frzScenarioRefresh = function(){
