@@ -13580,6 +13580,11 @@ def _digest_summary(items, term_map, sla, now_dt, waiting_map=None, parked_map=N
     } for age, p in open_rows[:8]]
     return counts
 
+def _nb(escaped: str) -> str:
+    """DIGEST-NOWRAP-1: make already-escaped text unbreakable in email clients (spaces -> &nbsp;, hyphens ->
+    U+2011 non-breaking hyphen). Apply AFTER html-escaping."""
+    return escaped.replace(" ", "&nbsp;").replace("-", "\u2011")
+
 def _render_digest_email(team, scope_label, s, base_url, sla_enabled=True):
     scope = f" - {scope_label}" if scope_label else ""
     # DIGEST-WATCH-1: the SLA tiles + the subject's SLA count are OMITTED (absent, not zeroed) when SLA is
@@ -13615,11 +13620,13 @@ def _render_digest_email(team, scope_label, s, base_url, sla_enabled=True):
     oldest_html = ""
     if s["oldest_open"]:
         rows = "".join(
-            f'<tr><td style="padding:6px 8px;font-family:ui-monospace,Menlo,monospace;color:#0059A9;font-weight:700;white-space:nowrap">{esc(it["key"])}</td>'
+            # DIGEST-NOWRAP-1: Outlook drops CSS white-space, so "FRZ-351" broke at the hyphen and "In Progress" at
+            # the space. The HTML nowrap attribute + &nbsp; / a non-breaking hyphen (U+2011) hold in every client.
+            f'<tr><td nowrap style="padding:6px 8px;font-family:ui-monospace,Menlo,monospace;color:#0059A9;font-weight:700;white-space:nowrap">{_nb(esc(it["key"]))}</td>'
             f'<td style="padding:6px 8px;color:#1f2733">{esc(it["name"])}</td>'
-            f'<td style="padding:6px 8px;color:#6b7280;white-space:nowrap">{(str(it["age"])+"d") if it["age"] is not None else "?"}</td>'
-            f'<td style="padding:6px 8px;color:#6b7280;white-space:nowrap">{esc(it["status"])}</td>'
-            f'<td style="padding:6px 8px;color:#6b7280;white-space:nowrap">{esc(it["assignee"] or "-")}</td></tr>'
+            f'<td nowrap style="padding:6px 8px;color:#6b7280;white-space:nowrap">{(str(it["age"])+"d") if it["age"] is not None else "?"}</td>'
+            f'<td nowrap style="padding:6px 8px;color:#6b7280;white-space:nowrap">{_nb(esc(it["status"]))}</td>'
+            f'<td nowrap style="padding:6px 8px;color:#6b7280;white-space:nowrap">{_nb(esc(it["assignee"] or "-"))}</td></tr>'
             for it in s["oldest_open"])
         oldest_html = ('<div style="font-size:12px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin:20px 0 8px">Oldest open tickets</div>'
                        '<table style="border-collapse:collapse;width:100%;font-size:13px"><thead><tr>'
