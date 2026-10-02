@@ -2818,7 +2818,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.58.9';
+const APP_VERSION = '6.58.10';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -26428,6 +26428,9 @@ if ('serviceWorker' in navigator) {
         + '<div><div style="color:var(--muted);font-size:12px;margin-bottom:6px">Deliver to:</div>'+slackModeRows+'</div>'
         + '<div><div style="color:var(--muted);font-size:12px;margin-bottom:6px">Which events:</div>'+slackTypeRows+'</div>'
         + '<div style="display:flex;gap:10px;align-items:center"><button type="button" id="tsSlackTest" '+btn+'>Send test message</button><span id="tsSlackTestResult" style="font-size:12px;color:var(--muted)"></span></div>'
+        // SLACK-COVERAGE-1: who Flow can reach by Slack DM (people are matched by their Flow email).
+        + '<div><div style="display:flex;gap:10px;align-items:center"><button type="button" id="tsSlackCoverage" '+btn+'>Check who Slack can reach</button><span id="tsSlackCoverageSum" style="font-size:12px;color:var(--muted)"></span></div>'
+        + '<div id="tsSlackCoverageList" style="margin-top:8px"></div></div>'
         + '<div style="font-size:11px;color:var(--muted)">Secrets are never entered here - they live in the server .env. Channel posts need an Incoming Webhook at SLACK_WEBHOOK_'+esc(team)+'. DMs need a Slack app bot token (scopes chat:write + users:read.email) at SLACK_BOT_TOKEN_'+esc(team)+'; DMs reach a user only if their Flow email matches a Slack account.</div>'
       + '</div></div>';
     // IT/Ops SLA card: per-priority calendar-hour targets for BOTH clocks (time to first touch +
@@ -26553,6 +26556,29 @@ if ('serviceWorker' in navigator) {
         if(out){ out.textContent = r&&r.sentTo ? ('Preview sent to '+r.sentTo) : 'Sent'; out.style.color='#1f9d55'; }
       }).catch(function(e){ var m=(e&&e.message)||'Failed'; try{ var j=JSON.parse(m); if(j&&j.detail) m=j.detail; }catch(_){}
         if(out){ out.textContent=m; out.style.color='#e8394a'; } });
+    });
+    // SLACK-COVERAGE-1: list everyone Slack DMs cannot reach, and why. Read-only (fresh Slack lookups).
+    var scov=host.querySelector('#tsSlackCoverage');
+    if(scov) scov.addEventListener('click', function(){
+      var sum=host.querySelector('#tsSlackCoverageSum'), list=host.querySelector('#tsSlackCoverageList');
+      scov.disabled=true; if(sum){ sum.textContent='Checking...'; sum.style.color='var(--muted)'; } if(list) list.innerHTML='';
+      API.get('/api/slack/coverage').then(function(r){
+        scov.disabled=false; r=r||{};
+        if(!r.botToken){ if(sum){ sum.textContent='No bot token, so Flow sends no Slack DMs on this Organization.'; sum.style.color='#d9822b'; } return; }
+        var miss=(r.rows||[]).filter(function(x){ return x.status!=='matched'; });
+        if(sum){ sum.textContent=r.matched+' of '+r.total+' people found in Slack'+(miss.length?'':' - everyone can get DMs'); sum.style.color=miss.length?'#d9822b':'#1f9d55'; }
+        if(!list || !miss.length) return;
+        var why={ no_email:'No email on their Flow user', not_found:'No Slack account with this email', error:'Slack error' };
+        list.innerHTML='<table style="border-collapse:collapse;font-size:12px;width:100%">'
+          + '<thead><tr><th style="text-align:left;padding:4px 8px;color:var(--muted)">Person</th><th style="text-align:left;padding:4px 8px;color:var(--muted)">Flow email</th><th style="text-align:left;padding:4px 8px;color:var(--muted)">Why they get no DMs</th></tr></thead><tbody>'
+          + miss.map(function(x){
+              var reason=(why[x.status]||x.status)+(x.status==='error'&&x.detail?(': '+x.detail+(x.detail==='missing_scope'?' (the bot needs the users:read.email scope)':'')):'');
+              return '<tr><td style="padding:4px 8px;border-top:1px solid var(--border)">'+esc(x.name||x.username)+'</td>'
+                + '<td style="padding:4px 8px;border-top:1px solid var(--border);color:var(--muted)">'+esc(x.email||'-')+'</td>'
+                + '<td style="padding:4px 8px;border-top:1px solid var(--border)">'+esc(reason)+'</td></tr>';
+            }).join('')
+          + '</tbody></table><div style="font-size:11px;color:var(--muted);margin-top:6px">Fix by making the email on the Flow user match their Slack email (Admin, Users).</div>';
+      }).catch(function(e){ scov.disabled=false; var m=(e&&e.message)||'Failed'; if(sum){ sum.textContent=m; sum.style.color='#e8394a'; } });
     });
     var stest=host.querySelector('#tsSlackTest');
     if(stest) stest.addEventListener('click', function(){

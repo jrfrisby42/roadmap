@@ -89,6 +89,18 @@ def test_digest_omits_sla_section_when_off():
         assert label in html_body and label in text
 
 
+def test_digest_oldest_rows_do_not_wrap_in_outlook():
+    """DIGEST-NOWRAP-1: Outlook ignores CSS white-space, so the key broke at its hyphen ("FRZ-" / "351") and
+    "In Progress" at its space. Cells carry the nowrap ATTRIBUTE and the values are made unbreakable."""
+    s = dict(_sla_sample(), oldest_open=[{"id": 351, "key": "FRZ-351", "name": "Hubspot notes", "age": 245,
+                                          "status": "In Progress", "assignee": "jacob.smith"}])
+    _, _, html_body = server._render_digest_email("acme", "", s, "http://x", sla_enabled=False)
+    assert "FRZ‑351" in html_body and "FRZ-351</td>" not in html_body      # non-breaking hyphen
+    assert "In&nbsp;Progress" in html_body
+    assert html_body.count("<td nowrap") >= 4                                   # key, age, status, assignee
+    assert "Hubspot notes" in html_body                                         # the name cell still wraps normally
+
+
 def test_digest_includes_sla_section_when_on():
     s = _sla_sample()
     subj, text, html_body = server._render_digest_email("acme", "", s, "http://x", sla_enabled=True)
