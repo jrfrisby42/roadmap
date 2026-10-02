@@ -2671,8 +2671,8 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
             <div style="font-size:11px;color:var(--muted);margin:-4px 0 2px">When off, this team is left off the shared <b>/report</b> list, but its own link above keeps working and it stays available as a transfer target.</div>
             <div style="font-size:12px;font-weight:700;color:var(--text);margin:8px 0 6px">Spaces offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all; optional per-space email overrides the Organization address for that space's tickets)</span></div>
             <div id="tsIntakeProjects" style="display:flex;flex-direction:column;gap:6px;max-width:520px"></div>
-            <div style="font-size:12px;font-weight:700;color:var(--text);margin:12px 0 6px">Types offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all)</span></div>
-            <div id="tsIntakeTypes" style="display:flex;flex-wrap:wrap;gap:8px 16px"></div>
+            <div style="font-size:12px;font-weight:700;color:var(--text);margin:12px 0 6px">Types offered in the portal <span style="font-weight:400;color:var(--muted)">(none checked = all; an optional default assignee is set on new tickets of that type)</span></div>
+            <div id="tsIntakeTypes" style="display:flex;flex-direction:column;gap:6px;max-width:520px"></div>
             <div style="margin:10px 0 4px;display:flex;align-items:center;gap:8px">
               <span style="font-size:12px;font-weight:700;color:var(--text)">Default type</span>
               <select id="tsIntakeDefType" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)"></select>
@@ -3523,6 +3523,7 @@ let intakeNotifyEmail = '';     // team inbox that gets a copy of each portal ti
 let intakeTypes = [];           // which item Types the portal offers (empty = all). (config)
 let intakeProjectEmails = {};   // optional per-Project notify email override {product: email}; falls back to intakeNotifyEmail. (config)
 let intakeProjectStatus = {};   // optional per-Project DEFAULT STATUS for portal tickets {product: status}; falls back to the team default. (config)
+let intakeTypeAssignees = {};   // INTAKE-ASSIGNEE-1: optional per-Type DEFAULT ASSIGNEE for portal tickets {type: username}. (config)
 let intakeDefaultType = '';     // portal Type preselect ('' = none: reporters must choose when several types are offered). (config)
 let intakeDomains = [];         // allowed reporter email domains for the portal (empty = allow any). (config)
 let intakeNotifyTeam = false;   // notify the team (in-app + Slack channel) on a new portal ticket. (config)
@@ -9109,6 +9110,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
       intakeTypes   = Array.isArray(data.intakeTypes) ? data.intakeTypes : [];
       if(data.intakeProjectEmails && typeof data.intakeProjectEmails === 'object') intakeProjectEmails = data.intakeProjectEmails;
       if(data.intakeProjectStatus && typeof data.intakeProjectStatus === 'object') intakeProjectStatus = data.intakeProjectStatus;
+      if(data.intakeTypeAssignees && typeof data.intakeTypeAssignees === 'object') intakeTypeAssignees = data.intakeTypeAssignees;
       if(typeof data.intakeDefaultType === 'string') intakeDefaultType = data.intakeDefaultType;
       if(Array.isArray(data.intakeDomains)) intakeDomains = data.intakeDomains;
       if(data.productIgnoreConflicts) productIgnoreConflicts = data.productIgnoreConflicts;
@@ -18755,10 +18757,24 @@ function renderIntakePortalSettings(){
   const allNames = (types||[]).map(t => (t&&t.name)||t).filter(Boolean);
   const offered = intakeTypes.length ? new Set(intakeTypes) : new Set(allNames);   // empty = all
   if(typesWrap){
-    typesWrap.innerHTML = allNames.length ? allNames.map(n =>
-      `<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" class="ts-intake-type" data-name="${escA(n)}" ${offered.has(n)?'checked':''} style="accent-color:var(--accent)"> ${esc(n)}</label>`
-    ).join('') : '<span style="font-size:12px;color:var(--muted)">No Types configured - add some in the Types tab.</span>';
+    // INTAKE-ASSIGNEE-1: each offered Type can name a default assignee for new portal tickets. A ticket born
+    // assigned bells admins + that person instead of every editor. Same user list as the in-app pickers.
+    const _ua = (users||[]).filter(u => u && u.username)
+      .map(u => ({u: u.username, n: displayName(u.username)})).sort((a,b) => a.n.localeCompare(b.n));
+    typesWrap.innerHTML = allNames.length ? allNames.map(n => {
+      const cur = intakeTypeAssignees[n] || '';
+      const stale = cur && !_ua.some(x => x.u === cur);   // assignee no longer a user: shown so it can be cleared (server ignores it)
+      return `<div style="display:flex;align-items:center;gap:8px">
+         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;flex:0 0 auto;min-width:140px"><input type="checkbox" class="ts-intake-type" data-name="${escA(n)}" ${offered.has(n)?'checked':''} style="accent-color:var(--accent)"> ${esc(n)}</label>
+         <select class="ts-intake-type-assignee" data-name="${escA(n)}" title="Default assignee for new portal tickets of this Type" aria-label="Default assignee for ${escA(n)} tickets" style="flex:0 1 220px;min-width:0;padding:5px 6px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)">
+           <option value="">No default assignee</option>
+           ${_ua.map(x => `<option value="${escA(x.u)}" ${cur===x.u?'selected':''}>${esc(x.n)}</option>`).join('')}
+           ${stale ? `<option value="${escA(cur)}" selected>${esc(cur)} (no longer a user)</option>` : ''}
+         </select>
+       </div>`;
+    }).join('') : '<span style="font-size:12px;color:var(--muted)">No Types configured - add some in the Types tab.</span>';
     typesWrap.querySelectorAll('.ts-intake-type').forEach(cb => cb.onchange = _saveIntakeTypes);
+    typesWrap.querySelectorAll('.ts-intake-type-assignee').forEach(sel => sel.onchange = _saveIntakeTypeAssignees);
   }
   const defTypeSel = document.getElementById('tsIntakeDefType');
   if(defTypeSel){
@@ -18795,6 +18811,16 @@ function _saveIntakeProjects(){
   const checked = [...document.querySelectorAll('.ts-intake-proj')].filter(c=>c.checked).map(c=>c.getAttribute('data-name'));
   intakeProjects = (checked.length === 0 || checked.length === allNames.length) ? [] : checked;
   saveConfig('intakeProjects', intakeProjects);
+}
+function _saveIntakeTypeAssignees(){
+  // INTAKE-ASSIGNEE-1: per-Type default assignee for portal tickets {type: username}; only set entries stored.
+  const map = {};
+  [...document.querySelectorAll('.ts-intake-type-assignee')].forEach(sel => {
+    const name = sel.getAttribute('data-name'), val = sel.value;
+    if(val) map[name] = val;
+  });
+  intakeTypeAssignees = map;
+  saveConfig('intakeTypeAssignees', intakeTypeAssignees);
 }
 function _saveIntakeProjectStatus(){
   // Per-project default status for portal tickets {product: status}; only overrides stored.
@@ -19775,6 +19801,7 @@ async function boot(){
     intakeNotifyEmail     = typeof data.intakeNotifyEmail === 'string' ? data.intakeNotifyEmail : ''; // team inbox copy
     intakeProjectEmails   = (data.intakeProjectEmails && typeof data.intakeProjectEmails === 'object') ? data.intakeProjectEmails : {}; // per-project override
     intakeProjectStatus   = (data.intakeProjectStatus && typeof data.intakeProjectStatus === 'object') ? data.intakeProjectStatus : {}; // per-project default status
+    intakeTypeAssignees   = (data.intakeTypeAssignees && typeof data.intakeTypeAssignees === 'object') ? data.intakeTypeAssignees : {}; // INTAKE-ASSIGNEE-1 per-type default assignee
     intakeDefaultType     = (typeof data.intakeDefaultType === 'string') ? data.intakeDefaultType : ''; // portal Type preselect
     intakeDomains         = Array.isArray(data.intakeDomains) ? data.intakeDomains : [];              // allowed reporter email domains (empty = any)
     departmentMeta        = (data.departmentMeta && typeof data.departmentMeta === 'object') ? data.departmentMeta : {};  // per-dept color + notify emails

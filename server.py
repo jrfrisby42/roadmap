@@ -1269,6 +1269,7 @@ def init_team_db(team: str):
             "intakeTypes": [],     # empty = offer ALL of the team's types
             "intakeProjectEmails": {},  # optional per-project notify override {product: email}; falls back to intakeNotifyEmail
             "intakeProjectStatus": {},  # optional per-project DEFAULT STATUS for portal tickets {product: status}; falls back to statusIsDefault
+            "intakeTypeAssignees": {},  # INTAKE-ASSIGNEE-1: optional per-Type DEFAULT ASSIGNEE for portal tickets {type: username}
             "intakeDefaultType": "",    # portal Type preselect ("" = none: reporters must choose when several types are offered)
             "intakeDomains": [],   # allowed reporter email domains (empty = allow any)
             "departmentMeta": {k: dict(v) for k, v in _DEFAULT_DEPARTMENT_META.items()},  # DEPT-DEFAULTS-1: seed pill colors (NO emails - per-team routing)
@@ -1395,6 +1396,7 @@ def _migrate_config_keys(team: str):
         "intakeNotifyEmail": "",
         "intakeProjectEmails": {},
         "intakeProjectStatus": {},
+        "intakeTypeAssignees": {},   # INTAKE-ASSIGNEE-1
         "intakeDefaultType": "",
         "intakeDomains": [],
         "intakeNotifyTeam": False,   # notify the team (in-app + Slack channel) on a new portal ticket
@@ -1434,7 +1436,7 @@ def _migrate_config_keys(team: str):
     # Keys where False/0/empty-string is a valid intentional value - only seed if key is MISSING,
     # never overwrite an existing value even if it's falsy. (assignmentTypes: presence-only so
     # an admin who deletes all types isn't re-seeded on next boot.)
-    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeCombined", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeProjectStatus", "intakeDefaultType", "intakeDomains", "intakeNotifyTeam", "intakeAppendTemplate", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify", "slaTargets", "digestConfig",
+    presence_only_keys = {"jiraEnabled", "jiraSyncConfig", "richTextEditor", "intakeEnabled", "intakeCombined", "intakeProjects", "intakeTypes", "intakeNotifyEmail", "intakeProjectEmails", "intakeProjectStatus", "intakeTypeAssignees", "intakeDefaultType", "intakeDomains", "intakeNotifyTeam", "intakeAppendTemplate", "departmentMeta", "assignmentTypes", "maintenanceDutyTypeId", "externalRequestCategories", "assethubConnection", "assethubServiceTypeMapping", "enabledViews", "slackNotify", "slaTargets", "digestConfig",
                           "jiraPullFloor", "jiraPullTypes", "jiraAssigneeMap", "jiraPullStatusMap", "jiraSprintBoardId"}
 
     with db(team) as c:
@@ -2079,6 +2081,18 @@ def _intake_type_template(team: str, type_name: str) -> str:
             return tv if isinstance(tv, str) and tv.strip() else ""
     return ""
 
+def _intake_type_assignee(team: str, type_name: str) -> str:
+    """INTAKE-ASSIGNEE-1: the default assignee configured for a Type (intakeTypeAssignees {type: username}),
+    or '' if none. Honoured only while that username is still a user on the team - a removed user silently
+    leaves the ticket unassigned (it then falls back to the admins + editors bell), never a dangling value."""
+    if not type_name:
+        return ""
+    un = ((_cfg_val(team, "intakeTypeAssignees", {}) or {}).get(type_name) or "").strip()
+    if not un:
+        return ""
+    users = {u.get("username") for u in (_cfg_val(team, "users", []) or []) if isinstance(u, dict)}
+    return un if un in users else ""
+
 def _intake_projects(team: str) -> list:
     """Exposed product/project names for a team (intakeProjects ∩ products; empty = all)."""
     sel = _cfg_val(team, "intakeProjects", []) or []
@@ -2407,6 +2421,15 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
         "reporterEmail": email, "source": "portal", "attachments": atts,
         "createdAt": now_iso,
     }
+    # INTAKE-ASSIGNEE-1: the Type's default assignee (if configured and still a user). Set BEFORE the
+    # insert so the ticket is born assigned, and before the team-notify hook below, which then bells
+    # admins + this assignee instead of every editor (_intake_new_ticket_usernames).
+    try:
+        _def_assignee = _intake_type_assignee(team, ttype)
+        if _def_assignee:
+            item["assignee"] = _def_assignee
+    except Exception as e:
+        log.warning(f"[Intake] default assignee lookup failed for a {team} submission: {e}")
     with db(team) as c:
         _assign_item_key(c, item)
         item["id"] = _insert_project(c, item)
@@ -3972,6 +3995,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "intakeNotifyEmail": cfg_map.get("intakeNotifyEmail", ""),
             "intakeProjectEmails": cfg_map.get("intakeProjectEmails", {}),
             "intakeProjectStatus": cfg_map.get("intakeProjectStatus", {}),
+            "intakeTypeAssignees": cfg_map.get("intakeTypeAssignees", {}),   # INTAKE-ASSIGNEE-1
             "intakeDefaultType": cfg_map.get("intakeDefaultType", ""),
             "intakeNotifyTeam": bool(cfg_map.get("intakeNotifyTeam", False)),
             "intakeAppendTemplate": bool(cfg_map.get("intakeAppendTemplate", False)),   # INTAKE-TEMPLATE-1
@@ -5899,7 +5923,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow","statusIsWaiting","statusIsParked",
-              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeProjectStatus","intakeDefaultType","intakeDomains","intakeNotifyTeam","intakeAppendTemplate","intakeCombined","departmentMeta","maintenanceDutyTypeId",
+              "richTextEditor","intakeEnabled","intakeProjects","intakeTypes","intakeNotifyEmail","intakeProjectEmails","intakeProjectStatus","intakeTypeAssignees","intakeDefaultType","intakeDomains","intakeNotifyTeam","intakeAppendTemplate","intakeCombined","departmentMeta","maintenanceDutyTypeId",
               "externalRequestCategories","assethubConnection","assethubServiceTypeMapping","enabledViews",
               "slackNotify","slaTargets","digestConfig",
               # JIRA-PULL-1 Stage 1: admin-editable on the Jira admin screen. jiraPullFloor is deliberately
