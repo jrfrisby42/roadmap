@@ -140,6 +140,28 @@ when `LITESTREAM_FLOW_CONFIG` is not set (the `LITESTREAM_*` vars belong in
 command was not run with sufficient privileges, it prints the reload command to run
 manually - the config file is still written.
 
+### Weekday-morning To-do reminders (TODO-EMAIL-1)
+
+`python server.py --send-todo-reminders` emails each user their open To-dos that are due today or overdue
+(Mountain Time day, weekdays only) and, when an admin has ticked **To-do reminders** in the Organization's
+Slack settings with DM delivery, sends the same list as a Slack DM. Email is on by default per user, with a
+one-click off link in every email and a switch in Settings -> Notifications. Each channel sends at most once
+per user per day, so a re-run is harmless. Preview without sending: add `--dry-run`.
+
+The unit files live in the repo at `tools/systemd/` (this timer and the digest timer below):
+
+```bash
+scp tools/systemd/roadmap-todo-reminders.* tools/systemd/roadmap-digest.* ubuntu@52.35.224.183:/tmp/
+sudo mv /tmp/roadmap-todo-reminders.* /tmp/roadmap-digest.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now roadmap-todo-reminders.timer roadmap-digest.timer
+systemctl list-timers 'roadmap-*'                   # confirm the next runs
+sudo -u ubuntu /opt/roadmap/venv/bin/python /opt/roadmap/server.py --send-todo-reminders --dry-run
+```
+
+`OnCalendar=Mon..Fri *-*-* 07:00:00 America/Denver` is evaluated in Mountain Time, so it follows DST.
+The digest timer was documented below but never installed until 6.58.9.
+
 ### Weekly queue-health digest (IT/Ops SLA feature, Stage B)
 
 `python server.py --send-digests` builds and emails a per-team queue-health summary (open /
