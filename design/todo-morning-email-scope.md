@@ -1,6 +1,6 @@
 # TODO-EMAIL-1 - morning To-do email (scope, not built)
 
-Status: scoped 2026-10-02, awaiting J.R.'s calls on the open questions below. Companion to TODO-DUE-1
+Status: BUILT 2026-10-02 (branch todo-email-1). J.R.'s calls: default ON, 07:00 MT, weekdays only, no "due tomorrow"; Slack DM added as an Org-wide admin option. The CLI is `--send-todo-reminders` (covers email + Slack). Companion to TODO-DUE-1
 (due To-dos pinned in the bell, 6.58.8), which only helps people who open Flow.
 
 ## Why

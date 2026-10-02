@@ -958,6 +958,14 @@ def init_team_db(team: str):
             username    TEXT NOT NULL,
             PRIMARY KEY(item_id, username)
         );
+        -- TODO-EMAIL-1: per-user notification preferences + the once-per-day send guards for the
+        -- morning To-do reminder. todo_email NULL = default (ON); 0 = turned off; 1 = on.
+        CREATE TABLE IF NOT EXISTS user_prefs (
+            username            TEXT PRIMARY KEY,
+            todo_email          INTEGER,
+            todo_email_sent_on  TEXT,
+            todo_slack_sent_on  TEXT
+        );
         -- Phase B: explicit read-access grants. An insider (editor/admin) @mentions a
         -- Contributor on an item outside their pod → a grant lets them open it (and the
         -- notification link resolves). Records granted_by, so it is an act by SOMEONE ELSE
@@ -1801,7 +1809,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.58.8"
+APP_VERSION = "6.58.9"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -7450,6 +7458,8 @@ def _team_usernames(team: str) -> set:
 
 # ── Slack notifications (Tier 1 channel webhook + Tier 2 per-user DMs) ─────────
 _SLACK_DEFAULT_TYPES = ["mention", "assigned", "reply", "watch_status", "watch_comment"]
+# TODO-EMAIL-1: "reminder" is NOT in the default list - an admin ticks it per Organization. It is delivered
+# only by the weekday morning job (send_todo_reminders) and only as a DM, never to a channel (to-dos are private).
 _slack_uid_cache = {}   # {team: {email_lower: slack_user_id or ''}} - lookups are cached (incl. not-found)
 
 def _slack_webhook(team: str) -> str:
@@ -13223,21 +13233,232 @@ def sync_children_status_endpoint(pid: int, body: dict = Body({}),
     return result
 
 
-# ── SPA catch-all (Phase 3: Flow lives at root) ───────────────────────────────
-# MUST be the LAST route. FastAPI matches in declaration order, so every route
-# defined above wins first; only genuine root SPA paths (/list, /item/5,
-# /planning/sprints, …) fall through to here and get roadmap.html (like root()).
-# API/audit are guarded so a stray GET to an undefined /api/* or /audit path still
-# 404s instead of returning HTML.
-@app.get("/{full_path:path}", response_class=HTMLResponse)
-def spa_catch_all(full_path: str):
-    if full_path.startswith("api/") or full_path.startswith("audit"):
-        raise HTTPException(404)
-    if not os.path.exists(HTML):
-        raise HTTPException(404, "roadmap.html not found next to server.py")
-    with open(HTML, encoding="utf-8") as f:
-        return f.read()
+# ══════════════════════════════════════════════════════════════════════════════
+# TODO-EMAIL-1: weekday-morning To-do reminders (email + optional Slack DM)
+# ══════════════════════════════════════════════════════════════════════════════
+# `python server.py --send-todo-reminders [--dry-run]`, run by a systemd timer at 07:00 America/Denver on
+# weekdays (tools/systemd/roadmap-todo-reminders.*). For each user with open to-dos due today or overdue
+# (MT day-key via _today_mt_key, the same _MT_ZONE path RELEASE-DATE-1 uses - DST-aware, never a fixed
+# offset): one email (per-user preference, DEFAULT ON, one-click off link) and, when the Organization's admin
+# has ticked "To-do reminders" in Slack settings with DM delivery, one Slack DM. Only the owner's own to-dos,
+# only to the owner. Each channel is claimed once per MT day in the same transaction that decides to send,
+# so a re-run or a double timer fire sends nothing twice; a failed send releases the claim for a retry.
+TODO_REMINDER_SHOW = 15   # rows listed per message; the rest summarised as "and N more"
 
+def _todo_off_token(team: str, username: str) -> str:
+    return _sign(f"todo-email-off:{team}:{username}")
+
+def _todo_off_url(team: str, username: str) -> str:
+    return (f"{APP_BASE_URL}/todo-email/off?team={_urlq(team, safe='')}&u={_urlq(username, safe='')}"
+            f"&t={_todo_off_token(team, username)}")
+
+def _todo_due_rows(team: str, username: str, today_key: str) -> list:
+    """The owner's open to-dos due on/before today (MT), oldest first. PRIVACY: username in the WHERE."""
+    with db(team) as c:
+        return [dict(r) for r in c.execute(
+            "SELECT id, title, due_date, item_id, item_key FROM todos WHERE username=? AND status!='Done' "
+            "AND due_date IS NOT NULL AND due_date<=? ORDER BY due_date, id", (username, today_key)).fetchall()]
+
+def _todo_days_over(due: str, today_key: str) -> int:
+    from datetime import date
+    try:
+        return (date.fromisoformat(today_key) - date.fromisoformat(due)).days
+    except ValueError:
+        return 0
+
+def _todo_row_label(due: str, today_key: str) -> str:
+    n = _todo_days_over(due, today_key)
+    return "Due today" if n <= 0 else f"Overdue - {n} day{'s' if n != 1 else ''}"
+
+def _todo_link(team: str, t: dict) -> str:
+    q = f"?team={_urlq(team, safe='')}"
+    return f"{APP_BASE_URL}/item/{t['item_id']}{q}" if t.get("item_id") else f"{APP_BASE_URL}/my-home/todos{q}"
+
+def _todo_subject(rows: list, today_key: str) -> str:
+    over = sum(1 for r in rows if _todo_days_over(r["due_date"], today_key) > 0)
+    today = len(rows) - over
+    parts = []
+    if over:
+        parts.append(f"{over} To-do{'s' if over != 1 else ''} overdue")
+    if today:
+        parts.append(f"{today} due today" if over else f"{today} To-do{'s' if today != 1 else ''} due today")
+    return ", ".join(parts)
+
+def _render_todo_email(team: str, username: str, rows: list, today_key: str):
+    """(subject, text, html) for one user's morning reminder. Titles/keys HTML-escaped; no to-do notes or
+    user-entered URLs are re-emitted."""
+    subject = _todo_subject(rows, today_key)
+    shown, more = rows[:TODO_REMINDER_SHOW], max(0, len(rows) - TODO_REMINDER_SHOW)
+    off = _todo_off_url(team, username)
+    home = f"{APP_BASE_URL}/my-home/todos?team={_urlq(team, safe='')}"
+    text_lines = [f"Good morning. Here is what is due on your Flow To-do list ({team}):", ""]
+    html_rows = []
+    for r in shown:
+        label = _todo_row_label(r["due_date"], today_key)
+        key = (r.get("item_key") or "").strip()
+        title = (key + " - " if key else "") + (r.get("title") or "")
+        text_lines.append(f"- {title} ({label}) {_todo_link(team, r)}")
+        over = _todo_days_over(r["due_date"], today_key) > 0
+        html_rows.append(
+            '<tr><td style="padding:8px 0;border-bottom:1px solid #e3e8ee">'
+            f'<a href="{html.escape(_todo_link(team, r), quote=True)}" style="color:#0059A9;text-decoration:none;font-weight:700">'
+            f'{html.escape(title)}</a><br><span style="font-size:12px;color:{"#b42318" if over else "#5a6b7c"}">'
+            f'{html.escape(label)}</span></td></tr>')
+    if more:
+        text_lines.append(f"- and {more} more")
+        html_rows.append(f'<tr><td style="padding:8px 0;font-size:13px;color:#5a6b7c">and {more} more</td></tr>')
+    text_lines += ["", f"All your To-dos: {home}", "", f"Stop these emails: {off}"]
+    body = (
+        '<div style="font-family:Lato,Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1d2733">'
+        f'<h2 style="font-size:18px;margin:0 0 6px">{html.escape(subject)}</h2>'
+        f'<div style="font-size:13px;color:#5a6b7c;margin-bottom:12px">Your Flow To-do list ({html.escape(team)})</div>'
+        f'<table style="width:100%;border-collapse:collapse;font-size:14px">{"".join(html_rows)}</table>'
+        f'<p style="margin:16px 0"><a href="{html.escape(home, quote=True)}" style="background:#0059A9;color:#fff;'
+        'padding:9px 16px;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px">Open my To-dos</a></p>'
+        '<p style="font-size:11px;color:#5a6b7c">You get this on weekday mornings when something is due. '
+        f'<a href="{html.escape(off, quote=True)}" style="color:#5a6b7c">Stop these emails</a> '
+        '(you can turn them back on in Settings, Notifications).</p></div>')
+    return subject, "\n".join(text_lines), body
+
+def _todo_slack_text(team: str, rows: list, today_key: str) -> str:
+    lines = [f"*{_todo_subject(rows, today_key)}* (Flow, {team})"]
+    for r in rows[:TODO_REMINDER_SHOW]:
+        key = (r.get("item_key") or "").strip()
+        title = (key + " - " if key else "") + (r.get("title") or "")
+        lines.append(f"- <{_todo_link(team, r)}|{title.replace('<', '').replace('>', '')}> ({_todo_row_label(r['due_date'], today_key)})")
+    if len(rows) > TODO_REMINDER_SHOW:
+        lines.append(f"- and {len(rows) - TODO_REMINDER_SHOW} more")
+    return "\n".join(lines)
+
+def _todo_claim(team: str, username: str, col: str, today_key: str) -> bool:
+    """Claim today's send for one channel (col = todo_email_sent_on | todo_slack_sent_on). True = this run
+    owns it. Atomic under BEGIN IMMEDIATE so two concurrent runs cannot both send."""
+    assert col in ("todo_email_sent_on", "todo_slack_sent_on")
+    with db(team) as c:
+        c.execute("BEGIN IMMEDIATE")
+        c.execute("INSERT OR IGNORE INTO user_prefs(username) VALUES(?)", (username,))
+        row = c.execute(f"SELECT {col} FROM user_prefs WHERE username=?", (username,)).fetchone()
+        if row and row[0] == today_key:
+            return False
+        c.execute(f"UPDATE user_prefs SET {col}=? WHERE username=?", (today_key, username))
+        return True
+
+def _todo_release(team: str, username: str, col: str):
+    assert col in ("todo_email_sent_on", "todo_slack_sent_on")
+    with db(team) as c:
+        c.execute(f"UPDATE user_prefs SET {col}=NULL WHERE username=?", (username,))
+
+def _todo_email_on(team: str, username: str) -> bool:
+    with db(team) as c:
+        row = c.execute("SELECT todo_email FROM user_prefs WHERE username=?", (username,)).fetchone()
+    return not (row and row["todo_email"] == 0)   # NULL / missing = default ON
+
+def send_todo_reminders(verbose=False, dry_run=False, now_utc=None, only_team=None) -> dict:
+    """Send the weekday-morning To-do reminders for every team (or just `only_team`). Returns counts.
+    Weekends (MT) send nothing."""
+    from datetime import date
+    today_key = _today_mt_key(now_utc)
+    out = {"date": today_key, "emails": 0, "slack": 0, "skipped_weekend": False}
+    if date.fromisoformat(today_key).weekday() >= 5:
+        out["skipped_weekend"] = True
+        if verbose:
+            print(f"[todo-reminders] {today_key} is a weekend in Mountain Time - nothing sent")
+        return out
+    try:
+        teams = [d for d in sorted(os.listdir(TENANTS_DIR))
+                 if os.path.isdir(os.path.join(TENANTS_DIR, d)) and re.match(r"^[a-z0-9]+$", d)
+                 and os.path.exists(os.path.join(TENANTS_DIR, d, "roadmap.db"))]
+    except FileNotFoundError:
+        teams = []
+    if only_team:
+        teams = [t for t in teams if t == only_team]
+    can_mail = mail_configured()
+    for team in teams:
+        try:
+            users = [u for u in (_cfg_val(team, "users", []) or []) if isinstance(u, dict) and u.get("username")]
+            slk = _cfg_val(team, "slackNotify", {}) or {}
+            token = _slack_bot_token(team)
+            slack_on = bool(slk.get("enabled") and "reminder" in (slk.get("types") or [])
+                            and (slk.get("mode") in ("dm", "both")) and token)
+            for u in users:
+                un = u["username"]; email = (u.get("email") or "").strip()
+                rows = _todo_due_rows(team, un, today_key)
+                if not rows:
+                    continue
+                if email and _todo_email_on(team, un) and (can_mail or dry_run):
+                    if dry_run:
+                        if verbose:
+                            print(f"[todo-reminders] DRY {team}/{un}: email '{_todo_subject(rows, today_key)}'")
+                    elif _todo_claim(team, un, "todo_email_sent_on", today_key):
+                        try:
+                            subj, text, body = _render_todo_email(team, un, rows, today_key)
+                            send_email(email, subj, text, body)
+                            out["emails"] += 1
+                        except Exception as e:
+                            _todo_release(team, un, "todo_email_sent_on")
+                            log.warning(f"[todo-reminders] email failed for {team}/{un}: {e}")
+                if slack_on and email:
+                    if dry_run:
+                        if verbose:
+                            print(f"[todo-reminders] DRY {team}/{un}: Slack DM")
+                    elif _todo_claim(team, un, "todo_slack_sent_on", today_key):
+                        try:
+                            uid = _slack_user_id(team, token, email)
+                            if not uid:
+                                raise RuntimeError("no Slack user for this email")
+                            _slack_post_dm(token, uid, _todo_slack_text(team, rows, today_key))
+                            out["slack"] += 1
+                        except Exception as e:
+                            _todo_release(team, un, "todo_slack_sent_on")
+                            log.warning(f"[todo-reminders] Slack DM failed for {team}/{un}: {e}")
+        except Exception as e:
+            log.warning(f"[todo-reminders] team {team} failed: {e}")
+    if verbose:
+        print(f"[todo-reminders] {today_key}: {out['emails']} email(s), {out['slack']} Slack DM(s)"
+              + (" (dry run)" if dry_run else ""))
+    return out
+
+@app.get("/api/my/prefs")
+def get_my_prefs(auth: dict = Depends(require_auth)):
+    """TODO-EMAIL-1: the caller's own notification preferences (+ whether their account has an email and
+    whether their Organization sends To-do reminders to Slack, so Settings can say so plainly)."""
+    team, me = auth["team"], auth["username"]
+    rec = next((u for u in (_cfg_val(team, "users", []) or []) if isinstance(u, dict) and u.get("username") == me), {})
+    slk = _cfg_val(team, "slackNotify", {}) or {}
+    return {"todoEmail": _todo_email_on(team, me), "hasEmail": bool((rec.get("email") or "").strip()),
+            "slackReminders": bool(slk.get("enabled") and "reminder" in (slk.get("types") or [])
+                                   and slk.get("mode") in ("dm", "both"))}
+
+@app.put("/api/my/prefs")
+def put_my_prefs(body: dict = Body(...), auth: dict = Depends(require_auth)):
+    team, me = auth["team"], auth["username"]
+    if "todoEmail" in body:
+        if not isinstance(body["todoEmail"], bool):
+            raise HTTPException(422, "todoEmail must be true or false")
+        with db(team) as c:
+            c.execute("INSERT OR IGNORE INTO user_prefs(username) VALUES(?)", (me,))
+            c.execute("UPDATE user_prefs SET todo_email=? WHERE username=?", (1 if body["todoEmail"] else 0, me))
+    return get_my_prefs(auth)
+
+@app.get("/todo-email/off", response_class=HTMLResponse)
+def todo_email_off(team: str = "", u: str = "", t: str = ""):
+    """One-click "stop these emails" from the morning reminder (no login: the link is signed per team+user).
+    Idempotent. An invalid/forged link changes nothing and says so."""
+    ok = bool(team and u and t) and re.match(r"^[a-z0-9]+$", team or "") and \
+        hmac.compare_digest(t, _todo_off_token(team, u)) and os.path.exists(team_db_path(team))
+    if ok:
+        with db(team) as c:
+            c.execute("INSERT OR IGNORE INTO user_prefs(username) VALUES(?)", (u,))
+            c.execute("UPDATE user_prefs SET todo_email=0 WHERE username=?", (u,))
+        msg = ("You will no longer get the morning To-do email. You can turn it back on in Flow under "
+               "Settings, Notifications.")
+    else:
+        msg = "This link is not valid. You can manage the morning To-do email in Flow under Settings, Notifications."
+    return HTMLResponse('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>Flow To-do email</title><body style="font-family:Lato,Segoe UI,Arial,sans-serif;max-width:480px;margin:60px auto;'
+        f'padding:0 16px;color:#1d2733"><h2 style="font-size:18px">Flow To-do email</h2><p>{html.escape(msg)}</p>'
+        f'<p><a href="{html.escape(APP_BASE_URL, quote=True)}" style="color:#0059A9">Open Flow</a></p></body>',
+        status_code=200 if ok else 400)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # IT/Ops weekly queue-health digest (Stage B)
@@ -13500,12 +13721,33 @@ def send_digest_preview(body: dict = Body(default={}), auth: dict = Depends(requ
     return {"ok": True, "sentTo": to,
             "summary": {k: s[k] for k in ("open", "overdue", "sla_breached", "sla_atrisk", "aged_30", "closed_7d")}}
 
+# ── SPA catch-all (Phase 3: Flow lives at root) ───────────────────────────────
+# MUST be the LAST route. FastAPI matches in declaration order, so every route
+# defined above wins first; only genuine root SPA paths (/list, /item/5,
+# /planning/sprints, …) fall through to here and get roadmap.html (like root()).
+# API/audit are guarded so a stray GET to an undefined /api/* or /audit path still
+# 404s instead of returning HTML.
+@app.get("/{full_path:path}", response_class=HTMLResponse)
+def spa_catch_all(full_path: str):
+    if full_path.startswith("api/") or full_path.startswith("audit"):
+        raise HTTPException(404)
+    if not os.path.exists(HTML):
+        raise HTTPException(404, "roadmap.html not found next to server.py")
+    with open(HTML, encoding="utf-8") as f:
+        return f.read()
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     # Weekly queue-health digest (run by a systemd timer): send + exit, never start the server.
     if "--send-digests" in sys.argv:
         _n = send_team_digests(verbose=True)
         print(f"[digest] sent {_n} email(s)")
+        sys.exit(0)
+    # TODO-EMAIL-1: weekday-morning To-do reminders (systemd timer): send + exit, never start the server.
+    if "--send-todo-reminders" in sys.argv:
+        _only = sys.argv[sys.argv.index("--team") + 1] if "--team" in sys.argv[:-1] else None
+        send_todo_reminders(verbose=True, dry_run="--dry-run" in sys.argv, only_team=_only)
         sys.exit(0)
     import uvicorn
     uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=False)

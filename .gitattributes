@@ -1,0 +1,2 @@
+# systemd units are copied to Linux as-is: keep LF
+tools/systemd/* text eol=lf

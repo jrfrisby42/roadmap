@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly Frazil Flow queue-health digest (Mon 08:00 America/Denver)
+
+[Timer]
+OnCalendar=Mon *-*-* 08:00:00 America/Denver
+Persistent=true
+
+[Install]
+WantedBy=timers.target

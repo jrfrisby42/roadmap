@@ -1,0 +1,10 @@
+[Unit]
+Description=Frazil Flow weekly queue-health digest
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/roadmap
+ExecStart=/opt/roadmap/venv/bin/python server.py --send-digests

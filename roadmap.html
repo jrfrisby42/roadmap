@@ -2818,7 +2818,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.58.8';
+const APP_VERSION = '6.58.9';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -21468,6 +21468,8 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-set-panel { display:none; }
   .frz-beta .frz-set-panel.is-active { display:block; }
   .frz-beta .frz-set-panel h2 { margin:0 0 14px; }
+  .frz-beta .frz-pref-switch { display:inline-flex; align-items:center; gap:6px; font-size:13px; font-weight:700; color:var(--frz-text); cursor:pointer; flex-shrink:0; }
+  .frz-beta .frz-pref-switch input { width:16px; height:16px; accent-color:var(--frz-accent); cursor:pointer; }
   .frz-beta .frz-set-stub { font-size:13px; color:var(--frz-text-muted); line-height:1.6; }
   .frz-beta .frz-set-row { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:14px 0; border-bottom:1px solid var(--frz-border); }
   .frz-beta .frz-set-row-title { font-size:13.5px; font-weight:600; color:var(--frz-text); }
@@ -26410,7 +26412,9 @@ if ('serviceWorker' in navigator) {
     function _okbad(ok, okTxt, badTxt){ return ok ? '<span style="color:#1f9d55;font-weight:700">'+okTxt+'</span>' : '<span style="color:#d9822b;font-weight:700">'+badTxt+'</span>'; }
     var slackState = 'Channel: '+_okbad(slackHasHook,'webhook present','no webhook')
       + ' &nbsp;&middot;&nbsp; DMs: '+_okbad(slackHasBot,'bot token present','no bot token');
-    var slackTypeRows = [['mention','Mentions'],['assigned','Assignments'],['reply','Comment replies'],['watch_status','Status changes (watched)'],['watch_comment','Comments (watched)']].map(function(t){
+    // TODO-EMAIL-1: 'reminder' = the weekday 7:00 MT To-do summary, sent as a DM only (to-dos are private, so it
+    // never posts to the channel even in Channel/Both mode). Not in the default set: an admin opts the Org in.
+    var slackTypeRows = [['mention','Mentions'],['assigned','Assignments'],['reply','Comment replies'],['watch_status','Status changes (watched)'],['watch_comment','Comments (watched)'],['reminder','To-do reminders (DM only, weekday mornings)']].map(function(t){
       return '<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin-right:14px;margin-bottom:4px"><input type="checkbox" class="ts-slack-type" data-stype="'+t[0]+'"'+(effTypes.indexOf(t[0])>=0?' checked':'')+'>'+esc(t[1])+'</label>';
     }).join('');
     var slackModeRows = [['channel','Channel only'],['dm','DM the users'],['both','Both']].map(function(m){
@@ -33848,7 +33852,17 @@ if ('serviceWorker' in navigator) {
               '</div>'+
             '</div>'+
           '</div>'+
-          '<div class="frz-set-panel" id="frzSetPanel_notifs"><div class="frz-set-stub">Notification preferences are coming soon. For now, notifications show in the bell menu in the top bar.</div></div>'+
+          '<div class="frz-set-panel" id="frzSetPanel_notifs">'+   // TODO-EMAIL-1
+            '<h2>Notifications</h2>'+
+            '<div class="frz-set-row">'+
+              '<div><div class="frz-set-row-title">Morning To-do email</div><div class="frz-set-row-sub" id="frzPrefTodoSub">On weekday mornings (7:00 Mountain), an email listing your To-dos that are due today or overdue. Nothing due, no email.</div></div>'+
+              '<label class="frz-pref-switch"><input type="checkbox" id="frzPrefTodoEmail" aria-describedby="frzPrefTodoSub" disabled> <span>On</span></label>'+
+            '</div>'+
+            '<div class="frz-set-row">'+
+              '<div><div class="frz-set-row-title">Slack reminders</div><div class="frz-set-row-sub" id="frzPrefSlack">Loading…</div></div>'+
+            '</div>'+
+            '<div class="frz-set-stub" style="margin-top:12px">Everything else shows in the bell menu in the top bar.</div>'+
+          '</div>'+
         '</div>'+
       '</div>';
     root.appendChild(bg);
@@ -33955,6 +33969,30 @@ if ('serviceWorker' in navigator) {
     bg.querySelectorAll('[data-settab]').forEach(function(b){ b.classList.toggle('is-active', b.getAttribute('data-settab')===t); });
     bg.querySelectorAll('.frz-set-panel').forEach(function(p){ p.classList.remove('is-active'); });
     var panel=bg.querySelector('#frzSetPanel_'+t); if(panel) panel.classList.add('is-active');
+    if(t==='notifs') _frzLoadPrefs();   // TODO-EMAIL-1
+  }
+  // TODO-EMAIL-1: the caller's own notification preferences. The email is a PER-PERSON choice; Slack
+  // reminders are an ORGANIZATION setting an admin turns on, so this tab states which way it is rather
+  // than offering a switch that isn't the user's to flip.
+  function _frzLoadPrefs(){
+    var cb=document.getElementById('frzPrefTodoEmail'), sub=document.getElementById('frzPrefTodoSub'), sl=document.getElementById('frzPrefSlack');
+    if(!cb) return;
+    API.get('/api/my/prefs').then(function(d){
+      d=d||{};
+      cb.checked=!!d.todoEmail; cb.disabled=false;
+      var lbl=cb.parentNode && cb.parentNode.querySelector('span'); if(lbl) lbl.textContent=cb.checked?'On':'Off';
+      if(sub && !d.hasEmail) sub.textContent='Your account has no email address, so this cannot be sent. Ask an admin to add one.';
+      if(sl) sl.textContent = d.slackReminders
+        ? 'On for your Organization: you also get the morning list as a Slack direct message. This is an admin setting for everyone, not a personal one.'
+        : 'Off for your Organization. An admin can turn on To-do reminders as Slack direct messages for everyone.';
+      cb.onchange=function(){
+        var want=cb.checked; cb.disabled=true;
+        API.put('/api/my/prefs', {todoEmail:want}).then(function(r){
+          cb.checked=!!(r&&r.todoEmail); cb.disabled=false; if(lbl) lbl.textContent=cb.checked?'On':'Off';
+          _call('showToast', cb.checked?'Morning To-do email on':'Morning To-do email off', 'success');
+        }).catch(function(){ cb.checked=!want; cb.disabled=false; if(lbl) lbl.textContent=cb.checked?'On':'Off'; _call('showToast','Could not save','error'); });
+      };
+    }).catch(function(){ if(sl) sl.textContent='Could not load your preferences.'; });
   }
   function openSettings(){
     buildSettingsPanel();
