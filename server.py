@@ -7516,16 +7516,11 @@ def _slack_channel_msg(team, message, recips) -> str:
     msg = re.sub(r"\byou\b", names, msg)
     return msg
 
-def _slack_user_id(team, token, email) -> str:
-    """Resolve a Slack user id from an email via users.lookupByEmail, cached per team. Returns ''
-    when the email is blank / not found in Slack (that '' is cached to avoid re-lookups). A transient
-    error returns '' WITHOUT caching so it retries later. Best-effort - never raises."""
-    email = (email or "").strip().lower()
-    if not email or not token:
-        return ""
-    cache = _slack_uid_cache.setdefault(team, {})
-    if email in cache:
-        return cache[email]
+def _slack_lookup(team, token, email):
+    """SLACK-COVERAGE-1: one users.lookupByEmail call, classified. Returns (status, value):
+    ('found', uid) | ('not_found', '') | ('error', reason). 'users_not_found' is Slack's answer for an email
+    with no Slack account; anything else that is not ok (e.g. missing_scope, invalid_auth) is an error -
+    the old lookup folded both into '' and cached the error as 'not found'."""
     try:
         req = Request("https://slack.com/api/users.lookupByEmail?email=" + _urlq(email, safe=""),
                       headers={"Authorization": "Bearer " + token})
@@ -7533,8 +7528,28 @@ def _slack_user_id(team, token, email) -> str:
             data = json.loads(r.read())
     except Exception as e:
         log.warning(f"[Slack] user lookup failed for team {team}: {e}")
-        return ""   # transient - do not cache
-    uid = ((data.get("user") or {}).get("id") or "") if data.get("ok") else ""
+        return ("error", str(e) or "network error")
+    if data.get("ok"):
+        uid = (data.get("user") or {}).get("id") or ""
+        return ("found", uid) if uid else ("not_found", "")
+    err = data.get("error") or "unknown error"
+    return ("not_found", "") if err == "users_not_found" else ("error", err)
+
+def _slack_user_id(team, token, email, fresh=False) -> str:
+    """Resolve a Slack user id from an email via users.lookupByEmail, cached per team. Returns ''
+    when the email is blank / not found in Slack (that '' is cached to avoid re-lookups). A transient
+    error OR a Slack-side error (e.g. missing_scope) returns '' WITHOUT caching so it retries later.
+    fresh=True skips the cache read (the admin match check). Best-effort - never raises."""
+    email = (email or "").strip().lower()
+    if not email or not token:
+        return ""
+    cache = _slack_uid_cache.setdefault(team, {})
+    if not fresh and email in cache:
+        return cache[email]
+    status, val = _slack_lookup(team, token, email)
+    if status == "error":
+        return ""   # do not cache - retry later
+    uid = val if status == "found" else ""
     cache[email] = uid   # cache found AND not-found
     return uid
 
@@ -7960,6 +7975,39 @@ def slack_test(auth: dict = Depends(require_role("admin"))):
                     result["dm"] = "failed: " + str(e)
     write_audit(team, "slack:test", auth["username"])
     return {"ok": True, "result": result}
+
+@app.get("/api/slack/coverage")
+def slack_coverage(auth: dict = Depends(require_role("admin"))):
+    """SLACK-COVERAGE-1: which of this Organization's people Flow can reach by Slack DM. DMs find a person by
+    their Flow email (users.lookupByEmail), so anyone whose email is missing or differs from their Slack email
+    is silently skipped today. Admin-only, read-only (fresh lookups, results refresh the id cache). Statuses:
+    matched | no_email | not_found | error (with Slack's reason, e.g. missing_scope = the bot token lacks
+    users:read.email)."""
+    team = auth["team"]
+    token = _slack_bot_token(team)
+    users = [u for u in (_cfg_val(team, "users", []) or []) if isinstance(u, dict) and u.get("username")]
+    if not token:
+        return {"botToken": False, "total": len(users), "matched": 0, "rows": []}
+    rows, matched = [], 0
+    cache = _slack_uid_cache.setdefault(team, {})
+    for u in users[:200]:
+        un = u["username"]; email = (u.get("email") or "").strip()
+        row = {"username": un, "name": _user_display(team, un), "email": email}
+        if not email:
+            row["status"] = "no_email"
+        else:
+            st, val = _slack_lookup(team, token, email.lower())
+            if st == "found":
+                row["status"] = "matched"; matched += 1; cache[email.lower()] = val
+            elif st == "not_found":
+                row["status"] = "not_found"; cache[email.lower()] = ""
+            else:
+                row["status"] = "error"; row["detail"] = val
+        rows.append(row)
+    order = {"error": 0, "not_found": 1, "no_email": 2, "matched": 3}
+    rows.sort(key=lambda r: (order.get(r["status"], 9), (r["name"] or r["username"]).lower()))
+    write_audit(team, "slack:coverage", auth["username"], changes={"matched": matched, "total": len(rows)})
+    return {"botToken": True, "total": len(rows), "matched": matched, "rows": rows}
 
 @app.get("/api/items/{pid}/watchers")
 def get_item_watchers(pid: int, auth: dict = Depends(require_auth)):

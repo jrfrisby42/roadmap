@@ -128,3 +128,57 @@ def test_new_ticket_assigned_to_an_admin_is_not_doubled(team, admin_headers, cli
     _users(client, admin_headers)
     got = server._intake_new_ticket_usernames(team, {"assignee": "boss"})
     assert sorted(got) == ["boss"]
+
+
+# ── SLACK-COVERAGE-1: who Slack DMs can reach ───────────────────────────────────────────────────────────
+def _cov_users(client, admin_headers):
+    client.put("/api/config/users", json=[
+        {"username": "admin", "role": "admin", "email": "admin@x.com"},
+        {"username": "ann", "role": "editor", "email": "Ann@X.com"},
+        {"username": "bob", "role": "editor", "email": "bob@x.com"},
+        {"username": "cy", "role": "viewer"},
+        {"username": "dee", "role": "editor", "email": "dee@x.com"},
+    ], headers=admin_headers)
+
+
+def test_slack_coverage_classifies_everyone(team, admin_headers, client, monkeypatch):
+    _cov_users(client, admin_headers)
+    monkeypatch.setattr(server, "_slack_bot_token", lambda t: "xoxb-test")
+    answers = {"admin@x.com": ("found", "U1"), "ann@x.com": ("found", "U2"),
+               "bob@x.com": ("not_found", ""), "dee@x.com": ("error", "missing_scope")}
+    seen = []
+    monkeypatch.setattr(server, "_slack_lookup", lambda t, tok, email: seen.append(email) or answers[email])
+    r = client.get("/api/slack/coverage", headers=admin_headers).json()
+    assert r["botToken"] is True and r["total"] == 5 and r["matched"] == 2
+    st = {x["username"]: x["status"] for x in r["rows"]}
+    assert st == {"admin": "matched", "ann": "matched", "bob": "not_found", "cy": "no_email", "dee": "error"}
+    assert [x["username"] for x in r["rows"]][:3] == ["dee", "bob", "cy"]          # problems listed first
+    assert next(x for x in r["rows"] if x["username"] == "dee")["detail"] == "missing_scope"
+    assert "ann@x.com" in seen                                                     # looked up lower-cased
+
+
+def test_slack_coverage_without_a_bot_token(team, admin_headers, client, monkeypatch):
+    _cov_users(client, admin_headers)
+    monkeypatch.setattr(server, "_slack_bot_token", lambda t: "")
+    r = client.get("/api/slack/coverage", headers=admin_headers).json()
+    assert r["botToken"] is False and r["rows"] == []
+
+
+def test_slack_coverage_is_admin_only(team, client):
+    h = {"Authorization": f"Bearer {server.create_token(team, 'ed', 'editor')}", "X-Team": team}
+    assert client.get("/api/slack/coverage", headers=h).status_code == 403
+
+
+def test_slack_user_id_does_not_cache_a_slack_error(monkeypatch):
+    """A missing_scope / network error must not be remembered as 'no Slack account' (it would stick until restart)."""
+    team = "cachetest"
+    server._slack_uid_cache.pop(team, None)
+    calls = {"n": 0}
+
+    def flaky(t, tok, email):
+        calls["n"] += 1
+        return ("error", "missing_scope") if calls["n"] == 1 else ("found", "U9")
+    monkeypatch.setattr(server, "_slack_lookup", flaky)
+    assert server._slack_user_id(team, "xoxb", "a@x.com") == ""
+    assert server._slack_user_id(team, "xoxb", "a@x.com") == "U9"          # retried, not cached as not-found
+    assert server._slack_user_id(team, "xoxb", "a@x.com") == "U9" and calls["n"] == 2   # now cached
