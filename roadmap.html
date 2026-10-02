@@ -21412,6 +21412,16 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-reminder-ind:hover { border-color:var(--frz-accent); color:var(--frz-text); }
   /* ACTIVITY-MERGE: labelled section header inside the bell dropdown, + the flag-coloured dot on an
      Activity Center row. Muted --frz-* tokens only. */
+  /* TODO-DUE-1: due to-dos pinned at the top of the bell */
+  .frz-beta .frz-notif-due { display:flex; align-items:center; gap:8px; padding:0 14px 0 0; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-notif-due-open { flex:1; min-width:0; text-align:left; border:0; background:none; cursor:pointer; padding:10px 0 10px 14px; display:flex; flex-direction:column; gap:3px; font-family:inherit; }
+  .frz-beta .frz-notif-due-open:hover .frz-notif-msg { color:var(--frz-accent); }
+  .frz-beta .frz-notif-due-key { font-size:11px; font-weight:800; color:var(--frz-text-muted); font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  .frz-beta .frz-notif-meta.frz-notif-due-over { color:var(--frz-danger); font-weight:700; }
+  .frz-beta .frz-notif-due-acts { display:flex; align-items:center; gap:4px; flex-shrink:0; flex-wrap:wrap; justify-content:flex-end; }
+  .frz-beta .frz-notif-due-done { font-size:11px; font-weight:700; color:#fff; background:var(--frz-accent); border:1px solid var(--frz-accent); border-radius:6px; padding:2px 9px; cursor:pointer; font-family:'Lato',sans-serif; }
+  .frz-beta .frz-notif-due-done:hover { filter:brightness(1.08); }
+  .frz-beta .frz-notif-due-done:disabled, .frz-beta .frz-notif-due-snz:disabled { opacity:.5; cursor:default; }
   .frz-beta .frz-notif-seclbl { padding:8px 14px 4px; font-size:10.5px; font-weight:800; letter-spacing:.5px; text-transform:uppercase; color:var(--frz-text-muted); background:var(--frz-bg-app); border-bottom:1px solid var(--frz-border); }
   .frz-beta .frz-notif-actdot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; vertical-align:middle; flex-shrink:0; }
   /* BELL-1: header can hold two actions (Mark all read + Clear read) */
@@ -23938,8 +23948,12 @@ if ('serviceWorker' in navigator) {
       var over=_frzTodoOverdue(t);
       // The due date DISPLAYS as a controllable span (overdue = a real muted-red date in both themes; a
       // native input cannot be reliably colored). It swaps to a native input on click for editing.
+      // TODO-DUE-1: say it - an overdue row reads "Overdue · Sep 8" (not a bare red date), due today reads
+      // "Due today". Future dates stay the compact absolute date.
+      var _dueTxt = !t.due_date ? '' : (over ? 'Overdue · '+_frzFmtDue(t.due_date) : (t.due_date===_frzTodayMTKey() ? 'Due today' : _frzFmtDue(t.due_date)));
+      var _dueTip = !t.due_date ? '' : (over ? _frzDueLabel(t.due_date)+' - change due date' : 'Change due date');
       var dateHtml = t.due_date
-        ? '<span class="frz-todo-datebtn'+(over?' frz-todo-over':'')+'" role="button" tabindex="0" data-tid="'+t.id+'" data-cur="'+escA(t.due_date)+'" title="Change due date">'+esc(_frzFmtDue(t.due_date))+'</span>'
+        ? '<span class="frz-todo-datebtn'+(over?' frz-todo-over':'')+'" role="button" tabindex="0" data-tid="'+t.id+'" data-cur="'+escA(t.due_date)+'" title="'+escA(_dueTip)+'">'+esc(_dueTxt)+'</span>'
         : '<span class="frz-todo-adddate" role="button" tabindex="0" data-tid="'+t.id+'">Add date</span>';
       // TODO-RECUR-1: recurrence control - shown ONLY when a due date exists (required-due gating: no date
       // means no next date to compute, addendum A4). Muted glyph when none; accent + a "Repeats X" title
@@ -33031,11 +33045,78 @@ if ('serviceWorker' in navigator) {
   }
   function _frzBacklogCount(){ var a=_frzBacklogActs(); return a?a.length:0; }
   // BELL-1 title: the composition, so the meaning never depends on colour. Singulars kept; a zero half omitted.
-  function _frzBadgeTitle(unread, actN){
+  // ── TODO-DUE-1: due To-dos pinned at the top of the bell ──────────────────────────────────────────────
+  // A reminder used to be a one-shot notification row: fired once, then buried under the rest of the bell
+  // and never shown again (on development 14 of 15 were never read, 16 to-dos sat overdue). The bell now
+  // derives a "To-dos due" section from the caller's OWN open to-dos (due today or overdue, MT day-key), so
+  // an overdue to-do stays visible until it is done or snoozed - state, not an event, so no repeated rows.
+  // The one-shot reminder notification for a to-do shown here is hidden from the list (it would duplicate
+  // the pinned row) and left out of the badge count; Done / Snooze from the section clear it.
+  var _frzDueLoading=false;
+  function _frzDueTodos(){
+    if(_frzMyTodos===null){   // not loaded (or invalidated by a mutation): load once, repaint, show nothing meanwhile
+      if(!_frzDueLoading){ _frzDueLoading=true; _frzMyTodosReady(function(){ _frzDueLoading=false; _frzRepaintNotif(); }); }
+      return [];
+    }
+    var today=_frzTodayMTKey();
+    return _frzMyTodos.filter(function(t){ return t.status!=='Done' && t.due_date && t.due_date<=today; })
+      .sort(function(a,b){ return a.due_date<b.due_date?-1:(a.due_date>b.due_date?1:a.id-b.id); });
+  }
+  function _frzDaysOverdue(iso){   // whole MT days between a YYYY-MM-DD due date and MT today (0 = due today)
+    var a=Date.parse(iso+'T00:00:00Z'), b=Date.parse(_frzTodayMTKey()+'T00:00:00Z');
+    return (isNaN(a)||isNaN(b)) ? 0 : Math.round((b-a)/86400000);
+  }
+  function _frzDueLabel(iso){
+    var n=_frzDaysOverdue(iso);
+    return n<=0 ? 'Due today' : ('Overdue · '+n+' day'+(n===1?'':'s'));
+  }
+  function _frzDueTodoIds(){ var o={}; _frzDueTodos().forEach(function(t){ o[t.id]=true; }); return o; }
+  // Reminder rows whose to-do is pinned in the due section: hidden from the list + the badge.
+  function _frzIsPinnedReminder(n, dueIds){ return !!(n.type==='reminder' && n.todo_id && dueIds[n.todo_id]); }
+  function _frzBadgeTitle(unread, actN, dueN){
     var parts=[];
+    if(dueN>0) parts.push(dueN+' to-do'+(dueN===1?'':'s')+' due');
     if(unread>0) parts.push(unread+' new');
     if(actN>0) parts.push(actN+' outstanding');
     return parts.join(', ');
+  }
+  // Clear the one-shot reminder notification(s) for a to-do once it is done or snoozed from the due section.
+  function _frzDropReminderNotifs(todoId){
+    _notifs.filter(function(n){ return n.type==='reminder' && n.todo_id===todoId; }).forEach(function(n){
+      API.del('/api/notifications/'+n.id).then(function(d){
+        _notifs=_notifs.filter(function(x){ return x.id!==n.id; });
+        if(d && typeof d.unread==='number') _notifUnread=d.unread;
+        _frzRepaintNotif();
+      }).catch(function(){});
+    });
+  }
+  function _frzAfterDueChange(){   // refetch the to-do cache, then repaint the bell + any open To-dos tab + the rail badge
+    _frzInvalidateMyTodos();
+    _frzMyTodosReady(function(){
+      _frzRepaintNotif();
+      try { renderRail(); } catch(e){}
+      if(state.view==='my-home' && state.homeTab==='todos' && _frzTodoView==='open') _frzRenderTodos();
+    });
+  }
+  function _frzDueDone(id){
+    API.put('/api/my/todos/'+id, {status:'Done'}).then(function(){
+      _frzDropReminderNotifs(id); _frzAfterDueChange();
+      if(typeof showToast==='function') showToast('To-do done');
+    }).catch(function(){ if(typeof showToast==='function') showToast('Could not complete the to-do','error'); _frzRepaintNotif(); });
+  }
+  function _frzDueSnooze(id, days){
+    var td=(_frzMyTodos||[]).filter(function(t){ return t.id===id; })[0];
+    var prevDue=td?(td.due_date||null):null;   // captured BEFORE the write so Undo can put it back
+    var lbl=(days===1?'tomorrow':'next week');
+    API.put('/api/my/todos/'+id, {due_date:_frzDateFromMT(days)}).then(function(){
+      _frzDropReminderNotifs(id); _frzAfterDueChange();
+      if(typeof showToast!=='function') return;
+      if(!prevDue){ showToast('Snoozed to '+lbl); return; }
+      showToast('Snoozed to '+lbl, 'info', 5000, { label:'Undo', fn:function(){
+        API.put('/api/my/todos/'+id, {due_date:prevDue}).then(_frzAfterDueChange)
+          .catch(function(){ showToast('Could not move the date back','error'); });
+      }});
+    }).catch(function(){ if(typeof showToast==='function') showToast('Could not snooze the to-do','error'); _frzRepaintNotif(); });
   }
   function renderBellBadge(){
     var b=document.getElementById('frzBellBadge'); if(!b) return;
@@ -33045,13 +33126,17 @@ if ('serviceWorker' in navigator) {
     // alarming colour or the badge would be red forever on a team that never resolves). BADGE-1: the two
     // discs invert lightness polarity (dark red/light text vs light amber/dark text), not just hue, so they
     // read apart under deuteranopia; the title spells out the split for colour-independent meaning.
-    var unread=(_notifUnread||0), actN=_frzBacklogCount(), total=unread+actN;
+    // TODO-DUE-1: due to-dos count as wanting attention (amber, like activities); a pinned reminder's own
+    // unread row is not counted twice.
+    var _dueIds=_frzDueTodoIds(), dueN=Object.keys(_dueIds).length;
+    var _hidUnread=_notifs.filter(function(n){ return !n.read && _frzIsPinnedReminder(n, _dueIds); }).length;
+    var unread=Math.max(0,(_notifUnread||0)-_hidUnread), actN=_frzBacklogCount(), total=unread+actN+dueN;
     b.classList.remove('is-alert','is-warn');
     if(total<=0){ b.hidden=true; b.removeAttribute('title'); return; }
     b.hidden=false;
     b.textContent = total>99 ? '99+' : String(total);
     b.classList.add(unread>0 ? 'is-alert' : 'is-warn');
-    b.title = _frzBadgeTitle(unread, actN);
+    b.title = _frzBadgeTitle(unread, actN, dueN);
   }
   // ACTIVITY-MERGE: block B calls this after every loadActivities so the bell reflects activity changes
   // (new flags, or activities marked Read when the Activity Center opens) without waiting for the next poll.
@@ -33421,6 +33506,26 @@ if ('serviceWorker' in navigator) {
     // restore the under-reporting BELL-1 exists to fix). It no longer clears on visit (source is unresolved,
     // not unread) - only RESOLVING an item removes it. Activity rows are NOT deletable and carry .frz-notif-act
     // (the notification-row handler and the per-row × are both excluded from them).
+    // TODO-DUE-1: the caller's due to-dos, pinned FIRST (personal deadlines), capped like the activity section.
+    var dues=_frzDueTodos(), dueIds=_frzDueTodoIds(), dueSection='';
+    if(dues.length){
+      var _DUE_CAP=5;
+      dueSection='<div class="frz-notif-seclbl">To-dos due ('+dues.length+')</div>'+dues.slice(0,_DUE_CAP).map(function(t){
+        var over=_frzDaysOverdue(t.due_date)>0;
+        return '<div class="frz-notif-due">'+
+          '<button type="button" class="frz-notif-due-open" data-tdid="'+t.id+'" data-tditem="'+(t.item_id||'')+'">'+
+            '<span class="frz-notif-msg">'+(t.item_key?'<span class="frz-notif-due-key">'+esc(t.item_key)+'</span> ':'')+esc(t.title)+'</span>'+
+            '<span class="frz-notif-meta'+(over?' frz-notif-due-over':'')+'">'+esc(_frzDueLabel(t.due_date))+' · '+esc(_frzFmtDue(t.due_date))+'</span>'+
+          '</button>'+
+          '<span class="frz-notif-due-acts">'+
+            '<button type="button" class="frz-notif-due-done" data-tdid="'+t.id+'" aria-label="Mark '+escA(t.title)+' done">Done</button>'+
+            '<button type="button" class="frz-notif-snooze-btn frz-notif-due-snz" data-tdid="'+t.id+'" data-days="1" aria-label="Snooze '+escA(t.title)+' to tomorrow">Tomorrow</button>'+
+            '<button type="button" class="frz-notif-snooze-btn frz-notif-due-snz" data-tdid="'+t.id+'" data-days="7" aria-label="Snooze '+escA(t.title)+' to next week">Next week</button>'+
+          '</span>'+
+        '</div>';
+      }).join('');
+      if(dues.length>_DUE_CAP) dueSection+='<button class="frz-notif-row frz-notif-act frz-notif-due-all">View all ('+dues.length+')</button>';
+    }
     var acts=_frzBacklogActs();
     var actSection='';
     if(acts && acts.length){
@@ -33435,7 +33540,8 @@ if ('serviceWorker' in navigator) {
       }).join('');
       if(acts.length>_ACT_CAP) actSection+='<button class="frz-notif-row frz-notif-act frz-notif-viewall" data-actall="1">View all ('+acts.length+')</button>';
     }
-    var notifBody = _notifs.length ? _notifs.map(function(n){
+    var _shownNotifs=_notifs.filter(function(n){ return !_frzIsPinnedReminder(n, dueIds); });   // TODO-DUE-1: no duplicate of a pinned to-do
+    var notifBody = _shownNotifs.length ? _shownNotifs.map(function(n){
       // REM-3: a reminder gets a sibling snooze block (Tomorrow / Next week), a SIBLING not nested (the row
       // is a <button>). REM-4 item 2 (orphans): only offer snooze while the to-do still EXISTS in the
       // caller's own list. A reminder notification outlives its to-do; a deleted to-do (todo_id present but
@@ -33472,8 +33578,8 @@ if ('serviceWorker' in navigator) {
     }).join('') : '';
     // Label the personal notifications only when the Activity Center section sits above them (so the two are
     // distinguishable); with no activities the list is unlabelled exactly as before. Empty only when BOTH are.
-    var notifLbl = (acts && acts.length && _notifs.length) ? '<div class="frz-notif-seclbl">Notifications</div>' : '';   // acts may be null (loading) - guard
-    var listInner = actSection + notifLbl + notifBody;
+    var notifLbl = (((acts && acts.length) || dues.length) && _shownNotifs.length) ? '<div class="frz-notif-seclbl">Notifications</div>' : '';   // acts may be null (loading) - guard
+    var listInner = dueSection + actSection + notifLbl + notifBody;
     if(!listInner) listInner = '<div class="frz-notif-empty">You’re all caught up.</div>';
     p.innerHTML=hd+'<div class="frz-notif-list">'+listInner+'</div>';
     var all=document.getElementById('frzNotifAll'); if(all) all.addEventListener('click', function(e){ e.stopPropagation(); markAllRead(); });
@@ -33504,7 +33610,24 @@ if ('serviceWorker' in navigator) {
     p.querySelectorAll('.frz-notif-del').forEach(function(x){
       x.addEventListener('click', function(e){ e.stopPropagation(); _frzDeleteNotif(+x.getAttribute('data-delid')); });
     });
-    p.querySelectorAll('.frz-notif-snooze-btn').forEach(function(sb){
+    // TODO-DUE-1: due-section handlers. The row opens its item (or My Home To-dos); Done / Snooze act in
+    // place and keep the panel open so the next due to-do can be handled.
+    p.querySelectorAll('.frz-notif-due-open').forEach(function(b){
+      b.addEventListener('click', function(){
+        var it=+b.getAttribute('data-tditem'); p.hidden=true;
+        if(it) navigate('/item/'+it, false); else navigate('/my-home/todos', false);
+      });
+    });
+    p.querySelectorAll('.frz-notif-due-all').forEach(function(b){
+      b.addEventListener('click', function(){ p.hidden=true; navigate('/my-home/todos', false); });
+    });
+    p.querySelectorAll('.frz-notif-due-done').forEach(function(b){
+      b.addEventListener('click', function(e){ e.stopPropagation(); b.disabled=true; _frzDueDone(+b.getAttribute('data-tdid')); });
+    });
+    p.querySelectorAll('.frz-notif-due-snz').forEach(function(b){
+      b.addEventListener('click', function(e){ e.stopPropagation(); b.disabled=true; _frzDueSnooze(+b.getAttribute('data-tdid'), +b.getAttribute('data-days')); });
+    });
+    p.querySelectorAll('.frz-notif-snooze-btn:not(.frz-notif-due-snz)').forEach(function(sb){
       sb.addEventListener('click', function(e){
         e.stopPropagation();
         var box=sb.closest('.frz-notif-snooze'); if(!box) return;
