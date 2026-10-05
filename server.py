@@ -2764,12 +2764,24 @@ def _intake_email_html(item, rows, heading, intro, cta_label, cta_url, note=None
 <tr><td style="padding:12px 24px;border-top:1px solid #eef1f4;color:#9aa4b1;font-size:11px;text-align:center;line-height:1.5">Submitted via the Frazil Flow ticket portal.<br>If the button doesn't work, paste this link:<br><span style="color:#6b7280;word-break:break-all">{esc(cta_url)}</span></td></tr>
 </table></td></tr></table></body></html>"""
 
+def _parse_email_list(v) -> list:
+    """A notify-address setting -> clean, de-duplicated addresses. Stored as ONE string ("a@x.com, b@y.com",
+    comma/semicolon separated) - DIGEST-DEPT-1: the weekly digest treated that string as a list and sent
+    to each CHARACTER (539 rejected SES calls on its first run). Also accepts a list. Drops anything that is
+    not an address, so a typo can never become a send to a bare word."""
+    parts = v if isinstance(v, list) else re.split(r"[,;]", v or "")
+    out = []
+    for a in parts:
+        a = (a or "").strip() if isinstance(a, str) else ""
+        if a and "@" in a and a.lower() not in {x.lower() for x in out}:
+            out.append(a)
+    return out
+
 def _department_emails(team, dept):
     """Notify addresses configured for a department (departmentMeta[dept].emails)."""
     meta = _cfg_val(team, "departmentMeta", {}) or {}
     entry = meta.get(dept) if isinstance(meta, dict) else None
-    emails = (entry.get("emails", "") if isinstance(entry, dict) else "") or ""
-    return [a.strip() for a in re.split(r"[,;]", emails) if a.strip()]
+    return _parse_email_list(entry.get("emails", "") if isinstance(entry, dict) else "")
 
 def _intake_send_emails(team, item, pid):
     """Confirmation to the reporter (public status link) + a copy to the team inbox
@@ -13722,7 +13734,7 @@ def send_team_digests(verbose=False):
             if inbox:
                 targets.append(("", inbox, items))
             for dname, meta in (_cfg_val(team, "departmentMeta", {}) or {}).items():
-                emails = [e.strip() for e in (meta.get("emails") or []) if e and e.strip()] if isinstance(meta, dict) else []
+                emails = _parse_email_list(meta.get("emails")) if isinstance(meta, dict) else []   # DIGEST-DEPT-1
                 if not emails:
                     continue
                 subset = [p for p in items if dname in (p.get("departments") or [])]
