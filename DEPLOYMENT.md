@@ -144,9 +144,14 @@ manually - the config file is still written.
 
 `python server.py --send-todo-reminders` emails each user their open To-dos that are due today or overdue
 (Mountain Time day, weekdays only) and, when an admin has ticked **To-do reminders** in the Organization's
-Slack settings with DM delivery, sends the same list as a Slack DM. Email is on by default per user, with a
-one-click off link in every email and a switch in Settings -> Notifications. Each channel sends at most once
-per user per day, so a re-run is harmless. Preview without sending: add `--dry-run`.
+Slack settings with DM delivery, sends the same list as a Slack DM. The email also carries a **"Newly assigned
+to you"** section (items assigned since the previous morning email, ASSIGN-EMAIL-1) and is sent when either
+section has something. Both sections are on by default per user, with a one-click off link in every email and
+switches in Settings -> Notifications. Each channel sends at most once per user per day, so a re-run is
+harmless. Preview without sending: add `--dry-run`.
+
+Separately, people can opt in (default off) to an **instant email per assignment**; that is sent from the app
+itself when the assignment happens, not by this timer.
 
 The unit files live in the repo at `tools/systemd/` (this timer and the digest timer below):
 
