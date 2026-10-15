@@ -33622,6 +33622,7 @@ if ('serviceWorker' in navigator) {
         // (My Home To-dos) instead of doing nothing. Other null-item types keep their prior no-op behaviour.
         if(it) navigate('/item/'+it, false);
         else if(b.getAttribute('data-ntype')==='reminder') navigate('/my-home/todos', false);
+        else if(b.getAttribute('data-ntype')==='assigned') navigate('/my-home/assigned', false);   // ASSIGN-NOTIFY-1: a bulk-assignment summary has no single item
       });
     });
     // ACTIVITY-MERGE: an activity ITEM row opens the Activity Center focused on its item (openConflictActivityModal
