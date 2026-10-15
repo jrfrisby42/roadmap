@@ -1143,6 +1143,15 @@ def init_team_db(team: str):
             c.execute("ALTER TABLE todos ADD COLUMN url TEXT")
         except Exception:
             pass  # column already exists
+        # ASSIGN-EMAIL-1: assignment email preferences. assign_daily NULL = default ON ("Newly assigned to you" in
+        # the morning email); assign_instant NULL = default OFF (an email per assignment); assign_since = the
+        # last morning email's run time, the start of the next "newly assigned" window. Plain try/except ALTER
+        # (the loser of the two gunicorn workers' race catches "duplicate column").
+        for _col in ("assign_daily INTEGER", "assign_instant INTEGER", "assign_since TEXT"):
+            try:
+                c.execute(f"ALTER TABLE user_prefs ADD COLUMN {_col}")
+            except Exception:
+                pass  # column already exists
         # REM-3: reminded_ts is the fire-once guard - NULL = never fired, a timestamp = fired. Without a
         # one-time BACKFILL, the first page load after deploy would find every existing past-due to-do
         # "never reminded" and flood the bell. We stamp rows that are Done OR already PAST in MT (due_date
@@ -1809,7 +1818,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.58.11"
+APP_VERSION = "6.58.12"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -7706,6 +7715,10 @@ def _notify(team, recipients, ntype, item_id, item_name, message, actor):
     # Outbound Slack (best-effort, non-blocking; inert unless configured + enabled). recips carries
     # the per-user DM targets (mode 'dm'/'both'); channel mode ignores it.
     _slack_dispatch(team, ntype, item_id, item_name, message, actor, recips)
+    # ASSIGN-EMAIL-1: an email per assignment for people who turned it on (default off). Same recipients, so it
+    # covers every path that sends "assigned" (create, edit, bulk, portal default assignee).
+    if ntype == "assigned":
+        _assign_email_dispatch(team, item_id, item_name, message, actor, recips)
 
 def _get_watchers(team, item_id) -> set:
     with db(team) as c:
@@ -13385,14 +13398,23 @@ def _todo_subject(rows: list, today_key: str) -> str:
         parts.append(f"{today} due today" if over else f"{today} To-do{'s' if today != 1 else ''} due today")
     return ", ".join(parts)
 
-def _render_todo_email(team: str, username: str, rows: list, today_key: str):
-    """(subject, text, html) for one user's morning reminder. Titles/keys HTML-escaped; no to-do notes or
-    user-entered URLs are re-emitted."""
-    subject = _todo_subject(rows, today_key)
+def _render_todo_email(team: str, username: str, rows: list, today_key: str, assigned: list = None):
+    """(subject, text, html) for one user's morning email: To-dos due today/overdue and (ASSIGN-EMAIL-1) items
+    newly assigned to them. Titles/keys HTML-escaped; no to-do notes or user-entered URLs are re-emitted."""
+    assigned = assigned or []
+    parts = []
+    if rows:
+        parts.append(_todo_subject(rows, today_key))
+    if assigned:
+        parts.append(f"{len(assigned)} item{'s' if len(assigned) != 1 else ''} newly assigned to you")
+    subject = ", ".join(parts)
     shown, more = rows[:TODO_REMINDER_SHOW], max(0, len(rows) - TODO_REMINDER_SHOW)
     off = _todo_off_url(team, username)
     home = f"{APP_BASE_URL}/my-home/todos?team={_urlq(team, safe='')}"
-    text_lines = [f"Good morning. Here is what is due on your Flow To-do list ({team}):", ""]
+    if not rows:
+        home = f"{APP_BASE_URL}/my-home/assigned?team={_urlq(team, safe='')}"
+    text_lines = ([f"Good morning. Here is what is due on your Flow To-do list ({team}):", ""] if rows
+                  else [f"Good morning. Here is your Flow update ({team}):", ""])
     html_rows = []
     for r in shown:
         label = _todo_row_label(r["due_date"], today_key)
@@ -13408,16 +13430,34 @@ def _render_todo_email(team: str, username: str, rows: list, today_key: str):
     if more:
         text_lines.append(f"- and {more} more")
         html_rows.append(f'<tr><td style="padding:8px 0;font-size:13px;color:#5a6b7c">and {more} more</td></tr>')
-    text_lines += ["", f"All your To-dos: {home}", "", f"Stop these emails: {off}"]
+    # ASSIGN-EMAIL-1: "Newly assigned to you" (since the previous morning email; Monday covers the weekend).
+    asg_html = []
+    if assigned:
+        if rows:
+            text_lines.append("")
+        text_lines += ["Newly assigned to you:"]
+        for a in assigned[:TODO_REMINDER_SHOW]:
+            link = a["link"]
+            text_lines.append(f"- {a['label']} {link}")
+            asg_html.append('<tr><td style="padding:8px 0;border-bottom:1px solid #e3e8ee">'
+                            f'<a href="{html.escape(link, quote=True)}" style="color:#0059A9;text-decoration:none;font-weight:700">'
+                            f'{html.escape(a["label"])}</a></td></tr>')
+        if len(assigned) > TODO_REMINDER_SHOW:
+            text_lines.append(f"- and {len(assigned) - TODO_REMINDER_SHOW} more")
+            asg_html.append(f'<tr><td style="padding:8px 0;font-size:13px;color:#5a6b7c">and {len(assigned) - TODO_REMINDER_SHOW} more</td></tr>')
+    text_lines += ["", f"Open Flow: {home}", "", f"Stop these morning emails: {off}"]
+    todo_block = (f'<div style="font-size:13px;color:#5a6b7c;margin-bottom:6px">Your Flow To-do list ({html.escape(team)})</div>'
+                  f'<table style="width:100%;border-collapse:collapse;font-size:14px">{"".join(html_rows)}</table>') if rows else ""
+    asg_block = ('<div style="font-size:13px;font-weight:700;color:#1d2733;margin:16px 0 6px">Newly assigned to you</div>'
+                 f'<table style="width:100%;border-collapse:collapse;font-size:14px">{"".join(asg_html)}</table>') if assigned else ""
     body = (
         '<div style="font-family:Lato,Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1d2733">'
         f'<h2 style="font-size:18px;margin:0 0 6px">{html.escape(subject)}</h2>'
-        f'<div style="font-size:13px;color:#5a6b7c;margin-bottom:12px">Your Flow To-do list ({html.escape(team)})</div>'
-        f'<table style="width:100%;border-collapse:collapse;font-size:14px">{"".join(html_rows)}</table>'
+        f'{todo_block}{asg_block}'
         f'<p style="margin:16px 0"><a href="{html.escape(home, quote=True)}" style="background:#0059A9;color:#fff;'
-        'padding:9px 16px;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px">Open my To-dos</a></p>'
-        '<p style="font-size:11px;color:#5a6b7c">You get this on weekday mornings when something is due. '
-        f'<a href="{html.escape(off, quote=True)}" style="color:#5a6b7c">Stop these emails</a> '
+        f'padding:9px 16px;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px">{"Open my To-dos" if rows else "Open my assigned items"}</a></p>'
+        '<p style="font-size:11px;color:#5a6b7c">You get this on weekday mornings when something is due or newly assigned to you. '
+        f'<a href="{html.escape(off, quote=True)}" style="color:#5a6b7c">Stop these morning emails</a> '
         '(you can turn them back on in Settings, Notifications).</p></div>')
     return subject, "\n".join(text_lines), body
 
@@ -13454,11 +13494,116 @@ def _todo_email_on(team: str, username: str) -> bool:
         row = c.execute("SELECT todo_email FROM user_prefs WHERE username=?", (username,)).fetchone()
     return not (row and row["todo_email"] == 0)   # NULL / missing = default ON
 
+_PREF_DEFAULTS = {"todo_email": True, "assign_daily": True, "assign_instant": False}
+
+def _pref_on(team: str, username: str, col: str) -> bool:
+    """ASSIGN-EMAIL-1: a boolean user_prefs column with its default (NULL / no row = the default)."""
+    assert col in _PREF_DEFAULTS
+    with db(team) as c:
+        row = c.execute(f"SELECT {col} FROM user_prefs WHERE username=?", (username,)).fetchone()
+    if not row or row[0] is None:
+        return _PREF_DEFAULTS[col]
+    return bool(row[0])
+
+def _assign_since(team: str, username: str, now_dt) -> str:
+    with db(team) as c:
+        row = c.execute("SELECT assign_since FROM user_prefs WHERE username=?", (username,)).fetchone()
+    from datetime import timedelta
+    return (row["assign_since"] if row and row["assign_since"] else (now_dt - timedelta(days=1)).isoformat())
+
+def _assign_new_rows(team: str, username: str, since_iso: str) -> list:
+    """ASSIGN-EMAIL-1: items newly assigned to `username` since `since_iso`, from their "assigned" notifications
+    (so every path that notifies is covered). An item is listed once, and only while it is STILL theirs; a
+    bulk-assignment summary (no item) is listed by its message. Each row: {label, link}."""
+    with db(team) as c:
+        rows = c.execute("SELECT item_id, message FROM notifications WHERE username=? AND type='assigned' "
+                         "AND created_ts > ? ORDER BY id", (username, since_iso)).fetchall()
+        out, seen = [], set()
+        q = f"?team={_urlq(team, safe='')}"
+        for r in rows:
+            iid = r["item_id"]
+            if iid is None:
+                out.append({"label": r["message"] or "Items assigned to you", "link": f"{APP_BASE_URL}/my-home/assigned{q}"})
+                continue
+            if iid in seen:
+                continue
+            seen.add(iid)
+            prow = c.execute("SELECT data FROM projects WHERE id=?", (iid,)).fetchone()
+            if not prow:
+                continue
+            item = json.loads(prow["data"])
+            if (item.get("assignee") or "") != username:
+                continue   # reassigned again since - not theirs any more
+            key = item.get("itemKey") or f"#{iid}"
+            out.append({"label": f"{key} - {item.get('name', '')}", "link": f"{APP_BASE_URL}/item/{iid}{q}"})
+    return out
+
+_OUTBOUND_ASYNC = True   # tests set False to send inline
+
+def _assign_email_dispatch(team, item_id, item_name, message, actor, recips):
+    """ASSIGN-EMAIL-1: email each recipient who turned on "email me right away when something is assigned to
+    me" (default OFF - Slack is the instant channel). Non-blocking (daemon thread, like Slack); best-effort."""
+    try:
+        if not mail_configured():
+            return
+        users = {u.get("username"): u for u in (_cfg_val(team, "users", []) or []) if isinstance(u, dict)}
+        targets = []
+        for r in recips or []:
+            em = ((users.get(r) or {}).get("email") or "").strip()
+            if em and _pref_on(team, r, "assign_instant"):
+                targets.append((r, em))
+        if not targets:
+            return
+        key = ""
+        if item_id is not None:
+            with db(team) as c:
+                prow = c.execute("SELECT data FROM projects WHERE id=?", (item_id,)).fetchone()
+            if prow:
+                key = json.loads(prow["data"]).get("itemKey") or ""
+        def _send():
+            for r, em in targets:
+                try:
+                    subj, text, body = _render_assign_email(team, r, item_id, item_name, key, message, actor)
+                    send_email(em, subj, text, body)
+                except Exception as e:
+                    log.warning(f"[assign-email] failed for {team}/{r}: {e}")
+        if _OUTBOUND_ASYNC:
+            threading.Thread(target=_send, daemon=True).start()
+        else:
+            _send()
+    except Exception as e:
+        log.warning(f"[assign-email] dispatch failed for {team}: {e}")
+
+def _assign_off_token(team: str, username: str) -> str:
+    return _sign(f"assign-email-off:{team}:{username}")
+
+def _render_assign_email(team, username, item_id, item_name, key, message, actor):
+    """(subject, text, html) for one instant assignment email. The actor's username is shown as their name."""
+    who = _user_display(team, actor) if actor and actor != "Portal" else ""
+    msg = message or ""
+    if actor and msg.startswith(actor + " ") and who:
+        msg = who + msg[len(actor):]
+    q = f"?team={_urlq(team, safe='')}"
+    link = f"{APP_BASE_URL}/item/{item_id}{q}" if item_id is not None else f"{APP_BASE_URL}/my-home/assigned{q}"
+    off = (f"{APP_BASE_URL}/todo-email/off?team={_urlq(team, safe='')}&u={_urlq(username, safe='')}"
+           f"&k=instant&t={_assign_off_token(team, username)}")
+    subject = (f"Assigned to you: {key} {item_name}".strip() if item_id is not None else msg)[:180]
+    text = f"{msg}\n\nOpen in Flow: {link}\n\nStop instant assignment emails: {off}\n"
+    body = ('<div style="font-family:Lato,Segoe UI,Arial,sans-serif;max-width:560px;margin:0 auto;color:#1d2733">'
+            f'<p style="font-size:15px">{html.escape(msg)}</p>'
+            f'<p style="margin:16px 0"><a href="{html.escape(link, quote=True)}" style="background:#0059A9;color:#fff;'
+            'padding:9px 16px;border-radius:8px;text-decoration:none;font-weight:700;font-size:13px">Open in Flow</a></p>'
+            '<p style="font-size:11px;color:#5a6b7c">You turned on instant assignment emails. '
+            f'<a href="{html.escape(off, quote=True)}" style="color:#5a6b7c">Stop these</a> '
+            '(or change it in Settings, Notifications).</p></div>')
+    return subject, text, body
+
 def send_todo_reminders(verbose=False, dry_run=False, now_utc=None, only_team=None) -> dict:
     """Send the weekday-morning To-do reminders for every team (or just `only_team`). Returns counts.
     Weekends (MT) send nothing."""
     from datetime import date
     today_key = _today_mt_key(now_utc)
+    run_dt = now_utc or datetime.now(timezone.utc)
     out = {"date": today_key, "emails": 0, "slack": 0, "skipped_weekend": False}
     if date.fromisoformat(today_key).weekday() >= 5:
         out["skipped_weekend"] = True
@@ -13484,21 +13629,28 @@ def send_todo_reminders(verbose=False, dry_run=False, now_utc=None, only_team=No
             for u in users:
                 un = u["username"]; email = (u.get("email") or "").strip()
                 rows = _todo_due_rows(team, un, today_key)
-                if not rows:
+                # ASSIGN-EMAIL-1: the morning email also lists items newly assigned since the previous one.
+                email_rows = rows if _todo_email_on(team, un) else []
+                assigned = (_assign_new_rows(team, un, _assign_since(team, un, run_dt))
+                            if _pref_on(team, un, "assign_daily") else [])
+                if not rows and not assigned:
                     continue
-                if email and _todo_email_on(team, un) and (can_mail or dry_run):
+                if email and (email_rows or assigned) and (can_mail or dry_run):
                     if dry_run:
                         if verbose:
-                            print(f"[todo-reminders] DRY {team}/{un}: email '{_todo_subject(rows, today_key)}'")
+                            subj = _render_todo_email(team, un, email_rows, today_key, assigned)[0]
+                            print(f"[todo-reminders] DRY {team}/{un}: email '{subj}'")
                     elif _todo_claim(team, un, "todo_email_sent_on", today_key):
                         try:
-                            subj, text, body = _render_todo_email(team, un, rows, today_key)
+                            subj, text, body = _render_todo_email(team, un, email_rows, today_key, assigned)
                             send_email(email, subj, text, body)
                             out["emails"] += 1
+                            with db(team) as c:   # the next "newly assigned" window starts at this run
+                                c.execute("UPDATE user_prefs SET assign_since=? WHERE username=?", (run_dt.isoformat(), un))
                         except Exception as e:
                             _todo_release(team, un, "todo_email_sent_on")
                             log.warning(f"[todo-reminders] email failed for {team}/{un}: {e}")
-                if slack_on and email:
+                if rows and slack_on and email:
                     if dry_run:
                         if verbose:
                             print(f"[todo-reminders] DRY {team}/{un}: Slack DM")
@@ -13526,35 +13678,47 @@ def get_my_prefs(auth: dict = Depends(require_auth)):
     team, me = auth["team"], auth["username"]
     rec = next((u for u in (_cfg_val(team, "users", []) or []) if isinstance(u, dict) and u.get("username") == me), {})
     slk = _cfg_val(team, "slackNotify", {}) or {}
+    _dm = bool(slk.get("enabled") and slk.get("mode") in ("dm", "both") and _slack_bot_token(team))
     return {"todoEmail": _todo_email_on(team, me), "hasEmail": bool((rec.get("email") or "").strip()),
+            "assignDaily": _pref_on(team, me, "assign_daily"), "assignInstant": _pref_on(team, me, "assign_instant"),
             "slackReminders": bool(slk.get("enabled") and "reminder" in (slk.get("types") or [])
-                                   and slk.get("mode") in ("dm", "both"))}
+                                   and slk.get("mode") in ("dm", "both")),
+            "slackAssigned": _dm and "assigned" in (slk.get("types") or _SLACK_DEFAULT_TYPES)}
 
 @app.put("/api/my/prefs")
 def put_my_prefs(body: dict = Body(...), auth: dict = Depends(require_auth)):
     team, me = auth["team"], auth["username"]
-    if "todoEmail" in body:
-        if not isinstance(body["todoEmail"], bool):
-            raise HTTPException(422, "todoEmail must be true or false")
-        with db(team) as c:
-            c.execute("INSERT OR IGNORE INTO user_prefs(username) VALUES(?)", (me,))
-            c.execute("UPDATE user_prefs SET todo_email=? WHERE username=?", (1 if body["todoEmail"] else 0, me))
+    cols = {"todoEmail": "todo_email", "assignDaily": "assign_daily", "assignInstant": "assign_instant"}
+    for k, col in cols.items():
+        if k in body and not isinstance(body[k], bool):
+            raise HTTPException(422, f"{k} must be true or false")
+    with db(team) as c:
+        c.execute("INSERT OR IGNORE INTO user_prefs(username) VALUES(?)", (me,))
+        for k, col in cols.items():
+            if k in body:
+                c.execute(f"UPDATE user_prefs SET {col}=? WHERE username=?", (1 if body[k] else 0, me))
     return get_my_prefs(auth)
 
 @app.get("/todo-email/off", response_class=HTMLResponse)
-def todo_email_off(team: str = "", u: str = "", t: str = ""):
-    """One-click "stop these emails" from the morning reminder (no login: the link is signed per team+user).
-    Idempotent. An invalid/forged link changes nothing and says so."""
+def todo_email_off(team: str = "", u: str = "", t: str = "", k: str = ""):
+    """One-click "stop these emails" (no login: the link is signed per team+user, and per kind). Default kind =
+    the morning email (turns off BOTH its sections: To-dos and newly assigned); k=instant = instant assignment
+    emails (ASSIGN-EMAIL-1). Idempotent. An invalid/forged link changes nothing and says so."""
+    instant = (k == "instant")
+    expected = _assign_off_token(team, u) if instant else _todo_off_token(team, u)
     ok = bool(team and u and t) and re.match(r"^[a-z0-9]+$", team or "") and \
-        hmac.compare_digest(t, _todo_off_token(team, u)) and os.path.exists(team_db_path(team))
+        hmac.compare_digest(t, expected) and os.path.exists(team_db_path(team))
     if ok:
         with db(team) as c:
             c.execute("INSERT OR IGNORE INTO user_prefs(username) VALUES(?)", (u,))
-            c.execute("UPDATE user_prefs SET todo_email=0 WHERE username=?", (u,))
-        msg = ("You will no longer get the morning To-do email. You can turn it back on in Flow under "
-               "Settings, Notifications.")
+            if instant:
+                c.execute("UPDATE user_prefs SET assign_instant=0 WHERE username=?", (u,))
+            else:
+                c.execute("UPDATE user_prefs SET todo_email=0, assign_daily=0 WHERE username=?", (u,))
+        what = "instant assignment emails" if instant else "the morning email"
+        msg = (f"You will no longer get {what}. You can turn it back on in Flow under Settings, Notifications.")
     else:
-        msg = "This link is not valid. You can manage the morning To-do email in Flow under Settings, Notifications."
+        msg = "This link is not valid. You can manage your Flow emails under Settings, Notifications."
     return HTMLResponse('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
         '<title>Flow To-do email</title><body style="font-family:Lato,Segoe UI,Arial,sans-serif;max-width:480px;margin:60px auto;'
         f'padding:0 16px;color:#1d2733"><h2 style="font-size:18px">Flow To-do email</h2><p>{html.escape(msg)}</p>'
