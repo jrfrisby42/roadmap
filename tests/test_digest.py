@@ -131,6 +131,24 @@ def test_send_team_digests_uses_existing_recipients(team, monkeypatch):
     assert hw in tos
 
 
+def test_send_team_digests_reads_the_stored_string_form(team, monkeypatch):
+    """DIGEST-DEPT-1: departmentMeta[d].emails is stored as ONE string ("a@x.com, b@x.com"), which is what the
+    Admin UI writes. The digest iterated it as a list and sent to each character - 539 rejected SES calls on
+    the first prod run. The list form above still works; this is the form real data has."""
+    _base_config(team)
+    a, b, c = f"{team}-a@example.com", f"{team}-b@example.com", f"{team}-c@example.com"
+    _cfg(team, "digestConfig", {"enabled": True})
+    _cfg(team, "intakeNotifyEmail", "")
+    _cfg(team, "departmentMeta", {"Hardware": {"emails": f"{a}, {b}; {c},{a.upper()}, not-an-address"}})
+    _seed(team, [{"name": "A", "status": "New", "priority": 1, "createdAt": _iso(5), "departments": ["Hardware"]}])
+    sent = []
+    monkeypatch.setattr(server, "send_email", lambda to, subj, text, html=None: sent.append(to))
+    server.send_team_digests(verbose=False)
+    mine = [t for t in sent if team in t.lower()]
+    assert sorted(mine) == sorted([a, b, c])            # each address once (case-insensitive dedupe)
+    assert all("@" in t for t in sent)                  # never a single character or a bare word
+
+
 def test_send_team_digests_skips_disabled(team, monkeypatch):
     inbox = f"{team}-disabled@example.com"
     _base_config(team)

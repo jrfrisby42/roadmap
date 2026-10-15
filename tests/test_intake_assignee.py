@@ -63,10 +63,27 @@ def test_ticket_of_a_mapped_type_is_born_assigned(client, team, admin_headers):
     assert _blob(team, pid).get("assignee") == "dev2"
 
 
-def test_assigned_ticket_bells_admins_and_the_assignee_only(client, team, admin_headers):
+def _bell(team, pid, ntype):
+    with server.db(team) as c:
+        return [dict(r) for r in c.execute(
+            "SELECT username, message FROM notifications WHERE type=? AND item_id=?", (ntype, pid)).fetchall()]
+
+
+def test_assigned_ticket_bells_admins_and_tells_the_assignee_once(client, team, admin_headers):
     _setup(client, admin_headers, team, {"Bug": "dev2"})
     pid = _submit(client, team, "Login fails", "Bug")
-    assert _intake_bell(team, pid) == {"admin", "boss", "dev2"}      # dev1 is not belled
+    assert _intake_bell(team, pid) == {"admin", "boss"}               # dev1 not belled; dev2 not doubled
+    [row] = _bell(team, pid, "assigned")                              # ASSIGN-NOTIFY-1
+    assert row["username"] == "dev2" and "assigned to you" in row["message"] and "Login fails" in row["message"]
+    with server.db(team) as c:
+        assert c.execute("SELECT 1 FROM watchers WHERE item_id=? AND username='dev2'", (pid,)).fetchone()
+
+
+def test_assignee_is_told_even_when_the_team_broadcast_is_off(client, team, admin_headers):
+    _setup(client, admin_headers, team, {"Bug": "dev2"}, notify=False)
+    pid = _submit(client, team, "Login fails", "Bug")
+    assert _intake_bell(team, pid) == set()                            # broadcast off
+    assert [r["username"] for r in _bell(team, pid, "assigned")] == ["dev2"]   # personal assignment still sent
 
 
 def test_unmapped_type_stays_unassigned_and_bells_admins_and_editors(client, team, admin_headers):

@@ -1809,7 +1809,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.58.10"
+APP_VERSION = "6.58.11"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -2176,10 +2176,9 @@ def _intake_new_ticket_usernames(team: str, item: dict) -> list:
     assignee = (item.get("assignee") or "").strip()
     if not assignee:
         return _intake_team_usernames(team)
-    out = _intake_team_usernames(team, roles=("admin",))
-    if assignee not in out:
-        out.append(assignee)
-    return out
+    # ASSIGN-NOTIFY-1: the assignee is told by their own "assigned" notification (intake_submit), so they are
+    # left out of this generic "New portal ticket" bell - one row for them, not two.
+    return [u for u in _intake_team_usernames(team, roles=("admin",)) if u != assignee]
 
 def _intake_departments(team: str) -> list:
     return [d for d in (_cfg_val(team, "departments", []) or []) if d]
@@ -2489,6 +2488,16 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
             _notify(team, _intake_new_ticket_usernames(team, item), "intake", item["id"], title, msg, "Portal")
     except Exception as e:
         log.warning(f"[Intake] team-notify hook failed for item {item.get('id')}: {e}")
+    # ASSIGN-NOTIFY-1: a ticket born assigned (per-Type default assignee) tells its assignee as an ASSIGNMENT -
+    # the same "assigned" type an in-app assignment sends, so it also reaches them by Slack DM (the generic
+    # portal post above is channel-only). Independent of intakeNotifyTeam: this is personal, not a broadcast.
+    try:
+        if item.get("assignee"):
+            _add_watchers(team, item["id"], [item["assignee"]])
+            _notify(team, [item["assignee"]], "assigned", item["id"], title,
+                    f"New portal ticket assigned to you: {title}", "Portal")
+    except Exception as e:
+        log.warning(f"[Intake] assignee-notify hook failed for item {item.get('id')}: {e}")
     return {"ok": True, "itemKey": item.get("itemKey"), "id": item["id"],
             "url": f"{APP_BASE_URL}/ticket?team={team}&id={item['id']}&t={_ticket_token(team, item['id'])}",
             "attachmentsDropped": dropped_atts}
@@ -2764,12 +2773,24 @@ def _intake_email_html(item, rows, heading, intro, cta_label, cta_url, note=None
 <tr><td style="padding:12px 24px;border-top:1px solid #eef1f4;color:#9aa4b1;font-size:11px;text-align:center;line-height:1.5">Submitted via the Frazil Flow ticket portal.<br>If the button doesn't work, paste this link:<br><span style="color:#6b7280;word-break:break-all">{esc(cta_url)}</span></td></tr>
 </table></td></tr></table></body></html>"""
 
+def _parse_email_list(v) -> list:
+    """A notify-address setting -> clean, de-duplicated addresses. Stored as ONE string ("a@x.com, b@y.com",
+    comma/semicolon separated) - DIGEST-DEPT-1: the weekly digest treated that string as a list and sent
+    to each CHARACTER (539 rejected SES calls on its first run). Also accepts a list. Drops anything that is
+    not an address, so a typo can never become a send to a bare word."""
+    parts = v if isinstance(v, list) else re.split(r"[,;]", v or "")
+    out = []
+    for a in parts:
+        a = (a or "").strip() if isinstance(a, str) else ""
+        if a and "@" in a and a.lower() not in {x.lower() for x in out}:
+            out.append(a)
+    return out
+
 def _department_emails(team, dept):
     """Notify addresses configured for a department (departmentMeta[dept].emails)."""
     meta = _cfg_val(team, "departmentMeta", {}) or {}
     entry = meta.get(dept) if isinstance(meta, dict) else None
-    emails = (entry.get("emails", "") if isinstance(entry, dict) else "") or ""
-    return [a.strip() for a in re.split(r"[,;]", emails) if a.strip()]
+    return _parse_email_list(entry.get("emails", "") if isinstance(entry, dict) else "")
 
 def _intake_send_emails(team, item, pid):
     """Confirmation to the reporter (public status link) + a copy to the team inbox
@@ -5895,6 +5916,7 @@ def bulk_update_items(body: dict = Body(...),
     updated = 0
     skipped = []   # POLISH-2: reserved-status items whose status change was refused
     _changing_status = "status" in patch
+    _assigned = {}   # ASSIGN-NOTIFY-1: {new_assignee: [(pid, name, key)]} for items whose assignee changed
     with db(team) as c:
         for raw in ids:
             try:
@@ -5912,12 +5934,43 @@ def bulk_update_items(body: dict = Body(...),
                     and data.get("status") in RESERVED_TERMINAL_STATUSES:
                 skipped.append(data.get("itemKey") or f"#{pid}")
                 continue
+            _old_assignee = data.get("assignee") or ""
             data.update(patch)
             _save_project(c, pid, data)
             updated += 1
+            _na = (data.get("assignee") or "") if "assignee" in patch else ""
+            if _na and _na != _old_assignee:
+                _assigned.setdefault(_na, []).append((pid, data.get("name", ""), data.get("itemKey") or f"#{pid}"))
     write_audit(team, "bulk_update", auth["username"],
                 changes={"count": updated, "fields": list(patch.keys()), "skipped": len(skipped)})
+    # ASSIGN-NOTIFY-1: bulk assignment used to notify nobody. Post-commit + best-effort, like every notify hook.
+    try:
+        _notify_bulk_assigned(team, _assigned, auth["username"])
+    except Exception as e:
+        log.warning(f"[Notify] bulk assign hook failed for team {team}: {e}")
     return {"updated": updated, "patch": patch, "skipped": skipped}
+
+_BULK_ASSIGN_INDIVIDUAL_MAX = 3   # up to this many items -> one notification each; more -> one summary
+
+def _notify_bulk_assigned(team, assigned: dict, actor: str):
+    """ASSIGN-NOTIFY-1: notify each new assignee from a bulk edit, the same "assigned" type a single edit sends
+    (so Slack DMs follow the Org's settings). Each item is watched by its new assignee, as a single edit does.
+    A small batch gets one notification per item; a large one gets ONE summary (item_id None - the bell opens
+    My Home -> Assigned to me) so a 30-item reassignment is one bell row and one Slack DM, not thirty.
+    Unknown usernames (not users on this team) are skipped. Self-assignment is excluded by _notify."""
+    valid = _team_usernames(team)
+    for who, items in (assigned or {}).items():
+        if who not in valid or who == actor or not items:
+            continue
+        for pid, _n, _k in items:
+            _add_watchers(team, pid, [who])
+        if len(items) <= _BULK_ASSIGN_INDIVIDUAL_MAX:
+            for pid, name, _k in items:
+                _notify(team, [who], "assigned", pid, name, f"{actor} assigned you {name or 'an item'}", actor)
+        else:
+            keys = [k for _p, _n, k in items]
+            shown = ", ".join(keys[:5]) + (f" and {len(keys) - 5} more" if len(keys) > 5 else "")
+            _notify(team, [who], "assigned", None, "", f"{actor} assigned you {len(items)} items: {shown}", actor)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
@@ -13722,7 +13775,7 @@ def send_team_digests(verbose=False):
             if inbox:
                 targets.append(("", inbox, items))
             for dname, meta in (_cfg_val(team, "departmentMeta", {}) or {}).items():
-                emails = [e.strip() for e in (meta.get("emails") or []) if e and e.strip()] if isinstance(meta, dict) else []
+                emails = _parse_email_list(meta.get("emails")) if isinstance(meta, dict) else []   # DIGEST-DEPT-1
                 if not emails:
                     continue
                 subset = [p for p in items if dname in (p.get("departments") or [])]

@@ -112,10 +112,12 @@ def _users(client, admin_headers):
     ], headers=admin_headers)
 
 
-def test_new_ticket_with_assignee_notifies_admins_and_assignee_only(team, admin_headers, client):
+def test_new_ticket_with_assignee_bells_admins_only(team, admin_headers, client):
     _users(client, admin_headers)
     got = set(server._intake_new_ticket_usernames(team, {"assignee": "dev2"}))
-    assert got == {"boss", "dev2"}          # dev1 (an unrelated editor) is no longer notified
+    # dev1 (an unrelated editor) is not notified; dev2 gets their own "assigned" notification instead
+    # (ASSIGN-NOTIFY-1), so they are not also on this generic "New portal ticket" list.
+    assert got == {"boss"}
 
 
 def test_new_ticket_without_assignee_falls_back_to_admins_and_editors(team, admin_headers, client):
@@ -127,7 +129,7 @@ def test_new_ticket_without_assignee_falls_back_to_admins_and_editors(team, admi
 def test_new_ticket_assigned_to_an_admin_is_not_doubled(team, admin_headers, client):
     _users(client, admin_headers)
     got = server._intake_new_ticket_usernames(team, {"assignee": "boss"})
-    assert sorted(got) == ["boss"]
+    assert sorted(got) == []                 # boss hears about it once, via "assigned"
 
 
 # ── SLACK-COVERAGE-1: who Slack DMs can reach ───────────────────────────────────────────────────────────

@@ -2818,7 +2818,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.58.10';
+const APP_VERSION = '6.58.11';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -33622,6 +33622,7 @@ if ('serviceWorker' in navigator) {
         // (My Home To-dos) instead of doing nothing. Other null-item types keep their prior no-op behaviour.
         if(it) navigate('/item/'+it, false);
         else if(b.getAttribute('data-ntype')==='reminder') navigate('/my-home/todos', false);
+        else if(b.getAttribute('data-ntype')==='assigned') navigate('/my-home/assigned', false);   // ASSIGN-NOTIFY-1: a bulk-assignment summary has no single item
       });
     });
     // ACTIVITY-MERGE: an activity ITEM row opens the Activity Center focused on its item (openConflictActivityModal
