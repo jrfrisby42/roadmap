@@ -2818,7 +2818,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.58.13';
+const APP_VERSION = '6.58.14';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -20886,10 +20886,13 @@ if ('serviceWorker' in navigator) {
 
   /* Narrow / responsive: rail becomes an overlay */
   .frz-beta.frz-narrow { grid-template-columns:var(--frz-rail-w-collapsed) 1fr; }
-  .frz-beta.frz-narrow:not(.is-collapsed) .frz-rail { position:absolute; top:0; bottom:0; left:0; width:var(--frz-rail-w); z-index:40; box-shadow:8px 0 28px rgba(20,40,63,.18); }
+  /* RAIL-PORTRAIT-1: top-bar navigation (frz-ia) collapses by HIDING the rail (frz-rail-hidden) and never sets
+     is-collapsed, so this drawer rule matched a hidden rail below 900px (a Surface turned to portrait): the rail
+     popped open over the page and the collapse button / scrim could not close it. A hidden rail is never a drawer. */
+  .frz-beta.frz-narrow:not(.is-collapsed):not(.frz-rail-hidden) .frz-rail { position:absolute; top:0; bottom:0; left:0; width:var(--frz-rail-w); z-index:40; box-shadow:8px 0 28px rgba(20,40,63,.18); }
   .frz-beta.frz-narrow .frz-scrim { display:block; }
   .frz-beta .frz-scrim { display:none; position:absolute; inset:0 0 0 var(--frz-rail-w-collapsed); background:rgba(20,40,63,.18); z-index:30; }
-  .frz-beta.frz-narrow.is-collapsed .frz-scrim { display:none; }
+  .frz-beta.frz-narrow.is-collapsed .frz-scrim, .frz-beta.frz-narrow.frz-rail-hidden .frz-scrim { display:none; }   /* RAIL-PORTRAIT-1 */
 
   /* ── Beta modal (board editor etc.) - scaled-up Save-filter popover pattern ── */
   .frz-beta .frz-modal-bg { position:fixed; inset:0; background:rgba(20,40,63,.32); z-index:80; display:flex; align-items:center; justify-content:center; padding:24px; }
@@ -21966,8 +21969,11 @@ if ('serviceWorker' in navigator) {
     /* Both selectors: the second matches the specificity of the .frz-narrow drawer
        rule (L15714) and, being later, wins - otherwise the rail stays a 232px drawer
        UNDER the scrim (which is what was overlaying it / blocking taps). */
+    /* RAIL-PORTRAIT-1: the drawer rule gained :not(.frz-rail-hidden), so this selector carries it too to keep
+       matching its specificity (the old form stays as a harmless fallback). */
     .frz-beta:not(.is-collapsed) .frz-rail,
-    .frz-beta.frz-narrow:not(.is-collapsed) .frz-rail {
+    .frz-beta.frz-narrow:not(.is-collapsed) .frz-rail,
+    .frz-beta.frz-narrow:not(.is-collapsed):not(.frz-rail-hidden) .frz-rail {
       display:flex; position:fixed; inset:0; width:100%; max-width:100%; z-index:95; box-shadow:none;
     }
     .frz-beta .frz-collapse { display:none; }      /* the collapse toggle is meaningless full-screen */
@@ -34120,7 +34126,12 @@ if ('serviceWorker' in navigator) {
   function onResize(){
     var narrow = window.innerWidth < 900;
     root.classList.toggle('frz-narrow', narrow);
-    if (narrow && !state.collapsed && ls(railKey())!=='e'){ /* auto-collapse below 900 unless user forced expanded */ root.classList.add('is-collapsed'); root.classList.add('is-collapsed-ui'); state.collapsed=true; }
+    if (narrow && !state.collapsed && ls(railKey())!=='e'){ /* auto-collapse below 900 unless user forced expanded */
+      // RAIL-PORTRAIT-1: top-bar navigation collapses by hiding the rail - use ITS path (silent: no saved
+      // preference), not the classic icon-rail classes, which do not belong to that mode.
+      if (_frzIA()) { setCollapsed(true, true); }
+      else { root.classList.add('is-collapsed'); root.classList.add('is-collapsed-ui'); state.collapsed=true; }
+    }
   }
 
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
