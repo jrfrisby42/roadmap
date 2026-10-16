@@ -2818,7 +2818,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.58.12';
+const APP_VERSION = '6.58.13';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -6104,9 +6104,12 @@ function _frzComposerHeader(p, id){
 // Test Period which the panel showed read-only. Admin path restores all of them (the modal is reused).
 function frzApplyComposerRoleScope(p){
   const editorOnly = (typeof isEditor!=='undefined' && isEditor) && !(typeof isAdmin!=='undefined' && isAdmin);
-  // Start Date: editors never had it (no field in the retired panel).
+  // Start Date: editors never had it (no field in the retired panel). EDITOR-START-1 (J.R. 2026-10-16): an
+  // editor may set an OPTIONAL start date when CREATING an item (p is null for New Item); editing an existing
+  // item keeps the admin-only rule. The save path already uses the field for a new item and keeps the stored
+  // start for an existing one (`isEditor ? (existingProject?.start ?? fStart.value)`), and the server accepts it.
   const startRow = document.getElementById('fStart')?.closest('.form-row');
-  if(startRow) startRow.style.display = editorOnly ? 'none' : '';
+  if(startRow) startRow.style.display = (editorOnly && p) ? 'none' : '';
   // Depends On + Parallel: not in the retired panel.
   const depRow = document.getElementById('dependsOnRow');
   if(depRow) depRow.style.display = editorOnly ? 'none' : '';
