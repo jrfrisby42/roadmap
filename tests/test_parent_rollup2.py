@@ -74,7 +74,7 @@ def test_defectB_rules_unchanged_over_deeper_set():
     b = _fn_body("_computeRollup")
     # the derived-field rules are unchanged, only the SET they run over is deeper
     assert "c.revised||c.due" in b
-    assert "s!=='Duplicate'" in b and "!statusIsOffFlow[s]" in b
+    assert "!RESERVED_TERMINAL_STATUSES.has(s)" in b   # ROLLUP-SYNC-1: status is rule A now (see test_parent_rollup)
     assert "kids.every(c => statusIsReleased[c.status])" in b
     assert "' +'+(pods.length-1)" in b
 

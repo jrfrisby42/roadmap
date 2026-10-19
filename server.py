@@ -4936,6 +4936,134 @@ def _status_rank(status: str, all_statuses: list) -> int:
     except ValueError:
         return 999
 
+# ── ROLLUP-SYNC-1: write the parent roll-up onto the parent item ─────────────────────────────────────
+# The Gantt has long DRAWN an unscoped parent (has children, lacks its own start or due) from its children
+# (PARENT-ROLLUP-1/2, display only), so the Gantt said "Released, Wasatch" while the item said "Approved, no
+# team". J.R. 2026-10-19: the item should say what is really happening, so the same parents now get the
+# rolled-up values WRITTEN (rule A, the Jira convention, chosen by J.R.):
+#   status - from DIRECT children's effective statuses, bottom-up (a Roadmap Item rolls up from Epics that
+#            rolled up from their Stories): every countable child finished -> the least-progressed finished
+#            status among them; else any child started (at/after the first active status, not parked/
+#            deferred) -> the first active status; else no opinion. FORWARD-ONLY: applied only when it ranks
+#            above the parent's own status, the same rule as the Jira sync, so neither can undo the other.
+#   dev    - the team with the most descendants (alpha tie-break, as the Gantt places it), ONLY when empty.
+#   finish - on the move into a terminal status: releaseDate (set-once) = the latest child releaseDate for a
+#            released status; completedAt (set-once) = the latest child finish, else now.
+# Scope is exactly the roll-up set (parents WITHOUT their own start+due). Those carry no dates, so the
+# capacity engine (start/due-driven) cannot change. No notifications (bookkeeping); one audit row per
+# changed parent; nothing is pushed to Jira. Reserved statuses (Duplicate/Transferred) are never counted
+# and a reserved parent is never touched.
+def _rollup_plan(c) -> list:
+    def cfg(k, d):
+        r = c.execute("SELECT value FROM config WHERE key=?", (k,)).fetchone()
+        return json.loads(r["value"]) if r else d
+    statuses = cfg("statuses", []) or []
+    active, terminal, released = cfg("statusIsActive", {}) or {}, cfg("statusIsTerminal", {}) or {}, cfg("statusIsReleased", {}) or {}
+    parked, deferred = cfg("statusIsParked", {}) or {}, cfg("statusIsDeferred", {}) or {}
+    rows = {r["id"]: json.loads(r["data"]) for r in c.execute("SELECT id, data FROM projects")}
+    kids = {}
+    for pid, p in rows.items():
+        par = p.get("parent")
+        if par in (None, "") or p.get("hidden"):
+            continue
+        try:
+            par = int(par)
+        except (TypeError, ValueError):
+            continue
+        if par in rows:
+            kids.setdefault(par, []).append(pid)
+    rank = lambda s: _status_rank(s, statuses)
+    act_idx = [i for i, s in enumerate(statuses) if active.get(s)]
+    first_active = min(act_idx) if act_idx else None
+    def finished(s): return bool(terminal.get(s))
+    def target(eff):
+        cnt = [s for s in eff if s and s not in RESERVED_TERMINAL_STATUSES]
+        if not cnt:
+            return ""
+        if all(finished(s) for s in cnt):
+            return min(cnt, key=rank)
+        if first_active is not None and any(first_active <= rank(s) < 999 and not parked.get(s) and not deferred.get(s) for s in cnt):
+            return statuses[first_active]
+        return ""
+    def rolls_up(pid):
+        p = rows[pid]
+        return bool(kids.get(pid)) and not (p.get("start") and p.get("due")) and not p.get("hidden") \
+            and (p.get("status") or "") not in RESERVED_TERMINAL_STATUSES
+    memo = {}
+    def effective(pid, stack):
+        if pid in memo:
+            return memo[pid]
+        own = rows[pid].get("status") or ""
+        if pid in stack or not rolls_up(pid):
+            return own                                    # leaf, scoped parent, or a cycle back-edge
+        stack.add(pid)
+        t = target([effective(k, stack) for k in kids[pid]])
+        stack.discard(pid)
+        memo[pid] = t if t and (own not in statuses or rank(t) > rank(own)) else own
+        return memo[pid]
+    def descendants(pid, seen):
+        out = []
+        for k in kids.get(pid, []):
+            if k in seen:
+                continue
+            seen.add(k); out.append(rows[k]); out += descendants(k, seen)
+        return out
+    now_iso = datetime.now(timezone.utc).isoformat()
+    plan = []
+    for pid in rows:
+        if not rolls_up(pid):
+            continue
+        p = rows[pid]
+        own, new = p.get("status") or "", effective(pid, set())
+        d = descendants(pid, {pid})
+        ch = {}
+        if new != own:
+            ch["status"] = (own, new)
+        if not p.get("dev"):
+            ct = {}
+            for x in d:
+                if x.get("dev"):
+                    ct[x["dev"]] = ct.get(x["dev"], 0) + 1
+            if ct:
+                ch["dev"] = ("", sorted(ct, key=lambda k: (-ct[k], k))[0])
+        if "status" in ch and finished(new):
+            if released.get(new) and not p.get("releaseDate"):
+                rels = sorted(x["releaseDate"][:10] for x in d if x.get("releaseDate"))
+                if rels:
+                    ch["releaseDate"] = ("", rels[-1])
+            if not p.get("completedAt"):
+                fins = sorted([x["completedAt"] for x in d if x.get("completedAt")] +
+                              [x["releaseDate"][:10] + "T00:00:00+00:00" for x in d if x.get("releaseDate")])
+                ch["completedAt"] = ("", fins[-1] if fins else now_iso)
+        if ch:
+            plan.append((pid, p, ch))
+    return plan
+
+def _rollup_sync(team: str, actor: str = "system", dry_run: bool = False) -> list:
+    """Apply (or, dry_run, only report) the roll-up write-back in one write transaction."""
+    out = []
+    with db(team) as c:
+        c.execute("BEGIN IMMEDIATE")
+        for pid, p, ch in _rollup_plan(c):
+            out.append({"id": pid, "itemKey": p.get("itemKey"), "name": p.get("name", ""),
+                        "fields": {k: {"from": v[0], "to": v[1]} for k, v in ch.items()}})
+            if dry_run:
+                continue
+            for k, v in ch.items():
+                p[k] = v[1]
+            _save_project(c, pid, p, None)
+            _write_audit_c(c, "rollup-sync", actor or "system", pid, p.get("name", ""),
+                           changes={k: {"from": v[0], "to": v[1]} for k, v in ch.items()})
+    return out
+
+def _rollup_sync_safe(team: str, actor: str = "system") -> list:
+    """Post-commit hook form: best-effort, never fails the write that triggered it."""
+    try:
+        return _rollup_sync(team, actor)
+    except Exception as e:
+        log.warning(f"[RollupSync] sync failed for team {team} (non-fatal): {e}")
+        return []
+
 def _contributor_in_scope(c, auth: dict, item: dict, pod=None) -> bool:
     """True if `item` is in a Contributor's scope: they are the assignee, or the item's
     owner pod (`dev`) equals their `ownerFilter`. Consulted only for the contributor role.
@@ -5268,6 +5396,8 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
                     f"{username} assigned you {body.get('name','an item')}", username)
     except Exception as e:
         log.warning(f"[Notify] create hook failed for item {body['id']}: {e}")
+    if body.get("parent") not in (None, ""):
+        _rollup_sync_safe(team, username)   # ROLLUP-SYNC-1: a new child can move its parent's roll-up
     return body
 
 @app.put("/api/projects/{pid}")
@@ -5545,6 +5675,9 @@ def update_project(pid: int, body: dict, background: BackgroundTasks = None,
     except Exception as e:
         log.warning(f"[AssetHub] service-event trigger failed for item {pid}: {e}")
 
+    # ROLLUP-SYNC-1: a change that can move a parent's roll-up re-syncs the parents (post-commit, best-effort).
+    if any((old.get(k) or "") != (merged.get(k) or "") for k in ("status", "dev", "parent", "start", "due", "hidden")):
+        _rollup_sync_safe(team, username)
     return merged
 
 @app.delete("/api/projects/{pid}")
@@ -5564,6 +5697,7 @@ def delete_project(pid: int, username: str = "",
         c.execute("DELETE FROM projects WHERE id=?", (pid,))
         _fts_delete(c, pid)
     write_audit(team, "delete", username, pid, name)
+    _rollup_sync_safe(team, username)   # ROLLUP-SYNC-1: removing a child can finish its parent
     return {"ok": True}
 
 # Sortable columns for /api/items (whitelist - never interpolate raw user input).
@@ -10624,6 +10758,10 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
                         "syncedAt": now_ts,
                         "details": audit_details,
                     })
+    # ROLLUP-SYNC-1: a status advance can move the parent's roll-up. The bulk pull (jira_pull_all, which
+    # sets _suppressNotify) runs the sync ONCE at the end instead of once per item.
+    if any_changed and not (body or {}).get("_suppressNotify"):
+        _rollup_sync_safe(team, username)
     return {
         "changed": any_changed, "syncedAt": now_ts, "issues": issues_data,
         "statusChange": {"from": old_status, "to": best_new_status} if any_changed else None,
@@ -10804,6 +10942,8 @@ def jira_pull_all(body: dict = Body({}), x_team: Optional[str] = Header(None),
         except Exception as e:
             errors += 1
 
+    if changes:
+        _rollup_sync_safe(team, auth["username"])   # ROLLUP-SYNC-1: once for the whole bulk run
     return {"synced": synced, "skipped": skipped, "errors": errors,
             "changes": changes, "childrenAdded": children_added}
 
@@ -11779,9 +11919,19 @@ def _jira_refresh_pulled(team, actor):
                                  "fields": {k: {"from": v[0], "to": v[1]} for k, v in chg.items()}})
         except Exception as e:
             log.warning(f"[JiraRefresh] audit write failed for {jkey}: {e}")
+    if details:
+        _rollup_sync_safe(team, actor)   # ROLLUP-SYNC-1: refreshed status/team/dates can move parent roll-ups
     return {**base, "changed": len(details), "statusChanged": n_status, "podChanged": n_pod,
             "assigneeChanged": n_assignee, "releaseStamped": n_release, "datesChanged": n_dates,
             "errors": n_err, "details": details}
+
+@app.post("/api/rollup/sync")
+def rollup_sync(body: dict = Body({}), auth: dict = Depends(require_role("admin"))):
+    """ROLLUP-SYNC-1: run the parent roll-up write-back now (the one-time catch-up, or on demand).
+    {"dryRun": true} reports what would change without writing. Admin only."""
+    dry = bool((body or {}).get("dryRun"))
+    changes = _rollup_sync(auth["team"], auth["username"], dry_run=dry)
+    return {"dryRun": dry, "changed": len(changes), "changes": changes}
 
 @app.post("/api/jira/refresh")
 def jira_refresh(auth: dict = Depends(require_role("admin"))):
@@ -13009,6 +13159,8 @@ def commit_planning_session(session_id: str, body: dict = Body(...),
     except Exception as e:
         log.warning(f"[AssetHub] planning-commit service-event dispatch failed: {e}")
 
+    if to_save:
+        _rollup_sync_safe(team, auth["username"])   # ROLLUP-SYNC-1: committed status changes can move parent roll-ups
     return {
         "session_id": session_id, "type": stype, "status": "committed",
         "committed_ts": committed_ts, "changes": changes,

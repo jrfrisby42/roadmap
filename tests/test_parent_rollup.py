@@ -52,12 +52,17 @@ def test_own_dated_parent_is_untouched():
     assert "if(p.start && p.due) return null;" in b       # Decision 5 / own-wins
 
 
-def test_status_excludes_offflow_and_duplicate():
+def test_status_follows_rule_a():
+    # ROLLUP-SYNC-1 (J.R. 2026-10-19) replaced "least-progressed child" with rule A, the same rule the server
+    # writes onto the parent (_rollup_plan): all leaves finished -> least-progressed finished status; any leaf
+    # started -> first active status; forward-only against the parent's own status.
     b = _fn_body("_computeRollup")
-    assert "s!=='Duplicate'" in b                          # Duplicate excluded explicitly (not just out-ranked)
-    assert "!statusIsOffFlow[s]" in b                      # off-flow ignored
-    assert "statuses.indexOf(s)" in b                      # lowest by the statuses order
-    assert "(p.status || '')" in b                         # all-off-flow -> parent's own status else blank
+    assert "!RESERVED_TERMINAL_STATUSES.has(s)" in b       # Duplicate/Transferred are not countable work
+    assert "_cnt.every(s => statusIsTerminal[s])" in b     # finished only when every leaf is
+    assert "statuses.findIndex(s => statusIsActive[s])" in b   # "started" = at/after the first active status
+    assert "!statusIsParked[s] && !statusIsDeferred[s]" in b   # parked/deferred never count as started
+    assert "statuses.indexOf(_tgt)>statuses.indexOf(_own)" in b  # forward-only
+    assert "const _own = p.status || '';" in b             # no opinion -> the parent's own status
 
 
 def test_dates_earliest_latest_revised_wins():
