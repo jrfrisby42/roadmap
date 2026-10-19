@@ -22217,7 +22217,7 @@ if ('serviceWorker' in navigator) {
     caret:'<svg class="frz-chip-caret" viewBox="0 0 12 12"><path d="M3 4.5l3 3 3-3"/></svg>'
   };
   var VIEW_KEYS = ['gantt','kanban','list','planning','dashboard'];
-  var VIEW_LABEL = { gantt:'Gantt', kanban:'Kanban', list:'List', planning:'Planning', dashboard:'Dashboard', reports:'Reports', 'my-home':'My Home', 'team-calendar':'Calendar', 'team-board':'Team Board', admin:'Admin' };
+  var VIEW_LABEL = { gantt:'Gantt', kanban:'Kanban', list:'List', planning:'Planning', dashboard:'Dashboard', reports:'Reports', 'my-home':'My Home', 'team-calendar':'Calendar', 'team-board':'Team', admin:'Admin' };
   // ── Team Admin: per-team view visibility ──────────────────────────────────────
   // admin + my-home are ALWAYS on (hiding admin self-locks; my-home is the guaranteed floor).
   // The rest are toggleable via the enabledViews allowlist (null/absent = all enabled). Enforced
@@ -22233,6 +22233,7 @@ if ('serviceWorker' in navigator) {
     if(v==='kanban')   return !_val('isViewer', false);
     if(v==='planning') return _val('isAdmin', false);
     if(v==='reports')  return _val('isAdmin', false) || _val('isEditor', false);
+    if(v==='team-board') return _val('isAdmin', false);   // TEAM-BOARD-1: admin-only
     return true;
   }
   function _firstEnabledView(){
@@ -23172,6 +23173,7 @@ if ('serviceWorker' in navigator) {
       if(v==='kanban' && viewer) return;                  // viewers never see Kanban (CLAUDE.md role rule)
       if(v==='planning' && !admin) return;                // Planning is admin-only
       if(v==='reports' && !(admin||editor)) return;       // Reports is admin/editor-only (contributors get no export path)
+      if(v==='team-board' && !admin) return;              // TEAM-BOARD-1: Team is admin-only
       var b = document.createElement('button');
       b.className='frz-item'; b.setAttribute('data-nav','view:'+v);
       b.setAttribute('aria-current', String(state.view===v && !state.onItem));
@@ -23449,6 +23451,7 @@ if ('serviceWorker' in navigator) {
       if(v==='kanban' && viewer) return false;
       if(v==='planning' && !admin) return false;
       if(v==='reports' && !(admin||editor)) return false;
+      if(v==='team-board' && !admin) return false;   // TEAM-BOARD-1: admin-only
       return true;
     });
   }
@@ -24555,6 +24558,7 @@ if ('serviceWorker' in navigator) {
   var _tbOpen = {};                                   // 'team|col' -> true when a capped cell is expanded
   var _TB_CAP = { finished:5, now:6, next:3 };
   function setTeamBoard(){
+    if(!_val('isAdmin',false)){ navigate('/gantt', true); return; }   // admin-only (route belt; the rail + tab strip also hide it)
     state.onItem=false; state.itemId=null; state.view='team-board';
     root.classList.remove('on-item'); root.classList.remove('frz-cal-active');
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
@@ -24564,7 +24568,7 @@ if ('serviceWorker' in navigator) {
     setProjectPanel();
     applyChromeHiding();
     if(root) root.classList.toggle('frz-ia', _frzIA());   // same flag fork as Reports/Calendar (tab strip vs classic title)
-    document.getElementById('frzLeft').innerHTML = _frzIA() ? _frzTabStrip() : _titleHtml('team-board','Team Board');
+    document.getElementById('frzLeft').innerHTML = _frzIA() ? _frzTabStrip() : _titleHtml('team-board','Team');
     document.getElementById('frzBadges').innerHTML='';
     renderBar();
     renderRail();
