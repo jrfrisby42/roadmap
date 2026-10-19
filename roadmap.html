@@ -456,6 +456,13 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .left-row.hidden-row { opacity: 0.45; }
   .left-row.hidden-row .proj-name { text-decoration: line-through; }
   .left-row.child-row { border-left: 3px solid var(--accent); padding-left: 9px; }
+  /* GANTT-DECLUTTER-1: per-group Unscheduled bucket + the "Now" window footer */
+  .left-row.unsched-row { cursor: pointer; color: var(--muted); font-style: italic; }
+  .left-row.unsched-row .proj-name { flex: 1; }
+  .left-row.span-foot { color: var(--muted); font-size: 12px; cursor: default; }
+  .left-row.span-foot .proj-name { flex: 1; }
+  .span-foot-btn { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--accent); font: inherit; font-weight: 600; padding: 2px 8px; cursor: pointer; white-space: nowrap; }
+  .span-foot-btn:hover { background: var(--surface2); }
 
   /* ── Phase 4: Virtual Echo rows ── */
   .left-row.echo-row  { border-left: 3px solid rgba(34,185,110,0.35); padding-left: 9px; opacity: 0.7; font-style: italic; cursor: pointer; }
@@ -2818,7 +2825,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.58.14';
+const APP_VERSION = '6.58.15';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -4325,6 +4332,18 @@ document.getElementById('showHiddenAdminBtn')?.addEventListener('click', ()=>{
 // ── COLLAPSE STATE ──
 const collapsed = {};
 const collapsedParents = {}; // parentId → true means children hidden
+// GANTT-DECLUTTER-1: an unset entry means the DEFAULT - a top-level parent starts expanded, a mid-tier
+// parent (itself a child, e.g. an Epic under a Roadmap Item) starts collapsed. An explicit toggle wins.
+function isParentCollapsed(id, depth){ const v = collapsedParents[id]; return v === undefined ? depth > 0 : v; }
+const unschedOpen = {};       // GANTT-DECLUTTER-1: group label -> true when its "Unscheduled (N)" bucket is expanded (default collapsed)
+// GANTT-DECLUTTER-1: an item's finish date - releaseDate, else (terminal items only) the server-stamped
+// completedAt. Drives the 45-day aging, so finished work with no releaseDate (IT "Closed", ops "Completed")
+// ages off the Gantt like released work does. Neither present -> null -> the item stays visible (as before).
+function itemFinishDate(p){
+  if(p.releaseDate) return parseD(p.releaseDate);
+  if(p.completedAt && isTerminalStatus(p.status)) return parseD(String(p.completedAt).slice(0,10));
+  return null;
+}
 
 // ── Phase 4: Capacity View state ──────────────────────────────────────────────
 let _showCapacityView = false;    // is the capacity graph + echoes visible?
@@ -4917,13 +4936,13 @@ function render(){
   const wkPx     = getWkPx();
   const totalPx  = weeks.length * wkPx;
 
-  // A project is effectively hidden if: explicitly hidden OR released > 45 days ago
+  // A project is effectively hidden if: explicitly hidden OR finished > 45 days ago. The 45 days is
+  // load-bearing (last month's releases feed the monthly exec report) - do not shorten it.
+  // GANTT-DECLUTTER-1: "finished" = itemFinishDate (releaseDate, else completedAt on a terminal item).
   function isEffectivelyHidden(p){
     if(p.hidden) return true;
-    if(p.releaseDate){
-      const rd = parseD(p.releaseDate);
-      if(rd && (TODAY - rd) / 86400000 > 45) return true;
-    }
+    const fd = itemFinishDate(p);
+    if(fd && (TODAY - fd) / 86400000 > 45) return true;
     return false;
   }
 
@@ -4981,6 +5000,30 @@ function render(){
   // the prompt). Everywhere else derived values stay out of filters, sorts, counts and exports.
   function _rollupDev(p){ const r=_rollupOf(p); return (r && r.dev) || ''; }
 
+  // GANTT-DECLUTTER-1: does the item draw anything on the chart? A rollup parent needs a derived span;
+  // a normal item needs a start+due bar, an expected diamond or a release marker. Items that draw
+  // nothing go to their group's collapsed "Unscheduled (N)" row instead of taking a row each.
+  function _drawsBar(p){
+    const ru = _rollupOf(p);
+    if(ru) return !!(ru.start && ru.due);
+    return !!((p.start && p.due) || p.expected || p.releaseDate);
+  }
+  // "Now" window: dated items whose span misses [today-45d, today+90d] are left out. Recently finished
+  // items always stay (anything older is already aged out above), and undated items are never windowed
+  // (they belong to the Unscheduled bucket). Flow shell only - classic has no toggle to get them back.
+  const _spanNow = _ganttSpan !== 'all' && document.body.classList.contains('frz-beta-active');
+  const _winLo = addDays(TODAY, -45), _winHi = addDays(TODAY, 90);
+  function _inWindow(p){
+    if(!_drawsBar(p) || itemFinishDate(p)) return true;
+    const ru = _rollupOf(p);
+    const ds = ru ? [ru.start, ru.due] : [p.start, p.revised || p.due, p.expected, p.releaseDate];
+    const dd = ds.map(parseD).filter(Boolean);
+    if(!dd.length) return true;
+    const lo = new Date(Math.min(...dd)), hi = new Date(Math.max(...dd));
+    return lo <= _winHi && hi >= _winLo;
+  }
+  let _outOfWindow = 0;
+
   const list = projects.filter(p =>
     (showHidden || !isEffectivelyHidden(p)) &&
     (!fDev  || fDev.includes(p.dev || _rollupDev(p) || '')) &&
@@ -4992,7 +5035,8 @@ function render(){
     departmentMatches(p, fDept) &&
     isScheduledType(p.type || '') &&        // Stage 2: non-scheduled types are tracking-only - hidden from the Gantt baseline (composes with the user Type filter; untyped = scheduled, fail-safe)
     (!ownerScope || p.dev === ownerScope) &&
-    itemMatchesSearch(p, searchQ)
+    itemMatchesSearch(p, searchQ) &&
+    (!_spanNow || _inWindow(p) || (_outOfWindow++, false))
   );
 
   // Sort projects by start date ascending within every group (blank start → end)
@@ -5164,20 +5208,26 @@ function render(){
         return (+(b.dueWeeks)||0) - (+(a.dueWeeks)||0);
       }));
 
-      // Build ordered flat list: parent → its children → next parent → ...
-      const orderedItems = [];
-      topLevel.forEach(p => {
-        orderedItems.push({ p, isChild: false });
-        if(childMap[p.id]) childMap[p.id].forEach(c => orderedItems.push({ p:c, isChild:true }));
-      });
+      // GANTT-DECLUTTER-1: ordered flat list built by a recursive walk (parent → children → grandchildren
+      // → ...). The old one-level push never placed a grandchild (a Story under an Epic under a Roadmap
+      // Item), so those items had no row at all. `seen` guards a malformed parent cycle.
+      const _seen = new Set();
+      function _walk(p, depth, out){
+        if(_seen.has(p.id)) return;
+        _seen.add(p.id);
+        out.push({ p, isChild: depth > 0, depth });
+        if(!isParentCollapsed(p.id, depth)) (childMap[p.id] || []).forEach(c => _walk(c, depth + 1, out));
+      }
+      // Top-level items that draw nothing (and their subtree) go to the group's Unscheduled bucket.
+      const orderedItems = [], unschedItems = [];
+      topLevel.forEach(p => _walk(p, 0, _drawsBar(p) ? orderedItems : unschedItems));
+      const unschedCount = topLevel.filter(p => !_drawsBar(p)).length;
 
-      orderedItems.forEach(({ p, isChild }) => {
-        // Skip children if parent is collapsed
-        if(isChild && collapsedParents[p.parent]) return;
-
+      const _renderRow = ({ p, isChild, depth }) => {
         // hasChildren: check both within-group childMap AND all projects globally
         const hasChildren = !!childMap[p.id] || projects.some(x => x.parent === p.id);
-        const parentCollapsed = collapsedParents[p.id];
+        const parentCollapsed = isParentCollapsed(p.id, depth);
+        const _indent = depth > 1 ? ` style="padding-left:${9 + 16 * (depth - 1)}px"` : '';   // grandchildren step in further than the 9px child indent
 
         // PARENT-ROLLUP-1: an unscoped parent draws a DERIVED, dashed bar from its children (display only)
         // instead of the normal phase bars. It reads _rollupOf (which returns null for own-dated parents
@@ -5189,13 +5239,13 @@ function render(){
         // dated children drew nothing at all. _ru is non-null ONLY for an unscoped parent, so a scoped
         // child or a leaf still falls through to the normal render.
         if(_ru){
-          const _pc = collapsedParents[p.id];
-          const _caret = hasChildren ? `<button class="caret-btn" data-parent="${p.id}" title="${_pc?'Expand':'Collapse'} children">${_caretSvg(_pc)}</button>` : '';
+          const _pc = parentCollapsed;
+          const _caret = hasChildren ? `<button class="caret-btn" data-parent="${p.id}" data-depth="${depth}" title="${_pc?'Expand':'Collapse'} children">${_caretSvg(_pc)}</button>` : '';
           const _tchip = _ru.multiPod ? `<span class="rollup-team" title="Children span multiple teams; placed under the pod with the most">${esc(_ru.teamLabel)}</span>` : '';
           const _stBadge = _ru.status ? `<span class="sbadge ${statusCls(_ru.status)}">${esc(_ru.status)}</span>` : `<span class="sbadge" style="opacity:.5">-</span>`;
           const _ds=parseD(_ru.start), _dd=_ru.due?nextMonday(parseD(_ru.due)):null;
           const _schedTxt = _dd ? _dd.toLocaleDateString('en-US',{timeZone:MT_TZ,month:'short',day:'numeric'}) : '-';
-          lRows += `<div class="left-row rollup-row${isChild?' child-row':''}" data-id="${p.id}">
+          lRows += `<div class="left-row rollup-row${isChild?' child-row':''}" data-id="${p.id}"${_indent}>
             <span class="proj-name" title="${escA(p.name)}">${(()=>{const ic=typeIconHTML(p.type);return ic?ic+' ':'';})()}${esc(p.name)}${_tchip}</span>
             ${priorityDot(p.priority)}
             ${_stBadge}
@@ -5271,7 +5321,7 @@ function render(){
         }
 
         const caretBtn = hasChildren
-          ? `<button class="caret-btn" data-parent="${p.id}" title="${parentCollapsed?'Expand':'Collapse'} children">${_caretSvg(parentCollapsed)}</button>`
+          ? `<button class="caret-btn" data-parent="${p.id}" data-depth="${depth}" title="${parentCollapsed?'Expand':'Collapse'} children">${_caretSvg(parentCollapsed)}</button>`
           : '';
 
         const conflictIcon = _conflictingIds.has(p.id)
@@ -5291,7 +5341,7 @@ function render(){
         const statusTitle = statusOverridden ? ` title="Actual: ${escA(p.status)} - in testing period"` : '';
         const statusText = statusOverridden ? `<span style="color:var(--accent2)">⚠</span> ${displayStatus} <span style="color:var(--accent2)">⚠</span>` : displayStatus;
 
-        lRows += `<div class="left-row${isEffectivelyHidden(p)?' hidden-row':''}${isChild?' child-row':''}" data-id="${p.id}">
+        lRows += `<div class="left-row${isEffectivelyHidden(p)?' hidden-row':''}${isChild?' child-row':''}" data-id="${p.id}"${_indent}>
           <span class="proj-name" title="${escA(p.name)}">${(()=>{ const ic=typeIconHTML(p.type); return ic?ic+' ':''; })()}${esc(p.name)}${conflictIcon}${activityIndicator}</span>
           ${priorityDot(p.priority)}
           <span class="sbadge ${statusOverridden ? '' : statusCls(displayStatus)}" style="${statusStyle}"${statusTitle}>${statusText}</span>
@@ -5383,9 +5433,28 @@ function render(){
             rowIndex++;
           });
         }
-      }); // end orderedItems.forEach
+      }; // end _renderRow
+
+      orderedItems.forEach(_renderRow);
+
+      // GANTT-DECLUTTER-1: one collapsed "Unscheduled (N)" row per group for items that draw nothing.
+      if(unschedCount){
+        const _uk = g.label === null ? '__all__' : g.label;
+        const _uOpen = !!unschedOpen[_uk];
+        lRows += `<div class="left-row unsched-row" data-unsched="${escA(_uk)}" title="${_uOpen?'Hide':'Show'} items with no dates yet"><span class="proj-name">Unscheduled</span><span class="grp-cnt">${unschedCount}</span><span class="grp-tog">${_caretSvg(!_uOpen)}</span></div>`;
+        cH += `<div class="chart-row unsched-row" style="width:${totalPx}px">${wCells}</div>`;
+        rowIndex++;
+        if(_uOpen) unschedItems.forEach(_renderRow);
+      }
     }
   }); // end groups.forEach
+
+  // GANTT-DECLUTTER-1: say what the "Now" window left out, with a one-click way back to everything.
+  if(_outOfWindow){
+    lRows += `<div class="left-row span-foot"><span class="proj-name">${_outOfWindow} item${_outOfWindow!==1?'s':''} outside the current window</span><button type="button" class="span-foot-btn" onclick="event.stopPropagation();window._frzSetGanttSpan&&window._frzSetGanttSpan('all')">Show all</button></div>`;
+    cH += `<div class="chart-row span-foot" style="width:${totalPx}px">${wCells}</div>`;
+    rowIndex++;
+  }
 
   cH += `</div>`; // end chartPanel
 
@@ -5555,14 +5624,19 @@ function render(){
     bar.addEventListener('click', e=>{ e.stopPropagation(); openProjectModal(+bar.dataset.id); });
   });
 
-  leftPanel.querySelectorAll('.left-row:not(.grp):not(.echo-row)').forEach(el => {
+  // GANTT-DECLUTTER-1: the Unscheduled bucket header toggles its group's undated items
+  leftPanel.querySelectorAll('.left-row.unsched-row').forEach(el =>
+    el.addEventListener('click', ()=>{ unschedOpen[el.dataset.unsched]=!unschedOpen[el.dataset.unsched]; render(); })
+  );
+
+  leftPanel.querySelectorAll('.left-row:not(.grp):not(.echo-row):not(.unsched-row):not(.span-foot)').forEach(el => {
     el.addEventListener('click', e => {
       // If the caret button was clicked, toggle collapse - don't open modal
       const caret = e.target.closest('.caret-btn');
       if(caret){
         e.stopPropagation();
         const parentId = +caret.dataset.parent;
-        collapsedParents[parentId] = !collapsedParents[parentId];
+        collapsedParents[parentId] = !isParentCollapsed(parentId, +caret.dataset.depth || 0);
         render();
         return;
       }
@@ -11298,6 +11372,7 @@ var FLAG_TYPES = ['At Risk','Blocked','Needs Decision'];
 var FLAG_TERMINAL_STATUSES = ['Resolved','Approved','Rejected','Dismissed','Auto-Cleared'];
 function _isActiveFlag(a){ return !!a && FLAG_TYPES.indexOf(a.activity_type)>=0 && FLAG_TERMINAL_STATUSES.indexOf(a.status)<0; }
 var _betaFlagged = false;   // FN5 "Flagged" toggle (list + kanban), global so classic _listQuery + beta shell share it
+var _ganttSpan = 'now';     // GANTT-DECLUTTER-1: Gantt "Now" (window around today) vs "All"; URL ?span=all; Flow shell only
 
 const AC_SORT_ORDER = {
   'Blocked':2, 'At Risk':3, 'Pending Approval':4,
@@ -22160,7 +22235,7 @@ if ('serviceWorker' in navigator) {
   // are in that view's CFG.extra - so they render on the List alone. Empty-list gating is in the offer menu.
   var _XCHIP = ['priority','dept','location','resolutionType','blockedReason','reporter'];   // REPORTER-TEXT-1: +reporter (free-text, List-only via CFG.list.extra)
   var CFG = {
-    gantt:    { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['groupby','legend','capacity'] },   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
+    gantt:    { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['span','groupby','legend','capacity'] },   // GANTT-DECLUTTER-1: +span (Now/All window toggle)   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
     kanban:   { chips:['owner','assignee','type','status'], extra:['sprint','priority','dept'], opts:['flagged','hideEmpty'] },   // FN5: +Flagged toggle
     list:     { chips:['owner','assignee','type','status'], extra:['priority','dept','location','resolutionType','blockedReason','reporter'], opts:['listgroup','flagged','columns','export'] },     // FN5: +Flagged; GROUPBY-2: +Group by. FIELDS-2: +location/resolutionType/blockedReason chips (List only; server-filtered; gated on non-empty list)
     planning: { chips:['owner','status'],                   extra:['type','assignee','priority','dept'], opts:['whatif'] },   // What-if (Phase 0)
@@ -23544,10 +23619,12 @@ if ('serviceWorker' in navigator) {
     var label = map[o]||o;
     if (o==='groupby'){ var gb=document.getElementById('groupBy'); var cur=gb?(gb.options[gb.selectedIndex]||{}).text:'Team'; label='Group by: '+(cur||'Team'); }
     if (o==='listgroup'){ var lg=_call('_listGetGroup')||''; label='Group by'+(lg?': '+(_FRZ_GROUP_LABELS[lg]||lg):''); }
+    if (o==='span') label = 'Showing: '+(_ganttSpan==='all' ? 'All' : 'Now');   // GANTT-DECLUTTER-1
     var activeStyle = (o==='hideEmpty' && _betaHideEmpty) || (o==='flagged' && _betaFlagged) || (o==='whatif' && _val('_scenarioActive',false)) || (o==='listgroup' && _call('_listGetGroup'))
       ? ' style="border-color:var(--frz-accent);color:var(--frz-accent);background:var(--frz-accent-soft)"' : '';
     // Phase 1c: decision-tree glyph + explanatory tooltip on the Scenario button only.
-    var titleAttr = (o==='whatif') ? ' title="Model plan changes without saving - see who\'s over-committed, then commit or discard."' : '';
+    var titleAttr = (o==='whatif') ? ' title="Model plan changes without saving - see who\'s over-committed, then commit or discard."'
+      : (o==='span') ? ' title="Now: items active from 45 days ago to 90 days ahead, plus everything finished in the last 45 days. All: every item. Click to switch."' : '';
     var icon = (o==='whatif')
       ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><path d="M6 8.2v3.3a2.5 2.5 0 0 0 2.5 2.5H15"/><path d="M18 8.2v1.6a4 4 0 0 1-4 4h-1"/></svg>'
       : '';
@@ -23695,6 +23772,7 @@ if ('serviceWorker' in navigator) {
     if (view==='team-calendar'){ var _cf=state.calFilter||{}; Object.keys(_CAL_FILTER_PARAMS).forEach(function(k){ if(_cf[k]) params.set(_CAL_FILTER_PARAMS[k], _cf[k]); }); }  // Stage 5a: filter chips in the URL
     if (view==='reports') _rptEmitURL(params);   // RPT-DRILL-1 Stage 2: report-owned r-prefixed controls (+ D4 drill dims when Stage 3 sets them)
     if ((view==='list' || view==='kanban') && _betaFlagged) params.set('flag','1');   // FN5: the Flagged toggle in the URL (shareable)
+    if (view==='gantt' && _ganttSpan==='all') params.set('span','all');   // GANTT-DECLUTTER-1: absent = Now (the default)
     var qs = params.toString();
     var base = '/'+view;
     if (view==='planning' && state.planTab && state.planTab!=='plan') base = '/planning/'+state.planTab;  // planning sub-tab is URL state
@@ -23751,6 +23829,7 @@ if ('serviceWorker' in navigator) {
     }
     if (view==='reports') _rptSeedURL(qp);   // RPT-DRILL-1 Stage 2: seed report-local controls (+ D4 dims) from the URL; absent -> defaults
     if (view==='list' || view==='kanban') _betaFlagged = (qp.get('flag')==='1');   // FN5: seed the Flagged toggle from the URL (absent -> off)
+    if (view==='gantt') _ganttSpan = (qp.get('span')==='all') ? 'all' : 'now';      // GANTT-DECLUTTER-1: seed Now/All from the URL (absent -> Now)
     if (view==='list' && typeof _listState!=='undefined') _listState.sort = qp.get('sort') || '';   // ADOPT-1: seed the List sort from the URL (round-trip); absent -> default (empty = server updated_ts:desc)
   }
 
@@ -28184,10 +28263,17 @@ if ('serviceWorker' in navigator) {
       navigate('/item/'+mm[1], false);
     }, true);
   }
+  // GANTT-DECLUTTER-1: switch the Gantt between Now and All (toolbar button + the footer "Show all").
+  function _frzSetGanttSpan(v){
+    _ganttSpan = (v==='all') ? 'all' : 'now';
+    syncURL(true); rerender(); renderBar();
+  }
+  window._frzSetGanttSpan = _frzSetGanttSpan;
   function handleOpt(o, anchor){
     if (o==='groupby') return groupByMenu(anchor);
     if (o==='legend') return legendPop(anchor);
     if (o==='capacity') { _call('toggleCapacityView'); return; }
+    if (o==='span') { _frzSetGanttSpan(_ganttSpan==='all' ? 'now' : 'all'); return; }   // GANTT-DECLUTTER-1
     if (o==='whatif') { _call('enterScenario'); return; }   // What-if (Phase 0); exit via the banner
     if (o==='newSession'){ _call('openMyAccount'); /* placeholder: planning entry lives in classic */ _call('showToast','Use the Planning board controls'); return; }
     if (o==='history'){ _call('openActivityCenter'); return; }
