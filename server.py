@@ -4520,10 +4520,18 @@ def _insert_project(c, data: dict, ts: str = None) -> int:
 #   firstResponseAt - assignment branch: first time an assignee is set. The comment branch
 #                     (first non-reporter comment) lives in add_comment. Whichever fires first
 #                     wins, per L1 as clarified in C1.2.
+def _stamp_completed_at(item: dict, terminal_map: dict, now_iso: str) -> bool:
+    """completedAt on first entry into a statusIsTerminal status (first completion wins). Shared by
+    update_project and the Jira status writers (JIRA-COMPLETED-1), which bypass update_project and so
+    used to leave Jira-finished items with no completedAt - they then never aged off the Gantt."""
+    ns = item.get("status", "")
+    if ns and terminal_map.get(ns) and not item.get("completedAt"):
+        item["completedAt"] = now_iso
+        return True
+    return False
+
 def _stamp_measurement_ts(old: dict, merged: dict, terminal_map: dict, now_iso: str):
-    ns = merged.get("status", "")
-    if ns and terminal_map.get(ns) and not merged.get("completedAt"):
-        merged["completedAt"] = now_iso
+    _stamp_completed_at(merged, terminal_map, now_iso)
     if merged.get("assignee") and not (old.get("assignee") or "") and not merged.get("firstResponseAt"):
         merged["firstResponseAt"] = now_iso
 
@@ -10415,6 +10423,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
     fwd_map      = cfg("jiraStatusMapping")
     rev_map      = {v: k for k, v in fwd_map.items() if v}
     all_statuses = cfg("statuses") or []
+    terminal_map = cfg("statusIsTerminal")   # JIRA-COMPLETED-1: read before the write txn below
 
     def status_rank(s):
         return _status_rank(s, all_statuses)   # extracted to a shared module helper (identical behavior)
@@ -10576,6 +10585,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
                     current[_k] = p[_k]
             if any_changed and best_new_status and current.get("status") == old_status:
                 current["status"] = best_new_status
+                _stamp_completed_at(current, terminal_map, datetime.now(timezone.utc).isoformat())   # JIRA-COMPLETED-1
             # PRESERVE the optimistic-concurrency token (updated_ts) on a no-op poll.
             # Background jira sync runs on a timer and on item-page open; if every poll
             # bumped updated_ts it would invalidate every open editor's base token and
@@ -11424,6 +11434,7 @@ def _pull_context(team):
         overlay = g("jiraPullStatusMap", {}); pmap = g("jiraProjectMapping", {})
         pods = g("developers", []); amap = g("jiraAssigneeMap", {})
         released_map = g("statusIsReleased", {})          # CLEANUP-1 Item 1: keyed on Released, NOT Terminal
+        terminal_map = g("statusIsTerminal", {})          # JIRA-COMPLETED-1: completedAt on a refresh into a terminal status
     type_rev = {}
     for k, v in tmap.items():
         if v:
@@ -11432,7 +11443,8 @@ def _pull_context(team):
     proj_rev = {str(v).strip(): k for k, v in pmap.items() if v}       # FRAZ -> Fraznet
     released = {s for s, v in (released_map or {}).items() if v}       # released Flow status names
     return {"type_rev": type_rev, "status_eff": status_eff, "overlay": overlay,
-            "proj_rev": proj_rev, "pods": pods, "assignee_map": amap, "released": released}
+            "proj_rev": proj_rev, "pods": pods, "assignee_map": amap, "released": released,
+            "terminal": {s: True for s, v in (terminal_map or {}).items() if v}}
 
 def _release_date_from_fields(f):
     """RELEASE-DATE-1: the MT-day releaseDate a Jira issue's fields imply, or None. DONE-ONLY (J.R.'s
@@ -11635,6 +11647,10 @@ def _refresh_one_pulled(current, issue, ctx, all_statuses, today=None):
         if mapped != cur_status and _status_rank(mapped, all_statuses) > _status_rank(cur_status, all_statuses):
             current["status"] = mapped
             changed["status"] = (cur_status, mapped)
+            # JIRA-COMPLETED-1: an advance INTO a terminal status stamps completedAt (set-once). Transition
+            # gated like the release stamp, so items already sitting at a terminal status are not stamped.
+            if _stamp_completed_at(current, ctx.get("terminal") or {}, datetime.now(timezone.utc).isoformat()):
+                changed["completedAt"] = ("", current["completedAt"])
     # RELEASE-DATE-1: set releaseDate ONCE. Jira's Done resolutiondate wins where present (the accurate
     # fact, and it works even without a transition this run). The CLEANUP-1 6.53.1 observed-transition
     # stamp is KEPT as the FALLBACK for the case Jira has no resolutiondate but Flow watched the move into
@@ -13225,6 +13241,7 @@ def _sync_recurrence_child_statuses(parent_id: int, team: str, username: str) ->
                         base["status"] = released_status
                         if not base.get("releaseDate"):
                             base["releaseDate"] = child_updated["releaseDate"]
+                        _stamp_completed_at(base, term_map, datetime.now(timezone.utc).isoformat())   # JIRA-COMPLETED-1
                         base.pop("_row_id", None)
                         _save_project(c, row_id, base)
                     write_audit(team, "update", username, row_id,
