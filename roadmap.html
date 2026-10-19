@@ -625,6 +625,11 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
      so an exec can tell an inferred schedule from a real one. Rides theme tokens for dark mode. */
   .bar.derived { background: var(--surface2); border: 1.5px dashed var(--muted); opacity: 0.6; box-sizing: border-box; border-radius: 4px; }
   .bar.derived:hover { opacity: 0.85; }
+  /* ROLLUP-PROGRESS-1: summary-bar progress. The fill sits inside the dashed track; a finished parent is solid. */
+  .bar.derived { overflow: hidden; }
+  .bar.derived .derived-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--bar-green); pointer-events: none; }
+  .bar.derived.derived-prog { opacity: 1; }   /* the faded 0.6 look is kept only for a track with no finished work */
+  .bar.derived.derived-done { border-style: solid; border-color: var(--bar-green); }
   .rollup-team { font-size: 9px; font-weight: 700; color: var(--muted); background: var(--surface2); border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; margin-left: 6px; white-space: nowrap; vertical-align: middle; }
   .rollup-noschedule { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); font-size: 10px; font-style: italic; color: var(--muted); opacity: 0.7; pointer-events: none; }
 
@@ -2825,7 +2830,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.61.0';
+const APP_VERSION = '6.61.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -4990,6 +4995,10 @@ function render(){
     else if(_fa>=0 && _cnt.some(s => statuses.indexOf(s)>=_fa && !statusIsParked[s] && !statusIsDeferred[s])) _tgt = statuses[_fa];
     const _own = p.status || '';
     const status = (_tgt && (statuses.indexOf(_own)<0 || statuses.indexOf(_tgt)>statuses.indexOf(_own))) ? _tgt : _own;
+    // ROLLUP-PROGRESS-1: progress = finished leaf work / countable leaf work (reserved statuses excluded,
+    // same countable set as the status rule). A finished parent always reads 100%.
+    const _done = _cnt.filter(s => statusIsTerminal[s]).length;
+    const progress = (statusIsTerminal[status] || (_cnt.length && _done === _cnt.length)) ? 1 : (_cnt.length ? _done / _cnt.length : 0);
     const allReleased = kids.every(c => statusIsReleased[c.status]);       // release date only if EVERY child released
     const rels = kids.map(c=>c.releaseDate).filter(Boolean).sort();
     const podCt = {}; kids.forEach(c => { if(c.dev) podCt[c.dev]=(podCt[c.dev]||0)+1; });
@@ -5000,7 +5009,7 @@ function render(){
       release:(allReleased && rels.length)?rels[rels.length-1]:'',
       dev:(pods[0]||''), teamLabel:(pods.length>1?(pods[0]+' +'+(pods.length-1)):(pods[0]||'')),
       multiPod:pods.length>1, assignee:(ak.length===1?ak[0]:(ak.length>1?'Multiple':'')),
-      empty:!(starts.length || dues.length) };
+      empty:!(starts.length || dues.length), progress, done:_done, total:_cnt.length };
   }
   function _rollupOf(p){ if(!(p.id in _rollupCache)) _rollupCache[p.id]=_computeRollup(p); return _rollupCache[p.id]; }
   // Placement dev for the filter + grouping ONLY (the one place a derived value may steer grouping, per
@@ -5261,7 +5270,11 @@ function render(){
           </div>`;
           let _bar;
           if(_ds && _dd){
-            _bar = `<div class="bar derived" data-id="${p.id}" title="Inferred from children (display only)" style="left:${px(_ds).toFixed(1)}px;width:${pxW(_ds,_dd).toFixed(1)}px"></div>`;
+            // ROLLUP-PROGRESS-1: the outline is the track; the fill is the share of child work finished
+            // (100% = solid once the parent is finished). Still display only - never counted in capacity.
+            const _pct = Math.round((_ru.progress || 0) * 100);
+            const _ptip = _ru.total ? `${_ru.done} of ${_ru.total} finished (${_pct}%)` : 'no child work yet';
+            _bar = `<div class="bar derived${_pct>0?' derived-prog':''}${_pct>=100?' derived-done':''}" data-id="${p.id}" title="Summary of children: ${_ptip}" style="left:${px(_ds).toFixed(1)}px;width:${pxW(_ds,_dd).toFixed(1)}px">${_pct>0?`<div class="derived-fill" style="width:${_pct}%"></div>`:''}</div>`;
             if(_ru.release){ const _rl=parseD(_ru.release); if(_rl) _bar += `<div class="plane-marker" data-id="${p.id}" title="All children released: ${fmtD(_rl)}" style="left:${px(_rl).toFixed(1)}px">${PLANE_SVG}</div>`; }
           } else {
             _bar = `<span class="rollup-noschedule" title="No schedule - children have no dates yet">no schedule</span>`;   // Decision 4: deliberate marker, not an empty lane
