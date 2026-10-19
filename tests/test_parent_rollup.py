@@ -95,10 +95,20 @@ def test_render_branch_draws_derived_or_marker():
     h = _html()
     assert "const _ru = _rollupOf(p);" in h
     assert "if(_ru){" in h                             # PARENT-ROLLUP-2: mid-tier parents (isChild) now draw too
-    assert 'class="bar derived"' in h
+    assert 'class="bar derived${' in h                      # ROLLUP-PROGRESS-1: + derived-prog / derived-done
     assert "rollup-noschedule" in h                          # Decision 4 empty marker
     assert "statusCls(_ru.status)" in h                      # derived status badge
     assert "rollup-team" in h                                # multi-team chip
+
+
+def test_derived_bar_progress_fill():
+    # ROLLUP-PROGRESS-1: the dashed outline is the track; the fill = finished share of child work, solid at
+    # 100%. Display only - the progress comes from _computeRollup, which writes nothing back.
+    h, b = _html(), _fn_body("_computeRollup")
+    assert "const _done = _cnt.filter(s => statusIsTerminal[s]).length;" in b
+    assert "progress, done:_done, total:_cnt.length" in b
+    assert '<div class="derived-fill" style="width:${_pct}%"></div>' in h
+    assert ".bar.derived .derived-fill {" in h and ".bar.derived.derived-done {" in h
 
 
 def test_derived_bar_css_no_new_fill():
