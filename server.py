@@ -1818,7 +1818,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.60.0"
+APP_VERSION = "6.60.1"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -11621,7 +11621,8 @@ def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))
 # ELSE. The 565 items that carry a Jira ticket but were created in Flow and pushed have no jiraSource, so
 # they are excluded by construction - their pod and assignee are Flow's decisions, never Jira's. Scope on
 # jiraSource, NEVER on jiraTickets being present or on the key matching.
-_PULL_REFRESH_FIELDS = ("status", "dev", "assignee")   # the only three fields the refresh may ever write
+_PULL_REFRESH_FIELDS = ("status", "dev", "assignee", "start", "due")   # the fields the refresh may ever write (JIRA-DATES-1: +start/due)
+_PULL_REFRESH_DATES = (("start", "customfield_10025"), ("due", "duedate"))   # JIRA-DATES-1: Flow field <- Jira field
 
 def _refresh_one_pulled(current, issue, ctx, all_statuses, today=None):
     """Given an item's CURRENT blob and its Jira issue, apply the three refreshed fields in place and
@@ -11637,7 +11638,10 @@ def _refresh_one_pulled(current, issue, ctx, all_statuses, today=None):
     date Flow observed for free. It is gated on the TRANSITION (a status change computed this run whose new
     value is released), never on the state, so the items already sitting at Released are never stamped; and
     it is set-once (an existing releaseDate is never overwritten).
-    Description/summary/dates/parent are otherwise never read here (create-time snapshot stands)."""
+    JIRA-DATES-1: start/due follow Jira ("Start date" customfield_10025 / duedate) - Jira owns a pulled
+    item's schedule. A Jira value that differs from Flow's is applied; an EMPTY Jira date keeps Flow's last
+    value (same rule as pod/assignee - a date cleared in Jira never wipes Flow's).
+    Description/summary/parent are otherwise never read here (create-time snapshot stands)."""
     changed = {}
     f = issue.get("fields", {}) or {}
     jstatus = (f.get("status") or {}).get("name", "")
@@ -11664,6 +11668,12 @@ def _refresh_one_pulled(current, issue, ctx, all_statuses, today=None):
         elif today and "status" in changed and changed["status"][1] in (ctx.get("released") or set()):
             current["releaseDate"] = today
             changed["releaseDate"] = ("", today)
+    for fld, jfld in _PULL_REFRESH_DATES:   # JIRA-DATES-1
+        jv = str(f.get(jfld) or "")[:10]
+        cv = current.get(fld) or ""
+        if jv and jv != cv:
+            current[fld] = jv
+            changed[fld] = (cv, jv)
     pod, reason = _jira_pull_pod(f.get("labels"), ctx["pods"])
     if reason == "matched":
         cur_pod = current.get("dev", "")
@@ -11728,7 +11738,7 @@ def _jira_refresh_pulled(team, actor):
             log.warning(f"[JiraRefresh] batch fetch failed, aborting with zero writes: {e}")
             return {**base, "aborted": True, "reason": f"Jira search failed: {e}"}
     base["fetched"] = len(issue_by_key)
-    n_status = n_pod = n_assignee = n_err = n_release = 0
+    n_status = n_pod = n_assignee = n_err = n_release = n_dates = 0
     details, audits = [], []
     with db(team) as c:
         for pid in pulled:
@@ -11753,6 +11763,7 @@ def _jira_refresh_pulled(team, actor):
                 if "dev" in chg:      n_pod += 1
                 if "assignee" in chg: n_assignee += 1
                 if "releaseDate" in chg: n_release += 1
+                if "start" in chg or "due" in chg: n_dates += 1   # JIRA-DATES-1
                 details.append({"key": jkey, "id": pid,
                                 "fields": {k: {"from": v[0], "to": v[1]} for k, v in chg.items()}})
                 audits.append((pid, current.get("name", ""), jkey, chg))
@@ -11769,7 +11780,8 @@ def _jira_refresh_pulled(team, actor):
         except Exception as e:
             log.warning(f"[JiraRefresh] audit write failed for {jkey}: {e}")
     return {**base, "changed": len(details), "statusChanged": n_status, "podChanged": n_pod,
-            "assigneeChanged": n_assignee, "releaseStamped": n_release, "errors": n_err, "details": details}
+            "assigneeChanged": n_assignee, "releaseStamped": n_release, "datesChanged": n_dates,
+            "errors": n_err, "details": details}
 
 @app.post("/api/jira/refresh")
 def jira_refresh(auth: dict = Depends(require_role("admin"))):
