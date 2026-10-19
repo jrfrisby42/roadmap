@@ -2825,7 +2825,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.60.1';
+const APP_VERSION = '6.61.0';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -4977,12 +4977,19 @@ function render(){
     // poisoning the min/max - filter(Boolean) drops them, so a mix of dated + undated still derives a span.
     const starts = kids.map(c=>c.start).filter(Boolean).sort();
     const dues   = kids.map(c=>c.revised||c.due).filter(Boolean).sort();   // revised wins over due
-    // status: lowest (least-progressed) child status by the `statuses` order, EXCLUDING off-flow and the
-    // off-list Duplicate. None qualify (all off-flow) -> the parent's own stored status, else blank (Dec 3).
-    const ranked = kids.map(c=>c.status)
-      .filter(s => s && s!=='Duplicate' && !statusIsOffFlow[s] && statuses.indexOf(s)>=0)
-      .map(s => ({s, i:statuses.indexOf(s)})).sort((a,b)=>a.i-b.i);
-    const status = ranked.length ? ranked[0].s : (p.status || '');
+    // ROLLUP-SYNC-1: status follows rule A (the Jira convention) - the SAME rule the server now writes onto
+    // the parent (_rollup_plan), so the Gantt and the item never disagree. Over the leaf work (descendants
+    // that are not themselves roll-up parents): every countable leaf finished -> the least-progressed
+    // finished status; else any leaf started (at/after the first active status, not parked/deferred) -> the
+    // first active status. Forward-only against the parent's own status; no opinion -> its own status.
+    const _leaves = kids.filter(c => !((_kidsByParent[c.id]||[]).length && !(c.start && c.due)));
+    const _cnt = _leaves.map(c=>c.status).filter(s => s && !RESERVED_TERMINAL_STATUSES.has(s));
+    const _fa = statuses.findIndex(s => statusIsActive[s]);
+    let _tgt = '';
+    if(_cnt.length && _cnt.every(s => statusIsTerminal[s])) _tgt = _cnt.slice().sort((a,b)=>statuses.indexOf(a)-statuses.indexOf(b))[0];
+    else if(_fa>=0 && _cnt.some(s => statuses.indexOf(s)>=_fa && !statusIsParked[s] && !statusIsDeferred[s])) _tgt = statuses[_fa];
+    const _own = p.status || '';
+    const status = (_tgt && (statuses.indexOf(_own)<0 || statuses.indexOf(_tgt)>statuses.indexOf(_own))) ? _tgt : _own;
     const allReleased = kids.every(c => statusIsReleased[c.status]);       // release date only if EVERY child released
     const rels = kids.map(c=>c.releaseDate).filter(Boolean).sort();
     const podCt = {}; kids.forEach(c => { if(c.dev) podCt[c.dev]=(podCt[c.dev]||0)+1; });
