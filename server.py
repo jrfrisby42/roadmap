@@ -7552,61 +7552,72 @@ def mark_duplicate(pid: int, body: dict = Body(...), auth: dict = Depends(requir
         raise HTTPException(422, "Choose the item this duplicates.")
     if survivor_id == pid:
         raise HTTPException(422, "An item cannot be a duplicate of itself.")
-    now_iso = datetime.now(timezone.utc).isoformat()
-    ts_h = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    op = _uuid.uuid4().hex
     with db(team) as c:
         c.execute("BEGIN IMMEDIATE")
-        dup = _get_item_blob(c, pid)                                   # the loser
-        srow = c.execute("SELECT data FROM projects WHERE id=?", (survivor_id,)).fetchone()
-        if not srow:
-            raise HTTPException(404, "That item was not found.")
-        surv = json.loads(srow["data"])
-        if _find_dup_ref(dup, "duplicate-of"):
-            raise HTTPException(409, detail={"error": "already_duplicate",
-                "message": "This item is already marked as a duplicate."})
-        # Chains are refused, not resolved: if the chosen survivor is itself a duplicate, name ITS
-        # survivor so the user picks that instead (silently redirecting one hop hides a data shape).
-        surv_dup = _find_dup_ref(surv, "duplicate-of")
-        if surv_dup:
-            _real = surv_dup.get("number") or f"#{surv_dup.get('targetId')}"
-            raise HTTPException(409, detail={"error": "chain",
-                "message": f"{surv.get('itemKey') or ('#'+str(survivor_id))} is itself a duplicate of "
-                           f"{_real}. Mark this a duplicate of {_real} instead."})
-        prev_status = dup.get("status") or ""
-        dup_key = dup.get("itemKey") or f"#{pid}"
-        surv_key = surv.get("itemKey") or f"#{survivor_id}"
-        _append_external_ref(dup, {"system": _DUPLICATE_SYSTEM, "kind": "duplicate-of", "operationRef": op,
-            "targetId": survivor_id, "number": surv_key, "url": f"{APP_BASE_URL}/item/{survivor_id}",
-            "prevStatus": prev_status, "status": "linked", "at": now_iso})   # prevStatus -> reversibility
-        dup["status"] = DUPLICATE_STATUS                                # direct write; NO completedAt
-        _save_project(c, pid, dup)
-        _append_external_ref(surv, {"system": _DUPLICATE_SYSTEM, "kind": "duplicated-by", "operationRef": op,
-            "sourceId": pid, "number": dup_key, "url": f"{APP_BASE_URL}/item/{pid}", "status": "linked", "at": now_iso})
-        # CC-1 (2.5): OPT-IN only. DUPLICATE-1 deliberately does not introduce the two reporters; this
-        # reverses that just for the person who ticks "also notify" on the mark-duplicate modal, adding
-        # the loser's reporter to the survivor's CC list so they follow the item that lives on.
-        if body.get("notifyReporter"):
-            dup_re = (dup.get("reporterEmail") or "").strip()
-            if dup_re:
-                _cc = surv.get("ccList") or []
-                if len(_cc) < _CC_LIST_CAP and not any((r.get("email") or "").strip().lower() == dup_re.lower()
-                                                       for r in _cc if isinstance(r, dict)):
-                    _cc.append({"id": secrets.token_hex(6), "email": dup_re, "addedBy": actor, "addedAt": now_iso})
-                    surv["ccList"] = _cc
-        _save_project(c, survivor_id, surv)
-        _dup_activity(c, pid, dup, actor, f"Marked as a duplicate of {surv_key}", prev_status, DUPLICATE_STATUS, ts_h)
-        _dup_activity(c, survivor_id, surv, actor, f"{dup_key} marked as a duplicate of this item", "", "", ts_h)
-    write_audit(team, "duplicate:mark", actor, pid, dup.get("name", ""),
-                changes={"survivorId": survivor_id, "survivorKey": surv_key, "operationRef": op})
-    write_audit(team, "duplicate:link", actor, survivor_id, surv.get("name", ""),
-                changes={"duplicateId": pid, "duplicateKey": dup_key, "operationRef": op})
+        dup, surv, dup_key, surv_key, op = _mark_duplicate_c(c, pid, survivor_id, actor, bool(body.get("notifyReporter")))
+    _mark_duplicate_audits(team, actor, pid, survivor_id, dup, surv, dup_key, surv_key, op)
     try:
         _duplicate_send_email(team, dup, pid)
     except Exception as e:
         log.warning("[Duplicate] reporter email failed for item %s: %s", pid, e)
     return {"ok": True, "survivorId": survivor_id, "survivorKey": surv_key,
             "status": DUPLICATE_STATUS, "externalRefs": dup.get("externalRefs") or []}
+
+def _mark_duplicate_c(c, pid: int, survivor_id: int, actor: str, notify_reporter: bool = False):
+    """The DUPLICATE-1 marking on an OPEN write txn: validate, stamp the duplicate-of / duplicated-by refs,
+    set Duplicate (prevStatus kept for reversal), save both, write both activities. Raises HTTPException on
+    a refused marking. Shared by mark_duplicate and the JIRA-AUTOLINK-1 link-time merge. Audits + reporter
+    email stay with the caller (they open their own connection). Returns (dup, surv, dup_key, surv_key, op)."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    ts_h = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    op = _uuid.uuid4().hex
+    dup = _get_item_blob(c, pid)                                   # the loser
+    srow = c.execute("SELECT data FROM projects WHERE id=?", (survivor_id,)).fetchone()
+    if not srow:
+        raise HTTPException(404, "That item was not found.")
+    surv = json.loads(srow["data"])
+    if _find_dup_ref(dup, "duplicate-of"):
+        raise HTTPException(409, detail={"error": "already_duplicate",
+            "message": "This item is already marked as a duplicate."})
+    # Chains are refused, not resolved: if the chosen survivor is itself a duplicate, name ITS
+    # survivor so the user picks that instead (silently redirecting one hop hides a data shape).
+    surv_dup = _find_dup_ref(surv, "duplicate-of")
+    if surv_dup:
+        _real = surv_dup.get("number") or f"#{surv_dup.get('targetId')}"
+        raise HTTPException(409, detail={"error": "chain",
+            "message": f"{surv.get('itemKey') or ('#'+str(survivor_id))} is itself a duplicate of "
+                       f"{_real}. Mark this a duplicate of {_real} instead."})
+    prev_status = dup.get("status") or ""
+    dup_key = dup.get("itemKey") or f"#{pid}"
+    surv_key = surv.get("itemKey") or f"#{survivor_id}"
+    _append_external_ref(dup, {"system": _DUPLICATE_SYSTEM, "kind": "duplicate-of", "operationRef": op,
+        "targetId": survivor_id, "number": surv_key, "url": f"{APP_BASE_URL}/item/{survivor_id}",
+        "prevStatus": prev_status, "status": "linked", "at": now_iso})   # prevStatus -> reversibility
+    dup["status"] = DUPLICATE_STATUS                                # direct write; NO completedAt
+    _save_project(c, pid, dup)
+    _append_external_ref(surv, {"system": _DUPLICATE_SYSTEM, "kind": "duplicated-by", "operationRef": op,
+        "sourceId": pid, "number": dup_key, "url": f"{APP_BASE_URL}/item/{pid}", "status": "linked", "at": now_iso})
+    # CC-1 (2.5): OPT-IN only. DUPLICATE-1 deliberately does not introduce the two reporters; this
+    # reverses that just for the person who ticks "also notify" on the mark-duplicate modal, adding
+    # the loser's reporter to the survivor's CC list so they follow the item that lives on.
+    if notify_reporter:
+        dup_re = (dup.get("reporterEmail") or "").strip()
+        if dup_re:
+            _cc = surv.get("ccList") or []
+            if len(_cc) < _CC_LIST_CAP and not any((r.get("email") or "").strip().lower() == dup_re.lower()
+                                                   for r in _cc if isinstance(r, dict)):
+                _cc.append({"id": secrets.token_hex(6), "email": dup_re, "addedBy": actor, "addedAt": now_iso})
+                surv["ccList"] = _cc
+    _save_project(c, survivor_id, surv)
+    _dup_activity(c, pid, dup, actor, f"Marked as a duplicate of {surv_key}", prev_status, DUPLICATE_STATUS, ts_h)
+    _dup_activity(c, survivor_id, surv, actor, f"{dup_key} marked as a duplicate of this item", "", "", ts_h)
+    return dup, surv, dup_key, surv_key, op
+
+def _mark_duplicate_audits(team, actor, pid, survivor_id, dup, surv, dup_key, surv_key, op):
+    write_audit(team, "duplicate:mark", actor, pid, dup.get("name", ""),
+                changes={"survivorId": survivor_id, "survivorKey": surv_key, "operationRef": op})
+    write_audit(team, "duplicate:link", actor, survivor_id, surv.get("name", ""),
+                changes={"duplicateId": pid, "duplicateKey": dup_key, "operationRef": op})
 
 @app.post("/api/items/{pid}/unmark-duplicate")
 def unmark_duplicate(pid: int, body: dict = Body({}), auth: dict = Depends(require_role("admin", "editor"))):
@@ -10137,7 +10148,7 @@ def _jira_keys_in_flow(c) -> set:
 def _jira_keys_pulled_before(c) -> set:
     """Every Jira key the pull has ever created an item for, from its `jira:pull-create` audit rows."""
     keys = set()
-    for r in c.execute("SELECT changes FROM audit_log WHERE action='jira:pull-create'"):
+    for r in c.execute("SELECT changes FROM audit_log WHERE action IN ('jira:pull-create','jira:pull-autolink')"):   # JIRA-AUTOLINK-1: an auto-linked key is never re-imported either
         try:
             k = (json.loads(r["changes"] or "{}") or {}).get("jiraKey")
         except (TypeError, ValueError):
@@ -10323,6 +10334,48 @@ def create_jira_issue(body: dict = Body(...),
     return {"key": new_key, "url": f"{JIRA_BASE}/browse/{new_key}"}
 
 # ── Link existing Jira issue to roadmap item ──────────────────────────────────
+# ── JIRA-AUTOLINK-1 (part 2): linking a key the pull already copied merges the copy away ─────────────────
+# Linking a Jira key to the ORIGINAL Flow item used to 409 when the pull had already imported that issue as
+# a copy, so people unlinked the copy and relinked by hand. Now, when the holder is an UNTOUCHED pulled copy
+# (pulled, holds only this key, no children, no comments, and its audit trail is sync-only), the link moves
+# the key to the original and marks the copy a Duplicate of it - the standard, reversible DUPLICATE-1 mark -
+# in one transaction. A copy anyone has worked on is never merged; the 409 stands and names it.
+_COPY_SYNC_ONLY_ACTIONS = ("jira:pull-create", "jira:pull-refresh", "jira:pull", "jira:pull-parent", "rollup-sync")
+
+def _merge_pulled_copy(team: str, ticket: str, copy_id: int, target_id: int, actor: str):
+    """Move `ticket` from an untouched pulled copy to the target and mark the copy its duplicate.
+    Returns {"id", "itemKey"} of the merged copy, or None when the copy is not safe to merge."""
+    with db(team) as c:
+        c.execute("BEGIN IMMEDIATE")
+        crow = c.execute("SELECT data FROM projects WHERE id=?", (copy_id,)).fetchone()
+        trow = c.execute("SELECT data, updated_ts FROM projects WHERE id=?", (target_id,)).fetchone()
+        if not crow or not trow:
+            return None
+        cp, tg = json.loads(crow["data"]), json.loads(trow["data"])
+        if cp.get("jiraSource") != _PULL_JIRA_SOURCE or (cp.get("jiraTickets") or []) != [ticket] \
+                or (cp.get("status") or "") in RESERVED_TERMINAL_STATUSES:
+            return None
+        if c.execute("SELECT 1 FROM projects WHERE json_extract(data,'$.parent') IN (?, ?) LIMIT 1",
+                     (copy_id, str(copy_id))).fetchone():
+            return None                                   # has children - would orphan them
+        if c.execute("SELECT 1 FROM comments WHERE item_id=? LIMIT 1", (copy_id,)).fetchone():
+            return None                                   # someone has discussed it
+        marks = ",".join("?" * len(_COPY_SYNC_ONLY_ACTIONS))
+        if c.execute(f"SELECT 1 FROM audit_log WHERE project_id=? AND action NOT IN ({marks}) LIMIT 1",
+                     (copy_id, *_COPY_SYNC_ONLY_ACTIONS)).fetchone():
+            return None                                   # a person has edited it
+        cp["jiraTickets"] = []
+        _save_project(c, copy_id, cp)
+        tix = list(tg.get("jiraTickets") or [])
+        if ticket not in tix:
+            tg["jiraTickets"] = tix + [ticket]
+            _save_project(c, target_id, tg, trow["updated_ts"])   # preserve the client's edit token
+        dup, surv, dup_key, surv_key, op = _mark_duplicate_c(c, copy_id, target_id, actor)
+    _mark_duplicate_audits(team, actor, copy_id, target_id, dup, surv, dup_key, surv_key, op)
+    write_audit(team, "jira:link-merge", actor, target_id, surv.get("name", ""),
+                changes={"jiraKey": ticket, "mergedCopyId": copy_id, "mergedCopyKey": dup_key})
+    return {"id": copy_id, "itemKey": dup_key}
+
 @app.post("/api/jira/link-issue")
 def link_jira_issue(body: dict = Body(...),
                     auth: dict = Depends(require_role("admin", "editor"))):
@@ -10338,7 +10391,13 @@ def link_jira_issue(body: dict = Body(...),
 
     # Duplicate check - scan all items
     existing_map = _get_all_jira_tickets(team)
-    if ticket in existing_map and existing_map[ticket] != item_id:
+    merged_copy = None
+    if ticket in existing_map and existing_map[ticket] != item_id and item_id:
+        try:
+            merged_copy = _merge_pulled_copy(team, ticket, int(existing_map[ticket]), int(item_id), username)
+        except (TypeError, ValueError):
+            merged_copy = None
+    if ticket in existing_map and existing_map[ticket] != item_id and not merged_copy:
         # FIX-409-HDR-1: name the holding item by its KEY (not the numeric id), and return a DICT detail
         # (the canonical 409 shape) carrying `message`, so the client surfaces "<ticket> is already linked
         # to <key>" instead of the generic concurrency fallback. Falls back to #id only if the key is unset.
@@ -10374,6 +10433,7 @@ def link_jira_issue(body: dict = Body(...),
         "issueType":f.get("issuetype",{}).get("name",""),
         "project":  f.get("project",{}).get("name",""),
         "url":      f"{JIRA_BASE}/browse/{ticket}",
+        "mergedCopy": merged_copy,   # JIRA-AUTOLINK-1: {id, itemKey} of a pulled copy that was merged away, else None
     }
 
 # ── Add comment to Jira (roadmap-originated changes only) ─────────────────────
@@ -11658,6 +11718,51 @@ def _pull_plan_issues(team):
     anc_new = [k for k, v in ancestors.items() if not v["alreadyInFlow"]]
     return core, list(core["candidates"]) + [cache[k] for k in anc_new if k in cache]
 
+# ── JIRA-AUTOLINK-1: a new Jira issue that names a Flow item links to it instead of becoming a copy ──────
+# People create a Jira issue by hand for an EXISTING Flow request and write the Flow key into it ("Revert
+# Verification for Logistics Jobs - FRZ - 889"); the pull then imported it as a second Flow item before they
+# could link it (the FRZ-889 / FRZ-1025 / FRZ-1026 report, 2026-10-19). Now: if the summary or description
+# names exactly ONE Flow item key ("FRZ-889", "FRZ - 889", a Flow item URL...) and that item is open (not
+# finished, not Duplicate/Transferred, not hidden), the Jira key is appended to that item and nothing is
+# created. Zero or several distinct references -> the normal create. Audited as `jira:pull-autolink`, which
+# also counts as "pulled before" so an unlink never triggers a re-import (the JIRA-DEDUPE-1 rule).
+_FLOW_REF_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9]{1,9})\s*[-–]\s*(\d{1,7})\b")   # hyphen or en dash between prefix and number
+
+def _flow_ref_index(c) -> dict:
+    """{ITEMKEY -> (id, blob)} for every item that has a key, read on THIS connection."""
+    out = {}
+    for r in c.execute("SELECT id, data FROM projects"):
+        p = json.loads(r["data"])
+        k = (p.get("itemKey") or "").strip().upper()
+        if k:
+            out[k] = (r["id"], p)
+    return out
+
+def _pull_flow_reference(issue: dict, index: dict, terminal: dict):
+    """The (id, itemKey) of the ONE open Flow item a Jira issue names, else None."""
+    f = (issue or {}).get("fields") or {}
+    text = (f.get("summary") or "") + " " + json.dumps(f.get("description") or "")
+    hits = {f"{pre.upper()}-{int(num)}" for pre, num in _FLOW_REF_RE.findall(text)} & set(index)
+    if len(hits) != 1:
+        return None
+    k = hits.pop()
+    pid, p = index[k]
+    st = p.get("status") or ""
+    if p.get("hidden") or p.get("archived") or terminal.get(st) or st in RESERVED_TERMINAL_STATUSES:
+        return None
+    return pid, k
+
+def _pull_autolink_c(c, pid: int, jkey: str, ref_key: str, actor: str):
+    """Append jkey to item pid on an open write txn (updated_ts preserved, as create-issue does) + audit."""
+    row = c.execute("SELECT data, updated_ts FROM projects WHERE id=?", (pid,)).fetchone()
+    p = json.loads(row["data"])
+    tix = list(p.get("jiraTickets") or [])
+    if jkey not in tix:
+        p["jiraTickets"] = tix + [jkey]
+        _save_project(c, pid, p, row["updated_ts"])
+    _write_audit_c(c, "jira:pull-autolink", actor, pid, p.get("name", ""),
+                   changes={"jiraKey": jkey, "reference": ref_key})
+
 @app.post("/api/jira/pull")
 def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))):
     """JIRA-PULL-1 Stage 4: construct + insert the pull plan (candidates + net-new ancestors) via the app's
@@ -11696,14 +11801,22 @@ def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))
             agg["descFlattened"][nt] = agg["descFlattened"].get(nt, 0) + n
         if meta["hasDescription"]:
             agg["withDescription"] += 1
+    terminal = ctx.get("terminal") or {}
     if dry:
+        would_link = []
+        with db(team) as c:
+            ref_index = _flow_ref_index(c)
         for issue in plan_issues:
             item, meta = _construct_pull_item(issue, ctx, actor)
             if item is None:
                 skipped.append(meta); continue
+            ref = _pull_flow_reference(issue, ref_index, terminal)   # JIRA-AUTOLINK-1
+            if ref:
+                would_link.append({"key": meta["key"], "linkTo": ref[1], "id": ref[0]}); continue
             _tally(meta, item["status"] or "(Org default)")
         return {"ready": True, "dryRun": True, "planCount": len(plan_issues),
-                "wouldCreate": len(plan_issues) - len(skipped), "skipped": skipped, "fieldSummary": agg}
+                "wouldCreate": len(plan_issues) - len(skipped) - len(would_link), "wouldAutoLink": would_link,
+                "skipped": skipped, "fieldSummary": agg}
     # WRITE: one transaction; construct + insert each via the app's insert path (no notify hook fires).
     with db(team) as c:
         # JIRA-DEDUPE-1: take the write lock BEFORE deciding what is new. A second pull (the other gunicorn
@@ -11712,6 +11825,8 @@ def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))
         # outside any txn and may be stale; the sets below are the authority.
         c.execute("BEGIN IMMEDIATE")
         taken = _jira_keys_in_flow(c) | _jira_keys_pulled_before(c)
+        ref_index = _flow_ref_index(c)                    # JIRA-AUTOLINK-1: read inside the txn, like `taken`
+        auto_linked = []
         for issue in plan_issues:
             item, meta = _construct_pull_item(issue, ctx, actor)
             if item is None:
@@ -11720,6 +11835,11 @@ def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))
             if jkey in taken:
                 skipped.append({"key": meta["key"], "skip": "already-in-flow"}); continue
             taken.add(jkey)                               # also dedupes a key repeated within this plan
+            ref = _pull_flow_reference(issue, ref_index, terminal)
+            if ref:                                       # JIRA-AUTOLINK-1: names an open Flow item -> link, don't copy
+                _pull_autolink_c(c, ref[0], jkey, ref[1], actor)
+                auto_linked.append({"key": jkey, "linkedTo": ref[1], "id": ref[0]})
+                continue
             _assign_item_key(c, item)
             item["id"] = _insert_project(c, item)         # mutates item: stamps default status if "" + itemKey above
             _tally(meta, item.get("status") or "(Org default)")
@@ -11754,7 +11874,7 @@ def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))
         log.warning(f"[JiraParent] cross-run flat link failed (non-fatal): {e}")
     return {"ready": True, "dryRun": False, "createdCount": len(created), "created": created,
             "skipped": skipped, "fieldSummary": agg, "parentLinks": parent_counts,
-            "crossRunParents": cross_run}
+            "crossRunParents": cross_run, "autoLinked": auto_linked}
 
 # ── JIRA-PULL-1 Stage 5: the refresh pass + triggers ─────────────────────────────────────────────────
 # THE ONE LINE THAT MATTERS: the refresh touches items with jiraSource == _PULL_JIRA_SOURCE and NOTHING

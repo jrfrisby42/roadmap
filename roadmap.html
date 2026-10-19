@@ -7050,6 +7050,7 @@ async function addJiraTicket(){
       }).catch(()=>{});
       // Update jiraStatuses cache with fetched data
       if(result.status) jiraStatuses[val] = { status: result.status, summary: result.summary||val };
+      _applyMergedJiraCopy(result, val);   // JIRA-AUTOLINK-1
     } catch(e){
       inp.style.borderColor = 'var(--accent2)';
       if(errEl){ errEl.textContent = e.message||'Could not validate ticket'; errEl.style.display=''; }
@@ -7067,6 +7068,16 @@ async function addJiraTicket(){
   if(cb) cb.style.display = 'none';
   if(!jiraStatuses[val]) fetchJiraStatuses([val]);
   inp.focus();
+}
+
+// JIRA-AUTOLINK-1: when linking a key the pull had already copied into an untouched item, the server
+// moves the key here and marks the copy a Duplicate of this item. Mirror that locally and say so.
+function _applyMergedJiraCopy(result, key){
+  const m = result && result.mergedCopy;
+  if(!m) return;
+  const cp = projects.find(x => x.id === m.id);
+  if(cp){ cp.jiraTickets = []; cp.status = DUPLICATE_STATUS; }
+  showToast(`${key} was already imported as ${m.itemKey}; that copy is now marked a duplicate of this item`);
 }
 
 async function createJiraIssueFromModal(){
@@ -19776,6 +19787,7 @@ async function linkJiraFromItemPage(){
       });
       summary = result.summary || '';
       if(result.status) jiraStatuses[val] = { status: result.status, summary: result.summary||val };
+      _applyMergedJiraCopy(result, val);   // JIRA-AUTOLINK-1
     } catch(e){
       inp.style.borderColor = 'var(--accent2)';
       if(errEl){ errEl.textContent = e.message||'Could not validate ticket'; errEl.style.display=''; }
