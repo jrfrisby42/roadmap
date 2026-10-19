@@ -21031,6 +21031,37 @@ if ('serviceWorker' in navigator) {
   /* ── Beta Planning (Feature B) ── */
   /* Reports view (Ship C) */
   .frz-beta #reportsView { color:var(--frz-text); }
+  /* TEAM-BOARD-1: Team Board (teams x Finished/Now/Next). Desktop grid; <=640px stacks per team. */
+  .frz-beta #frzTeamBoard { padding:16px 20px 32px; color:var(--frz-text); }
+  .frz-beta .frz-tb-note { font-size:12px; color:var(--frz-text-muted); margin:0 0 10px; }
+  .frz-beta .frz-tb-blank { font-size:13px; color:var(--frz-text-muted); padding:24px 4px; }
+  .frz-beta .frz-tb-grid { display:grid; grid-template-columns:minmax(110px,160px) repeat(var(--tb-cols,3), minmax(0,1fr));
+    border:1px solid var(--frz-border); border-radius:10px; background:var(--frz-bg-surface); overflow:hidden; }
+  .frz-beta .frz-tb-hd { display:flex; align-items:center; gap:6px; padding:9px 12px; background:var(--frz-header-tint);
+    font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--frz-text-secondary); }
+  .frz-beta .frz-tb-hd + .frz-tb-hd { border-left:1px solid var(--frz-border); }
+  .frz-beta .frz-tb-n { font-size:11px; font-weight:600; letter-spacing:0; color:var(--frz-text-muted); background:var(--frz-bg-surface);
+    border-radius:var(--frz-radius-chip); padding:0 7px; }
+  .frz-beta .frz-tb-team { padding:12px; font-size:13px; font-weight:700; border-top:1px solid var(--frz-border); }
+  .frz-beta .frz-tb-cell { display:flex; flex-direction:column; gap:6px; min-width:0; padding:8px;
+    border-top:1px solid var(--frz-border); border-left:1px solid var(--frz-border); }
+  .frz-beta .frz-tb-card { display:block; width:100%; text-align:left; font:inherit; color:inherit; cursor:pointer;
+    background:var(--frz-bg-elevated); border:1px solid var(--frz-border); border-radius:8px; padding:7px 9px; box-shadow:var(--frz-shadow-card); }
+  .frz-beta .frz-tb-card:hover { border-color:var(--frz-accent-soft-border); }
+  .frz-beta .frz-tb-card:focus-visible { outline:2px solid var(--frz-accent); outline-offset:1px; }
+  .frz-beta .frz-tb-name { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+    font-size:13px; font-weight:600; line-height:1.3; }
+  .frz-beta .frz-tb-meta { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; margin-top:5px; font-size:11.5px; color:var(--frz-text-muted); }
+  .frz-beta .frz-tb-overdue { color:var(--frz-danger); font-weight:600; }
+  .frz-beta .frz-tb-empty { padding:2px 4px; font-size:12px; color:var(--frz-text-muted); }
+  .frz-beta .frz-tb-more { align-self:flex-start; padding:2px 4px; font:inherit; font-size:12px; color:var(--frz-accent); background:none; border:0; cursor:pointer; }
+  @media (max-width:640px){
+    .frz-beta #frzTeamBoard { padding:12px 12px 24px; }
+    .frz-beta .frz-tb-grid { grid-template-columns:1fr; }
+    .frz-beta .frz-tb-hd { display:none; }
+    .frz-beta .frz-tb-cell { border-left:0; }
+    .frz-beta .frz-tb-cell::before { content:attr(data-label); font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--frz-text-secondary); }
+  }
   .frz-beta .frz-rpt-head { margin-bottom:14px; }
   .frz-beta .frz-rpt-title { font-size:20px; font-weight:900; margin:0; color:var(--frz-text); }
   .frz-beta .frz-rpt-sub { font-size:12px; color:var(--frz-text-muted); margin-top:2px; }
@@ -22168,6 +22199,7 @@ if ('serviceWorker' in navigator) {
     planning:'<svg class="frz-ic" viewBox="0 0 16 16"><circle cx="8" cy="9" r="5"/><path d="M8 6.5V9l1.8 1.3"/><path d="M6.5 1.5h3"/></svg>',
     dashboard:'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2" y="2" width="5.2" height="5.2" rx="1.2"/><rect x="8.8" y="2" width="5.2" height="5.2" rx="1.2"/><rect x="2" y="8.8" width="5.2" height="5.2" rx="1.2"/><rect x="8.8" y="8.8" width="5.2" height="5.2" rx="1.2"/></svg>',
     reports:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M2 14h12"/><rect x="3" y="8" width="2.4" height="4" rx="0.4"/><rect x="6.8" y="4.5" width="2.4" height="7.5" rx="0.4"/><rect x="10.6" y="9.5" width="2.4" height="2.5" rx="0.4"/></svg>',
+    'team-board':'<svg class="frz-ic" viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 8h12M6 2.5v11"/><rect x="7.6" y="4" width="2.4" height="2.4" rx="0.5"/><rect x="10.6" y="9.6" width="2.4" height="2.4" rx="0.5"/></svg>',   // TEAM-BOARD-1
     mywork:'<svg class="frz-ic" viewBox="0 0 16 16"><circle cx="8" cy="5" r="2.6"/><path d="M3 13.2c0-2.4 2.2-3.8 5-3.8s5 1.4 5 3.8"/></svg>',
     home:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M2.5 7.5L8 2.5l5.5 5"/><path d="M3.8 7v6.2h8.4V7"/></svg>',
     bell:'<svg class="frz-ic" viewBox="0 0 16 16"><path d="M8 2a3.2 3.2 0 0 0-3.2 3.2c0 3-1.3 4-1.3 4h9s-1.3-1-1.3-4A3.2 3.2 0 0 0 8 2z"/><path d="M6.6 13a1.5 1.5 0 0 0 2.8 0"/></svg>',
@@ -22185,12 +22217,12 @@ if ('serviceWorker' in navigator) {
     caret:'<svg class="frz-chip-caret" viewBox="0 0 12 12"><path d="M3 4.5l3 3 3-3"/></svg>'
   };
   var VIEW_KEYS = ['gantt','kanban','list','planning','dashboard'];
-  var VIEW_LABEL = { gantt:'Gantt', kanban:'Kanban', list:'List', planning:'Planning', dashboard:'Dashboard', reports:'Reports', 'my-home':'My Home', 'team-calendar':'Calendar', admin:'Admin' };
+  var VIEW_LABEL = { gantt:'Gantt', kanban:'Kanban', list:'List', planning:'Planning', dashboard:'Dashboard', reports:'Reports', 'my-home':'My Home', 'team-calendar':'Calendar', 'team-board':'Team Board', admin:'Admin' };
   // ── Team Admin: per-team view visibility ──────────────────────────────────────
   // admin + my-home are ALWAYS on (hiding admin self-locks; my-home is the guaranteed floor).
   // The rest are toggleable via the enabledViews allowlist (null/absent = all enabled). Enforced
   // at the rail AND the route (navigate/routeFromLocation + setView belt).
-  var _TOGGLEABLE_VIEWS = ['gantt','kanban','list','planning','dashboard','reports','team-calendar'];
+  var _TOGGLEABLE_VIEWS = ['gantt','team-board','kanban','list','planning','dashboard','reports','team-calendar'];   // TEAM-BOARD-1: +team-board (Orgs with an explicit enabledViews list must opt in)
   function _viewEnabled(v){
     if(v==='my-home' || v==='admin') return true;
     var ev = _val('enabledViews', null);
@@ -22243,7 +22275,8 @@ if ('serviceWorker' in navigator) {
     'my-home':{ chips:[],                                   extra:[], opts:[] },  // Stage 5: personal landing, no chips
     'admin':  { chips:[],                                   extra:[], opts:[] },  // Phase 0: Admin full page, no chips
     'team-calendar':{ chips:['owner'],                      extra:[], opts:[] },  // owner is applied+serialized so the SHARED Devs filter persists onto the calendar (the calendar renders its OWN filter row, not renderBar, so this adds no visual chip); _calData honors getSelectedDevs
-    'reports':{ chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:[] }   // Phase 1: Reports uses the SHARED chip bar (so Saved Views scope it); its date-basis/range/group-by are report-local controls in the page body
+    'reports':{ chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:[] },   // Phase 1: Reports uses the SHARED chip bar (so Saved Views scope it); its date-basis/range/group-by are report-local controls in the page body
+    'team-board':{ chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:[] }   // TEAM-BOARD-1: shared chip bar, like Reports
   };
   // PALETTE-1: the stale 7-entry PROJ_COLORS duplicate was removed. It contradicted the single-source rule
   // (projectColor() is the one source) and, at 13 projects, its fallback branch had become reachable and
@@ -22825,6 +22858,16 @@ if ('serviceWorker' in navigator) {
       var t = b.getAttribute('data-caltab');
       navigate('/team-calendar' + (t==='month' ? '' : '/'+t) + location.search, false);   // Stage 2c: carry ?d= (period) + ?project= across tab switches
     });
+    // TEAM-BOARD-1: Flow-owned container (created here like the calendar, so it needs no re-parenting).
+    var tboard = document.createElement('div');
+    tboard.id = 'frzTeamBoard'; tboard.style.display = 'none';
+    content.appendChild(tboard);
+    tboard.addEventListener('click', function(e){
+      var more = e.target.closest('[data-tbmore]');
+      if(more){ var k=more.getAttribute('data-tbmore'); _tbOpen[k]=!_tbOpen[k]; renderTeamBoard(); return; }
+      var card = e.target.closest('[data-open]');
+      if(card) navigate('/item/'+card.getAttribute('data-open'), false);
+    });
     document.getElementById('frzHomeBody').addEventListener('click', function(e){
       if (e.target.closest('input,button,a')) return;
       var tr = e.target.closest('tr.list-row'); if(!tr) return;
@@ -23124,7 +23167,7 @@ if ('serviceWorker' in navigator) {
     // per-team enabledViews allowlist (_viewEnabled). admin + my-home are always on and are not in
     // this list. Calendar sits after List, Reports after Planning, Dashboard last - as before, but
     // decoupled so disabling List/Planning no longer also hides Calendar/Reports.
-    ['gantt','kanban','list','team-calendar','planning','reports','dashboard'].forEach(function(v){
+    ['gantt','team-board','kanban','list','team-calendar','planning','reports','dashboard'].forEach(function(v){   // TEAM-BOARD-1: +team-board after Gantt
       if(!_viewEnabled(v)) return;                        // Team Admin: per-team view visibility
       if(v==='kanban' && viewer) return;                  // viewers never see Kanban (CLAUDE.md role rule)
       if(v==='planning' && !admin) return;                // Planning is admin-only
@@ -23139,7 +23182,7 @@ if ('serviceWorker' in navigator) {
       // site; NOT sprints+releases). That is a quantity, not an actionable "N need you" count, so it did
       // not earn a lone badge among the tabs, and the scope chip (POLISH-5 Part 3) is now the row's single
       // number. Do NOT re-add it as a missing feature. (Calendar + Reports carry no count pill either.)
-      var c = (v==='team-calendar' || v==='reports' || v==='planning') ? null : viewCount(v);
+      var c = (v==='team-calendar' || v==='reports' || v==='planning' || v==='team-board') ? null : viewCount(v);
       b.innerHTML = icon + '<span class="frz-item-lbl" title="'+escA(VIEW_LABEL[v])+'">'+VIEW_LABEL[v]+'</span>' + (c!=null ? '<span class="frz-count">'+c+'</span>' : '') + '<span class="frz-item-cdot" aria-hidden="true"></span>';   // COUNTER-ALIGN-1: label flexes/truncates
       nav.appendChild(b);
     });
@@ -23393,7 +23436,7 @@ if ('serviceWorker' in navigator) {
   function _frzRailCollapsed(){ return !!root && (root.classList.contains('frz-rail-hidden') || root.classList.contains('is-collapsed-ui')); }
   // B2 priority order: Gantt, List, Kanban, Reports, Calendar, Dashboard, Planning. 'team-calendar'
   // is the calendar view key. My Home is NOT in the strip (RAIL-TIDY-1 standalone rail entry).
-  var _FRZ_VIEW_ORDER = ['gantt','list','kanban','reports','team-calendar','dashboard','planning'];
+  var _FRZ_VIEW_ORDER = ['gantt','team-board','list','kanban','reports','team-calendar','dashboard','planning'];   // TEAM-BOARD-1: +team-board after Gantt
   function _frzViewIcon(v){ return (v==='team-calendar') ? IC.teamCalendar : (IC[v]||''); }
   // THE ONE shared view-list helper (Addendum A3.1): priority order, intersected with enabledViews +
   // role (same gates as the rail), minus My Home. Feeds the desktop tab strip (and, later, the mobile
@@ -23685,7 +23728,7 @@ if ('serviceWorker' in navigator) {
     if (!values || !values.length){ if(all) all.checked=true; items.forEach(function(c){c.checked=false;}); }
     else { if(all) all.checked=false; items.forEach(function(c){ c.checked = values.indexOf(c.value)>=0; }); }
   }
-  function rerender(){ if(state.view==='reports'){ renderReports(); return; } _call('renderCurrentView'); }   // Reports is Flow-owned; renderCurrentView has no Reports case, so a chip/search/saved-view change must route here
+  function rerender(){ if(state.view==='reports'){ renderReports(); return; } if(state.view==='team-board'){ renderTeamBoard(); return; } _call('renderCurrentView'); }   // Reports is Flow-owned; renderCurrentView has no Reports case, so a chip/search/saved-view change must route here
   function setProjectPanel(){
     // project scope drives the production product filter
     if (state.project==='__all__') applyPanel('productDropPanel', null);
@@ -24380,7 +24423,7 @@ if ('serviceWorker' in navigator) {
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     // hide every production view container (initViewSelect won't run for my-home)
     var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
-    ['kanbanBoard','listView','dashboardView','planningView','frzAdminPage','frzCalendar','reportsView'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    ['kanbanBoard','listView','dashboardView','planningView','frzAdminPage','frzCalendar','reportsView','frzTeamBoard'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
     var home=document.getElementById('frzHome'); if(home) home.style.display='';
     setProjectPanel();
     applyChromeHiding();
@@ -24458,7 +24501,7 @@ if ('serviceWorker' in navigator) {
     root.classList.remove('on-item'); root.classList.remove('frz-cal-active');
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
-    ['kanbanBoard','listView','dashboardView','planningView','frzCalendar','reportsView'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    ['kanbanBoard','listView','dashboardView','planningView','frzCalendar','reportsView','frzTeamBoard'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
     var home=document.getElementById('frzHome'); if(home) home.style.display='none';
     var ap=document.getElementById('frzAdminPage'); if(ap) ap.style.display='';
     setProjectPanel();
@@ -24485,7 +24528,7 @@ if ('serviceWorker' in navigator) {
     root.classList.remove('on-item');
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
-    ['kanbanBoard','listView','dashboardView','planningView','frzHome','frzAdminPage','reportsView'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    ['kanbanBoard','listView','dashboardView','planningView','frzHome','frzAdminPage','reportsView','frzTeamBoard'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
     var c=document.getElementById('frzCalendar'); if(c) c.style.display='flex';   // Stage 3.5: flex column for the fill-height month grid
     root.classList.add('frz-cal-active');   // Stage 3.5: scopes the filter-row padding trim to the calendar view only
     setProjectPanel();
@@ -24501,6 +24544,152 @@ if ('serviceWorker' in navigator) {
     _frzSyncSearchMode();
     renderCalendar();
   }
+  // ── TEAM-BOARD-1: Team Board - "what is each team on right now" ───────────────
+  // Flow-owned, read-only. One row per team (the Gantt's Team grouping), TOP-LEVEL items only, in three
+  // STATUS-driven columns: Finished (last 45 days, the Gantt's aging rule), Now (started, not finished)
+  // and Next (the Org's Approved status - the Now/Next/Later convention). Dates never place a card: the
+  // 2026-10-19 recon found every development team's In Progress work had a Gantt bar that missed today.
+  // A parent is placed by its WHOLE subtree (any started descendant -> Now), so a Roadmap Item whose own
+  // status lags its Stories still reads as in flight. Runs over in-memory projects (already team- and
+  // contributor-scoped), so there is no endpoint.
+  var _tbOpen = {};                                   // 'team|col' -> true when a capped cell is expanded
+  var _TB_CAP = { finished:5, now:6, next:3 };
+  function setTeamBoard(){
+    state.onItem=false; state.itemId=null; state.view='team-board';
+    root.classList.remove('on-item'); root.classList.remove('frz-cal-active');
+    var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
+    var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
+    ['kanbanBoard','listView','dashboardView','planningView','frzHome','frzAdminPage','frzCalendar','reportsView'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    var tb=document.getElementById('frzTeamBoard'); if(tb) tb.style.display='';
+    setProjectPanel();
+    applyChromeHiding();
+    if(root) root.classList.toggle('frz-ia', _frzIA());   // same flag fork as Reports/Calendar (tab strip vs classic title)
+    document.getElementById('frzLeft').innerHTML = _frzIA() ? _frzTabStrip() : _titleHtml('team-board','Team Board');
+    document.getElementById('frzBadges').innerHTML='';
+    renderBar();
+    renderRail();
+    _frzSyncSearchMode();
+    renderTeamBoard();
+  }
+  // Column of a single status. Next = exactly the Approved status (not "Approved or later": on development
+  // that range also catches Ready to Release / Released - Flag Off). Now = ranked after Approved and not
+  // finished; parked/deferred statuses are never Now. An Approved status that is not a real status, or that
+  // is also flagged active (ops: Planned), is unusable -> no Next column, and Now = the active statuses.
+  function _tbStatusModel(){
+    var sts=_val('statuses',[])||[], act=_val('statusIsActive',{})||{}, appr=_val('statusIsApproved',{})||{};
+    var parked=_val('statusIsParked',{})||{}, deferred=_val('statusIsDeferred',{})||{};
+    var a=sts.filter(function(s){ return appr[s]; })[0]||'', ai=a?sts.indexOf(a):-1;
+    if(ai<0 || act[a]){ a=''; ai=-1; }
+    function phase(s){
+      if(!s || _call('isTerminalStatus', s) || parked[s] || deferred[s]) return '';
+      if(a) return s===a ? 'next' : (sts.indexOf(s)>ai ? 'now' : '');
+      return act[s] ? 'now' : '';
+    }
+    return { approved:a, phase:phase };
+  }
+  function renderTeamBoard(){
+    var host=document.getElementById('frzTeamBoard'); if(!host) return;
+    var ps=_val('projects',[])||[], today=_val('TODAY', new Date()), tz=_val('MT_TZ','America/Denver');
+    var released=_val('statusIsReleased',{})||{}, devOrder=_val('developers',[])||[];
+    var model=_tbStatusModel(), f=_frzActiveFilter(), ownerScope=_call('getCurrentOwnerFilter');
+    var byId={}, kids={};
+    ps.forEach(function(p){ byId[p.id]=p; var pr=p.parent; if(pr!=null && pr!=='') (kids[pr]=kids[pr]||[]).push(p); });
+    function desc(id, seen){   // transitive descendants; `seen` guards a malformed parent cycle
+      seen=seen||{}; var out=[];
+      (kids[id]||[]).forEach(function(c){ if(seen[c.id] || c.hidden) return; seen[c.id]=1; out.push(c); out=out.concat(desc(c.id, seen)); });
+      return out;
+    }
+    function ageDays(d){ return (today - d) / 86400000; }
+    function fmt(d){ return d ? d.toLocaleDateString('en-US',{timeZone:tz, month:'short', day:'numeric'}) : ''; }
+    function pd(s){ return _call('parseD', s); }
+    function isTop(p){ var par=p.parent!=null && p.parent!=='' ? byId[p.parent] : null; return !par || par.hidden || par.archived || !inScope(par); }
+    var cards=[];
+    ps.forEach(function(p){
+      if(p.archived || p.hidden || !inScope(p) || !isTop(p)) return;
+      if(_call('isScheduledType', p.type||'')===false) return;   // same baseline as the Gantt (tracking-only types stay off)
+      var d=desc(p.id);
+      var ct={}; d.forEach(function(c){ if(c.dev) ct[c.dev]=(ct[c.dev]||0)+1; });
+      var team=p.dev || Object.keys(ct).sort(function(x,y){ return (ct[y]-ct[x]) || x.localeCompare(y); })[0] || '';
+      if(ownerScope && team!==ownerScope) return;
+      if(!_frzPillMatch(Object.assign({}, p, {dev:team}), f)) return;   // chips + search; Team chip matches the placed team
+      var col='', when=null, fd=_call('itemFinishDate', p);
+      if(fd){ if(ageDays(fd)>45) return; col='finished'; when=fd; }
+      else if(_call('isTerminalStatus', p.status)) return;   // finished but undated: cannot be placed in "last 45 days"
+      else {
+        var phases=[p].concat(d).map(function(x){ return model.phase(x.status); });
+        if(phases.indexOf('now')>=0) col='now';
+        else if(phases.indexOf('next')>=0) col='next';
+        else if(d.length){   // every descendant finished (dated) -> the parent finished when the last one did
+          var fds=d.map(function(x){ return _call('itemFinishDate', x); });
+          if(fds.every(Boolean)){ var last=fds.reduce(function(m,x){ return x>m?x:m; }); if(ageDays(last)<=45){ col='finished'; when=last; } }
+        }
+      }
+      if(!col) return;
+      var starts=[pd(p.start)].concat(d.map(function(x){ return pd(x.start); })).filter(Boolean);
+      var ends=(p.revised||p.due) ? [pd(p.revised||p.due)] : d.map(function(x){ return pd(x.revised||x.due); });
+      ends=ends.filter(Boolean);
+      var done=d.filter(function(x){ return _call('isTerminalStatus', x.status); }).length;
+      cards.push({ p:p, team:team, col:col, when:when, total:d.length, done:done,
+        start: p.start ? pd(p.start) : (starts.length ? starts.reduce(function(m,x){ return x<m?x:m; }) : null),
+        due: ends.length ? ends.reduce(function(m,x){ return x>m?x:m; }) : null });
+    });
+    var cols=[{k:'finished', t:'Finished', h:'Finished in the last 45 days'},
+              {k:'now', t:'Now', h:'Started and not finished (any part of it)'}];
+    if(model.approved) cols.push({k:'next', t:'Next', h:'In "'+model.approved+'" and not started'});
+    function prio(p){ var v=+p.priority; return v>0 ? v : 100; }
+    var sorters={
+      finished:function(a,b){ return b.when - a.when; },
+      now:function(a,b){ return prio(a.p)-prio(b.p) || ((a.due||Infinity) - (b.due||Infinity)); },
+      next:function(a,b){ return prio(a.p)-prio(b.p) || ((a.start||Infinity) - (b.start||Infinity)); }
+    };
+    function cardHtml(c){
+      var p=c.p, meta=[];
+      var ic=_call('typeIconHTML', p.type) || '';
+      meta.push('<span class="sbadge '+(_call('statusCls', p.status)||'')+'">'+esc(p.status||'-')+'</span>');
+      if(p.itemKey) meta.push('<span>'+esc(p.itemKey)+'</span>');
+      if(c.col==='finished') meta.push('<span>'+(released[p.status]?'Released ':'Finished ')+fmt(c.when)+'</span>');
+      else if(c.col==='now' && c.due){ var od=c.due<today; meta.push('<span class="'+(od?'frz-tb-overdue':'')+'">'+(od?'Overdue, due ':'Due ')+fmt(c.due)+'</span>'); }
+      else if(c.col==='next' && c.start) meta.push('<span>'+(c.start<today?'Start was ':'Starts ')+fmt(c.start)+'</span>');
+      if(c.total) meta.push('<span>'+c.done+'/'+c.total+' done</span>');
+      if(p.assignee) meta.push('<span>'+esc(_call('displayName', p.assignee)||p.assignee)+'</span>');
+      return '<button type="button" class="frz-tb-card" data-open="'+p.id+'" title="'+escA(p.name||'')+'">'+
+        '<span class="frz-tb-name">'+(ic?ic+' ':'')+esc(p.name||'(untitled)')+'</span>'+
+        '<span class="frz-tb-meta">'+meta.join('')+'</span></button>';
+    }
+    var teams={};
+    cards.forEach(function(c){ (teams[c.team]=teams[c.team]||[]).push(c); });
+    var names=Object.keys(teams).sort(function(a,b){
+      if(!a) return 1; if(!b) return -1;   // no team last
+      var ai=devOrder.indexOf(a), bi=devOrder.indexOf(b);
+      return ((ai<0?9999:ai)-(bi<0?9999:bi)) || a.localeCompare(b);
+    });
+    var html='<div class="frz-tb">';
+    if(!model.approved) html+='<div class="frz-tb-note">Next is off: this Organization has no usable Approved status. An admin can set one in Admin &gt; Statuses.</div>';
+    if(!names.length){
+      html+='<div class="frz-tb-blank">No items are finished, in progress or approved for the current filters.</div></div>';
+      host.innerHTML=html; return;
+    }
+    html+='<div class="frz-tb-grid" style="--tb-cols:'+cols.length+'"><div class="frz-tb-hd">Team</div>';
+    cols.forEach(function(col){
+      var n=cards.filter(function(c){ return c.col===col.k; }).length;
+      html+='<div class="frz-tb-hd" title="'+escA(col.h)+'">'+col.t+'<span class="frz-tb-n">'+n+'</span></div>';
+    });
+    names.forEach(function(t){
+      var label=t||'No team';
+      html+='<div class="frz-tb-team">'+esc(label)+'</div>';
+      cols.forEach(function(col){
+        var list=teams[t].filter(function(c){ return c.col===col.k; }).sort(sorters[col.k]);
+        var key=t+'|'+col.k, open=!!_tbOpen[key], cap=_TB_CAP[col.k];
+        var shown=open ? list : list.slice(0, cap);
+        html+='<div class="frz-tb-cell" data-label="'+escA(col.t)+'">';
+        html+= list.length ? shown.map(cardHtml).join('') : '<span class="frz-tb-empty">-</span>';
+        if(list.length>cap) html+='<button type="button" class="frz-tb-more" data-tbmore="'+escA(key)+'">'+(open?'Show less':'+'+(list.length-cap)+' more')+'</button>';
+        html+='</div>';
+      });
+    });
+    html+='</div></div>';
+    host.innerHTML=html;
+  }
   // ── Reports view (Ship C) - Flow-owned full page, admin/editor only ───────────
   // Runs entirely over the in-memory `projects` array, which is already the CURRENT TEAM's
   // set AND already contributor-read-scoped by Phase B - so team scope (C2.8) and export
@@ -24512,7 +24701,7 @@ if ('serviceWorker' in navigator) {
     root.classList.remove('on-item'); root.classList.remove('frz-cal-active');
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     var gv=document.querySelector('.gantt-outer'); if(gv) gv.style.display='none';
-    ['kanbanBoard','listView','dashboardView','planningView','frzHome','frzAdminPage','frzCalendar'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    ['kanbanBoard','listView','dashboardView','planningView','frzHome','frzAdminPage','frzCalendar','frzTeamBoard'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
     var rv=document.getElementById('reportsView'); if(rv) rv.style.display='';
     setProjectPanel();
     applyChromeHiding();
@@ -26134,6 +26323,7 @@ if ('serviceWorker' in navigator) {
     if(view==='admin'){ return setAdmin(); }
     if(view==='team-calendar'){ return setCalendar(state.calTab); }
     if(view==='reports'){ return setReports(); }
+    if(view==='team-board'){ return setTeamBoard(); }   // TEAM-BOARD-1
     if(view==='kanban' && _val('isViewer', false)) view='gantt';   // viewers never see Kanban (safety net; callers also redirect)
     state.onItem=false; state.itemId=null;
     root.classList.remove('on-item');
@@ -26141,6 +26331,7 @@ if ('serviceWorker' in navigator) {
     var _ap=document.getElementById('frzAdminPage'); if(_ap) _ap.style.display='none';   // hide the Admin page when switching to a production view
     var _cal=document.getElementById('frzCalendar'); if(_cal) _cal.style.display='none';   // Stage 3.5: setView never hid the calendar (only setHome/setAdmin did) - a pre-existing lingering that the fill-height min-height:100% turned into a full-height ghost below production views
     var _rv=document.getElementById('reportsView'); if(_rv) _rv.style.display='none';   // hide Reports when switching to a production view
+    var _tb=document.getElementById('frzTeamBoard'); if(_tb) _tb.style.display='none';   // TEAM-BOARD-1: and the Team Board
     root.classList.remove('frz-cal-active');
     var io=document.getElementById('itemPageOverlay'); if(io) io.style.display='none';
     state.view = view;
@@ -26806,7 +26997,7 @@ if ('serviceWorker' in navigator) {
     // view containers must be hidden or they render alongside/over it.
     // applyViewMode() restores them when we navigate back to a view.
     var _gv=document.querySelector('.gantt-outer'); if(_gv) _gv.style.display='none';
-    ['kanbanBoard','listView','dashboardView','planningView','reportsView','frzCalendar','frzHome','frzAdminPage'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
+    ['kanbanBoard','listView','dashboardView','planningView','reportsView','frzCalendar','frzHome','frzAdminPage','frzTeamBoard'].forEach(function(id){ var e=document.getElementById(id); if(e) e.style.display='none'; });
     var _mw=document.getElementById('frzHome'); if(_mw) _mw.style.display='none';
     // Render content via the ORIGINAL openItemPage (avoid recursing our override); we own history
     if (_origOpenItemPage) _origOpenItemPage(id, {push:false}); else _call('openItemPage', id, {push:false});
@@ -26969,7 +27160,7 @@ if ('serviceWorker' in navigator) {
       state.itemFromApp = !replace; openItem(_iid, {push:!replace, key:_iky}); return;
     }
     if (/^\/my-work(\/|$)/.test(path)){ navigate('/my-home', replace); return; }   // Stage 5: My Work absorbed into My Home
-    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar)/);
+    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar|team-board)/);
     var view = vm ? vm[1] : (lastView()||'gantt');
     if (view==='kanban' && _val('isViewer', false)){ navigate('/gantt', replace); return; }   // viewers can't see Kanban
     // Team Admin: per-team view visibility, enforced at the ROUTE (not just the rail). A disabled
@@ -26987,7 +27178,7 @@ if ('serviceWorker' in navigator) {
     setView(view);
     if (replace) history.replaceState({frzView:view},'',url); else history.pushState({frzView:view},'',url);
     lset('frazil_beta_lastview_'+uname(), view);
-    if (view!=='my-home' && view!=='admin' && view!=='team-calendar' && view!=='reports') rerender();   // these Flow-owned views render themselves; skip the production view render
+    if (view!=='my-home' && view!=='admin' && view!=='team-calendar' && view!=='reports' && view!=='team-board') rerender();   // these Flow-owned views render themselves; skip the production view render
     syncURL(true); // normalize URL to current filter state
   }
   function lastView(){ return ls('frazil_beta_lastview_'+uname()); }
@@ -27014,7 +27205,7 @@ if ('serviceWorker' in navigator) {
       history.replaceState({frzView:v2},'','/'+v2); state.itemFromApp=true; openItem(parseInt(qItem,10), {push:true, arrivalUnknown:true}); return;   // ITEM-VIEWNAV-1 D4: ?item= cold deep-link -> arrival unknown, mark nothing
     }
     if (/^\/my-work(\/|$)/.test(path)){ navigate('/my-home', true); return; }   // Stage 5: absorbed into My Home
-    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar)/);
+    var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar|team-board)/);
     if (!vm){ // /beta -> last used (default gantt)
       var lv = lastView()||'gantt';
       applyDefaultCollapse(lv);
@@ -27050,7 +27241,7 @@ if ('serviceWorker' in navigator) {
     applyURLToFilters(vm[1], new URLSearchParams(location.search));
     setView(vm[1]);
     lset('frazil_beta_lastview_'+uname(), vm[1]);
-    if (vm[1]!=='my-home' && vm[1]!=='admin' && vm[1]!=='team-calendar' && vm[1]!=='reports') rerender();   // these Flow-owned views render themselves
+    if (vm[1]!=='my-home' && vm[1]!=='admin' && vm[1]!=='team-calendar' && vm[1]!=='reports' && vm[1]!=='team-board') rerender();   // these Flow-owned views render themselves
     _frzSeedActiveFromURL();   // Fix 1: cold load - seed the saved-filter anchor from URL-match (single, most-specific)
     _frzSyncPanelFromURL();   // List detail panel: restore BEFORE syncURL so the emit preserves ?panel= on cold load
                               // (frzOpenPanel({fromURL}) sets state.panelId without writing the URL). Was after syncURL → stripped.
@@ -27064,7 +27255,7 @@ if ('serviceWorker' in navigator) {
     if (st.frzItem){ state.itemFromApp=true; openItem(st.frzItem, {push:false}); }
     else {
       var path = location.pathname.replace(/\/+$/,'');
-      var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar)/);
+      var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar|team-board)/);
       var view = vm? vm[1] : (st.frzView || state.view);
       if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
         state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }   // Stage 1b: seed before rerender (popstate doesn't syncURL, but keep symmetric + avoids a stale-expand flash)
@@ -27073,7 +27264,7 @@ if ('serviceWorker' in navigator) {
     if (view==='team-calendar'){ var _psp=new URLSearchParams(location.search); state.calTab = _calTabFromURL(path, _psp); _calSeedDateFromURL(_psp); _calSeedFiltersFromURL(_psp); }   // Stage 2c/5a: tab + period + filters on back/forward
       applyURLToFilters(view, new URLSearchParams(location.search));
       setView(view);
-      if (view!=='my-home' && view!=='admin' && view!=='team-calendar' && view!=='reports') rerender();   // these Flow-owned views render themselves
+      if (view!=='my-home' && view!=='admin' && view!=='team-calendar' && view!=='reports' && view!=='team-board') rerender();   // these Flow-owned views render themselves
       _frzSeedActiveFromURL();   // Fix 1: back/forward is a cold landing - reseed the anchor from the URL
       _frzRefreshActiveSaved();  // apply the reseeded highlight/crumb (popstate doesn't run syncURL)
       _frzSyncPanelFromURL();   // List detail panel: open/close to match ?panel on back/forward (no new listener)
@@ -27240,7 +27431,7 @@ if ('serviceWorker' in navigator) {
   // _frzBootSpecifiesDest() is false (a bare "/" or the boot-default view), so it resolves to that view.
   function _frzBootReqView(){
     var req = state.bootReq || { path:'', search:'' };
-    var vm = (req.path||'').match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar)/);
+    var vm = (req.path||'').match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar|team-board)/);
     return vm ? vm[1] : (lastView() || 'gantt');
   }
   function _frzApplyDefaultFilter(view){
@@ -28215,10 +28406,10 @@ if ('serviceWorker' in navigator) {
       si.addEventListener('input', function(){
         clearTimeout(_frzSearchTimer); var q=si.value;
         if(_searchGlobal()){ _frzSearchTimer=setTimeout(function(){ frzGlobalSearch(q); }, 250); }
-        else { sb.hidden=true; var prod=document.getElementById('itemSearch'); if(prod) prod.value=q; _frzSearchTimer=setTimeout(function(){ _call('renderCurrentView'); }, 280); }
+        else { sb.hidden=true; var prod=document.getElementById('itemSearch'); if(prod) prod.value=q; _frzSearchTimer=setTimeout(function(){ rerender(); }, 280); }   // TEAM-BOARD-1: rerender (not renderCurrentView) so Flow-owned views (Reports, Team Board) refilter too
       });
       si.addEventListener('keydown', function(e){
-        if(e.key==='Escape'){ si.value=''; sb.hidden=true; if(!_searchGlobal()){ var prod=document.getElementById('itemSearch'); if(prod) prod.value=''; _call('renderCurrentView'); } }
+        if(e.key==='Escape'){ si.value=''; sb.hidden=true; if(!_searchGlobal()){ var prod=document.getElementById('itemSearch'); if(prod) prod.value=''; rerender(); } }
         else if(e.key==='Enter' && _searchGlobal()){ var r=sb.querySelector('.frz-search-res'); if(r){ e.preventDefault(); _frzSearchJump(r.getAttribute('data-id')); } }
       });
       sb.addEventListener('click', function(e){ var r=e.target.closest && e.target.closest('.frz-search-res'); if(r) _frzSearchJump(r.getAttribute('data-id')); });
