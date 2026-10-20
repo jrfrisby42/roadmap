@@ -1,0 +1,11 @@
+[Unit]
+Description=Frazil Flow background Jira sync (JIRA-SERVER-SYNC-1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/opt/roadmap
+ExecStart=/opt/roadmap/venv/bin/python server.py --sync-jira
+TimeoutStartSec=900

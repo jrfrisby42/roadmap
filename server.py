@@ -1818,7 +1818,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.61.2"
+APP_VERSION = "6.62.0"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -12045,6 +12045,12 @@ def _jira_refresh_pulled(team, actor):
             "assigneeChanged": n_assignee, "releaseStamped": n_release, "datesChanged": n_dates,
             "errors": n_err, "details": details}
 
+@app.get("/api/jira/sync-status")
+def jira_sync_status(auth: dict = Depends(require_role("admin"))):
+    """JIRA-SERVER-SYNC-1: when the server last synced this Org with Jira, and what changed (state file
+    written by run_jira_sync, defined near the entry point). Registered here, ahead of the SPA catch-all."""
+    return _read_jira_sync_state(auth["team"])
+
 @app.post("/api/rollup/sync")
 def rollup_sync(body: dict = Body({}), auth: dict = Depends(require_role("admin"))):
     """ROLLUP-SYNC-1: run the parent roll-up write-back now (the one-time catch-up, or on demand).
@@ -14310,8 +14316,95 @@ def spa_catch_all(full_path: str):
         return f.read()
 
 
+# ── JIRA-SERVER-SYNC-1: the background Jira sync runs on the server ──────────────────────────────────
+# It used to be a setInterval in every ADMIN's open browser tab, so nothing synced when no admin had Flow
+# open (nights, weekends) and several open tabs each ran it. Now `python server.py --sync-jira` runs from a
+# systemd timer every _JIRA_SYNC_TICK_MIN minutes (tools/systemd/roadmap-jira-sync.*) and, per Org, does
+# exactly what the browser timer did - the linked-item forward sync (jira_pull_all) then the pull
+# (jira_pull_now: create + refresh + sprints) - when that Org has Background Pull-Sync enabled and its
+# interval has elapsed. The admin setting stays the control (enabled + "every N minutes", floored at the
+# tick). Last run + a summary live in a small per-Org state file (no config key, no schema). The browser
+# timer is retired; the manual Sync / Pull buttons are unchanged.
+_JIRA_SYNC_ACTOR = "jira-sync"
+_JIRA_SYNC_TICK_MIN = 5
+
+def _jira_sync_state_path(team: str) -> str:
+    return os.path.join(TENANTS_DIR, team, "jira_sync_state.json")
+
+def _read_jira_sync_state(team: str) -> dict:
+    try:
+        with open(_jira_sync_state_path(team), encoding="utf-8") as f:
+            return json.load(f) or {}
+    except (OSError, ValueError):
+        return {}
+
+def _write_jira_sync_state(team: str, state: dict):
+    path = _jira_sync_state_path(team)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f)
+    os.replace(tmp, path)                                 # atomic: a reader never sees a half-written file
+
+def run_jira_sync(verbose: bool = False, only_team: str = None, force: bool = False) -> dict:
+    """One timer tick: sync every Org that is enabled and due (or `only_team`; `force` ignores the interval)."""
+    out = {}
+    if not jira_configured():
+        if verbose:
+            print("[jira-sync] Jira not configured - nothing to do")
+        return out
+    now = datetime.now(timezone.utc)
+    for team in sorted(os.listdir(TENANTS_DIR)):
+        if (only_team and team != only_team) or not os.path.exists(team_db_path(team)):
+            continue
+        with db(team) as c:
+            cfg = {r["key"]: json.loads(r["value"]) for r in
+                   c.execute("SELECT key, value FROM config WHERE key IN ('jiraEnabled','jiraSyncConfig')")}
+        sync_cfg = cfg.get("jiraSyncConfig") or {}
+        if cfg.get("jiraEnabled") is False or not sync_cfg.get("enabled"):
+            continue
+        try:
+            interval = max(_JIRA_SYNC_TICK_MIN, int(sync_cfg.get("intervalMinutes") or 30))
+        except (TypeError, ValueError):
+            interval = 30
+        state = _read_jira_sync_state(team)
+        last = state.get("lastRunAt")
+        if not force and last:
+            try:
+                if (now - datetime.fromisoformat(last)).total_seconds() < interval * 60 - 60:   # 60s slack for timer jitter
+                    continue
+            except ValueError:
+                pass
+        auth = {"team": team, "username": _JIRA_SYNC_ACTOR, "role": "admin"}
+        res = {}
+        try:
+            r = jira_pull_all({}, None, auth)
+            res["linked"] = {k: r.get(k, 0) for k in ("synced", "changes", "errors", "childrenAdded")}
+        except Exception as e:
+            res["linkedError"] = str(e)[:300]
+            log.warning(f"[jira-sync] {team}: linked-item sync failed: {e}")
+        try:
+            r = jira_pull_now({}, auth)
+            rf = r.get("refresh") or {}
+            res["pull"] = {"created": r.get("createdCount", 0), "refreshed": r.get("refreshedCount", 0),
+                           "statusChanged": rf.get("statusChanged", 0), "datesChanged": rf.get("datesChanged", 0),
+                           "autoLinked": len((r.get("create") or {}).get("autoLinked") or []),
+                           "sprintMembership": r.get("membershipChanged", 0)}
+        except Exception as e:
+            res["pullError"] = str(e)[:300]
+            log.warning(f"[jira-sync] {team}: pull failed: {e}")
+        _write_jira_sync_state(team, {"lastRunAt": now.isoformat(), "intervalMinutes": interval, "result": res})
+        out[team] = res
+        if verbose:
+            print(f"[jira-sync] {team}: {json.dumps(res)}")
+    return out
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    # JIRA-SERVER-SYNC-1: background Jira sync (systemd timer every 5 min): sync due Orgs + exit.
+    if "--sync-jira" in sys.argv:
+        _only = sys.argv[sys.argv.index("--team") + 1] if "--team" in sys.argv[:-1] else None
+        run_jira_sync(verbose=True, only_team=_only, force="--force" in sys.argv)
+        sys.exit(0)
     # Weekly queue-health digest (run by a systemd timer): send + exit, never start the server.
     if "--send-digests" in sys.argv:
         _n = send_team_digests(verbose=True)
