@@ -20,7 +20,7 @@ import json, os, re, sqlite3, base64, time, hashlib, hmac, sys, html, logging, s
 import threading
 from html.parser import HTMLParser
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from urllib.request import urlopen, Request
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote as _urlq
@@ -291,6 +291,14 @@ def jira_configured():
 # Jira custom field ID for the "Feature Flag" label field
 JIRA_FF_FIELD = "customfield_10064"
 
+
+# POINTS-ESTIMATE-1: default story points -> time estimate table (config `pointsEstimate`, OFF by default
+# because IT uses the storyPoints field for hours). Rows {upTo, weeks}; upTo None = catch-all; weeks on
+# Flow's 7-day estimate basis. These values are development's (J.R. 2026-10-20, floored at 1 day):
+# <=2 pts 1 day, 3 -> 3 days, 5 -> 1 week, 7 -> 2 weeks, more -> 3 weeks. Helpers near _stamp_measurement_ts.
+_POINTS_ESTIMATE_DEFAULT = {"enabled": False, "rows": [
+    {"upTo": 2, "weeks": 0.142857}, {"upTo": 3, "weeks": 0.428571}, {"upTo": 5, "weeks": 1},
+    {"upTo": 7, "weeks": 2}, {"upTo": None, "weeks": 3}]}
 
 def round_up_to_quarter(val) -> float:
     """Round a parallelResources value UP to the nearest 0.25.
@@ -1274,6 +1282,7 @@ def init_team_db(team: str):
             # today's most common wording. NOTE: the same field can't be an estimate AND an actual for one
             # team, and cross-team sums are meaningless once two teams mean different things by the number.
             "metricLabel": "Story Points",
+            "pointsEstimate": _POINTS_ESTIMATE_DEFAULT,   # POINTS-ESTIMATE-1 (off by default)
             # CAL-DATES-1: per-Organization labels for the two item milestone badges shown on the Calendar.
             # handoffLabel names the devEnd milestone ("Handoff"); dueLabel names the due milestone ("Due").
             # Neutral defaults on purpose - development can set "Code complete", marketing "Goes to print".
@@ -1406,6 +1415,7 @@ def _migrate_config_keys(team: str):
         # default anyway. So a plain migration entry is correct: it backfills the key for existing teams and
         # never clobbers an admin's non-empty custom label. (Finding per Part 1: re-seed is safe here.)
         "metricLabel":      "Story Points",
+        "pointsEstimate":   _POINTS_ESTIMATE_DEFAULT,   # POINTS-ESTIMATE-1: a non-empty dict, so the falsy re-seed never clobbers an admin's table
         "handoffLabel":     "Handoff",   # CAL-DATES-1: same non-presence-only reasoning as metricLabel (a label is a non-empty string; "" falls back to the default anyway)
         "dueLabel":         "Due",       # CAL-DATES-1
         "intakeProjects":   [],
@@ -1818,7 +1828,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.62.3"
+APP_VERSION = "6.62.4"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -4026,6 +4036,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "intakeEnabled": cfg_map.get("intakeEnabled", False),
             "intakeCombined": bool(cfg_map.get("intakeCombined", True)),   # PORTAL-SCOPE-LOCK-1: default true; explicit False reaches the client
             "metricLabel": (cfg_map.get("metricLabel") or "Story Points"),   # METRIC-LABEL-1: empty/missing -> default so the client never renders a blank label
+            "pointsEstimate": (cfg_map.get("pointsEstimate") or _POINTS_ESTIMATE_DEFAULT),   # POINTS-ESTIMATE-1
             "handoffLabel": (cfg_map.get("handoffLabel") or "Handoff"),      # CAL-DATES-1: empty/missing -> default (client never renders a blank badge label)
             "dueLabel": (cfg_map.get("dueLabel") or "Due"),                  # CAL-DATES-1
             "intakeProjects": cfg_map.get("intakeProjects", []),
@@ -4534,6 +4545,66 @@ def _stamp_measurement_ts(old: dict, merged: dict, terminal_map: dict, now_iso: 
     _stamp_completed_at(merged, terminal_map, now_iso)
     if merged.get("assignee") and not (old.get("assignee") or "") and not merged.get("firstResponseAt"):
         merged["firstResponseAt"] = now_iso
+
+# ── POINTS-ESTIMATE-1: story points set the time estimate ──────────────────────────────────────────
+# Per-Org table (config `pointsEstimate`, OFF by default - IT uses the same storyPoints field for hours).
+# When an item's points are set or change - from Jira or typed in Flow - its time estimate (dueWeeks)
+# follows the table and, when it has a start, its due date is recomputed exactly as the client's
+# computeItemDue does. Rows are {upTo, weeks}: the first row whose upTo >= points wins; upTo null is the
+# catch-all. Weeks use Flow's 7-day estimate basis (1 day = 1/7 week, the estimate picker's own values).
+# Not applied to finished items, or to a pulled item whose due date came from Jira (Jira's dates win). A
+# save that ALSO changed the estimate keeps the person's value (update_project decides that).
+# The default table (_POINTS_ESTIMATE_DEFAULT) lives near the top of the file: boot() seeds config at import.
+def _points_estimate_weeks(points, cfg):
+    if not isinstance(cfg, dict) or not cfg.get("enabled"):
+        return None
+    try:
+        pts = float(points)
+    except (TypeError, ValueError):
+        return None
+    rows = cfg.get("rows") or []
+    if pts <= 0 or not rows:
+        return None
+    for r in rows:
+        up = r.get("upTo")
+        if up in (None, "") or pts <= float(up):
+            return float(r.get("weeks") or 0) or None
+    return float(rows[-1].get("weeks") or 0) or None
+
+def _compute_item_due(p) -> str:
+    """Server twin of the client's computeItemDue: start + (dev weeks compressed by parallelResources +
+    test weeks) in calendar days, a weekend landing rolled to Monday. '' when there is no start."""
+    try:
+        y, m, d = str(p.get("start") or "")[:10].split("-")
+        s = datetime(int(y), int(m), int(d))
+    except ValueError:
+        return ""
+    w, tw = float(p.get("dueWeeks") or 0), float(p.get("testWeeks") or 0)
+    pr = round_up_to_quarter(p.get("parallelResources") or 1)
+    dev = max(w - tw, 0)
+    total = (dev / pr if pr > 1 else dev) + tw
+    due = s + timedelta(days=round(total * 7))           # whole days: "1 day" is 0.142857 wk = 0.999999 days
+    due += timedelta(days={5: 2, 6: 1}.get(due.weekday(), 0))   # Sat -> Mon, Sun -> Mon (client nextMonday)
+    return due.date().isoformat()
+
+def _apply_points_estimate(p: dict, cfg, terminal_map: dict) -> bool:
+    """Set dueWeeks (and due, from start) from the points table. True when anything changed."""
+    st = p.get("status") or ""
+    if terminal_map.get(st) or st in RESERVED_TERMINAL_STATUSES:
+        return False
+    if p.get("jiraSource") == _PULL_JIRA_SOURCE and p.get("due") and p.get("dueWeeksSource") != "points":
+        return False                                     # Jira supplied this item's dates
+    w = _points_estimate_weeks(p.get("storyPoints"), cfg)
+    if w is None:
+        return False
+    before = (p.get("dueWeeks"), p.get("testWeeks"), p.get("due"))
+    p["dueWeeks"] = w
+    p["dueWeeksSource"] = "points"
+    if float(p.get("testWeeks") or 0) >= w:
+        p["testWeeks"] = 0                               # keep the testWeeks < dueWeeks rule (422 otherwise)
+    if p.get("start"):
+        p["due"] = _compute_item_due(p) or p.get("due", "")
+    return before != (p.get("dueWeeks"), p.get("testWeeks"), p.get("due"))
 
 # ── SLA-3 Stage 2: status-pause clock maintenance (basis + pausedSince) ────────────────────────
 # Both fields are server-owned and forward-only. The SLA engines (client slaState/firstTouchState
@@ -5308,6 +5379,10 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
         if "assignee" in body:
             body["assignee"] = _resolve_assignee(c, body.get("assignee"))   # display name -> username (import/API safety)
         _bucket_item_owner(c, body)   # owner bucketing: fill a blank owner from the assignee's pod
+        if body.get("storyPoints") not in (None, "", 0):   # POINTS-ESTIMATE-1: a new item with points takes the table's estimate
+            _pe = c.execute("SELECT value FROM config WHERE key='pointsEstimate'").fetchone()
+            _tm = c.execute("SELECT value FROM config WHERE key='statusIsTerminal'").fetchone()
+            _apply_points_estimate(body, json.loads(_pe["value"]) if _pe else None, json.loads(_tm["value"]) if _tm else {})
         _assign_item_key(c, body)
         body["id"] = _insert_project(c, body)
     # PRECREATE-ATTACH-1 Stage A: promote any pending create-mode attachments. They were uploaded to
@@ -5593,6 +5668,16 @@ def update_project(pid: int, body: dict, background: BackgroundTasks = None,
         _clock_changes = _maintain_sla_clock(old, merged, waiting_map, parked_map, now_ts)
         if _clock_changes:
             _log_clock_history(c, pid, merged, _clock_changes, username, now_ts)
+        # POINTS-ESTIMATE-1: points set or changed -> the estimate follows the Org's table, unless this same
+        # save also changed the estimate (the person's value wins, and it stops being table-owned).
+        if "dueWeeks" in body and str(body.get("dueWeeks")) != str(old.get("dueWeeks")):
+            merged.pop("dueWeeksSource", None)
+        elif str(merged.get("storyPoints")) != str(old.get("storyPoints")):
+            _pe = c.execute("SELECT value FROM config WHERE key='pointsEstimate'").fetchone()
+            if _apply_points_estimate(merged, json.loads(_pe["value"]) if _pe else None, terminal_map):
+                changes["dueWeeks"] = {"from": old.get("dueWeeks"), "to": merged.get("dueWeeks")}
+                if merged.get("due") != old.get("due"):
+                    changes["due"] = {"from": old.get("due"), "to": merged.get("due")}
         _save_project(c, pid, merged, now_ts)
         # Return the fresh token so the client's cached copy is current for its NEXT
         # edit (else the next save would 409 with a stale base token).
@@ -6131,7 +6216,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "statusIsDefault","statusIsDeferred",
               "changeReasons","deferReasons","blockedReasons","departments",
               "locations","resolutionTypes",
-              "metricLabel","handoffLabel","dueLabel",
+              "metricLabel","handoffLabel","dueLabel","pointsEstimate",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow","statusIsWaiting","statusIsParked",
@@ -10616,9 +10701,14 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
 
     fwd_map      = cfg("jiraStatusMapping")
     rev_map      = {v: k for k, v in fwd_map.items() if v}
+    # JIRA-STATUSMAP-1: also honour the pull's overlay (jiraPullStatusMap, e.g. Code Review -> In Progress,
+    # QA Approved -> In Testing), exactly as the pull does (_pull_context status_eff). Without it a Flow-created
+    # item sat still while Jira was in an overlay-only status (FRZ-1094 on Code Review, 2026-10-20).
+    rev_map.update(cfg("jiraPullStatusMap") or {})
     all_statuses = cfg("statuses") or []
     terminal_map = cfg("statusIsTerminal")   # JIRA-COMPLETED-1: read before the write txn below
     released_map = cfg("statusIsReleased")   # JIRA-RELDATE-2: a sync INTO a released status stamps releaseDate
+    points_cfg   = cfg("pointsEstimate")     # POINTS-ESTIMATE-1
 
     def status_rank(s):
         return _status_rank(s, all_statuses)   # extracted to a shared module helper (identical behavior)
@@ -10803,6 +10893,8 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
             if points_changed:
                 audit_details.append(f"Story points: {current.get('storyPoints')!r} -> {_sp!r}")
                 current["storyPoints"] = _sp
+                if _apply_points_estimate(current, points_cfg, terminal_map):   # POINTS-ESTIMATE-1
+                    audit_details.append(f"Estimate from points: {current.get('dueWeeks')} wk, due {current.get('due') or '-'}")
             # PRESERVE the optimistic-concurrency token (updated_ts) on a no-op poll.
             # Background jira sync runs on a timer and on item-page open; if every poll
             # bumped updated_ts it would invalidate every open editor's base token and
@@ -11676,6 +11768,7 @@ def _pull_context(team):
         overlay = g("jiraPullStatusMap", {}); pmap = g("jiraProjectMapping", {})
         pods = g("developers", []); amap = g("jiraAssigneeMap", {})
         released_map = g("statusIsReleased", {})          # CLEANUP-1 Item 1: keyed on Released, NOT Terminal
+        points_cfg = g("pointsEstimate", None)            # POINTS-ESTIMATE-1
         terminal_map = g("statusIsTerminal", {})          # JIRA-COMPLETED-1: completedAt on a refresh into a terminal status
     type_rev = {}
     for k, v in tmap.items():
@@ -11686,7 +11779,8 @@ def _pull_context(team):
     released = {s for s, v in (released_map or {}).items() if v}       # released Flow status names
     return {"type_rev": type_rev, "status_eff": status_eff, "overlay": overlay,
             "proj_rev": proj_rev, "pods": pods, "assignee_map": amap, "released": released,
-            "terminal": {s: True for s, v in (terminal_map or {}).items() if v}}
+            "terminal": {s: True for s, v in (terminal_map or {}).items() if v},
+            "pointsEstimate": points_cfg}
 
 def _release_date_from_fields(f):
     """RELEASE-DATE-1: the MT-day releaseDate a Jira issue's fields imply, or None. DONE-ONLY (J.R.'s
@@ -11739,6 +11833,8 @@ def _construct_pull_item(issue, ctx, actor):
         "jiraSource": _PULL_JIRA_SOURCE,
         "reporter": actor,
     }
+    if item.get("storyPoints") is not None and not item.get("due"):   # POINTS-ESTIMATE-1: no Jira due -> the table's estimate
+        _apply_points_estimate(item, ctx.get("pointsEstimate"), ctx.get("terminal") or {})
     meta = {"key": jkey, "pod": pod, "podReason": pod_reason, "assignee": assignee,
             "assigneeResolved": bool(assignee), "hadJiraAssignee": bool(acct),
             "jiraStatus": jstatus, "flowStatus": rstatus, "statusUnmapped": rstatus == "",
@@ -11981,6 +12077,11 @@ def _refresh_one_pulled(current, issue, ctx, all_statuses, today=None):
     if sp is not None and current.get("storyPoints") != sp:
         changed["storyPoints"] = (current.get("storyPoints"), sp)
         current["storyPoints"] = sp
+        _before = (current.get("dueWeeks"), current.get("due"))
+        if _apply_points_estimate(current, ctx.get("pointsEstimate"), ctx.get("terminal") or {}):   # POINTS-ESTIMATE-1
+            changed["dueWeeks"] = (_before[0], current.get("dueWeeks"))
+            if current.get("due") != _before[1]:
+                changed["due"] = (_before[1] or "", current.get("due"))
     pod, reason = _jira_pull_pod(f.get("labels"), ctx["pods"])
     if reason == "matched":
         cur_pod = current.get("dev", "")
@@ -12296,6 +12397,44 @@ def _jira_backfill_story_points(team, actor, dry=False):
             out["written"] += 1
         if changes:
             _write_audit_c(c, "jira:points-backfill", actor, None, "", changes={"items": changes})
+    return out
+
+# ── POINTS-ESTIMATE-1: one-time catch-up for items that already have points ──────────────────────────
+def _points_estimate_catchup(team, actor, dry=False):
+    """Apply the Org's points table to existing items that have points and whose estimate is missing or
+    still the form default (2 weeks) - nearly every estimate on development was that default, not a choice.
+    Any other estimate looks hand-typed and is left alone (counted). Same rules as the live hook (open items,
+    Jira-dated pulled items skipped). One audit row per changed item; updated_ts refreshed (dates move)."""
+    out = {"withPoints": 0, "toChange": 0, "keptHandTyped": 0, "written": 0, "dryRun": dry, "sample": []}
+    with db(team) as c:
+        cfg = {r["key"]: json.loads(r["value"]) for r in
+               c.execute("SELECT key, value FROM config WHERE key IN ('pointsEstimate','statusIsTerminal')")}
+        pe, term = cfg.get("pointsEstimate"), cfg.get("statusIsTerminal") or {}
+        if not (isinstance(pe, dict) and pe.get("enabled")):
+            return {**out, "reason": "pointsEstimate is not enabled for this Organization"}
+        if not dry:
+            c.execute("BEGIN IMMEDIATE")
+        for r in c.execute("SELECT id, data FROM projects ORDER BY id").fetchall():
+            p = json.loads(r["data"])
+            if p.get("storyPoints") in (None, "", 0):
+                continue
+            out["withPoints"] += 1
+            if p.get("dueWeeksSource") != "points" and p.get("dueWeeks") not in (None, "", 2, 2.0, "2"):
+                out["keptHandTyped"] += 1
+                continue
+            before = {k: p.get(k) for k in ("dueWeeks", "testWeeks", "due")}
+            if not _apply_points_estimate(p, pe, term):
+                continue
+            out["toChange"] += 1
+            after = {k: p.get(k) for k in ("dueWeeks", "testWeeks", "due")}
+            if len(out["sample"]) < 8:
+                out["sample"].append({"itemKey": p.get("itemKey"), "points": p.get("storyPoints"), "before": before, "after": after})
+            if dry:
+                continue
+            _save_project(c, r["id"], p, None)
+            _write_audit_c(c, "points-estimate", actor, r["id"], p.get("name", ""),
+                           changes={k: {"from": before[k], "to": after[k]} for k in before if before[k] != after[k]})
+            out["written"] += 1
     return out
 
 # ── JIRA-PULL-1 Stage 6: parent hierarchy ────────────────────────────────────────────────────────────
