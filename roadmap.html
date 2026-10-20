@@ -2710,6 +2710,21 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         </div>
       </div>
 
+      <!-- POINTS-ESTIMATE-1: story points -> time estimate table -->
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
+        <div style="padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px">
+          Points to time estimate
+        </div>
+        <div style="padding:14px;display:flex;flex-direction:column;gap:10px">
+          <label style="display:flex;align-items:center;gap:10px;font-size:12px;font-weight:700;cursor:pointer">
+            <input type="checkbox" id="tsPointsEstOn" style="accent-color:var(--accent);width:15px;height:15px;cursor:pointer">
+            Set the time estimate from points
+          </label>
+          <div style="font-size:11px;color:var(--muted)">When an item's points are set or change (from Jira or in Flow), its time estimate follows this table and its due date moves with it. An estimate someone types in the same save wins. Finished items and items whose dates come from Jira are left alone. Leave this off if your team uses the metric for something other than effort.</div>
+          <div id="tsPointsEstRows"></div>
+        </div>
+      </div>
+
       <!-- Section 2: Project Mapping -->
       <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
         <div style="padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px">
@@ -3487,6 +3502,7 @@ let blockedReasons = []; // BLOCK-REASON-1: admin-managed coded Blocked reasons 
 let locations = [];       // FIELDS-1: per-team Location value list. EMPTY = the Location field is hidden EVERYWHERE.
 let resolutionTypes = []; // FIELDS-1: per-team Resolution Type value list. EMPTY = the field is hidden EVERYWHERE.
 let metricLabel = 'Story Points'; // METRIC-LABEL-1: team-defined display label for the storyPoints metric (field key unchanged; only the label is configurable)
+let pointsEstimate = {enabled:false, rows:[]}; // POINTS-ESTIMATE-1: points -> time estimate table (applied server-side; edited in Team Settings)
 let handoffLabel = 'Handoff';     // CAL-DATES-1: per-Org label for the item handoff (devEnd) milestone badge on the Calendar
 let dueLabel = 'Due';             // CAL-DATES-1: per-Org label for the item due milestone badge on the Calendar
 let departments   = []; // shared master list of departments (free-text, grows on item save)
@@ -5800,7 +5816,10 @@ function computeScheduledStr(){
   const devWeeks = Math.max(dueWks - testWks, 0);
   const compressedDev = pr > 1 ? devWeeks / pr : devWeeks;
   const totalWeeks = compressedDev + testWks;
-  const due = nextMonday(addDays(s, totalWeeks * 7));
+  // POINTS-ESTIMATE-1: round to whole days. Day estimates are stored as fractions of a week ("1 day" =
+  // 0.142857 = 0.999999 days) and setDate() truncates, so every day estimate came out one day short and
+  // "1 day" gave due == start (a zero-width bar with no capacity). The server twin (_compute_item_due) rounds too.
+  const due = nextMonday(addDays(s, Math.round(totalWeeks * 7)));
   const r   = parseD(revised);
   // Testing is within due date - scheduled = due (or revised if delayed past due)
   const sched = (r && r > due) ? r : due;
@@ -9175,6 +9194,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
     resolutionTypes = Array.isArray(data.resolutionTypes) ? data.resolutionTypes : [];  // FIELDS-1
     hasSprints = !!data.hasSprints; hasReleases = !!data.hasReleases;   // FIELDS-2 (secondary data-apply)
     metricLabel   = data.metricLabel   || metricLabel;   // METRIC-LABEL-1 (secondary data-apply path)
+    pointsEstimate = data.pointsEstimate || pointsEstimate;   // POINTS-ESTIMATE-1
     handoffLabel  = data.handoffLabel  || handoffLabel;  // CAL-DATES-1
     dueLabel      = data.dueLabel      || dueLabel;       // CAL-DATES-1
     departments   = data.departments   || departments;
@@ -11323,6 +11343,61 @@ async function saveConfig(key, value){
   if(!isAdmin) throw new Error('Admin role required to save config');
   await API.put('/api/config/' + key + '?username=' + encodeURIComponent(getUsername()), value);
   showSaveBadge();
+}
+
+// ── POINTS-ESTIMATE-1: Team Settings editor for the points -> time estimate table ──────────────────────
+// Rows are {upTo, weeks}; the LAST row is the catch-all ("more than ..."). Estimates use the same values as
+// the item modal's Time Estimate picker. The table is applied on the server.
+const _PE_DEFAULT_ROWS = [{upTo:2,weeks:0.142857},{upTo:3,weeks:0.428571},{upTo:5,weeks:1},{upTo:7,weeks:2},{upTo:null,weeks:3}];
+function _peEstimateOptions(sel){
+  const opts = [[0.142857,'1 day'],[0.285714,'2 days'],[0.428571,'3 days'],[0.571429,'4 days'],[0.714286,'5 days']]
+    .concat(Array.from({length:26},(_,i)=>[i+1, `${i+1} week${i?'s':''}`]));
+  return opts.map(([v,l]) => `<option value="${v}"${Math.abs((+sel||0)-v)<0.001?' selected':''}>${l}</option>`).join('');
+}
+function _renderPointsEstimateSettings(){
+  const on = document.getElementById('tsPointsEstOn'), host = document.getElementById('tsPointsEstRows');
+  if(!on || !host) return;
+  const pe = pointsEstimate || {};
+  const rows = (pe.rows && pe.rows.length) ? pe.rows.map(r => ({...r})) : _PE_DEFAULT_ROWS.map(r => ({...r}));
+  on.checked = !!pe.enabled;
+  const inp = 'padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:5px;background:var(--surface);color:var(--text);font-family:\'Lato\',sans-serif';
+  const btn = 'padding:3px 9px;font-size:12px;background:none;border:1px solid var(--border);border-radius:5px;cursor:pointer;color:var(--text);font-family:\'Lato\',sans-serif';
+  host.innerHTML = rows.map((r, i) => {
+    const last = i === rows.length - 1;
+    const prev = i ? rows[i-1].upTo : 0;
+    const lead = last
+      ? `<span style="font-size:12px;min-width:170px">More than <b>${esc(String(prev))}</b> points</span>`
+      : `<span style="font-size:12px;min-width:170px">Up to <input type="number" min="0" step="0.5" data-pe-up="${i}" value="${esc(String(r.upTo))}" style="${inp};width:64px"> points</span>`;
+    return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">${lead}
+      <span style="color:var(--muted)">→</span>
+      <select data-pe-wk="${i}" style="${inp}">${_peEstimateOptions(r.weeks)}</select>
+      ${(!last && rows.length > 2) ? `<button type="button" data-pe-del="${i}" style="${btn}" title="Remove this row">Remove</button>` : ''}</div>`;
+  }).join('') + `<button type="button" id="tsPointsEstAdd" style="${btn}">+ Add a row</button>`;
+  // Every action: read what is on screen into `rows` (by the indexes it was rendered with), then change
+  // `rows`, then persist - so an add/remove never reads inputs against shifted indexes.
+  const readScreen = () => rows.forEach((r, i) => {
+    const u = host.querySelector(`[data-pe-up="${i}"]`), w = host.querySelector(`[data-pe-wk="${i}"]`);
+    if(u) r.upTo = parseFloat(u.value);
+    if(w) r.weeks = parseFloat(w.value);
+  });
+  const persist = () => {
+    // Keep the ranges ascending and pin the catch-all as the last row.
+    const fixed = rows.slice(0, -1).filter(r => r.upTo > 0 && r.weeks > 0).sort((a, b) => a.upTo - b.upTo);
+    const tail = {upTo: null, weeks: rows[rows.length - 1].weeks || 3};
+    pointsEstimate = {enabled: on.checked, rows: [...fixed, tail]};
+    saveConfig('pointsEstimate', pointsEstimate).catch(e => showToast('Could not save: '+(e.message||e), 'error'));
+    _renderPointsEstimateSettings();
+  };
+  on.onchange = () => { readScreen(); persist(); };
+  host.querySelectorAll('[data-pe-up],[data-pe-wk]').forEach(el => el.onchange = () => { readScreen(); persist(); });
+  host.querySelectorAll('[data-pe-del]').forEach(b => b.onclick = () => { readScreen(); rows.splice(+b.dataset.peDel, 1); persist(); });
+  const add = document.getElementById('tsPointsEstAdd');
+  if(add) add.onclick = () => {
+    readScreen();
+    const lastFixed = rows.length > 1 ? (+rows[rows.length-2].upTo || 0) : 0;
+    rows.splice(rows.length - 1, 0, {upTo: lastFixed + 1, weeks: rows[rows.length-1].weeks});
+    persist();
+  };
 }
 
 // ── FILTERS ──
@@ -17732,7 +17807,12 @@ function computeItemDue(p){
   const devWeeks = Math.max(w - tw, 0);
   const compressedDev = pr > 1 ? devWeeks/pr : devWeeks;
   const totalWeeks = compressedDev + tw;
-  const d = nextMonday(new Date(new Date(s).setHours(0,0,0,0) + totalWeeks*7*86400000));
+  // POINTS-ESTIMATE-1: local-date + whole-day arithmetic, same as computeScheduledStr and the server's
+  // _compute_item_due. new Date('YYYY-MM-DD') parses as UTC midnight, which in Mountain Time is the PREVIOUS
+  // day, so this used to land one day early on mid-week starts.
+  const sd = parseD(s);
+  if(!sd) return p.due || '';
+  const d = nextMonday(addDays(sd, Math.round(totalWeeks * 7)));
   return d.toISOString().slice(0,10);
 }
 
@@ -18979,6 +19059,7 @@ function renderIntakePortalSettings(){
       if(typeof render==='function') try { render(); } catch(e){}
     };
   }
+  _renderPointsEstimateSettings();   // POINTS-ESTIMATE-1
   const projWrap = document.getElementById('tsIntakeProjects');
   const projNames = (products||[]).map(p => (p&&p.name)||p).filter(Boolean);
   const projOffered = intakeProjects.length ? new Set(intakeProjects) : new Set(projNames);   // empty = all
@@ -19995,6 +20076,7 @@ async function boot(){
     resolutionTypes = Array.isArray(data.resolutionTypes) ? data.resolutionTypes : [];  // FIELDS-1 (boot loader)
     hasSprints = !!data.hasSprints; hasReleases = !!data.hasReleases;   // FIELDS-2 (boot loader)
     metricLabel   = data.metricLabel   || 'Story Points';   // METRIC-LABEL-1: boot loader (the RIGHT block - see the 6.15.2 fix)
+    pointsEstimate = data.pointsEstimate || {enabled:false, rows:[]};   // POINTS-ESTIMATE-1
     // METRIC-LABEL-1: the ONE static label site is the classic List <th> (the shell List rebuilds its
     // header from _LIST_COL_DEF, which reads metricLabel live). Set it once post-load so classic follows too.
     try { var _mlTh=document.querySelector('th[data-sort="story_points"]'); if(_mlTh) _mlTh.innerHTML=esc(metricLabel)+'<span class="sort-arrow"></span>'; } catch(e){}
