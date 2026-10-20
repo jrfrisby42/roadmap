@@ -11474,12 +11474,13 @@ function openActivities(){
 }
 
 // ── AC-AUDIENCE-1: who an Activity Center alert is FOR ─────────────────────────
-// J.R. 2026-10-01: admins get every alert; everyone else gets the alerts on items ASSIGNED to them
+// J.R. 2026-10-01: admins get every alert (narrowed to "needs your attention" by AC-ATTENTION-1 below,
+// with every alert still under "All"); everyone else gets the alerts on items ASSIGNED to them
 // (a Capacity Conflict counts if any of its conflicting items is theirs). This drives the bell's
 // Activity Center section, the badges, what "opening the AC" marks Read, and the panel's default
 // "Mine" view (with an "All" toggle). The team-wide work-queue consumers (Dashboard tiles, Planning
 // at-risk bucket, sys_atrisk view, indicator dots) deliberately keep openActivities().
-let _acShowAll = false;   // panel toggle for non-admins; reset to Mine each time the panel opens
+let _acShowAll = false;   // panel toggle (everyone, AC-ATTENTION-1); reset to Mine / Needs your attention each open
 function _acIsMine(a, byId){
   const me = getUsername();
   const mine = id => { const p = byId.get(id); return !!(p && me && p.assignee === me); };
@@ -11489,13 +11490,30 @@ function _acIsMine(a, byId){
   }
   return a.item_id != null && mine(a.item_id);
 }
+// AC-ATTENTION-1 (J.R. 2026-10-20: "I can't keep up" with the AC): an ADMIN's default set is no longer
+// everything, it is what needs an admin - alerts on items assigned to them, approval requests (only an admin
+// can clear them), anything a PERSON raised, and System alerts still open after _AC_ATTENTION_DAYS (stuck
+// work, i.e. the escalations). Day-to-day System alerts belong to the item's assignee and stay under "All".
+// On development 2026-10-20 this took the admin list from 48 to 11. Drives the panel default, the bell's AC
+// section, the badge, and what opening the AC marks Read (so an admin no longer clears everyone's NEW).
+const _AC_ATTENTION_DAYS = 7;
+function _acAgeDays(a){
+  const ms = Date.parse(String(a.created_ts || '').replace(' UTC', 'Z').replace(' ', 'T'));
+  return isNaN(ms) ? 0 : (Date.now() - ms) / 86400000;
+}
+function _acNeedsAttention(a, byId){
+  if(_acIsMine(a, byId)) return true;
+  if(a.activity_type === 'Due Date Change' || a.activity_type === 'Delay Date Change') return true;
+  if(!(a.source === 'System' || a.created_by === 'System')) return true;
+  return _acAgeDays(a) >= _AC_ATTENTION_DAYS;
+}
 function _acMineFilter(list){
-  if(isAdmin) return list;
   const byId = new Map(projects.map(p => [p.id, p]));
+  if(isAdmin) return list.filter(a => _acNeedsAttention(a, byId));
   return list.filter(a => _acIsMine(a, byId));
 }
 function myActivities(){ return _acMineFilter(openActivities()); }
-function _acPanelActs(){ return (isAdmin || _acShowAll) ? openActivities() : myActivities(); }
+function _acPanelActs(){ return _acShowAll ? openActivities() : myActivities(); }
 function _acSetShowAll(v){ _acShowAll = !!v; renderAcOpen(); updateActivityBadge(); }
 
 // updateActivityBadge defined below (unread-only version)
@@ -11588,21 +11606,24 @@ function renderAcOpen(){
       return new Date(b.created_ts) - new Date(a.created_ts);
     });
 
-  // AC-AUDIENCE-1: non-admins choose Mine / All. Counts honour the same project scope as the list.
+  // AC-AUDIENCE-1: Mine / All. AC-ATTENTION-1: admins get the same two pills, their "Mine" being
+  // "Needs your attention". Counts honour the same project scope as the list.
   let scopeBar = '';
   let mineN = 0, allN = 0;
-  if(!isAdmin){
+  {
     const inScope = a => (!ownerFilter || a.owner === ownerFilter) && (!projScope || a.project === projScope);
     mineN = myActivities().filter(inScope).length;
     allN  = openActivities().filter(inScope).length;
     const pill = (on, label, v) => `<button onclick="_acSetShowAll(${v})" aria-pressed="${on}" style="padding:4px 12px;border-radius:14px;border:1px solid ${on?'var(--accent)':'var(--border)'};background:${on?'var(--accent)':'var(--surface)'};color:${on?'#fff':'var(--text)'};font-size:12px;font-weight:700;cursor:pointer;font-family:'Lato',sans-serif">${label}</button>`;
-    scopeBar = `<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
-      ${pill(!_acShowAll, `Assigned to me (${mineN})`, false)}${pill(_acShowAll, `All (${allN})`, true)}</div>`;
+    const mineLabel = isAdmin ? `Needs your attention (${mineN})` : `Assigned to me (${mineN})`;
+    const tip = isAdmin ? ` title="Your items, approval requests, anything a person raised, and alerts open ${_AC_ATTENTION_DAYS}+ days. Everything else is under All."` : '';
+    scopeBar = `<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px"${tip}>
+      ${pill(!_acShowAll, mineLabel, false)}${pill(_acShowAll, `All (${allN})`, true)}</div>`;
   }
 
-  if(!items.length && !isAdmin && !_acShowAll && allN > 0){
+  if(!items.length && !_acShowAll && allN > 0){
     pane.innerHTML = scopeBar + `<div style="text-align:center;padding:40px 20px;color:var(--muted)">
-      <strong>Nothing assigned to you needs attention</strong>
+      <strong>${isAdmin ? 'Nothing needs your attention' : 'Nothing assigned to you needs attention'}</strong>
       <div style="margin-top:10px"><button onclick="_acSetShowAll(true)" style="padding:6px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer">Show all (${allN})</button></div></div>`;
     return;
   }
