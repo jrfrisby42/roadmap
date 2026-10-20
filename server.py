@@ -1818,7 +1818,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.62.2"
+APP_VERSION = "6.62.3"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -10618,6 +10618,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
     rev_map      = {v: k for k, v in fwd_map.items() if v}
     all_statuses = cfg("statuses") or []
     terminal_map = cfg("statusIsTerminal")   # JIRA-COMPLETED-1: read before the write txn below
+    released_map = cfg("statusIsReleased")   # JIRA-RELDATE-2: a sync INTO a released status stamps releaseDate
 
     def status_rank(s):
         return _status_rank(s, all_statuses)   # extracted to a shared module helper (identical behavior)
@@ -10636,12 +10637,16 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
     # jiraSyncSkipped: { ticket: jira_status } - status we skipped (regression); don't retry same status
     skipped    = p.get("jiraSyncSkipped") or {}
 
-    fields_param = "summary,status,issuetype,project,assignee,parent,subtasks,updated,customfield_10064"
+    fields_param = ("summary,status,issuetype,project,assignee,parent,subtasks,updated,customfield_10064,"
+                    "resolution,resolutiondate," + ",".join(_JIRA_POINTS_FIELDS))   # JIRA-RELDATE-2 + JIRA-POINTS-1
+    fields_by_ticket = {}
+    best_ticket = None
 
     for ticket in tickets[:10]:
         try:
             data  = _jira_req("GET", f"/rest/api/3/issue/{ticket}?fields={fields_param}")
             f     = data.get("fields", {})
+            fields_by_ticket[ticket] = f
             jira_status  = f.get("status", {}).get("name", "")
             summary      = f.get("summary", "")
             issue_type   = f.get("issuetype", {}).get("name", "")
@@ -10697,6 +10702,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
                 best_rank = mapped_rank
                 best_new_status = mapped
                 best_jira_status = jira_status
+                best_ticket = ticket
                 last_known[ticket] = jira_status
                 skipped.pop(ticket, None)  # successful candidate - clear any skip flag
             elif mapped_rank == current_rank:
@@ -10769,6 +10775,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
     # Re-read the current row and merge ONLY the sync-owned fields onto it. The
     # forward-only status advance is applied only if the current status still equals
     # the one the decision was based on (else the user changed it - don't override).
+    points_changed = False
     with db(team) as c:
         cur_row = c.execute("SELECT data, updated_ts FROM projects WHERE id=?", (pid,)).fetchone()
         if cur_row:
@@ -10780,13 +10787,29 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
             if any_changed and best_new_status and current.get("status") == old_status:
                 current["status"] = best_new_status
                 _stamp_completed_at(current, terminal_map, datetime.now(timezone.utc).isoformat())   # JIRA-COMPLETED-1
+                # JIRA-RELDATE-2: a sync INTO a released status stamps releaseDate (set-once), the same rule the
+                # pulled-item refresh uses (RELEASE-DATE-1): Jira's Done resolutiondate, else the day Flow
+                # observed the release. Flow-created items used to reach Released with no date at all, so they
+                # had no Gantt release marker and fell out of the month they shipped in.
+                if released_map.get(best_new_status) and not current.get("releaseDate"):
+                    _rd = _release_date_from_fields(fields_by_ticket.get(best_ticket)) or \
+                          datetime.now(_MT_ZONE).date().isoformat()
+                    current["releaseDate"] = _rd
+                    audit_details.append(f"Release date set to {_rd}")
+            # JIRA-POINTS-1: story points follow Jira (the primary ticket). Jira is where the team estimates;
+            # an empty Jira value never clears Flow's.
+            _sp = _jira_points(fields_by_ticket.get(tickets[0]) if tickets else None)
+            points_changed = _sp is not None and current.get("storyPoints") != _sp
+            if points_changed:
+                audit_details.append(f"Story points: {current.get('storyPoints')!r} -> {_sp!r}")
+                current["storyPoints"] = _sp
             # PRESERVE the optimistic-concurrency token (updated_ts) on a no-op poll.
             # Background jira sync runs on a timer and on item-page open; if every poll
             # bumped updated_ts it would invalidate every open editor's base token and
             # produce a persistent spurious "update conflict" on save (T3 regression).
-            # Only a user-meaningful change (status advance or feature-flag change)
+            # Only a user-meaningful change (status advance, feature-flag or points change)
             # bumps it; pure sync-metadata refreshes keep the existing token.
-            _keep_ts = None if (any_changed or ff_changed) else cur_row["updated_ts"]
+            _keep_ts = None if (any_changed or ff_changed or points_changed) else cur_row["updated_ts"]
             _save_project(c, pid, current, _keep_ts)
         else:
             _save_project(c, pid, p)
@@ -10809,7 +10832,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
             log.warning(f"[Notify] jira status hook failed for item {pid}: {e}")
 
     # Everything else → audit log only (skip when nothing changed to reduce noise)
-    if any_changed or ff_changed:
+    if any_changed or ff_changed or points_changed:
         write_audit(team, "jira:pull", username, pid, p.get("name",""),
                     changes={
                         "tickets": tickets,
@@ -10823,7 +10846,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
     if any_changed and not (body or {}).get("_suppressNotify"):
         _rollup_sync_safe(team, username)
     return {
-        "changed": any_changed, "syncedAt": now_ts, "issues": issues_data,
+        "changed": any_changed, "pointsChanged": points_changed, "syncedAt": now_ts, "issues": issues_data,
         "statusChange": {"from": old_status, "to": best_new_status} if any_changed else None,
     }
 
@@ -10986,7 +11009,7 @@ def jira_pull_all(body: dict = Body({}), x_team: Optional[str] = Header(None),
             # Pull-sync Jira status changes
             result = jira_pull_sync(r["id"], body, x_team, auth)
             synced += 1
-            if result.get("changed"):
+            if result.get("changed") or result.get("pointsChanged"):   # JIRA-POINTS-1: a points-only update reloads clients too
                 changes += 1
 
             # Child sync: for items with syncChildren enabled and not terminal
@@ -11408,7 +11431,26 @@ def _jira_search_all(jql: str, fields: str, cap: int = 2000) -> list:
 
 # Widened fetch (Stage 4 needs labels/assignee/description/dates/project to CONSTRUCT items; the search
 # and the ancestry walk both fetch this set so the plan already carries everything a create needs).
-_PULL_FETCH_FIELDS = "summary,status,issuetype,parent,created,labels,assignee,description,duedate,customfield_10025,project,customfield_10010,resolution,resolutiondate"  # customfield_10010 = Sprint (list, JIRA-SPRINT-1 Stage 3); resolution+resolutiondate = RELEASE-DATE-1 (Done-only releaseDate). All ride the call the pull already makes.
+# JIRA-POINTS-1: story points come from Jira. FRAZ carries two point fields - "Story Points"
+# (customfield_10014, company-managed) and "Story point estimate" (customfield_10028, team-managed) - so the
+# first one set wins. On development 2026-10-20 Jira had points on 312 linked issues and Flow on 7 items.
+_JIRA_POINTS_FIELDS = ("customfield_10014", "customfield_10028")
+
+def _jira_points(f):
+    """Story points from a Jira issue's fields as a number (int when whole), or None when unset."""
+    for fid in _JIRA_POINTS_FIELDS:
+        v = (f or {}).get(fid)
+        if v in (None, ""):
+            continue
+        try:
+            n = float(v)
+        except (TypeError, ValueError):
+            continue
+        return int(n) if n == int(n) else n
+    return None
+
+_PULL_FETCH_FIELDS = ("summary,status,issuetype,parent,created,labels,assignee,description,duedate,customfield_10025,project,customfield_10010,resolution,resolutiondate,"
+                      + ",".join(_JIRA_POINTS_FIELDS))  # customfield_10010 = Sprint (list, JIRA-SPRINT-1 Stage 3); resolution+resolutiondate = RELEASE-DATE-1 (Done-only releaseDate); + story points (JIRA-POINTS-1). All ride the call the pull already makes.
 
 def _filter_pull_candidates(issues: list, flow_keys: set):
     """Drop issues Flow already references (PRESENCE only - never assume the mapped id is 'the' item,
@@ -11692,6 +11734,7 @@ def _construct_pull_item(issue, ctx, actor):
         "start": f.get("customfield_10025") or "",        # Jira "Start date", snapshot
         "due": f.get("duedate") or "",                    # snapshot
         "releaseDate": _release_date_from_fields(f) or "", # RELEASE-DATE-1: Done-only resolutiondate at create (6.53.1 only ever caught post-create transitions)
+        "storyPoints": _jira_points(f),                    # JIRA-POINTS-1 (None when Jira has none)
         "jiraTickets": [jkey],
         "jiraSource": _PULL_JIRA_SOURCE,
         "reporter": actor,
@@ -11881,7 +11924,7 @@ def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))
 # ELSE. The 565 items that carry a Jira ticket but were created in Flow and pushed have no jiraSource, so
 # they are excluded by construction - their pod and assignee are Flow's decisions, never Jira's. Scope on
 # jiraSource, NEVER on jiraTickets being present or on the key matching.
-_PULL_REFRESH_FIELDS = ("status", "dev", "assignee", "start", "due")   # the fields the refresh may ever write (JIRA-DATES-1: +start/due)
+_PULL_REFRESH_FIELDS = ("status", "dev", "assignee", "start", "due", "storyPoints")   # the fields the refresh may ever write (JIRA-DATES-1: +start/due; JIRA-POINTS-1: +storyPoints)
 _PULL_REFRESH_DATES = (("start", "customfield_10025"), ("due", "duedate"))   # JIRA-DATES-1: Flow field <- Jira field
 
 def _refresh_one_pulled(current, issue, ctx, all_statuses, today=None):
@@ -11934,6 +11977,10 @@ def _refresh_one_pulled(current, issue, ctx, all_statuses, today=None):
         if jv and jv != cv:
             current[fld] = jv
             changed[fld] = (cv, jv)
+    sp = _jira_points(f)                    # JIRA-POINTS-1: empty in Jira keeps Flow's value
+    if sp is not None and current.get("storyPoints") != sp:
+        changed["storyPoints"] = (current.get("storyPoints"), sp)
+        current["storyPoints"] = sp
     pod, reason = _jira_pull_pod(f.get("labels"), ctx["pods"])
     if reason == "matched":
         cur_pod = current.get("dev", "")
@@ -12198,6 +12245,58 @@ def jira_backfill_release_dates(body: dict = Body({}), auth: dict = Depends(requ
     terminal items with a ticket and no releaseDate (pulled + pushed - pushed is a stated exception,
     counted + audited). {dryRun?: bool} reports the write plan without writing. Admin only. No notifications."""
     return _jira_backfill_release_dates(auth["team"], auth["username"], dry=bool((body or {}).get("dryRun")))
+
+# ── JIRA-POINTS-1: one-time story-points backfill ────────────────────────────────────────────────────
+def _jira_backfill_story_points(team, actor, dry=False):
+    """Copy story points from Jira onto every item linked to a ticket (primary ticket; pulled AND
+    Flow-created; any status) where Jira has a value that differs. Idempotent; an empty Jira value never
+    clears Flow's. updated_ts is preserved (a few hundred writes must not churn Recent or 409 open editors);
+    no notifications. A search failure aborts with zero writes. One summary audit row."""
+    if not jira_configured():
+        raise HTTPException(503, "Jira not configured")
+    with db(team) as c:
+        rows = c.execute("SELECT id, data FROM projects ORDER BY id").fetchall()
+    cand = {}
+    for r in rows:
+        t = (json.loads(r["data"]).get("jiraTickets") or [None])[0]
+        if t:
+            cand[r["id"]] = t
+    keys = sorted(set(cand.values()))
+    pts = {}
+    for i in range(0, len(keys), 90):
+        try:
+            for iss in _jira_search_all("key in (" + ", ".join(keys[i:i + 90]) + ")", ",".join(_JIRA_POINTS_FIELDS)):
+                v = _jira_points(iss.get("fields"))
+                if v is not None:
+                    pts[iss.get("key")] = v
+        except Exception as e:
+            log.warning(f"[PointsBackfill] search failed, aborting with zero writes: {e}")
+            return {"aborted": True, "reason": f"Jira search failed: {e}", "written": 0}
+    out = {"candidates": len(cand), "jiraHasPoints": 0, "toWrite": 0, "written": 0, "dryRun": dry}
+    changes = {}
+    with db(team) as c:
+        if not dry:
+            c.execute("BEGIN IMMEDIATE")
+        for pid, key in cand.items():
+            if key not in pts:
+                continue
+            out["jiraHasPoints"] += 1
+            cur = c.execute("SELECT data, updated_ts FROM projects WHERE id=?", (pid,)).fetchone()
+            if not cur:
+                continue
+            p = json.loads(cur["data"])
+            if p.get("storyPoints") == pts[key]:
+                continue
+            out["toWrite"] += 1
+            if dry:
+                continue
+            changes[str(pid)] = {"jiraKey": key, "from": p.get("storyPoints"), "to": pts[key]}
+            p["storyPoints"] = pts[key]
+            _save_project(c, pid, p, cur["updated_ts"])
+            out["written"] += 1
+        if changes:
+            _write_audit_c(c, "jira:points-backfill", actor, None, "", changes={"items": changes})
+    return out
 
 # ── JIRA-PULL-1 Stage 6: parent hierarchy ────────────────────────────────────────────────────────────
 # Set `parent` on pulled items so the Jira hierarchy survives into Flow. Same invariant as Stage 5: only
@@ -14392,6 +14491,11 @@ def run_jira_sync(verbose: bool = False, only_team: str = None, force: bool = Fa
         except Exception as e:
             res["pullError"] = str(e)[:300]
             log.warning(f"[jira-sync] {team}: pull failed: {e}")
+        try:   # JIRA-RELDATE-2: finished items with a Jira ticket and no release date (idempotent, Done-only)
+            res["releaseDates"] = _jira_backfill_release_dates(team, _JIRA_SYNC_ACTOR).get("written", 0)
+        except Exception as e:
+            res["releaseDatesError"] = str(e)[:300]
+            log.warning(f"[jira-sync] {team}: release-date fill failed: {e}")
         _write_jira_sync_state(team, {"lastRunAt": now.isoformat(), "intervalMinutes": interval, "result": res})
         out[team] = res
         if verbose:
