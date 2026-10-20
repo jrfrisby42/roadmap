@@ -10763,8 +10763,12 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
 
             prev_known = last_known.get(ticket)
 
-            # Only process status change if Jira status has changed since last sync
-            if jira_status == prev_known:
+            # Only process status change if Jira status has changed since last sync - UNLESS that same status
+            # now maps to a later Flow status (JIRA-STATUSMAP-1: a status first seen while it had no mapping,
+            # e.g. FRZ-1094 recorded "Code Review" before the overlay was honoured, must not stay stuck).
+            # Still forward-only: a status that maps backwards (or not at all) is skipped as before.
+            _m_now = rev_map.get(jira_status)
+            if jira_status == prev_known and not (_m_now and status_rank(_m_now) > current_rank):
                 audit_details.append(f"[{ticket}] status unchanged ({jira_status!r}) - no action")
                 # Clear any previous skip flag since Jira matches what we last knew
                 skipped.pop(ticket, None)
