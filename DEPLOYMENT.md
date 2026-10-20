@@ -140,6 +140,29 @@ when `LITESTREAM_FLOW_CONFIG` is not set (the `LITESTREAM_*` vars belong in
 command was not run with sufficient privileges, it prints the reload command to run
 manually - the config file is still written.
 
+### Background Jira sync (JIRA-SERVER-SYNC-1)
+
+`python server.py --sync-jira` runs the background Jira sync on the server: for every Organization with
+**Background Pull-Sync** enabled (Team Settings -> Jira) whose interval has elapsed, it runs the linked-item
+sync (`jira_pull_all`) and then the pull (`jira_pull_now`: create new items, refresh pulled ones, sprints),
+then exits. Before 6.62.0 this ran in admins' browser tabs, so nothing synced when no admin had Flow open.
+The admin setting stays the control (on/off + "every N minutes", minimum 5). Each Org's last run and a short
+summary are kept in `/data/tenants/<team>/jira_sync_state.json` and shown under the setting. Audit rows from
+these runs carry the actor `jira-sync`.
+
+```bash
+scp tools/systemd/roadmap-jira-sync.* ubuntu@52.35.224.183:/tmp/
+sudo mv /tmp/roadmap-jira-sync.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now roadmap-jira-sync.timer
+systemctl list-timers roadmap-jira-sync.timer                 # next run (every 5 min)
+sudo -u ubuntu /opt/roadmap/venv/bin/python /opt/roadmap/server.py --sync-jira --team development --force   # run one now
+journalctl -u roadmap-jira-sync.service --no-pager | tail     # per-run results
+```
+
+Flags: `--team <slug>` limits the run to one Organization; `--force` ignores the interval. To pause it,
+`sudo systemctl stop roadmap-jira-sync.timer` (or turn Background Pull-Sync off for the Organization).
+
 ### Weekday-morning To-do reminders (TODO-EMAIL-1)
 
 `python server.py --send-todo-reminders` emails each user their open To-dos that are due today or overdue

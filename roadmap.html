@@ -2783,16 +2783,16 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
           Background Pull-Sync
         </div>
         <div style="padding:14px;display:flex;flex-direction:column;gap:10px">
-          <div style="font-size:11px;color:var(--muted)">Automatically refresh linked Jira issues on a schedule. Manual refresh is always available on the Item Page.</div>
+          <div style="font-size:11px;color:var(--muted)">The server syncs linked Jira issues and pulls new ones on this schedule, whether or not anyone has Flow open. Manual refresh is always available on the Item Page.</div>
           <label style="display:flex;align-items:center;gap:10px;font-size:12px;font-weight:700;cursor:pointer">
             <input type="checkbox" id="tsSyncEnabled" style="accent-color:var(--accent);width:15px;height:15px;cursor:pointer">
             Enable background sync
           </label>
           <div style="display:flex;align-items:center;gap:10px">
             <label style="font-size:11px;font-weight:700;color:var(--muted);white-space:nowrap">Sync every</label>
-            <input type="number" id="tsSyncInterval" min="2" max="1440" value="30"
+            <input type="number" id="tsSyncInterval" min="5" max="1440" value="30"
               style="width:70px;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:5px;background:var(--surface);font-family:'Lato',sans-serif;outline:none">
-            <label style="font-size:11px;color:var(--muted)">minutes (min 2)</label>
+            <label style="font-size:11px;color:var(--muted)">minutes (min 5)</label>
           </div>
           <div id="tsSyncStatus" style="font-size:11px;color:var(--muted)"></div>
           <div id="tsPullStatus" style="font-size:11px;color:var(--muted)"></div>
@@ -18789,9 +18789,15 @@ async function openTeamSettingsTab(){
   if(enabledEl)  enabledEl.checked  = !!_jiraSyncConfig.enabled;
   if(intervalEl) intervalEl.value   = _jiraSyncConfig.intervalMinutes || 30;
   if(statusEl){
-    statusEl.textContent = _jiraSyncLastRun
-      ? `Last background sync: ${fmtTS(_jiraSyncLastRun)}`
-      : _jiraSyncConfig.enabled ? 'Sync enabled - not yet run' : 'Background sync disabled';
+    statusEl.textContent = _jiraSyncConfig.enabled ? 'Sync enabled - not yet run on the server' : 'Background sync disabled';
+    // JIRA-SERVER-SYNC-1: report the SERVER's last run (the browser no longer syncs on its own).
+    API.get('/api/jira/sync-status').then(st => {
+      if(!st || !st.lastRunAt || !_jiraSyncConfig.enabled) return;
+      const r = st.result || {}, l = r.linked || {}, p = r.pull || {};
+      const bits = [`${l.changes||0} linked updated`, `${p.created||0} pulled in`, `${p.refreshed||0} refreshed`];
+      if(r.linkedError || r.pullError) bits.push('last run had an error - see server log');
+      statusEl.textContent = `Last server sync: ${fmtTS(st.lastRunAt)} · ${bits.join(' · ')}`;
+    }).catch(()=>{});
   }
   tsCheckConnection();
   tsLoadJiraMetadata();
@@ -19172,7 +19178,7 @@ async function saveTeamSettings(){
   const jiraEnabled = document.getElementById('tsJiraEnabled')?.checked !== false;
   // Read sync config
   const syncEnabled   = document.getElementById('tsSyncEnabled')?.checked || false;
-  const syncInterval  = Math.max(2, parseInt(document.getElementById('tsSyncInterval')?.value||'30'));
+  const syncInterval  = Math.max(5, parseInt(document.getElementById('tsSyncInterval')?.value||'30'));   // JIRA-SERVER-SYNC-1: the server timer ticks every 5 min
   _jiraSyncConfig = { enabled: syncEnabled, intervalMinutes: syncInterval };
 
   const statusEl = document.getElementById('tsStatus');
@@ -19628,11 +19634,11 @@ function _stopBackgroundJiraSync(){
   if(_jiraSyncTimer){ clearInterval(_jiraSyncTimer); _jiraSyncTimer = null; }
 }
 function _startBackgroundJiraSync(){
+  // JIRA-SERVER-SYNC-1: the background sync now runs on the SERVER (`server.py --sync-jira` on a systemd
+  // timer), honouring this same enabled + interval setting. The browser no longer runs its own copy - that
+  // only synced while an admin had Flow open, and every open admin tab ran it. Kept as a stop-only shim so
+  // existing callers still clear any timer left from an older page load.
   _stopBackgroundJiraSync();
-  if(_jiraSyncConfig && _jiraSyncConfig.enabled && +_jiraSyncConfig.intervalMinutes > 0){
-    const ms = Math.max(2, +_jiraSyncConfig.intervalMinutes) * 60 * 1000;
-    _jiraSyncTimer = setInterval(()=> runBackgroundJiraSync(), ms);
-  }
 }
 
 async function runBackgroundJiraSync(){

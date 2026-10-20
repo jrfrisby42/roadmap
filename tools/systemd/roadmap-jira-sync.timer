@@ -1,0 +1,10 @@
+[Unit]
+Description=Frazil Flow background Jira sync, every 5 minutes (each Org's own interval decides if it is due)
+
+[Timer]
+OnCalendar=*:0/5
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
