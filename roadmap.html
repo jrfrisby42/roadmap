@@ -2830,7 +2830,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.62.0';
+const APP_VERSION = '6.62.1';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -14443,10 +14443,24 @@ function renderResolveDropdown(a){
       ];
     }
   } else if(type === 'Needs Date Check'){
+    // AC-ACTIONS-1: once the due date has PASSED, "Confirm Dates" only re-confirms a wrong date - offer the
+    // fixes alone. Before the due date it stays (confirming an upcoming date is a real answer).
+    const _ap = projects.find(x=>x.id===a.item_id);
+    const _due = _ap ? nextMonday(parseD((_ap.revised && _ap.revised > (_ap.due||'')) ? _ap.revised : _ap.due)) : null;
+    const _duePassed = !!(_due && _due < TODAY);
     actions = [
-      {label:'Confirm Dates', fn:`confirmDates(${a.id})`},
+      ...(_duePassed ? [] : [{label:'Confirm Dates', fn:`confirmDates(${a.id})`}]),
       {label:'Update Expected Date', fn:`inlineUpdateExpected(${a.id})`},
       {label:'Extend Due Date', fn:`inlineDueDateChange(${a.id})`},
+    ];
+  } else if(type === 'Needs Decision' && a.source === 'System'){
+    // AC-ACTIONS-1: the start date arrived on committed work that has not started. Each action fixes the
+    // ITEM and clears the alert in one click (it used to offer only Resolve / Dismiss, so the alert was
+    // cleared while the item stayed Approved with a past start). User-raised Needs Decision flags keep Resolve.
+    actions = [
+      {label:'Start now', fn:`acStartNow(${a.id})`},
+      ...(getDeferredStatus() ? [{label:`Move to ${getDeferredStatus()}`, fn:`acMoveToBacklog(${a.id})`}] : []),
+      {label:'Reschedule start', fn:`inlineReschedule(${a.id})`},
     ];
   } else if(type === 'Capacity Conflict'){
     actions = [
@@ -14517,7 +14531,8 @@ async function resolveActivity(id, action='Resolved'){
   const a = activities.find(x=>x.id===+id);
   // System-generated action labels don't need a user note prompt
   const systemActions = ['Updated Expected Date','Owner changed','Due Date Change Requested',
-                         'Ignored Conflict','Auto-cleared','Item became terminal'];
+                         'Ignored Conflict','Auto-cleared','Item became terminal',
+                         'Started','Moved to','Rescheduled start','Due date changed'];   // AC-ACTIONS-1
   const isSystemAction = systemActions.some(s => action.startsWith(s));
   let note = '';
   if(!isSystemAction){
@@ -14535,9 +14550,90 @@ async function resolveActivity(id, action='Resolved'){
 }
 
 async function dismissActivity(id){
-  await API.put('/api/activities/'+id, {status:'Dismissed', action_taken:'Dismissed', resolved_by: getUsername()});
-  // Dismissed activities do not generate an item log entry
+  // AC-ACTIONS-1: dismissing an alert about a date that has ALREADY PASSED (a Needs Decision on a passed
+  // start, or a Needs Date Check on a passed due date) needs a reason - it was the easy way out that left the
+  // date wrong and snoozed the alert for 14 days. The reason is kept on the alert and in the item history.
+  const a = _acFind(id);
+  const pastDate = a && a.source === 'System' &&
+    (a.activity_type === 'Needs Decision' || (a.activity_type === 'Needs Date Check' && /has passed/i.test(a.message||'')));
+  let note = '';
+  if(pastDate){
+    const raw = prompt(`Dismiss "${a.item_name||'this item'}"?\n\nThis date has already passed. Why is it OK to leave it? (required)`, '');
+    if(raw === null) return;
+    note = raw.trim();
+    if(!note){ showToast('A reason is needed to dismiss this one - or use one of the fixes instead.', 'error'); return; }
+  }
+  await API.put('/api/activities/'+id, {status:'Dismissed', action_taken:'Dismissed', resolved_by: getUsername(), ...(note ? {note} : {})});
+  if(note && a?.item_id) logActionOnItem(a.item_id, a.item_name||'', a.owner||'', a.project||'',
+    `${a.activity_type} dismissed by ${getUsername()} - ${note}`, null, null);
   await loadActivities(); renderAcOpen(); updateActivityBadge();
+}
+
+// ── AC-ACTIONS-1: Needs Decision fixes ─────────────────────────────────────────────────────────────────
+async function _acSaveItem(p, logMsg, prev, next){
+  const updated = await API.put('/api/projects/'+p.id, {...p, _username: getUsername()});
+  const i = projects.findIndex(x=>x.id===p.id); if(i>-1) projects[i] = updated || p;
+  logActionOnItem(p.id, p.name||'', p.dev||'', p.product||'', logMsg, prev, next);
+}
+
+async function acStartNow(id){
+  const a = _acFind(id); const p = a && projects.find(x=>x.id===a.item_id);
+  if(!p) return;
+  const active = statuses.find(s => statusIsActive[s]);
+  if(!active){ showToast('No active status is configured.', 'error'); return; }
+  if(!p.dev){ showToast('Assign a Team before starting it.', 'error'); inlineChangeOwner(id); return; }
+  const prev = p.status; p.status = active;
+  await _acSaveItem(p, `Status ${prev} -> ${active} by ${getUsername()} via Activity Center (Start now)`, {status: prev}, {status: active});
+  await resolveActivity(id, `Started (${active})`);
+  render();
+}
+
+async function acMoveToBacklog(id){
+  const a = _acFind(id); const p = a && projects.find(x=>x.id===a.item_id);
+  const target = getDeferredStatus();
+  if(!p || !target) return;
+  const prev = p.status; p.status = target;
+  await _acSaveItem(p, `Status ${prev} -> ${target} by ${getUsername()} via Activity Center`, {status: prev}, {status: target});
+  await resolveActivity(id, `Moved to ${target}`);
+  render();
+}
+
+function inlineReschedule(id){
+  const a = _acFind(id);
+  if(!a) return;
+  const container = document.getElementById(`acInline_${id}`) || (() => {
+    const el = document.createElement('div');
+    el.id = `acInline_${id}`;
+    el.style.cssText = 'margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap';
+    document.querySelector(`[data-acid="${id}"]`)?.appendChild(el);
+    return el;
+  })();
+  container.innerHTML = `
+    <label style="font-size:11px;color:var(--muted)">New start</label>
+    <input type="date" id="acStartDate_${id}" style="padding:4px 8px;font-size:12px;border:1px solid var(--border);border-radius:5px;font-family:'Lato',sans-serif">
+    <button onclick="applyReschedule(${id})" style="padding:4px 10px;font-size:12px;background:var(--accent);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:'Lato',sans-serif;font-weight:700">Apply</button>
+    <button onclick="document.getElementById('acInline_${id}').remove()" style="padding:4px 8px;font-size:12px;background:none;border:1px solid var(--border);border-radius:5px;cursor:pointer">Cancel</button>
+    <span style="font-size:11px;color:var(--muted)">The due date moves with it, keeping the same length.</span>`;
+  document.querySelectorAll('.resolve-menu').forEach(m=>m.style.display='none');
+}
+
+async function applyReschedule(id){
+  const a = _acFind(id); const p = a && projects.find(x=>x.id===a.item_id);
+  const newStart = document.getElementById(`acStartDate_${id}`)?.value;
+  if(!p || !newStart) return;
+  const oldStart = parseD(p.start), ns = parseD(newStart), oldDue = parseD(p.due);
+  const shiftDays = (oldStart && ns) ? Math.round((ns - oldStart) / 86400000) : 0;
+  const newDue = oldDue ? addDays(oldDue, shiftDays).toISOString().slice(0,10) : (p.due || '');
+  const prev = {start: p.start||'', due: p.due||''};
+  p.start = newStart;
+  if(newDue && newDue !== prev.due){
+    if(isAdmin){ p.due = newDue; }   // same rule as the item modal: admins change the due date directly
+    else { await triggerDueDateApproval({...p, due: newDue}, prev.due, 'Activity Center - reschedule start'); }
+  }
+  await _acSaveItem(p, `Start rescheduled ${prev.start||'-'} -> ${newStart}${isAdmin && newDue !== prev.due ? `, due ${prev.due||'-'} -> ${newDue}` : ''} by ${getUsername()} via Activity Center`,
+    prev, {start: p.start, due: p.due||''});
+  await resolveActivity(id, 'Rescheduled start');
+  render();
 }
 
 async function acceptRisk(id){
@@ -14628,6 +14724,17 @@ async function applyInlineDueDateConfirm(id){
   if(!dateVal || !a) return;
   const p = projects.find(x=>x.id===a.item_id);
   const prevDue = p?.due || null;
+  // AC-ACTIONS-1: same rule as the item modal - an ADMIN's due-date change applies directly; only a
+  // non-admin's goes to approval. It used to file an approval request even for admins, so an admin fixing an
+  // alert created a second Activity Center item to approve their own change.
+  if(p && isAdmin){
+    p.due = dateVal;
+    await _acSaveItem(p, `Due date changed: ${prevDue||'-'} → ${dateVal} by ${getUsername()} via Activity Center`,
+      prevDue ? {due: prevDue} : null, {due: dateVal});
+    await resolveActivity(id, 'Due date changed');
+    render();
+    return;
+  }
   if(p){
     await triggerDueDateApproval({...p, due: dateVal}, p.due || '', 'Activity Center - extend due date');
     logActionOnItem(p.id, p.name||'', p.dev||'', p.product||'',
