@@ -2867,7 +2867,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.62.10';
+const APP_VERSION = '6.62.11';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -11640,7 +11640,7 @@ var FLAG_TERMINAL_STATUSES = ['Resolved','Approved','Rejected','Dismissed','Auto
 function _isActiveFlag(a){ return !!a && FLAG_TYPES.indexOf(a.activity_type)>=0 && FLAG_TERMINAL_STATUSES.indexOf(a.status)<0; }
 var _betaFlagged = false;   // FN5 "Flagged" toggle (list + kanban), global so classic _listQuery + beta shell share it
 var _ganttSpan = 'now';     // GANTT-DECLUTTER-1: Gantt "Now" (window around today) vs "All"; URL ?span=all; Flow shell only
-var _ganttItems = 'all';    // GANTT-FOCUS-1: Gantt "Everything" vs "Projects only"; URL ?items=projects; Flow shell only
+var _ganttItems = 'projects';   // GANTT-FOCUS-1: Gantt "Projects only" (the default) vs "Everything"; URL ?items=all; Flow shell only
 
 const AC_SORT_ORDER = {
   'Blocked':2, 'At Risk':3, 'Pending Approval':4,
@@ -21333,14 +21333,10 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-gleg-item { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; color:var(--frz-text-secondary); white-space:nowrap; }
   /* GANTT-FOCUS-1: Legend + Today cluster, bottom-right of the chart (clear of the horizontal scrollbar) */
   .frz-beta .frz-content > .gantt-outer { position:relative; }
-  .frz-beta .frz-gcorner { position:absolute; right:22px; bottom:22px; z-index:30; display:flex; flex-direction:column; align-items:flex-end; gap:6px; pointer-events:none; }
-  .frz-beta .frz-gcorner > * { pointer-events:auto; }
-  .frz-beta .frz-gcorner-legend { display:none; flex-direction:column; gap:6px; padding:10px 12px; background:var(--frz-bg-surface, var(--surface)); border:1px solid var(--frz-border, var(--border)); border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,0.10); }
-  .frz-beta .frz-gcorner.open .frz-gcorner-legend { display:flex; }
-  .frz-beta .frz-gcorner-btns { display:flex; gap:6px; }
-  .frz-beta .frz-gcorner-btn { font:inherit; font-size:12px; font-weight:600; padding:4px 10px; border-radius:6px; cursor:pointer; color:var(--frz-text-secondary); background:var(--frz-bg-surface, var(--surface)); border:1px solid var(--frz-border, var(--border)); box-shadow:0 2px 8px rgba(0,0,0,0.08); }
+  .frz-beta .frz-gcorner { position:absolute; right:22px; bottom:22px; z-index:30; display:flex; align-items:center; gap:14px; max-width:calc(100% - 44px); padding:6px 6px 6px 14px; background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,0.10); }
+  .frz-beta .frz-gcorner-legend { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .frz-beta .frz-gcorner-btn { font:inherit; font-size:12px; font-weight:600; padding:4px 10px; border-radius:6px; cursor:pointer; color:var(--frz-text-secondary); background:var(--frz-bg-surface); border:1px solid var(--frz-border); }
   .frz-beta .frz-gcorner-btn:hover { color:var(--frz-accent); border-color:var(--frz-accent); }
-  .frz-beta .frz-gcorner.open .frz-gcorner-btn[data-act="legend"] { color:var(--frz-accent); border-color:var(--frz-accent); background:var(--frz-accent-soft); }
   /* RAIL-COLLAPSED-1 Part 1: the segmented top view control (.frz-topview / .frz-tv-seg) is removed -
      the collapsed rail already carries all eight view icons, so it was a redundant second switcher. */
 
@@ -24141,27 +24137,18 @@ if ('serviceWorker' in navigator) {
     });
     return wrap;
   }
-  // GANTT-FOCUS-1: Legend + Today live in a small cluster at the chart's bottom-right corner (out of the
-  // toolbar). The legend opens/closes in place; open/closed is remembered per browser. The cluster is a
-  // child of .gantt-outer, which render() never rebuilds, so it is created once and hides with the Gantt.
-  var _GCORNER_KEY='frazil_gantt_legend_open';
+  // GANTT-FOCUS-1: the legend sits on one line at the chart's bottom-right corner, always shown, with the
+  // Today button at its end (both out of the toolbar). A child of .gantt-outer, which render() never
+  // rebuilds, so it is created once and hides with the Gantt.
   function _frzSyncGanttLegend(){
     var outer=document.querySelector('.frz-content > .gantt-outer'); if(!outer) return;
-    var el=document.getElementById('frzGanttCorner');
-    if(el) return;
-    var open=false; try{ open = localStorage.getItem(_GCORNER_KEY)==='1'; }catch(e){}
-    el=document.createElement('div'); el.id='frzGanttCorner'; el.className='frz-gcorner'+(open?' open':'');
+    if(document.getElementById('frzGanttCorner')) return;
+    var el=document.createElement('div'); el.id='frzGanttCorner'; el.className='frz-gcorner';
     var leg=_frzInlineLegendEl(); leg.removeAttribute('id'); leg.className='frz-gcorner-legend';
-    var btns=document.createElement('div'); btns.className='frz-gcorner-btns';
-    btns.innerHTML='<button type="button" class="frz-gcorner-btn" data-act="legend" aria-expanded="'+open+'">Legend</button>'
-      +'<button type="button" class="frz-gcorner-btn" data-act="today" title="Scroll the chart back to today">Today</button>';
-    el.appendChild(leg); el.appendChild(btns);
-    btns.addEventListener('click', function(e){
-      var b=e.target.closest('[data-act]'); if(!b) return;
-      if(b.dataset.act==='today'){ _call('_ganttScrollToToday'); return; }
-      var on=!el.classList.contains('open'); el.classList.toggle('open', on); b.setAttribute('aria-expanded', String(on));
-      try{ localStorage.setItem(_GCORNER_KEY, on?'1':'0'); }catch(e2){}
-    });
+    var today=document.createElement('button'); today.type='button'; today.className='frz-gcorner-btn'; today.textContent='Go to today';
+    today.title='Scroll the chart back to today';
+    today.addEventListener('click', function(){ _call('_ganttScrollToToday'); });
+    el.appendChild(leg); el.appendChild(today);
     outer.appendChild(el);
   }
 
@@ -24261,7 +24248,7 @@ if ('serviceWorker' in navigator) {
     if (view==='reports') _rptEmitURL(params);   // RPT-DRILL-1 Stage 2: report-owned r-prefixed controls (+ D4 drill dims when Stage 3 sets them)
     if ((view==='list' || view==='kanban') && _betaFlagged) params.set('flag','1');   // FN5: the Flagged toggle in the URL (shareable)
     if (view==='gantt' && _ganttSpan==='all') params.set('span','all');   // GANTT-DECLUTTER-1: absent = Now (the default)
-    if (view==='gantt' && _ganttItems==='projects') params.set('items','projects');   // GANTT-FOCUS-1: absent = Everything
+    if (view==='gantt' && _ganttItems==='all') params.set('items','all');   // GANTT-FOCUS-1: absent = Projects only (the default)
     var qs = params.toString();
     var base = '/'+view;
     if (view==='planning' && state.planTab && state.planTab!=='plan') base = '/planning/'+state.planTab;  // planning sub-tab is URL state
@@ -24319,7 +24306,7 @@ if ('serviceWorker' in navigator) {
     if (view==='reports') _rptSeedURL(qp);   // RPT-DRILL-1 Stage 2: seed report-local controls (+ D4 dims) from the URL; absent -> defaults
     if (view==='list' || view==='kanban') _betaFlagged = (qp.get('flag')==='1');   // FN5: seed the Flagged toggle from the URL (absent -> off)
     if (view==='gantt') _ganttSpan = (qp.get('span')==='all') ? 'all' : 'now';      // GANTT-DECLUTTER-1: seed Now/All from the URL (absent -> Now)
-    if (view==='gantt') _ganttItems = (qp.get('items')==='projects') ? 'projects' : 'all';   // GANTT-FOCUS-1: seed Everything/Projects only
+    if (view==='gantt') _ganttItems = (qp.get('items')==='all') ? 'all' : 'projects';   // GANTT-FOCUS-1: seed Projects only (default) / Everything
     if (view==='list' && typeof _listState!=='undefined') _listState.sort = qp.get('sort') || '';   // ADOPT-1: seed the List sort from the URL (round-trip); absent -> default (empty = server updated_ts:desc)
   }
 
