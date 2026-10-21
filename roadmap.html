@@ -577,6 +577,17 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .wk-row { display: flex; height: 22px; background: var(--bg); }
   .wk-col { flex: 1; text-align: center; line-height: 22px; font-size: 10px; color: var(--muted); border-right: 1px solid rgba(200,200,220,0.5); }
   .wk-col.ms { border-right: 1px solid var(--border); }
+  /* GANTT-SPRINTS-1: Sprints band (sticky with the header) + active-sprint tint */
+  .sp-row { position: relative; height: 18px; border-top: 1px solid var(--border); background: var(--bg); flex-shrink: 0; }
+  .sp-block { position: absolute; top: 2px; height: 14px; padding: 0 6px; box-sizing: border-box; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    font: 700 10px/12px 'Lato', sans-serif; text-align: left; border-radius: 4px; cursor: pointer; border: 1px solid var(--border);
+    background: var(--surface2); color: var(--muted); }
+  .sp-block.sp-active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .sp-block.sp-planned { background: transparent; border-style: dashed; color: var(--text); }
+  .sp-block.sp-completed { opacity: .75; }
+  .sp-block:hover { filter: brightness(0.96); }
+  .sp-block:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .sp-shade { position: absolute; bottom: 0; background: var(--accent); opacity: .05; pointer-events: none; z-index: 1; }
   .chart-row { height: var(--row-h); position: relative; border-bottom: 1px solid var(--row-sep); display: flex; transition: background 0.1s; }
   .chart-row:hover { background: rgba(0,89,169,0.03); }
   .chart-row.grp { background: var(--surface); border-bottom: 1px solid var(--border); }
@@ -4361,6 +4372,20 @@ const collapsedParents = {}; // parentId → true means children hidden
 // at render time: the shell hides/re-parents the chart when switching views and a hidden scroller's
 // scrollLeft resets to 0, so reading it would "keep" the start of the timeline.
 let _ganttLastWkPx = 0, _ganttKeep = null;   // _ganttKeep = {weeks, top} | null (null -> centre on today)
+// GANTT-SPRINTS-1: a Sprints band under the week numbers (sticky with the header) + a light tint over the
+// active sprint down the whole chart; a sprint block opens that sprint on Kanban. Sprints come from the Flow
+// shell (window._frzGetSprints), so the classic UI shows none. Per-user on/off (the Gantt "Sprints" button).
+let _ganttShowSprints = (() => { try { return localStorage.getItem('frazil_gantt_sprints') !== '0'; } catch(e){ return true; } })();
+function _ganttToggleSprints(){
+  _ganttShowSprints = !_ganttShowSprints;
+  try { localStorage.setItem('frazil_gantt_sprints', _ganttShowSprints ? '1' : '0'); } catch(e){}
+  render();
+}
+function _ganttSprints(){   // dated, non-discarded sprints in start order
+  const all = (typeof window._frzGetSprints === 'function' ? window._frzGetSprints() : null) || [];
+  return all.filter(s => s && s.startDate && s.endDate && s.state !== 'Discarded')
+    .sort((a, b) => String(a.startDate).localeCompare(String(b.startDate)));
+}
 function _ganttScrollToToday(){ _ganttKeep = null; render(); }
 // GANTT-DECLUTTER-1: an unset entry means the DEFAULT - a top-level parent starts expanded, a mid-tier
 // parent (itself a child, e.g. an Epic under a Roadmap Item) starts collapsed. An explicit toggle wins.
@@ -5186,7 +5211,12 @@ function render(){
 
   // ── LEFT PANEL HTML ──
   // Header stays fixed (outside transform), rows slide with chart scroll
-  let lHdr = `<div class="left-hdr"><span class="col-lbl proj">Item</span><span class="col-lbl pri"></span><span class="col-lbl stat">Status</span><span class="col-lbl sched">Schedule</span></div>`;
+  // GANTT-SPRINTS-1: the header grows by the Sprints band (18px) when it shows; both headers and the connector
+  // maths use HDR_H so the rows stay aligned.
+  const _sprintList = _ganttShowSprints ? _ganttSprints() : [];
+  const _sprintRow = _sprintList.length > 0;
+  const HDR_H = 50 + (_sprintRow ? 18 : 0);
+  let lHdr = `<div class="left-hdr" style="height:${HDR_H}px"><span class="col-lbl proj">Item</span><span class="col-lbl pri"></span><span class="col-lbl stat">Status</span><span class="col-lbl sched">Schedule</span></div>`;
   let lRows = ``; // just the rows, no header
 
   // ── CHART PANEL HTML ──
@@ -5197,7 +5227,19 @@ function render(){
   cH += `</div><div class="wk-row">`;
   let lastMo=-1;
   weeks.forEach(w=>{ const mo=w.getMonth(); cH+=`<div class="wk-col${mo!==lastMo?' ms':''}" style="width:${wkPx}px;flex:none">${w.getDate()}</div>`; lastMo=mo; });
-  cH += `</div></div>`;
+  cH += `</div>`;
+  if(_sprintRow){   // GANTT-SPRINTS-1: one block per sprint; the end date is inclusive (a Mon-Fri sprint spans 2 weeks)
+    cH += `<div class="sp-row" style="width:${totalPx}px">`;
+    _sprintList.forEach(sp => {
+      const s = parseD(String(sp.startDate).slice(0,10)), e = parseD(String(sp.endDate).slice(0,10));
+      if(!s || !e) return;
+      const st = String(sp.state || 'Planned').toLowerCase();
+      const tip = `${sp.name || 'Sprint'} · ${fmtD(s)} - ${fmtD(e)} · ${sp.state || 'Planned'}${typeof window._frzOpenSprint === 'function' ? ' · click to open on Kanban' : ''}`;
+      cH += `<button type="button" class="sp-block sp-${escA(st)}" data-sprint="${escA(String(sp.id))}" title="${escA(tip)}" style="left:${px(s).toFixed(1)}px;width:${Math.max(4, pxW(s, addDays(e, 1))).toFixed(1)}px">${esc(sp.name || 'Sprint')}</button>`;
+    });
+    cH += `</div>`;
+  }
+  cH += `</div>`;
 
   // Track row positions for connector drawing: { projectId → rowIndex }
   const rowPositions = {};  // projectId → { rowIndex, startPx, endPx (testEnd or barEnd) }
@@ -5315,7 +5357,7 @@ function render(){
             _bar = `<span class="rollup-noschedule" title="No schedule - children have no dates yet">no schedule</span>`;   // Decision 4: deliberate marker, not an empty lane
           }
           cH += `<div class="chart-row rollup-row" style="width:${totalPx}px">${wCells}<div class="bar-layer">${_bar}</div></div>`;
-          rowPositions[p.id] = { rowIndex, midY: 50 + rowIndex*38 + 19, startPx: _ds?px(_ds):null, endPx: _dd?px(_dd):null };
+          rowPositions[p.id] = { rowIndex, midY: HDR_H + rowIndex*38 + 19, startPx: _ds?px(_ds):null, endPx: _dd?px(_dd):null };
           rowIndex++;
           return;
         }
@@ -5449,7 +5491,7 @@ function render(){
 
         // Track row position for connector drawing
         // headerRows (chart-hdr) = 2 rows tall (50px); each data row = --row-h
-        const HEADER_H = 50; // matches chart-hdr height (mo-row 26 + wk-row 22 + border ~2)
+        const HEADER_H = HDR_H; // matches chart-hdr height (mo-row 26 + wk-row 22 + border ~2, + the 18px Sprints band when shown)
         const ROW_H = 38;    // matches --row-h
         rowPositions[p.id] = {
           rowIndex,
@@ -5539,10 +5581,28 @@ function render(){
     ln.style.left = px(TODAY).toFixed(1) + 'px';
     cp.appendChild(ln);
 
+    // GANTT-SPRINTS-1: tint the active sprint's dates down the whole chart (below the header), and let a
+    // sprint block open that sprint on Kanban (the shell supplies _frzOpenSprint; absent in classic/viewer).
+    if(_sprintRow){
+      const act = _sprintList.find(sp => String(sp.state) === 'Active');
+      const as = act && parseD(String(act.startDate).slice(0,10)), ae = act && parseD(String(act.endDate).slice(0,10));
+      if(as && ae){
+        const sh = document.createElement('div');
+        sh.className = 'sp-shade';
+        sh.title = `Active sprint: ${act.name || ''}`;
+        sh.style.cssText = `left:${px(as).toFixed(1)}px;width:${pxW(as, addDays(ae, 1)).toFixed(1)}px;top:${HDR_H}px`;
+        cp.appendChild(sh);
+      }
+      cp.querySelectorAll('.sp-block[data-sprint]').forEach(b => b.addEventListener('click', e => {
+        e.stopPropagation();
+        if(typeof window._frzOpenSprint === 'function') window._frzOpenSprint(b.dataset.sprint);
+      }));
+    }
+
     // ── CONNECTOR LINES ──
     const connectors = projects.filter(p => p.requires && rowPositions[p.id] && rowPositions[p.requires]);
     if(connectors.length){
-      const HEADER_H = 50;
+      const HEADER_H = HDR_H;   // GANTT-SPRINTS-1
       const ROW_H    = 38;
       const R        = 6;
 
@@ -22580,7 +22640,7 @@ if ('serviceWorker' in navigator) {
   // are in that view's CFG.extra - so they render on the List alone. Empty-list gating is in the offer menu.
   var _XCHIP = ['priority','dept','location','resolutionType','blockedReason','reporter'];   // REPORTER-TEXT-1: +reporter (free-text, List-only via CFG.list.extra)
   var CFG = {
-    gantt:    { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['today','span','groupby','legend','capacity'] },   // GANTT-DECLUTTER-1: +span (Now/All window toggle); GANTT-KEEP-SCROLL-1: +today   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
+    gantt:    { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['today','span','sprints','groupby','legend','capacity'] },   // GANTT-DECLUTTER-1: +span (Now/All window toggle); GANTT-KEEP-SCROLL-1: +today   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
     kanban:   { chips:['owner','assignee','type','status'], extra:['sprint','priority','dept'], opts:['flagged','hideEmpty'] },   // FN5: +Flagged toggle
     list:     { chips:['owner','assignee','type','status'], extra:['priority','dept','location','resolutionType','blockedReason','reporter'], opts:['listgroup','flagged','columns','export'] },     // FN5: +Flagged; GROUPBY-2: +Group by. FIELDS-2: +location/resolutionType/blockedReason chips (List only; server-filtered; gated on non-empty list)
     planning: { chips:['owner','status'],                   extra:['type','assignee','priority','dept'], opts:['whatif'] },   // What-if (Phase 0)
@@ -23620,6 +23680,14 @@ if ('serviceWorker' in navigator) {
       .catch(function(){ _sprints = []; })
       .then(function(){ if(done) done(); });
   }
+  // GANTT-SPRINTS-1: the classic Gantt render reads sprints + opens one on Kanban through these.
+  window._frzGetSprints = function(){ return _sprints; };
+  window._frzOpenSprint = function(id){
+    if(_val('isViewer', false) || !id) return;   // viewers have no Kanban
+    var u = new URLSearchParams(_frzCarryQS(true).replace(/^\?/, ''));
+    u.delete('board'); u.set('sprint', id);
+    navigate('/kanban?' + u.toString(), false);
+  };
   function saveSprints(done, meta){
     // meta (optional) = {reason, detail} -> attributable audit for edit/discard.
     var body = { sprints: _sprints };
@@ -23973,13 +24041,15 @@ if ('serviceWorker' in navigator) {
       hideEmpty:'Hide empty columns', columns:'Columns', export:'Export', newSession:'New session', history:'History',
       flagged:'Flagged',   // FN5: show only items with an unresolved flag (At Risk / Blocked / Needs Decision). NOT the SLA at-risk state.
       listgroup:'Group by',  // GROUPBY-2: List grouping (its own control; independent of the Gantt 'groupby')
-      today:'Today'          // GANTT-KEEP-SCROLL-1: scroll the Gantt back to today (it no longer jumps there on every render)
+      today:'Today',         // GANTT-KEEP-SCROLL-1: scroll the Gantt back to today (it no longer jumps there on every render)
+      sprints:'Sprints'      // GANTT-SPRINTS-1: show/hide the Sprints band (only offered when the Org has sprints)
     };
     var label = map[o]||o;
+    if (o==='sprints' && !(_sprints||[]).some(function(s){ return s && s.startDate && s.endDate && s.state!=='Discarded'; })) return '';   // GANTT-SPRINTS-1: no sprints, no button
     if (o==='groupby'){ var gb=document.getElementById('groupBy'); var cur=gb?(gb.options[gb.selectedIndex]||{}).text:'Team'; label='Group by: '+(cur||'Team'); }
     if (o==='listgroup'){ var lg=_call('_listGetGroup')||''; label='Group by'+(lg?': '+(_FRZ_GROUP_LABELS[lg]||lg):''); }
     if (o==='span') label = 'Showing: '+(_ganttSpan==='all' ? 'All' : 'Now');   // GANTT-DECLUTTER-1
-    var activeStyle = (o==='hideEmpty' && _betaHideEmpty) || (o==='flagged' && _betaFlagged) || (o==='whatif' && _val('_scenarioActive',false)) || (o==='listgroup' && _call('_listGetGroup'))
+    var activeStyle = (o==='hideEmpty' && _betaHideEmpty) || (o==='flagged' && _betaFlagged) || (o==='whatif' && _val('_scenarioActive',false)) || (o==='listgroup' && _call('_listGetGroup')) || (o==='sprints' && _val('_ganttShowSprints', true))
       ? ' style="border-color:var(--frz-accent);color:var(--frz-accent);background:var(--frz-accent-soft)"' : '';
     // Phase 1c: decision-tree glyph + explanatory tooltip on the Scenario button only.
     var titleAttr = (o==='whatif') ? ' title="Model plan changes without saving - see who\'s over-committed, then commit or discard."'
@@ -28783,6 +28853,7 @@ if ('serviceWorker' in navigator) {
     if (o==='capacity') { _call('toggleCapacityView'); return; }
     if (o==='span') { _frzSetGanttSpan(_ganttSpan==='all' ? 'now' : 'all'); return; }   // GANTT-DECLUTTER-1
     if (o==='today') { _call('_ganttScrollToToday'); return; }                            // GANTT-KEEP-SCROLL-1
+    if (o==='sprints') { _call('_ganttToggleSprints'); renderBar(); return; }             // GANTT-SPRINTS-1
     if (o==='whatif') { _call('enterScenario'); return; }   // What-if (Phase 0); exit via the banner
     if (o==='newSession'){ _call('openMyAccount'); /* placeholder: planning entry lives in classic */ _call('showToast','Use the Planning board controls'); return; }
     if (o==='history'){ _call('openActivityCenter'); return; }
