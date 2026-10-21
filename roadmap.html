@@ -4353,6 +4353,15 @@ document.getElementById('showHiddenAdminBtn')?.addEventListener('click', ()=>{
 // ── COLLAPSE STATE ──
 const collapsed = {};
 const collapsedParents = {}; // parentId → true means children hidden
+// GANTT-KEEP-SCROLL-1: the Gantt centres on today on its FIRST visible draw only. Every later render (expand /
+// collapse a parent, filters, Now/All, resize) keeps the date at the left edge and the vertical position -
+// render() used to scroll back to today every time, so expanding children threw you back to today.
+// _ganttScrollToToday() is the explicit way back (the Gantt toolbar's "Today" button).
+// The position is recorded from the chart's own scroll events while it is VISIBLE (_ganttKeep), not read back
+// at render time: the shell hides/re-parents the chart when switching views and a hidden scroller's
+// scrollLeft resets to 0, so reading it would "keep" the start of the timeline.
+let _ganttLastWkPx = 0, _ganttKeep = null;   // _ganttKeep = {weeks, top} | null (null -> centre on today)
+function _ganttScrollToToday(){ _ganttKeep = null; render(); }
 // GANTT-DECLUTTER-1: an unset entry means the DEFAULT - a top-level parent starts expanded, a mid-tier
 // parent (itself a child, e.g. an Epic under a Roadmap Item) starts collapsed. An explicit toggle wins.
 function isParentCollapsed(id, depth){ const v = collapsedParents[id]; return v === undefined ? depth > 0 : v; }
@@ -5503,6 +5512,13 @@ function render(){
     : '';
   document.getElementById('leftPanel').innerHTML =
     lHdr + `<div class="left-rows-clip"><div class="left-inner">${lRows || emptyRow}</div></div>`;
+  // GANTT-KEEP-SCROLL-1: refresh the remembered position from the live chart before its content is replaced -
+  // only while it is visible, and never from a 0 (a hidden or re-parented scroller resets to 0; nobody parks the
+  // chart on its first week, a year back). The scroll listener below covers renders that happen while hidden.
+  const _cw0 = document.getElementById('chartWrap');
+  if(_ganttKeep && _cw0 && _cw0.clientWidth > 0 && _cw0.scrollLeft > 0 && _ganttLastWkPx){
+    _ganttKeep = { weeks: _cw0.scrollLeft / _ganttLastWkPx, top: _cw0.scrollTop };
+  }
   document.getElementById('chartWrap').innerHTML = cH;
 
   // Today line
@@ -5723,11 +5739,28 @@ function render(){
     pl.addEventListener('click', e=>{ e.stopPropagation(); openProjectModal(+pl.dataset.id); });
   });
 
-  // Scroll so today is ~20% from left of visible chart area
+  // GANTT-KEEP-SCROLL-1: restore the remembered position (as a DATE offset, so a resize that changes the week
+  // width lands on the same dates); with nothing remembered yet (first visible draw, or the Today button),
+  // centre on today ~20% from the left. Positions are only recorded while the chart is visible.
   if(chartWrap){
-    const todayPx = px(TODAY);
-    const visibleW = chartWrap.clientWidth;
-    chartWrap.scrollLeft = Math.max(0, todayPx - visibleW * 0.2);
+    _ganttLastWkPx = wkPx;
+    if(!chartWrap._frzKeepScrollBound){
+      chartWrap._frzKeepScrollBound = true;
+      chartWrap.addEventListener('scroll', () => {
+        if(chartWrap.clientWidth > 0 && chartWrap.scrollLeft > 0 && _ganttLastWkPx) _ganttKeep = { weeks: chartWrap.scrollLeft / _ganttLastWkPx, top: chartWrap.scrollTop };
+      }, { passive: true });
+    }
+    if(chartWrap.clientWidth > 0){
+      const keep = _ganttKeep;
+      if(keep){
+        chartWrap.scrollLeft = keep.weeks * wkPx;
+        chartWrap.scrollTop = keep.top;
+      } else {
+        chartWrap.scrollLeft = Math.max(0, px(TODAY) - chartWrap.clientWidth * 0.2);
+      }
+      _ganttKeep = { weeks: chartWrap.scrollLeft / wkPx, top: chartWrap.scrollTop };
+      syncLeftScroll();
+    }
   }
 }
 
@@ -22526,7 +22559,7 @@ if ('serviceWorker' in navigator) {
   // are in that view's CFG.extra - so they render on the List alone. Empty-list gating is in the offer menu.
   var _XCHIP = ['priority','dept','location','resolutionType','blockedReason','reporter'];   // REPORTER-TEXT-1: +reporter (free-text, List-only via CFG.list.extra)
   var CFG = {
-    gantt:    { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['span','groupby','legend','capacity'] },   // GANTT-DECLUTTER-1: +span (Now/All window toggle)   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
+    gantt:    { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['today','span','groupby','legend','capacity'] },   // GANTT-DECLUTTER-1: +span (Now/All window toggle); GANTT-KEEP-SCROLL-1: +today   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
     kanban:   { chips:['owner','assignee','type','status'], extra:['sprint','priority','dept'], opts:['flagged','hideEmpty'] },   // FN5: +Flagged toggle
     list:     { chips:['owner','assignee','type','status'], extra:['priority','dept','location','resolutionType','blockedReason','reporter'], opts:['listgroup','flagged','columns','export'] },     // FN5: +Flagged; GROUPBY-2: +Group by. FIELDS-2: +location/resolutionType/blockedReason chips (List only; server-filtered; gated on non-empty list)
     planning: { chips:['owner','status'],                   extra:['type','assignee','priority','dept'], opts:['whatif'] },   // What-if (Phase 0)
@@ -23918,7 +23951,8 @@ if ('serviceWorker' in navigator) {
       groupby:'Group by', legend:'Legend', capacity:'Capacity', whatif:'Scenario',   // Phase 1c: renamed display "What-if" -> "Scenario" (opt id stays 'whatif')
       hideEmpty:'Hide empty columns', columns:'Columns', export:'Export', newSession:'New session', history:'History',
       flagged:'Flagged',   // FN5: show only items with an unresolved flag (At Risk / Blocked / Needs Decision). NOT the SLA at-risk state.
-      listgroup:'Group by'   // GROUPBY-2: List grouping (its own control; independent of the Gantt 'groupby')
+      listgroup:'Group by',  // GROUPBY-2: List grouping (its own control; independent of the Gantt 'groupby')
+      today:'Today'          // GANTT-KEEP-SCROLL-1: scroll the Gantt back to today (it no longer jumps there on every render)
     };
     var label = map[o]||o;
     if (o==='groupby'){ var gb=document.getElementById('groupBy'); var cur=gb?(gb.options[gb.selectedIndex]||{}).text:'Team'; label='Group by: '+(cur||'Team'); }
@@ -28727,6 +28761,7 @@ if ('serviceWorker' in navigator) {
     if (o==='legend') return legendPop(anchor);
     if (o==='capacity') { _call('toggleCapacityView'); return; }
     if (o==='span') { _frzSetGanttSpan(_ganttSpan==='all' ? 'now' : 'all'); return; }   // GANTT-DECLUTTER-1
+    if (o==='today') { _call('_ganttScrollToToday'); return; }                            // GANTT-KEEP-SCROLL-1
     if (o==='whatif') { _call('enterScenario'); return; }   // What-if (Phase 0); exit via the banner
     if (o==='newSession'){ _call('openMyAccount'); /* placeholder: planning entry lives in classic */ _call('showToast','Use the Planning board controls'); return; }
     if (o==='history'){ _call('openActivityCenter'); return; }
