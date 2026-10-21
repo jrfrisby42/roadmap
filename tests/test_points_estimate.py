@@ -127,6 +127,31 @@ def test_per_item_sync_honours_the_pull_overlay_status(client, admin_headers, mo
     assert _jira(client, admin_headers, monkeypatch, "Code Review")["status"] == "In Progress"   # FRZ-1094
 
 
+def test_status_recorded_while_unmapped_is_picked_up_once_it_maps(client, admin_headers, monkeypatch):
+    # FRZ-1094: "Code Review" was recorded as the last-known Jira status while it had no mapping, so the
+    # "unchanged" short-circuit skipped it forever. It must advance once the status maps forward.
+    h = admin_headers; _setup(client, h)
+    monkeypatch.setattr(server, "jira_configured", lambda: True)
+    monkeypatch.setattr(server, "_fetch_jira_feature_flags", lambda t: set())
+    monkeypatch.setattr(server, "_jira_req", lambda m, path, *a, **k: {"fields": {
+        "status": {"name": "Code Review"}, "summary": "S", "issuetype": {"name": "Story"}, "project": {"key": "FRAZ", "name": "P"}}})
+    client.put("/api/config/statuses", json=["Planned", "Approved", "In Progress", "Released"], headers=h)
+    client.put("/api/config/jiraStatusMapping", json={"Approved": "To Do", "In Progress": "In Dev"}, headers=h)
+    client.put("/api/config/jiraPullStatusMap", json={"Code Review": "In Progress"}, headers=h)
+    pid = _mk(client, h, status="Approved", jiraTickets=["FRAZ-1"], testWeeks=0, dueWeeks=4,
+              jiraLastKnownStatus={"FRAZ-1": "Code Review"})
+    client.post(f"/api/jira/pull/{pid}", json={}, headers=h)
+    assert _get(client, h, pid)["status"] == "In Progress"
+    r = client.post(f"/api/jira/pull/{pid}", json={}, headers=h).json()
+    assert r["changed"] is False                                   # then idempotent
+
+
+def test_unchanged_status_mapping_backwards_is_still_skipped(client, admin_headers, monkeypatch):
+    h = admin_headers; _setup(client, h)
+    p = _jira(client, h, monkeypatch, "To Do")                       # maps to Approved = its current status
+    assert p["status"] == "Approved"
+
+
 def test_per_item_sync_points_set_the_estimate(client, admin_headers, monkeypatch):
     _setup(client, admin_headers)
     p = _jira(client, admin_headers, monkeypatch, "To Do", customfield_10014=5)
