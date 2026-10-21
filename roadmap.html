@@ -5300,7 +5300,17 @@ function render(){
             const _pct = Math.round((_ru.progress || 0) * 100);
             const _ptip = _ru.total ? `${_ru.done} of ${_ru.total} finished (${_pct}%)` : 'no child work yet';
             _bar = `<div class="bar derived${_pct>0?' derived-prog':''}${_pct>=100?' derived-done':''}" data-id="${p.id}" title="Summary of children: ${_ptip}" style="left:${px(_ds).toFixed(1)}px;width:${pxW(_ds,_dd).toFixed(1)}px">${_pct>0?`<div class="derived-fill" style="width:${_pct}%"></div>`:''}</div>`;
-            if(_ru.release){ const _rl=parseD(_ru.release); if(_rl) _bar += `<div class="plane-marker" data-id="${p.id}" title="All children released: ${fmtD(_rl)}" style="left:${px(_rl).toFixed(1)}px">${PLANE_SVG}</div>`; }
+            // ROLLUP-OVERRUN-1: a release later than the children's span gets the same hatched overrun segment a
+            // normal item draws (UI-TRIO-1 P3), so the release marker attaches to the bar instead of floating
+            // past it (FRZ-951: children Sep 8 - Oct 2, last release Oct 13). Display only, nothing is written.
+            // Release = every child released (_ru.release), else the parent's own stored releaseDate (ROLLUP-SYNC-1).
+            const _rl = parseD(_ru.release || p.releaseDate);
+            if(_rl){
+              if(px(_dd) < px(_rl)){
+                _bar += `<div class="bar overrun" data-id="${p.id}" title="Released ${fmtD(_rl)} - after the children's scheduled end (${fmtD(_dd)})" style="left:${px(_dd).toFixed(1)}px;width:${pxW(_dd,_rl).toFixed(1)}px"></div>`;
+              }
+              _bar += `<div class="plane-marker" data-id="${p.id}" title="Released: ${fmtD(_rl)}" style="left:${px(_rl).toFixed(1)}px">${PLANE_SVG}</div>`;
+            }
           } else {
             _bar = `<span class="rollup-noschedule" title="No schedule - children have no dates yet">no schedule</span>`;   // Decision 4: deliberate marker, not an empty lane
           }
