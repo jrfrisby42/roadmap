@@ -1832,7 +1832,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.62.15"
+APP_VERSION = "6.62.16"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -10377,6 +10377,29 @@ def get_jira_issue(key: str, auth: dict = Depends(require_auth)):
     }
 
 # ── Create Jira issue from roadmap item ───────────────────────────────────────
+# JIRA-REPORTER-1: email -> Jira accountId, cached per process ('' = no account found). Best-effort: a
+# failed lookup returns '' and the issue is created without a reporter, exactly as before.
+_JIRA_ACCOUNT_CACHE: dict = {}
+
+def _jira_account_id(email: str) -> str:
+    email = (email or "").strip().lower()
+    if not email or "@" not in email:
+        return ""
+    if email in _JIRA_ACCOUNT_CACHE:
+        return _JIRA_ACCOUNT_CACHE[email]
+    acct = ""
+    try:
+        res = _jira_req("GET", "/rest/api/3/user/search?query=" + _urlq(email, safe="")) or []
+        people = [u for u in res if isinstance(u, dict) and u.get("accountType") in (None, "atlassian")]
+        exact = [u for u in people if (u.get("emailAddress") or "").lower() == email]
+        pick = exact[0] if exact else (people[0] if len(people) == 1 else None)   # email hidden by privacy -> trust a sole match
+        acct = (pick or {}).get("accountId") or ""
+    except Exception as e:
+        log.warning(f"[Jira] account lookup for {email} failed: {e}")
+        return ""                                            # not cached - try again next time
+    _JIRA_ACCOUNT_CACHE[email] = acct
+    return acct
+
 @app.post("/api/jira/create-issue")
 def create_jira_issue(body: dict = Body(...),
                       auth: dict = Depends(require_role("admin", "editor"))):
@@ -10393,8 +10416,32 @@ def create_jira_issue(body: dict = Body(...),
 
     if not project_key: raise HTTPException(400, "project_key required")
 
-    # Build Atlassian Document Format description
-    adf_content = [{"type":"paragraph","content":[{"type":"text","text":description or item_name}]}]
+    # JIRA-REPORTER-1: who the issue is for. The launcher is the signed-in user (never the body's
+    # username, which a client could set). The requester is the item's own reporter - a portal email,
+    # or the Flow user who created the item - when it is someone other than the launcher.
+    launcher = auth["username"]
+    item = {}
+    if item_id:
+        try:
+            with db(team) as c:
+                row = c.execute("SELECT data FROM projects WHERE id=?", (item_id,)).fetchone()
+            item = json.loads(row["data"]) if row else {}
+        except Exception:
+            item = {}
+    req_email = (item.get("reporterEmail") or "").strip()
+    req_user = (item.get("reporter") or "").strip()
+    is_flow_user = bool(req_user) and any(u.get("username") == req_user for u in (_cfg_val(team, "users", []) or []))
+    if is_flow_user and not req_email:
+        req_email = _user_email(team, req_user)              # a Flow-created item's reporter is a username
+    req_name = (_user_display(team, req_user) if is_flow_user else req_user) or req_email
+    launcher_name = _user_display(team, launcher)
+    lines = [f"Created from Flow by {launcher_name}"]
+    if req_name and req_user != launcher:
+        lines.append(f"Requested by {req_name}" + (f" ({req_email})" if req_email and req_email != req_name else ""))
+
+    # Build Atlassian Document Format description (the Flow attribution first, then the item text)
+    adf_content = [{"type":"paragraph","content":[{"type":"text","text":"\n".join(lines)}]},
+                   {"type":"paragraph","content":[{"type":"text","text":description or item_name}]}]
 
     payload = {
         "fields": {
@@ -10404,7 +10451,20 @@ def create_jira_issue(body: dict = Body(...),
             "description": {"type":"doc","version":1,"content":adf_content}
         }
     }
-    result = _jira_req("POST", "/rest/api/3/issue", payload)
+    # Reporter: the requester's Jira account if they have one, else the launcher's, else none (Jira then
+    # records the integration account, as before). Looked up by email.
+    reporter_id = (_jira_account_id(req_email) if req_email else "") or _jira_account_id(_user_email(team, launcher))
+    if reporter_id:
+        payload["fields"]["reporter"] = {"id": reporter_id}
+    try:
+        result = _jira_req("POST", "/rest/api/3/issue", payload)
+    except HTTPException as e:
+        # A project that does not allow setting the reporter must never block creation: retry without it.
+        if not reporter_id or e.status_code != 400 or "reporter" not in str(e.detail).lower():
+            raise
+        log.warning(f"[Jira] reporter not accepted for {project_key}, creating without it: {e.detail}")
+        payload["fields"].pop("reporter", None)
+        result = _jira_req("POST", "/rest/api/3/issue", payload)
     new_key = result.get("key","")
     if not new_key: raise HTTPException(500, "Jira did not return an issue key")
 
