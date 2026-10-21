@@ -2867,7 +2867,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.62.11';
+const APP_VERSION = '6.62.12';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -5296,7 +5296,11 @@ function render(){
       const _grpLbl = (groupBy==='status')   ? _groupBadge('status', g.label)
                     : (groupBy==='priority') ? _groupBadge('priority', g._priorityVal)
                     : esc(g.label);
-      lRows += `<div class="left-row grp" data-group="${escA(g.label)}"><span class="grp-lbl" title="${escA(g.label)}">${_grpLbl}</span>${grpLabelExtra}<span class="grp-cnt">${g.items.length}</span><span class="grp-tog">${_caretSvg(coll)}</span></div>`;   /* COUNTER-ALIGN-1: title = full group label (hover recovery when truncated) */
+      // GANTT-FOCUS-3: in "Projects only" the count is the group's projects (its top-level rows), not every
+      // item tucked inside them - otherwise "Team A 12" sits over 3 rows. Everything mode keeps the full count.
+      const _grpIds = _projOnly ? new Set(g.items.map(x => x.id)) : null;
+      const _grpCnt = _projOnly ? g.items.filter(x => !x.parent || !_grpIds.has(x.parent)).length : g.items.length;
+      lRows += `<div class="left-row grp" data-group="${escA(g.label)}"><span class="grp-lbl" title="${escA(g.label)}">${_grpLbl}</span>${grpLabelExtra}<span class="grp-cnt">${_grpCnt}</span><span class="grp-tog">${_caretSvg(coll)}</span></div>`;   /* COUNTER-ALIGN-1: title = full group label (hover recovery when truncated) */
       cH += `<div class="chart-row grp" style="width:${totalPx}px;overflow:hidden">${wCells}${grpChartExtra}</div>`;
       rowIndex++;
     }
@@ -21333,10 +21337,10 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-gleg-item { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; color:var(--frz-text-secondary); white-space:nowrap; }
   /* GANTT-FOCUS-1: Legend + Today cluster, bottom-right of the chart (clear of the horizontal scrollbar) */
   .frz-beta .frz-content > .gantt-outer { position:relative; }
-  .frz-beta .frz-gcorner { position:absolute; right:22px; bottom:22px; z-index:30; display:flex; align-items:center; gap:14px; max-width:calc(100% - 44px); padding:6px 6px 6px 14px; background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,0.10); }
+  .frz-beta .frz-gcorner { position:absolute; right:22px; bottom:22px; z-index:30; display:flex; align-items:center; gap:14px; max-width:calc(100% - 44px); padding:8px 14px; background:var(--frz-bg-surface); border:1px solid var(--frz-border); border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,0.10); }
   .frz-beta .frz-gcorner-legend { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
-  .frz-beta .frz-gcorner-btn { font:inherit; font-size:12px; font-weight:600; padding:4px 10px; border-radius:6px; cursor:pointer; color:var(--frz-text-secondary); background:var(--frz-bg-surface); border:1px solid var(--frz-border); }
-  .frz-beta .frz-gcorner-btn:hover { color:var(--frz-accent); border-color:var(--frz-accent); }
+  .frz-beta .frz-gleg-today { cursor:pointer; padding:3px 7px; margin:-3px -7px; border-radius:6px; }
+  .frz-beta .frz-gleg-today:hover, .frz-beta .frz-gleg-today:focus-visible { background:var(--frz-accent-soft); outline:none; }
   /* RAIL-COLLAPSED-1 Part 1: the segmented top view control (.frz-topview / .frz-tv-seg) is removed -
      the collapsed rail already carries all eight view icons, so it was a redundant second switcher. */
 
@@ -24145,10 +24149,16 @@ if ('serviceWorker' in navigator) {
     if(document.getElementById('frzGanttCorner')) return;
     var el=document.createElement('div'); el.id='frzGanttCorner'; el.className='frz-gcorner';
     var leg=_frzInlineLegendEl(); leg.removeAttribute('id'); leg.className='frz-gcorner-legend';
-    var today=document.createElement('button'); today.type='button'; today.className='frz-gcorner-btn'; today.textContent='Go to today';
-    today.title='Scroll the chart back to today';
-    today.addEventListener('click', function(){ _call('_ganttScrollToToday'); });
-    el.appendChild(leg); el.appendChild(today);
+    // The legend's own Today entry is the way back to today (no separate button).
+    var cells=leg.querySelectorAll('.frz-gleg-item'), today=cells[cells.length-1];
+    if(today){
+      today.classList.add('frz-gleg-today'); today.setAttribute('role','button'); today.tabIndex=0;
+      today.title='Scroll the chart back to today';
+      var go=function(){ _call('_ganttScrollToToday'); };
+      today.addEventListener('click', go);
+      today.addEventListener('keydown', function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); go(); } });
+    }
+    el.appendChild(leg);
     outer.appendChild(el);
   }
 
