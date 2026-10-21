@@ -81,7 +81,13 @@ def test_defectB_rules_unchanged_over_deeper_set():
 
 # ── invariants: own-dated still wins; no write path; capacity unchanged ───────────
 def test_own_dated_still_untouched():
-    assert "if(p.start && p.due) return null;" in _fn_body("_computeRollup")
+    # GANTT-TEAM-SLICES-1: the whole-item roll-up (team == null) still leaves an own-dated parent alone;
+    # only a per-team slice (Projects only, grouped by Team) derives one, and only outside its owning team.
+    b = _fn_body("_computeRollup")
+    assert "if(p.start && p.due && team == null) return null;" in b
+    o = _fn_body("_rollupOf")
+    assert "if(_rollTeam == null) return _rollupAll(p);" in o
+    assert "if(p.start && p.due && _effTeam(p) === _rollTeam) return null;" in o
 
 
 def test_no_write_path_after_recursion():
