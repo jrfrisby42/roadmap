@@ -14679,7 +14679,17 @@ async function acStartNow(id){
   if(!active){ showToast('No active status is configured.', 'error'); return; }
   if(!p.dev){ showToast('Assign a Team before starting it.', 'error'); inlineChangeOwner(id); return; }
   const prev = p.status; p.status = active;
-  await _acSaveItem(p, `Status ${prev} -> ${active} by ${getUsername()} via Activity Center (Start now)`, {status: prev}, {status: active});
+  // START-ON-ACTIVE-1: same rule as the item modal and the Jira sync - a missing start becomes today (a weekend
+  // rolls to Monday), and a missing due is filled from the estimate. Parents (dates from children) are skipped.
+  const isParent = projects.some(x => x.parent == p.id) && !p.due;
+  let startNote = '';
+  if(!p.start && !isParent){
+    const today = new Date(); today.setHours(0,0,0,0);
+    p.start = nextMonday(today).toISOString().slice(0,10);
+    if(!p.due && +p.dueWeeks > 0) p.due = computeItemDue(p);
+    startNote = `, start ${p.start}`;
+  }
+  await _acSaveItem(p, `Status ${prev} -> ${active}${startNote} by ${getUsername()} via Activity Center (Start now)`, {status: prev}, {status: active});
   await resolveActivity(id, `Started (${active})`);
   render();
 }

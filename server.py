@@ -4587,6 +4587,26 @@ def _compute_item_due(p) -> str:
     due += timedelta(days={5: 2, 6: 1}.get(due.weekday(), 0))   # Sat -> Mon, Sun -> Mon (client nextMonday)
     return due.date().isoformat()
 
+# ── START-ON-ACTIVE-1: a Jira move into an active status stamps a missing start date ───────────────────
+# The item modal has always stamped start = today when an item becomes active with no start; the Jira
+# syncs only changed the status, so work started in Jira with no Start date landed on the Gantt with no bar.
+# Same rule here: only when the item has NO start, the day Flow observes it (a weekend rolls to Monday, as
+# the modal's nextMonday does); a missing due is filled from the estimate (an existing due never moves).
+# Parents whose dates come from their children (has children, no own due) are skipped.
+def _flow_today_iso() -> str:
+    d = datetime.now(_MT_ZONE).date()
+    return (d + timedelta(days={5: 2, 6: 1}.get(d.weekday(), 0))).isoformat()
+
+def _stamp_start_on_activate(p: dict, active_map: dict, is_parent: bool) -> bool:
+    if p.get("start") or not (active_map or {}).get(p.get("status") or ""):
+        return False
+    if is_parent and not p.get("due"):
+        return False                                     # a roll-up parent: its bar comes from its children
+    p["start"] = _flow_today_iso()
+    if not p.get("due") and p.get("dueWeeks") not in (None, "", 0):
+        p["due"] = _compute_item_due(p) or ""
+    return True
+
 def _apply_points_estimate(p: dict, cfg, terminal_map: dict) -> bool:
     """Set dueWeeks (and due, from start) from the points table. True when anything changed."""
     st = p.get("status") or ""
@@ -10709,6 +10729,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
     terminal_map = cfg("statusIsTerminal")   # JIRA-COMPLETED-1: read before the write txn below
     released_map = cfg("statusIsReleased")   # JIRA-RELDATE-2: a sync INTO a released status stamps releaseDate
     points_cfg   = cfg("pointsEstimate")     # POINTS-ESTIMATE-1
+    active_map   = cfg("statusIsActive")     # START-ON-ACTIVE-1
 
     def status_rank(s):
         return _status_rank(s, all_statuses)   # extracted to a shared module helper (identical behavior)
@@ -10890,6 +10911,10 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
                           datetime.now(_MT_ZONE).date().isoformat()
                     current["releaseDate"] = _rd
                     audit_details.append(f"Release date set to {_rd}")
+                _is_parent = bool(c.execute("SELECT 1 FROM projects WHERE json_extract(data,'$.parent') IN (?, ?) LIMIT 1",
+                                            (pid, str(pid))).fetchone())
+                if _stamp_start_on_activate(current, active_map, _is_parent):   # START-ON-ACTIVE-1
+                    audit_details.append(f"Start date set to {current['start']} (moved to an active status)")
             # JIRA-POINTS-1: story points follow Jira (the primary ticket). Jira is where the team estimates;
             # an empty Jira value never clears Flow's.
             _sp = _jira_points(fields_by_ticket.get(tickets[0]) if tickets else None)
@@ -11773,6 +11798,14 @@ def _pull_context(team):
         pods = g("developers", []); amap = g("jiraAssigneeMap", {})
         released_map = g("statusIsReleased", {})          # CLEANUP-1 Item 1: keyed on Released, NOT Terminal
         points_cfg = g("pointsEstimate", None)            # POINTS-ESTIMATE-1
+        active_cfg = g("statusIsActive", {})              # START-ON-ACTIVE-1
+        parent_ids = set()                                # START-ON-ACTIVE-1: items that have children
+        for (_pd,) in c.execute("SELECT json_extract(data,'$.parent') FROM projects"):
+            if _pd not in (None, ""):
+                try:
+                    parent_ids.add(int(_pd))
+                except (TypeError, ValueError):
+                    pass
         terminal_map = g("statusIsTerminal", {})          # JIRA-COMPLETED-1: completedAt on a refresh into a terminal status
     type_rev = {}
     for k, v in tmap.items():
@@ -11784,7 +11817,8 @@ def _pull_context(team):
     return {"type_rev": type_rev, "status_eff": status_eff, "overlay": overlay,
             "proj_rev": proj_rev, "pods": pods, "assignee_map": amap, "released": released,
             "terminal": {s: True for s, v in (terminal_map or {}).items() if v},
-            "pointsEstimate": points_cfg}
+            "pointsEstimate": points_cfg,
+            "active": {s: True for s, v in (active_cfg or {}).items() if v}, "parentIds": parent_ids}
 
 def _release_date_from_fields(f):
     """RELEASE-DATE-1: the MT-day releaseDate a Jira issue's fields imply, or None. DONE-ONLY (J.R.'s
@@ -12027,7 +12061,7 @@ def jira_pull(body: dict = Body({}), auth: dict = Depends(require_role("admin"))
 _PULL_REFRESH_FIELDS = ("status", "dev", "assignee", "start", "due", "storyPoints")   # the fields the refresh may ever write (JIRA-DATES-1: +start/due; JIRA-POINTS-1: +storyPoints)
 _PULL_REFRESH_DATES = (("start", "customfield_10025"), ("due", "duedate"))   # JIRA-DATES-1: Flow field <- Jira field
 
-def _refresh_one_pulled(current, issue, ctx, all_statuses, today=None):
+def _refresh_one_pulled(current, issue, ctx, all_statuses, today=None, pid=None):
     """Given an item's CURRENT blob and its Jira issue, apply the three refreshed fields in place and
     return {field: (old, new)} for those that actually changed (empty -> nothing to write). Rules:
       - status: forward-only via the pull-effective map (jiraStatusMapping + jiraPullStatusMap overlay);
@@ -12086,6 +12120,14 @@ def _refresh_one_pulled(current, issue, ctx, all_statuses, today=None):
             changed["dueWeeks"] = (_before[0], current.get("dueWeeks"))
             if current.get("due") != _before[1]:
                 changed["due"] = (_before[1] or "", current.get("due"))
+    # START-ON-ACTIVE-1: a refresh that moved the item INTO an active status stamps a missing start (Jira's own
+    # Start date was applied just above, so it wins whenever Jira has one).
+    if "status" in changed and not current.get("start"):
+        _d0 = current.get("due")
+        if _stamp_start_on_activate(current, ctx.get("active") or {}, pid in (ctx.get("parentIds") or set())):
+            changed["start"] = ("", current["start"])
+            if current.get("due") != _d0:
+                changed["due"] = (_d0 or "", current.get("due"))
     pod, reason = _jira_pull_pod(f.get("labels"), ctx["pods"])
     if reason == "matched":
         cur_pod = current.get("dev", "")
@@ -12167,7 +12209,7 @@ def _jira_refresh_pulled(team, actor):
                 current = json.loads(cur_row["data"])
                 if current.get("jiraSource") != _PULL_JIRA_SOURCE:
                     continue                                      # belt-and-suspenders: never touch a non-pull item
-                chg = _refresh_one_pulled(current, issue, ctx, all_statuses, today=today)
+                chg = _refresh_one_pulled(current, issue, ctx, all_statuses, today=today, pid=pid)
                 if not chg:
                     continue                                      # no change -> skip the write, never bump updated_ts
                 _save_project(c, pid, current, None)              # ts=None -> a meaningful change stamps a fresh updated_ts
