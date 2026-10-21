@@ -2867,7 +2867,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.62.13';
+const APP_VERSION = '6.62.14';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -21351,6 +21351,10 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-asg-lbl { font-size:11px; font-weight:700; color:var(--frz-text-muted); text-transform:uppercase; letter-spacing:.4px; margin:10px 0 4px; }
   .frz-beta .frz-asg-inp { width:100%; box-sizing:border-box; padding:8px 10px; border:1px solid var(--frz-border); border-radius:8px; font:inherit; font-size:14px; background:var(--frz-bg-elevated); color:var(--frz-text); }
   .frz-beta .frz-asg-row { display:flex; gap:12px; } .frz-beta .frz-asg-row > div { flex:1; }
+  .frz-beta .frz-asg-people { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; max-height:96px; overflow:auto; }
+  .frz-beta .frz-asg-people:empty { display:none; }
+  .frz-beta .frz-asg-chip { display:inline-flex; align-items:center; gap:4px; padding:2px 4px 2px 9px; border-radius:12px; font-size:12px; background:var(--frz-accent-soft); color:var(--frz-accent); }
+  .frz-beta .frz-asg-chip button { border:none; background:none; cursor:pointer; color:inherit; font-size:11px; padding:0 4px; }
   .frz-beta .frz-asg-warnings { margin-top:12px; display:flex; flex-direction:column; gap:6px; }
   .frz-beta .frz-asg-warn { font-size:12.5px; padding:8px 11px; border-radius:8px; background:rgba(232,57,74,.09); color:#c0392b; border:1px solid rgba(232,57,74,.25); }
   .frz-beta .frz-asg-warn-info { font-size:12.5px; padding:8px 11px; border-radius:8px; background:rgba(0,89,169,.07); color:var(--frz-accent); border:1px solid rgba(0,89,169,.2); }
@@ -26673,6 +26677,7 @@ if ('serviceWorker' in navigator) {
 
   // ── Assignment create/edit modal (Phase 2b) ───────────────────────────────────
   var _asgEditId = null, _asgCheckTimer = null, _asgOwnerTouched = false;
+  var _asgExtra = [];   // CAL-MULTI-1: extra people on a NEW entry (usernames); saved as one entry per person
   function _ensureAsgModal(){
     if(document.getElementById('frzAsgModal')) return;
     var bg=document.createElement('div'); bg.className='frz-modal-bg'; bg.id='frzAsgModal'; bg.hidden=true;
@@ -26684,6 +26689,13 @@ if ('serviceWorker' in navigator) {
           '<div><label class="frz-asg-lbl">User</label><select id="frzAsgUser" class="frz-asg-inp"></select></div>'+
           // TERM-3: "Team (capacity pool)" KEEPS its parenthetical - a deliberate exception (was "Owner (capacity pool)" pre-TERM-3, "Owner (Pod)" pre-TERM-1). The row above is USER (a person); this field is the capacity pool the entry draws from, so "Team" alone would be ambiguous on this one screen. Do not remove the clarifier here.
           '<div><label class="frz-asg-lbl">Team (capacity pool)</label><select id="frzAsgOwner" class="frz-asg-inp"></select></div>'+
+        '</div>'+
+        // CAL-MULTI-1: more people on a new entry (holidays, offsites). Each person gets their own entry,
+        // drawn from their own team's capacity. Hidden when editing - an existing entry is one person.
+        '<div id="frzAsgPeopleWrap">'+
+          '<label class="frz-asg-lbl">Also for</label>'+
+          '<div id="frzAsgPeople" class="frz-asg-people"></div>'+
+          '<select id="frzAsgAddPeople" class="frz-asg-inp"></select>'+
         '</div>'+
         '<div class="frz-asg-row">'+
           '<div><label class="frz-asg-lbl">Start</label><input type="date" id="frzAsgStart" class="frz-asg-inp"></div>'+
@@ -26718,6 +26730,52 @@ if ('serviceWorker' in navigator) {
     bg.querySelector('#frzAsgOwner').addEventListener('change', function(){ _asgOwnerTouched=true; _asgUpdateOwnerNote(); });
     bg.querySelector('#frzAsgSave').addEventListener('click', _asgSave);
     bg.querySelector('#frzAsgDelete').addEventListener('click', _asgDelete);
+    bg.querySelector('#frzAsgAddPeople').addEventListener('change', function(){ _asgAddPeople(this.value); this.value=''; });
+    bg.querySelector('#frzAsgPeople').addEventListener('click', function(e){
+      var x=e.target.closest('[data-rm]'); if(!x) return;
+      _asgExtra=_asgExtra.filter(function(u){ return u!==x.dataset.rm; }); _asgRenderPeople();
+    });
+    bg.querySelector('#frzAsgUser').addEventListener('change', function(){
+      var u=this.value; if(u) _asgExtra=_asgExtra.filter(function(x){ return x!==u; }); _asgRenderPeople();
+    });
+  }
+  // CAL-MULTI-1: the people picker. "Everyone" and "Everyone on <team>" add in one pick; the main User
+  // field stays the first person. With more than one person the Team field is set aside - each person's
+  // entry comes out of their own team (the server fills a blank team from the person's team).
+  function _asgAllPeople(){ return (_val('users',[])||[]).filter(function(u){ return u && u.username; }); }
+  function _asgAddPeople(v){
+    if(!v) return;
+    var main=document.getElementById('frzAsgUser').value, add=[];
+    if(v==='__all') add=_asgAllPeople().map(function(u){ return u.username; });
+    else if(v.indexOf('__team:')===0){ var tm=v.slice(7); add=_asgAllPeople().filter(function(u){ return (u.ownerFilter||'')===tm; }).map(function(u){ return u.username; }); }
+    else add=[v];
+    add.forEach(function(u){ if(u!==main && _asgExtra.indexOf(u)<0) _asgExtra.push(u); });
+    _asgRenderPeople();
+  }
+  function _asgPeople(){   // everyone this entry is for, main person first
+    var main=document.getElementById('frzAsgUser').value;
+    return (main ? [main] : []).concat(_asgExtra.filter(function(u){ return u!==main; }));
+  }
+  function _asgRenderPeople(){
+    var wrap=document.getElementById('frzAsgPeopleWrap'); if(!wrap) return;
+    wrap.hidden = !!_asgEditId;
+    var box=document.getElementById('frzAsgPeople');
+    box.innerHTML=_asgExtra.map(function(u){
+      return '<span class="frz-asg-chip">'+esc(displayName(u))+'<button type="button" data-rm="'+escA(u)+'" aria-label="Remove '+escA(displayName(u))+'">✕</button></span>';
+    }).join('');
+    var main=document.getElementById('frzAsgUser').value;
+    var teams=(_val('developers',[])||[]).filter(function(t){ return _asgAllPeople().some(function(u){ return (u.ownerFilter||'')===t; }); });
+    var left=_asgAllPeople().filter(function(u){ return u.username!==main && _asgExtra.indexOf(u.username)<0; });
+    document.getElementById('frzAsgAddPeople').innerHTML='<option value="">+ Add people</option>'+
+      (left.length ? '<option value="__all">Everyone</option>' : '')+
+      teams.map(function(t){ return '<option value="__team:'+escA(t)+'">Everyone on '+esc(t)+'</option>'; }).join('')+
+      left.map(function(u){ return '<option value="'+escA(u.username)+'">'+esc(displayName(u.username))+'</option>'; }).join('');
+    var multi=_asgPeople().length>1, own=document.getElementById('frzAsgOwner');
+    own.disabled=multi;
+    own.title = multi ? 'With more than one person, each person\'s time comes out of their own team' : '';
+    var sv=document.getElementById('frzAsgSave');
+    if(sv && !sv.disabled) sv.textContent = multi ? 'Save for '+_asgPeople().length+' people' : 'Save';
+    _asgUpdateOwnerNote();
   }
   function _asgDeriveOwner(){
     if(_asgOwnerTouched) return;   // never overwrite a manually/pre-seeded owner
@@ -26728,7 +26786,7 @@ if ('serviceWorker' in navigator) {
   }
   function _asgUpdateOwnerNote(){
     var note=document.getElementById('frzAsgOwnerNote'); if(!note) return;
-    note.hidden = !!document.getElementById('frzAsgOwner').value;   // shown only when no pool is chosen; never blocks save
+    note.hidden = !!document.getElementById('frzAsgOwner').value || _asgPeople().length>1;   // shown only when no pool is chosen; never blocks save (CAL-MULTI-1: not with several people - each uses their own team)
   }
   function _asgBody(){
     return {
@@ -26792,6 +26850,7 @@ if ('serviceWorker' in navigator) {
     _asgOwnerTouched = !!data.owner;
     _asgUpdateOwnerNote();
     var sv=document.getElementById('frzAsgSave'); sv.disabled=false; sv.textContent='Save';
+    _asgExtra=[]; _asgRenderPeople();   // CAL-MULTI-1
     _asgRenderWarnings([]);
     document.getElementById('frzAsgModal').hidden=false;
     _asgScheduleCheck();
@@ -26814,6 +26873,29 @@ if ('serviceWorker' in navigator) {
     var btn=document.getElementById('frzAsgSave');
     if(btn.disabled) return;   // Stage 1c: in-flight guard - ignore rapid repeat clicks
     btn.disabled=true; btn.textContent='Saving…';
+    var people=_asgPeople();
+    if(!_asgEditId && people.length>1){   // CAL-MULTI-1: one entry per person, each on their own team
+      var done=0, failed=[], warns=[];
+      people.reduce(function(chain, u){
+        return chain.then(function(){
+          return API.post('/api/assignments', Object.assign({}, b, {username:u, owner:''}))
+            .then(function(res){ done++; warns=warns.concat((res&&res.warnings)||[]); })
+            .catch(function(){ failed.push(u); });
+        });
+      }, Promise.resolve()).then(function(){
+        if(failed.length){   // keep only the people that failed, so Save retries just them
+          loadAssignmentData().then(function(){ if(typeof render==='function') render(); renderCalendar(); });
+          btn.disabled=false;
+          document.getElementById('frzAsgUser').value='';
+          _asgExtra=failed.slice(); _asgRenderPeople();
+          _asgRenderWarnings([{level:'blocking',message:'Saved for '+done+' of '+people.length+'. Could not save for: '+failed.map(displayName).join(', ')+'.'}]);
+          return;
+        }
+        _asgAfterWrite(warns);
+        if(typeof showToast==='function') showToast('Added for '+done+' people', 'success');
+      });
+      return;
+    }
     var p = _asgEditId ? API.put('/api/assignments/'+_asgEditId, b) : API.post('/api/assignments', b);
     p.then(function(res){ _asgAfterWrite((res&&res.warnings)||[]); })   // closes + re-renders the calendar in place
      .catch(function(err){ btn.disabled=false; btn.textContent='Save'; _asgRenderWarnings([{level:'blocking',message:(err&&err.message)||'Save failed'}]); });
