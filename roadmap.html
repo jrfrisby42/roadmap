@@ -2736,6 +2736,17 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         </div>
       </div>
 
+      <!-- GANTT-FOCUS-1: which item types count as projects (Gantt "Focus: Projects only") -->
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
+        <div style="padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px">
+          Project types
+        </div>
+        <div style="padding:14px;display:flex;flex-direction:column;gap:10px">
+          <div style="font-size:11px;color:var(--muted)">The Gantt's "Focus: Projects only" shows items of these types, one row each, with their work tucked underneath. Everything else is left out of that focus.</div>
+          <div id="tsProjectTypes" style="display:flex;flex-wrap:wrap;gap:8px 18px"></div>
+        </div>
+      </div>
+
       <!-- Section 2: Project Mapping -->
       <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
         <div style="padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px">
@@ -2856,7 +2867,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.62.9';
+const APP_VERSION = '6.62.10';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -3513,6 +3524,7 @@ let blockedReasons = []; // BLOCK-REASON-1: admin-managed coded Blocked reasons 
 let locations = [];       // FIELDS-1: per-team Location value list. EMPTY = the Location field is hidden EVERYWHERE.
 let resolutionTypes = []; // FIELDS-1: per-team Resolution Type value list. EMPTY = the field is hidden EVERYWHERE.
 let metricLabel = 'Story Points'; // METRIC-LABEL-1: team-defined display label for the storyPoints metric (field key unchanged; only the label is configurable)
+let projectTypes = ['Roadmap Item','Epic','Feature','Project'];   // GANTT-FOCUS-1: types the Gantt's "Focus: Projects only" treats as projects (Team Settings)
 let pointsEstimate = {enabled:false, rows:[]}; // POINTS-ESTIMATE-1: points -> time estimate table (applied server-side; edited in Team Settings)
 let handoffLabel = 'Handoff';     // CAL-DATES-1: per-Org label for the item handoff (devEnd) milestone badge on the Calendar
 let dueLabel = 'Due';             // CAL-DATES-1: per-Org label for the item due milestone badge on the Calendar
@@ -4389,7 +4401,9 @@ function _ganttSprints(){   // dated, non-discarded sprints in start order
 function _ganttScrollToToday(){ _ganttKeep = null; render(); }
 // GANTT-DECLUTTER-1: an unset entry means the DEFAULT - a top-level parent starts expanded, a mid-tier
 // parent (itself a child, e.g. an Epic under a Roadmap Item) starts collapsed. An explicit toggle wins.
-function isParentCollapsed(id, depth){ const v = collapsedParents[id]; return v === undefined ? depth > 0 : v; }
+// GANTT-FOCUS-1: in "Projects only" every parent starts collapsed (one row per project; expand to drill in).
+function isParentCollapsed(id, depth){ const v = collapsedParents[id]; return v === undefined ? (depth > 0 || _ganttProjectsOnly()) : v; }
+function _ganttProjectsOnly(){ return _ganttItems === 'projects' && document.body.classList.contains('frz-beta-active'); }
 const unschedOpen = {};       // GANTT-DECLUTTER-1: group label -> true when its "Unscheduled (N)" bucket is expanded (default collapsed)
 // GANTT-DECLUTTER-1: an item's finish date - releaseDate, else (terminal items only) the server-stamped
 // completedAt. Drives the 45-day aging, so finished work with no releaseDate (IT "Closed", ops "Completed")
@@ -5089,6 +5103,19 @@ function render(){
     return lo <= _winHi && hi >= _winLo;
   }
   let _outOfWindow = 0;
+  // GANTT-FOCUS-1 "Projects only": an item stays when it, or any ancestor, is of a project type (Team
+  // Settings - projectTypes), so a project keeps its children to expand into. Standalone work drops out.
+  const _projOnly = _ganttProjectsOnly();
+  const _projTypeSet = new Set(projectTypes || []);
+  const _byIdF = {}; if(_projOnly) projects.forEach(q => { _byIdF[String(q.id)] = q; });
+  function _inProject(p){
+    const seen = new Set();
+    for(let q = p; q && !seen.has(q.id); q = (q.parent != null && q.parent !== '') ? _byIdF[String(q.parent)] : null){
+      seen.add(q.id);
+      if(_projTypeSet.has(q.type || '')) return true;
+    }
+    return false;
+  }
 
   const list = projects.filter(p =>
     (showHidden || !isEffectivelyHidden(p)) &&
@@ -5102,6 +5129,7 @@ function render(){
     isScheduledType(p.type || '') &&        // Stage 2: non-scheduled types are tracking-only - hidden from the Gantt baseline (composes with the user Type filter; untyped = scheduled, fail-safe)
     (!ownerScope || p.dev === ownerScope) &&
     itemMatchesSearch(p, searchQ) &&
+    (!_projOnly || _inProject(p)) &&
     (!_spanNow || _inWindow(p) || (_outOfWindow++, false))
   );
 
@@ -9309,6 +9337,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
     hasSprints = !!data.hasSprints; hasReleases = !!data.hasReleases;   // FIELDS-2 (secondary data-apply)
     metricLabel   = data.metricLabel   || metricLabel;   // METRIC-LABEL-1 (secondary data-apply path)
     pointsEstimate = data.pointsEstimate || pointsEstimate;   // POINTS-ESTIMATE-1
+    if (Array.isArray(data.projectTypes) && data.projectTypes.length) projectTypes = data.projectTypes;   // GANTT-FOCUS-1
     handoffLabel  = data.handoffLabel  || handoffLabel;  // CAL-DATES-1
     dueLabel      = data.dueLabel      || dueLabel;       // CAL-DATES-1
     departments   = data.departments   || departments;
@@ -11468,6 +11497,24 @@ function _peEstimateOptions(sel){
     .concat(Array.from({length:26},(_,i)=>[i+1, `${i+1} week${i?'s':''}`]));
   return opts.map(([v,l]) => `<option value="${v}"${Math.abs((+sel||0)-v)<0.001?' selected':''}>${l}</option>`).join('');
 }
+// ── GANTT-FOCUS-1: Team Settings - which item types are projects (one checkbox per type) ───────────────
+function _renderProjectTypesSettings(){
+  const host = document.getElementById('tsProjectTypes'); if(!host) return;
+  const names = (types || []).map(t => (t && t.name) || t).filter(Boolean);
+  const on = new Set(projectTypes || []);
+  host.innerHTML = names.length ? names.map(n =>
+    `<label style="display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer"><input type="checkbox" data-ptype="${esc(n)}"${on.has(n)?' checked':''} style="accent-color:var(--accent);width:14px;height:14px;cursor:pointer">${esc(n)}</label>`
+  ).join('') : '<span style="font-size:12px;color:var(--muted)">No item types configured.</span>';
+  host.querySelectorAll('[data-ptype]').forEach(cb => cb.onchange = () => {
+    // Keep any configured name that is not a current type (e.g. the shared default "Project" on an Org without it).
+    const keep = (projectTypes || []).filter(n => !names.includes(n));
+    const picked = [...host.querySelectorAll('[data-ptype]:checked')].map(x => x.dataset.ptype);
+    if(!picked.length){ cb.checked = true; showToast('Pick at least one project type', 'error'); return; }
+    projectTypes = [...keep, ...picked];
+    saveConfig('projectTypes', projectTypes).catch(e => showToast('Could not save: '+(e.message||e), 'error'));
+    if(typeof render === 'function') try { render(); } catch(e){}
+  });
+}
 function _renderPointsEstimateSettings(){
   const on = document.getElementById('tsPointsEstOn'), host = document.getElementById('tsPointsEstRows');
   if(!on || !host) return;
@@ -11593,6 +11640,7 @@ var FLAG_TERMINAL_STATUSES = ['Resolved','Approved','Rejected','Dismissed','Auto
 function _isActiveFlag(a){ return !!a && FLAG_TYPES.indexOf(a.activity_type)>=0 && FLAG_TERMINAL_STATUSES.indexOf(a.status)<0; }
 var _betaFlagged = false;   // FN5 "Flagged" toggle (list + kanban), global so classic _listQuery + beta shell share it
 var _ganttSpan = 'now';     // GANTT-DECLUTTER-1: Gantt "Now" (window around today) vs "All"; URL ?span=all; Flow shell only
+var _ganttItems = 'all';    // GANTT-FOCUS-1: Gantt "Everything" vs "Projects only"; URL ?items=projects; Flow shell only
 
 const AC_SORT_ORDER = {
   'Blocked':2, 'At Risk':3, 'Pending Approval':4,
@@ -19184,6 +19232,7 @@ function renderIntakePortalSettings(){
     };
   }
   _renderPointsEstimateSettings();   // POINTS-ESTIMATE-1
+  _renderProjectTypesSettings();     // GANTT-FOCUS-1
   const projWrap = document.getElementById('tsIntakeProjects');
   const projNames = (products||[]).map(p => (p&&p.name)||p).filter(Boolean);
   const projOffered = intakeProjects.length ? new Set(intakeProjects) : new Set(projNames);   // empty = all
@@ -20201,6 +20250,7 @@ async function boot(){
     hasSprints = !!data.hasSprints; hasReleases = !!data.hasReleases;   // FIELDS-2 (boot loader)
     metricLabel   = data.metricLabel   || 'Story Points';   // METRIC-LABEL-1: boot loader (the RIGHT block - see the 6.15.2 fix)
     pointsEstimate = data.pointsEstimate || {enabled:false, rows:[]};   // POINTS-ESTIMATE-1
+    if (Array.isArray(data.projectTypes) && data.projectTypes.length) projectTypes = data.projectTypes;   // GANTT-FOCUS-1
     // METRIC-LABEL-1: the ONE static label site is the classic List <th> (the shell List rebuilds its
     // header from _LIST_COL_DEF, which reads metricLabel live). Set it once post-load so classic follows too.
     try { var _mlTh=document.querySelector('th[data-sort="story_points"]'); if(_mlTh) _mlTh.innerHTML=esc(metricLabel)+'<span class="sort-arrow"></span>'; } catch(e){}
@@ -21281,6 +21331,16 @@ if ('serviceWorker' in navigator) {
   /* Gantt inline legend (shown only when measured to fit; else the Legend popover button) */
   .frz-beta .frz-gantt-legend { display:inline-flex; align-items:center; gap:14px; flex:0 0 auto; margin:0 6px 0 10px; white-space:nowrap; overflow:hidden; }
   .frz-beta .frz-gleg-item { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600; color:var(--frz-text-secondary); white-space:nowrap; }
+  /* GANTT-FOCUS-1: Legend + Today cluster, bottom-right of the chart (clear of the horizontal scrollbar) */
+  .frz-beta .frz-content > .gantt-outer { position:relative; }
+  .frz-beta .frz-gcorner { position:absolute; right:22px; bottom:22px; z-index:30; display:flex; flex-direction:column; align-items:flex-end; gap:6px; pointer-events:none; }
+  .frz-beta .frz-gcorner > * { pointer-events:auto; }
+  .frz-beta .frz-gcorner-legend { display:none; flex-direction:column; gap:6px; padding:10px 12px; background:var(--frz-bg-surface, var(--surface)); border:1px solid var(--frz-border, var(--border)); border-radius:8px; box-shadow:0 4px 14px rgba(0,0,0,0.10); }
+  .frz-beta .frz-gcorner.open .frz-gcorner-legend { display:flex; }
+  .frz-beta .frz-gcorner-btns { display:flex; gap:6px; }
+  .frz-beta .frz-gcorner-btn { font:inherit; font-size:12px; font-weight:600; padding:4px 10px; border-radius:6px; cursor:pointer; color:var(--frz-text-secondary); background:var(--frz-bg-surface, var(--surface)); border:1px solid var(--frz-border, var(--border)); box-shadow:0 2px 8px rgba(0,0,0,0.08); }
+  .frz-beta .frz-gcorner-btn:hover { color:var(--frz-accent); border-color:var(--frz-accent); }
+  .frz-beta .frz-gcorner.open .frz-gcorner-btn[data-act="legend"] { color:var(--frz-accent); border-color:var(--frz-accent); background:var(--frz-accent-soft); }
   /* RAIL-COLLAPSED-1 Part 1: the segmented top view control (.frz-topview / .frz-tv-seg) is removed -
      the collapsed rail already carries all eight view icons, so it was a redundant second switcher. */
 
@@ -22640,7 +22700,7 @@ if ('serviceWorker' in navigator) {
   // are in that view's CFG.extra - so they render on the List alone. Empty-list gating is in the offer menu.
   var _XCHIP = ['priority','dept','location','resolutionType','blockedReason','reporter'];   // REPORTER-TEXT-1: +reporter (free-text, List-only via CFG.list.extra)
   var CFG = {
-    gantt:    { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['today','span','sprints','groupby','legend','capacity'] },   // GANTT-DECLUTTER-1: +span (Now/All window toggle); GANTT-KEEP-SCROLL-1: +today   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
+    gantt:    { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['focus','sprints','groupby','capacity'] },   // GANTT-FOCUS-1: span (Now/All) + Projects only fold into one Focus menu; Legend + Today moved to the chart's bottom-right corner.   // GANTT-DECLUTTER-1: +span (Now/All window toggle); GANTT-KEEP-SCROLL-1: +today   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
     kanban:   { chips:['owner','assignee','type','status'], extra:['sprint','priority','dept'], opts:['flagged','hideEmpty'] },   // FN5: +Flagged toggle
     list:     { chips:['owner','assignee','type','status'], extra:['priority','dept','location','resolutionType','blockedReason','reporter'], opts:['listgroup','flagged','columns','export'] },     // FN5: +Flagged; GROUPBY-2: +Group by. FIELDS-2: +location/resolutionType/blockedReason chips (List only; server-filtered; gated on non-empty list)
     planning: { chips:['owner','status'],                   extra:['type','assignee','priority','dept'], opts:['whatif'] },   // What-if (Phase 0)
@@ -24049,11 +24109,13 @@ if ('serviceWorker' in navigator) {
     if (o==='groupby'){ var gb=document.getElementById('groupBy'); var cur=gb?(gb.options[gb.selectedIndex]||{}).text:'Team'; label='Group by: '+(cur||'Team'); }
     if (o==='listgroup'){ var lg=_call('_listGetGroup')||''; label='Group by'+(lg?': '+(_FRZ_GROUP_LABELS[lg]||lg):''); }
     if (o==='span') label = 'Showing: '+(_ganttSpan==='all' ? 'All' : 'Now');   // GANTT-DECLUTTER-1
+    if (o==='focus') label = 'Focus: '+(_ganttSpan==='all' ? 'All' : 'Now')+' · '+(_ganttItems==='projects' ? 'Projects' : 'Everything')+' ▾';   // GANTT-FOCUS-1
     var activeStyle = (o==='hideEmpty' && _betaHideEmpty) || (o==='flagged' && _betaFlagged) || (o==='whatif' && _val('_scenarioActive',false)) || (o==='listgroup' && _call('_listGetGroup')) || (o==='sprints' && _val('_ganttShowSprints', true))
       ? ' style="border-color:var(--frz-accent);color:var(--frz-accent);background:var(--frz-accent-soft)"' : '';
     // Phase 1c: decision-tree glyph + explanatory tooltip on the Scenario button only.
     var titleAttr = (o==='whatif') ? ' title="Model plan changes without saving - see who\'s over-committed, then commit or discard."'
-      : (o==='span') ? ' title="Now: items active from 45 days ago to 90 days ahead, plus everything finished in the last 45 days. All: every item. Click to switch."' : '';
+      : (o==='span') ? ' title="Now: items active from 45 days ago to 90 days ahead, plus everything finished in the last 45 days. All: every item. Click to switch."'
+      : (o==='focus') ? ' title="Choose the time window (Now or All) and whether to show everything or only projects."' : '';
     var icon = (o==='whatif')
       ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><path d="M6 8.2v3.3a2.5 2.5 0 0 0 2.5 2.5H15"/><path d="M18 8.2v1.6a4 4 0 0 1-4 4h-1"/></svg>'
       : '';
@@ -24079,31 +24141,28 @@ if ('serviceWorker' in navigator) {
     });
     return wrap;
   }
+  // GANTT-FOCUS-1: Legend + Today live in a small cluster at the chart's bottom-right corner (out of the
+  // toolbar). The legend opens/closes in place; open/closed is remembered per browser. The cluster is a
+  // child of .gantt-outer, which render() never rebuilds, so it is created once and hides with the Gantt.
+  var _GCORNER_KEY='frazil_gantt_legend_open';
   function _frzSyncGanttLegend(){
-    var bar=document.getElementById('frzFilterBar'); if(!bar) return;
-    if(!_ganttLegRO && typeof ResizeObserver!=='undefined'){   // re-evaluate on width changes (viewport, rail collapse)
-      _ganttLegRO=new ResizeObserver(function(){ _frzSyncGanttLegend(); }); _ganttLegRO.observe(bar);
-    }
-    var legendBtn=bar.querySelector('[data-opt="legend"]');
-    var existing=bar.querySelector('#frzGanttLegend');
-    if(state.view!=='gantt' || state.onItem || !legendBtn){ if(existing) existing.remove(); _ganttLegendOn=false; return; }
-    var spacer=bar.querySelector('.frz-spacer'); if(!spacer) return;
-    // Reset to the canonical baseline (Legend button visible, NO inline legend) so the measured
-    // gap is independent of the legend's own presence - otherwise "available" would include the
-    // legend's width (circular) and it could never retreat when the row shrinks.
-    if(existing) existing.remove();
-    legendBtn.style.display='';
-    var avail = spacer.offsetWidth + legendBtn.offsetWidth;   // free gap if the button were removed
-    var m=_frzInlineLegendEl(); m.style.position='absolute'; m.style.visibility='hidden'; m.style.left='-9999px';
-    bar.appendChild(m); var FOOT=m.offsetWidth+16; bar.removeChild(m);   // footprint incl. ~16px margins
-    var threshold = _ganttLegendOn ? FOOT : (FOOT + 24);       // hysteresis: +24 to switch ON, exact footprint to fall OFF
-    if(avail >= threshold){
-      legendBtn.style.display='none';
-      bar.insertBefore(_frzInlineLegendEl(), spacer);
-      _ganttLegendOn=true;
-    } else {
-      _ganttLegendOn=false;   // baseline already restored (button shown, no inline)
-    }
+    var outer=document.querySelector('.frz-content > .gantt-outer'); if(!outer) return;
+    var el=document.getElementById('frzGanttCorner');
+    if(el) return;
+    var open=false; try{ open = localStorage.getItem(_GCORNER_KEY)==='1'; }catch(e){}
+    el=document.createElement('div'); el.id='frzGanttCorner'; el.className='frz-gcorner'+(open?' open':'');
+    var leg=_frzInlineLegendEl(); leg.removeAttribute('id'); leg.className='frz-gcorner-legend';
+    var btns=document.createElement('div'); btns.className='frz-gcorner-btns';
+    btns.innerHTML='<button type="button" class="frz-gcorner-btn" data-act="legend" aria-expanded="'+open+'">Legend</button>'
+      +'<button type="button" class="frz-gcorner-btn" data-act="today" title="Scroll the chart back to today">Today</button>';
+    el.appendChild(leg); el.appendChild(btns);
+    btns.addEventListener('click', function(e){
+      var b=e.target.closest('[data-act]'); if(!b) return;
+      if(b.dataset.act==='today'){ _call('_ganttScrollToToday'); return; }
+      var on=!el.classList.contains('open'); el.classList.toggle('open', on); b.setAttribute('aria-expanded', String(on));
+      try{ localStorage.setItem(_GCORNER_KEY, on?'1':'0'); }catch(e2){}
+    });
+    outer.appendChild(el);
   }
 
   // ════════ apply filters to the production panels + URL ════════
@@ -24202,6 +24261,7 @@ if ('serviceWorker' in navigator) {
     if (view==='reports') _rptEmitURL(params);   // RPT-DRILL-1 Stage 2: report-owned r-prefixed controls (+ D4 drill dims when Stage 3 sets them)
     if ((view==='list' || view==='kanban') && _betaFlagged) params.set('flag','1');   // FN5: the Flagged toggle in the URL (shareable)
     if (view==='gantt' && _ganttSpan==='all') params.set('span','all');   // GANTT-DECLUTTER-1: absent = Now (the default)
+    if (view==='gantt' && _ganttItems==='projects') params.set('items','projects');   // GANTT-FOCUS-1: absent = Everything
     var qs = params.toString();
     var base = '/'+view;
     if (view==='planning' && state.planTab && state.planTab!=='plan') base = '/planning/'+state.planTab;  // planning sub-tab is URL state
@@ -24259,6 +24319,7 @@ if ('serviceWorker' in navigator) {
     if (view==='reports') _rptSeedURL(qp);   // RPT-DRILL-1 Stage 2: seed report-local controls (+ D4 dims) from the URL; absent -> defaults
     if (view==='list' || view==='kanban') _betaFlagged = (qp.get('flag')==='1');   // FN5: seed the Flagged toggle from the URL (absent -> off)
     if (view==='gantt') _ganttSpan = (qp.get('span')==='all') ? 'all' : 'now';      // GANTT-DECLUTTER-1: seed Now/All from the URL (absent -> Now)
+    if (view==='gantt') _ganttItems = (qp.get('items')==='projects') ? 'projects' : 'all';   // GANTT-FOCUS-1: seed Everything/Projects only
     if (view==='list' && typeof _listState!=='undefined') _listState.sort = qp.get('sort') || '';   // ADOPT-1: seed the List sort from the URL (round-trip); absent -> default (empty = server updated_ts:desc)
   }
 
@@ -28847,11 +28908,37 @@ if ('serviceWorker' in navigator) {
     syncURL(true); rerender(); renderBar();
   }
   window._frzSetGanttSpan = _frzSetGanttSpan;
+  // GANTT-FOCUS-1: the Focus menu - Time (Now / All) and Items (Everything / Projects only). Same look as
+  // the Group by picker (leading check on the selected option). Both are URL state (?span=all, ?items=projects).
+  function _frzSetGanttItems(v){
+    _ganttItems = (v==='projects') ? 'projects' : 'all';
+    syncURL(true); rerender(); renderBar();
+  }
+  function focusMenu(anchor){
+    openPop(anchor, function(pop){
+      function head(t){ var h=document.createElement('div'); h.textContent=t; h.style.cssText='padding:8px 12px 4px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--frz-text-muted)'; pop.appendChild(h); }
+      function opt(text, hint, sel, fn){
+        var b=document.createElement('button'); b.className='frz-pop-opt';
+        var mark='<span style="display:inline-block;width:14px;flex-shrink:0;text-align:center;color:var(--frz-accent)">'+(sel?'✓':'')+'</span>';
+        b.innerHTML=mark+'<span>'+esc(text)+'</span>'; if(hint) b.title=hint;
+        if(sel){ b.style.color='var(--frz-accent)'; b.style.fontWeight='700'; }
+        b.addEventListener('click', function(){ closePop(); fn(); });
+        pop.appendChild(b);
+      }
+      head('Time');
+      opt('Now', 'Items active from 45 days ago to 90 days ahead, plus everything finished in the last 45 days', _ganttSpan!=='all', function(){ _frzSetGanttSpan('now'); });
+      opt('All', 'Every item', _ganttSpan==='all', function(){ _frzSetGanttSpan('all'); });
+      head('Items');
+      opt('Everything', '', _ganttItems!=='projects', function(){ _frzSetGanttItems('all'); });
+      opt('Projects only', 'Only '+(projectTypes||[]).join(', ')+' items, collapsed to one row each (expand to see their work)', _ganttItems==='projects', function(){ _frzSetGanttItems('projects'); });
+    });
+  }
   function handleOpt(o, anchor){
     if (o==='groupby') return groupByMenu(anchor);
     if (o==='legend') return legendPop(anchor);
     if (o==='capacity') { _call('toggleCapacityView'); return; }
     if (o==='span') { _frzSetGanttSpan(_ganttSpan==='all' ? 'now' : 'all'); return; }   // GANTT-DECLUTTER-1
+    if (o==='focus') return focusMenu(anchor);                                            // GANTT-FOCUS-1
     if (o==='today') { _call('_ganttScrollToToday'); return; }                            // GANTT-KEEP-SCROLL-1
     if (o==='sprints') { _call('_ganttToggleSprints'); renderBar(); return; }             // GANTT-SPRINTS-1
     if (o==='whatif') { _call('enterScenario'); return; }   // What-if (Phase 0); exit via the banner

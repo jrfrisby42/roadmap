@@ -1283,6 +1283,9 @@ def init_team_db(team: str):
             # team, and cross-team sums are meaningless once two teams mean different things by the number.
             "metricLabel": "Story Points",
             "pointsEstimate": _POINTS_ESTIMATE_DEFAULT,   # POINTS-ESTIMATE-1 (off by default)
+            # GANTT-FOCUS-1: the item types the Gantt's "Focus: Projects only" treats as projects (top-level
+            # items of these types; their children stay expandable). Per Org - ops calls its type "Project".
+            "projectTypes": ["Roadmap Item", "Epic", "Feature", "Project"],
             # CAL-DATES-1: per-Organization labels for the two item milestone badges shown on the Calendar.
             # handoffLabel names the devEnd milestone ("Handoff"); dueLabel names the due milestone ("Due").
             # Neutral defaults on purpose - development can set "Code complete", marketing "Goes to print".
@@ -1416,6 +1419,7 @@ def _migrate_config_keys(team: str):
         # never clobbers an admin's non-empty custom label. (Finding per Part 1: re-seed is safe here.)
         "metricLabel":      "Story Points",
         "pointsEstimate":   _POINTS_ESTIMATE_DEFAULT,   # POINTS-ESTIMATE-1: a non-empty dict, so the falsy re-seed never clobbers an admin's table
+        "projectTypes":     ["Roadmap Item", "Epic", "Feature", "Project"],   # GANTT-FOCUS-1 (an emptied list re-seeds the default - "no project types" is not a useful setting)
         "handoffLabel":     "Handoff",   # CAL-DATES-1: same non-presence-only reasoning as metricLabel (a label is a non-empty string; "" falls back to the default anyway)
         "dueLabel":         "Due",       # CAL-DATES-1
         "intakeProjects":   [],
@@ -1828,7 +1832,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.62.9"
+APP_VERSION = "6.62.10"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -4037,6 +4041,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "intakeCombined": bool(cfg_map.get("intakeCombined", True)),   # PORTAL-SCOPE-LOCK-1: default true; explicit False reaches the client
             "metricLabel": (cfg_map.get("metricLabel") or "Story Points"),   # METRIC-LABEL-1: empty/missing -> default so the client never renders a blank label
             "pointsEstimate": (cfg_map.get("pointsEstimate") or _POINTS_ESTIMATE_DEFAULT),   # POINTS-ESTIMATE-1
+            "projectTypes": (cfg_map.get("projectTypes") or ["Roadmap Item", "Epic", "Feature", "Project"]),   # GANTT-FOCUS-1
             "handoffLabel": (cfg_map.get("handoffLabel") or "Handoff"),      # CAL-DATES-1: empty/missing -> default (client never renders a blank badge label)
             "dueLabel": (cfg_map.get("dueLabel") or "Due"),                  # CAL-DATES-1
             "intakeProjects": cfg_map.get("intakeProjects", []),
@@ -6236,7 +6241,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "statusIsDefault","statusIsDeferred",
               "changeReasons","deferReasons","blockedReasons","departments",
               "locations","resolutionTypes",
-              "metricLabel","handoffLabel","dueLabel","pointsEstimate",
+              "metricLabel","handoffLabel","dueLabel","pointsEstimate","projectTypes",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
               "statusIsOffFlow","statusIsWaiting","statusIsParked",
