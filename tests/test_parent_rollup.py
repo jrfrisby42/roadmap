@@ -52,7 +52,7 @@ def test_own_dated_parent_is_untouched():
     # GANTT-TEAM-SLICES-1: the whole-item roll-up (team == null) still leaves an own-dated parent alone;
     # only a per-team slice (Projects only, grouped by Team) derives one, and only outside its owning team.
     b = _fn_body("_computeRollup")
-    assert "if(p.start && p.due && team == null) return null;" in b
+    assert "if(p.start && p.due && team == null && !ignoreOwn) return null;" in b
     o = _fn_body("_rollupOf")
     assert "if(_rollTeam == null) return _rollupAll(p);" in o
     assert "if(p.start && p.due && _effTeam(p) === _rollTeam) return null;" in o
