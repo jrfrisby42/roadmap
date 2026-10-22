@@ -1483,8 +1483,10 @@ def _migrate_config_keys(team: str):
                     )
                     print(f"[Migration] Seeded config key '{k}' for team '{team}'")
             else:
-                # Insert if missing OR if row exists but value is empty/null
-                if k not in existing or not existing[k]:
+                # Insert if missing OR if row exists but value is empty/null. MIGRATE-QUIET-1: an empty value
+                # that already equals the (empty) default is left alone - rewriting {} over {} on every boot
+                # changed nothing but logged "Seeded" for the same keys each restart.
+                if k not in existing or (not existing[k] and existing[k] != v):
                     c.execute(
                         "INSERT INTO config(key,value) VALUES(?,?) "
                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -1832,7 +1834,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.62.16"
+APP_VERSION = "6.62.17"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
