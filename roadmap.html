@@ -2867,7 +2867,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.62.17';
+const APP_VERSION = '6.62.18';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -5038,9 +5038,9 @@ function render(){
     });
     return out;
   }
-  function _computeRollup(p, team){
+  function _computeRollup(p, team, ignoreOwn){
     if(!(_kidsByParent[p.id] && _kidsByParent[p.id].length)) return null;
-    if(p.start && p.due && team == null) return null;       // own-dated -> untouched (Decision 5)
+    if(p.start && p.due && team == null && !ignoreOwn) return null;       // own-dated -> untouched (Decision 5)
     let kids = _rollupDescendants(p.id);                    // Defect B: whole subtree, not just direct children
     if(team != null) kids = kids.filter(c => _effTeam(c) === team);   // GANTT-TEAM-SLICES-1: one team's work only
     if(!kids.length) return null;
@@ -5092,6 +5092,15 @@ function render(){
     }
     return _rollupCache[k];
   }
+  // PARENT-OVERRUN-1: the span of the work under a parent that has its OWN dates (own dates still draw the bar;
+  // this only says how far its children run). Team-scoped inside a team group. null for a parent without own
+  // dates (it already rolls up) or without children.
+  function _kidsSpanOf(p){
+    if(!(p.start && p.due) || !(_kidsByParent[p.id] && _kidsByParent[p.id].length)) return null;
+    const k = p.id + '|kids|' + (_rollTeam == null ? '*' : _rollTeam);
+    if(!(k in _rollupCache)) _rollupCache[k] = _computeRollup(p, _rollTeam, true);
+    return _rollupCache[k];
+  }
   // An item's team: its own, else the nearest ancestor's (an Epic with no team belongs to its project's).
   const _effTeamCache = {};
   function _effTeam(p){
@@ -5124,7 +5133,7 @@ function render(){
   function _inWindow(p){
     if(!_drawsBar(p) || itemFinishDate(p)) return true;
     const ru = _rollupOf(p);
-    const ds = ru ? [ru.start, ru.due] : [p.start, p.revised || p.due, p.expected, p.releaseDate];
+    const ds = ru ? [ru.start, ru.due] : [p.start, p.revised || p.due, p.expected, p.releaseDate, (_kidsSpanOf(p) || {}).due];   // PARENT-OVERRUN-1: a stale-dated parent stays in the window while its work does
     const dd = ds.map(parseD).filter(Boolean);
     if(!dd.length) return true;
     const lo = new Date(Math.min(...dd)), hi = new Date(Math.max(...dd));
@@ -5583,6 +5592,21 @@ function render(){
             cH += `<div class="bar overrun" data-id="${p.id}" title="Released ${fmtD(rl)} - past the ${hasDelay?'revised':'due'} date (no delay reason recorded)" style="left:${px(overrunStart).toFixed(1)}px;width:${pxW(overrunStart,rl).toFixed(1)}px"></div>`;
           }
           cH += `<div class="plane-marker" data-id="${p.id}" title="Released: ${fmtD(rl)}" style="left:${px(rl).toFixed(1)}px">${PLANE_SVG}</div>`;
+        }
+        // PARENT-OVERRUN-1: a parent's own dates are its plan, but when the work under it runs later (stale
+        // dates from Jira - FRZ-964 planned Oct-Nov 2025, its work still running Oct 2026) the bar carries on to
+        // the end of that work as a hatched overrun, so current work is never hidden behind old dates. Starts
+        // where the bar (or a later release marker) ends. Display only - nothing is written to the item.
+        {
+          const _ks = _kidsSpanOf(p);
+          const _kEnd = (_ks && _ks.due) ? nextMonday(parseD(_ks.due)) : null;
+          const _ownEnd = hasDelay ? r : d;
+          if(_kEnd && _ownEnd && px(_kEnd) > px(_ownEnd)){
+            const _from = (rl && px(rl) > px(_ownEnd)) ? rl : _ownEnd;
+            if(px(_kEnd) > px(_from)){
+              cH += `<div class="bar overrun" data-id="${p.id}" title="Work under this item runs to ${fmtD(_kEnd)} - past its own ${hasDelay?'revised':'due'} date (${fmtD(_ownEnd)})" style="left:${px(_from).toFixed(1)}px;width:${pxW(_from,_kEnd).toFixed(1)}px"></div>`;
+            }
+          }
         }
         cH += `</div></div>`;
 
