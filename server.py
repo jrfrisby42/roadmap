@@ -20,7 +20,7 @@ import json, os, re, sqlite3, base64, time, hashlib, hmac, sys, html, logging, s
 import threading
 from html.parser import HTMLParser
 from contextlib import contextmanager
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from urllib.request import urlopen, Request
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote as _urlq
@@ -1834,7 +1834,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.62.19"
+APP_VERSION = "6.62.20"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -14651,6 +14651,21 @@ def send_digest_preview(body: dict = Body(default={}), auth: dict = Depends(requ
     return {"ok": True, "sentTo": to,
             "summary": {k: s[k] for k in ("open", "overdue", "sla_breached", "sla_atrisk", "aged_30", "closed_7d")}}
 
+# EXEC-DECK-1: the slide download (helpers live with the rest of the deck code further down). Declared here,
+# above the SPA catch-all, because FastAPI matches routes in declaration order.
+@app.get("/api/exec-deck")
+def get_exec_deck(auth: dict = Depends(require_role("admin"))):
+    """Download the exec slides for the signed-in Org (the Team Board's 'Build exec slides' button)."""
+    try:
+        data = build_exec_deck([auth["team"]])
+    except ImportError:
+        raise HTTPException(503, "Slide building is not available on this server (python-pptx is not installed)")
+    today = datetime.now(_MT_ZONE).date()
+    fname = f"Technology Update - {_exec_org_label(auth['team'])} - {today:%Y-%m}.pptx"
+    write_audit(auth["team"], "exec-deck:download", auth["username"], changes={"bytes": len(data)})
+    return Response(content=data, media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
 # ── SPA catch-all (Phase 3: Flow lives at root) ───────────────────────────────
 # MUST be the LAST route. FastAPI matches in declaration order, so every route
 # defined above wins first; only genuine root SPA paths (/list, /item/5,
@@ -14754,12 +14769,449 @@ def run_jira_sync(verbose: bool = False, only_team: str = None, force: bool = Fa
             print(f"[jira-sync] {team}: {json.dumps(res)}")
     return out
 
+# ── EXEC-DECK-1: monthly exec slides ─────────────────────────────────────────────────────────────────────
+# Flow builds the data slides of J.R.'s monthly Technology Update as real, editable PowerPoint on the
+# company template: a title slide, then per Organization a Roadmap Progress table (styled like the deck's
+# "IT Progress" slide), a Visible Progress / Next Focus slide and a Current Roadmap Gantt drawn as native
+# shapes. The hand-made story slides stay J.R.'s. Emailed on the 1st by roadmap-exec-deck.timer
+# (`python server.py --send-exec-deck --teams development,it --to ...`) and downloadable from the Team
+# Board (GET /api/exec-deck, current Org). The data model mirrors the Team Board (projects only, health,
+# x/y done over the actual work). python-pptx is imported lazily, like boto3: without it the deck is
+# unavailable and nothing else is affected.
+EXEC_DECK_TEMPLATE = os.environ.get("EXEC_DECK_TEMPLATE") or os.path.join(
+    os.path.dirname(TENANTS_DIR.rstrip("/\\")) or ".", "exec_deck_template.pptx")
+_EXEC_PRIORITY = {"1": "Urgent", "2": "High", "3": "Medium", "4": "Low"}
+_EXEC_FINISHED_DAYS = 45
+
+
+def _exec_org_label(team: str) -> str:
+    return team.upper() if len(team) <= 3 else team.replace("-", " ").replace("_", " ").title()
+
+
+def _exec_parse_day(s):
+    s = (s or "")[:10]
+    try:
+        return date.fromisoformat(s) if s else None
+    except ValueError:
+        return None
+
+
+def _exec_model(team: str, today: date = None) -> dict:
+    """The Team Board model for one Org, per project (not per team slice): Now / Next / Finished cards with
+    teams, priority, status, start/due, x/y done over the actual work and a health colour for Now."""
+    today = today or datetime.now(_MT_ZONE).date()
+    with db(team) as c:
+        cfg = {r["key"]: json.loads(r["value"]) for r in c.execute("SELECT key, value FROM config")}
+        rows = c.execute("SELECT id, data, updated_ts FROM projects").fetchall()
+    ps = []
+    for r in rows:
+        p = json.loads(r["data"]); p["id"] = r["id"]; p["updated_ts"] = r["updated_ts"]
+        if not p.get("archived"):
+            ps.append(p)
+    sts = cfg.get("statuses") or []
+    act, appr = cfg.get("statusIsActive") or {}, cfg.get("statusIsApproved") or {}
+    parked, deferred = cfg.get("statusIsParked") or {}, cfg.get("statusIsDeferred") or {}
+    term = cfg.get("statusIsTerminal") or {}
+    sched = cfg.get("typeScheduled") or {}
+    proj_types = set(cfg.get("projectTypes") or ["Roadmap Item", "Epic", "Feature", "Project"])
+
+    def is_term(s):
+        return s in RESERVED_TERMINAL_STATUSES or bool(term.get(s))
+    a = next((s for s in sts if appr.get(s)), "")
+    if a and act.get(a):
+        a = ""
+    ai = sts.index(a) if a else -1
+
+    def phase(s):                                     # same rule as the Team Board's _tbStatusModel
+        if not s or is_term(s) or parked.get(s) or deferred.get(s):
+            return ""
+        if a:
+            return "next" if s == a else ("now" if (s in sts and sts.index(s) > ai) else "")
+        return "now" if act.get(s) else ""
+
+    by_id = {str(p["id"]): p for p in ps}
+    kids = {}
+    for p in ps:
+        if p.get("parent") not in (None, ""):
+            kids.setdefault(str(p["parent"]), []).append(p)
+
+    def parent_of(p):
+        return by_id.get(str(p.get("parent"))) if p.get("parent") not in (None, "") else None
+
+    def in_proj(p):
+        seen, q = set(), p
+        while q and q["id"] not in seen:
+            seen.add(q["id"])
+            if (q.get("type") or "") in proj_types:
+                return True
+            q = parent_of(q)
+        return False
+
+    def eff_team(x):
+        seen, q = set(), x
+        while q and q["id"] not in seen:
+            seen.add(q["id"])
+            if q.get("dev"):
+                return q["dev"]
+            q = parent_of(q)
+        return ""
+
+    def desc(pid, seen=None):
+        seen = seen if seen is not None else set()
+        out = []
+        for c in kids.get(str(pid), []):
+            if c["id"] in seen or c.get("hidden"):
+                continue
+            seen.add(c["id"]); out.append(c); out += desc(c["id"], seen)
+        return out
+
+    def is_work(x):
+        live = any(not c.get("hidden") for c in kids.get(str(x["id"]), []))
+        return (not live or (x.get("start") and x.get("due"))) and x.get("status") not in RESERVED_TERMINAL_STATUSES
+
+    def finish(x):
+        rd = _exec_parse_day(x.get("releaseDate"))
+        if rd:
+            return rd
+        return _exec_parse_day(x.get("completedAt")) if is_term(x.get("status")) else None
+
+    cards = []
+    for p in ps:
+        if p.get("hidden") or not in_proj(p) or sched.get(p.get("type") or "") is False:
+            continue
+        par = parent_of(p)
+        if par and in_proj(par):
+            continue                                       # inside another project - its work, not a card
+        d = desc(p["id"])
+        fd = finish(p)
+        if not fd and is_term(p.get("status")):
+            continue
+        col, when = "", None
+        if fd:
+            if (today - fd).days > _EXEC_FINISHED_DAYS:
+                continue
+            col, when = "finished", fd
+        else:
+            phases = [phase(x.get("status")) for x in [p] + d]
+            if "now" in phases:
+                col = "now"
+            elif "next" in phases:
+                col = "next"
+            elif d:
+                fds = [finish(x) for x in d]
+                if all(fds) and (today - max(fds)).days <= _EXEC_FINISHED_DAYS:
+                    col, when = "finished", max(fds)
+        if not col:
+            continue
+        work = [x for x in d if is_work(x)]
+        teams = sorted({eff_team(x) for x in work} | ({eff_team(p)} if (not d or (p.get("start") and p.get("due")) or not work) else set()))
+        teams = [t for t in teams if t]
+        done = sum(1 for x in work if is_term(x.get("status")))
+        own_due = _exec_parse_day(p.get("revised") or p.get("due"))
+        kid_dues = [_exec_parse_day(x.get("revised") or x.get("due")) for x in d]
+        kid_dues = [x for x in kid_dues if x]
+        due = own_due or (max(kid_dues) if kid_dues else None)
+        starts = [_exec_parse_day(x.get("start")) for x in [p] + d]
+        starts = [x for x in starts if x]
+        start = _exec_parse_day(p.get("start")) or (min(starts) if starts else None)
+        bar_end = max([x for x in [due] + kid_dues if x], default=None)   # PARENT-OVERRUN-1: the work, not stale dates
+        health = None
+        if col == "now":
+            touched = [x.get("updated_ts") for x in [p] + d if x.get("updated_ts")]
+            idle = None
+            if touched:
+                try:
+                    idle = (datetime.now(timezone.utc) - datetime.fromisoformat(max(touched).replace("Z", "+00:00"))).days
+                except ValueError:
+                    idle = None
+            left = len(work) - done
+            if due and due < today:
+                health = ("red", f"Past due ({due:%b %d})" + (f", {left} of {len(work)} open" if work else ""))
+            elif due and (due - today).days <= 7 and work and done / len(work) < 0.75:
+                health = ("amber", f"Due {due:%b %d}, {left} of {len(work)} open")
+            elif idle is not None and idle >= 14:
+                health = ("amber", f"No changes in {idle} days")
+            else:
+                health = ("green", "On track")
+        cards.append({"id": p["id"], "key": p.get("itemKey") or "", "name": p.get("name") or "(untitled)",
+                      "teams": teams, "ownTeam": eff_team(p), "priority": _EXEC_PRIORITY.get(str(p.get("priority") or ""), ""),
+                      "prioRank": int(p["priority"]) if str(p.get("priority") or "").isdigit() and int(p["priority"]) > 0 else 100,
+                      "status": p.get("status") or "", "col": col, "when": when, "start": start, "due": due,
+                      "barEnd": bar_end, "total": len(work), "done": done, "health": health})
+    far = date(9999, 1, 1)
+    now_c = sorted([c for c in cards if c["col"] == "now"], key=lambda c: (c["prioRank"], c["due"] or far, c["name"]))
+    next_c = sorted([c for c in cards if c["col"] == "next"], key=lambda c: (c["prioRank"], c["start"] or far, c["name"]))
+    fin_c = sorted([c for c in cards if c["col"] == "finished"], key=lambda c: c["when"], reverse=True)
+    return {"team": team, "label": _exec_org_label(team), "today": today, "now": now_c, "next": next_c,
+            "finished": fin_c, "teamOrder": cfg.get("developers") or []}
+
+
+def _exec_layout(prs, name, fallback_idx):
+    for l in prs.slide_layouts:
+        if l.name == name:
+            return l
+    return prs.slide_layouts[min(fallback_idx, len(prs.slide_layouts) - 1)]
+
+
+def build_exec_deck(teams: list, today: date = None, template: str = None) -> bytes:
+    """Build the monthly exec slides for the given Orgs and return the .pptx bytes."""
+    import io
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
+    from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+    from pptx.enum.dml import MSO_LINE_DASH_STYLE
+
+    today = today or datetime.now(_MT_ZONE).date()
+    tpl = template if template is not None else EXEC_DECK_TEMPLATE
+    prs = Presentation(tpl) if tpl and os.path.exists(tpl) else Presentation()
+    if not (tpl and os.path.exists(tpl)):
+        prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+    lst = prs.slides._sldIdLst                               # a template that still carries slides: start empty
+    for s in list(lst):
+        prs.part.drop_rel(s.rId); lst.remove(s)
+    title_layout = _exec_layout(prs, "4_ONLY For Title Page", 0)
+    body_layout = _exec_layout(prs, "24_Custom Layout", 5)
+
+    NAVY, BLUE, WHITE = RGBColor(0x1F, 0x3A, 0x6E), RGBColor(0x00, 0x70, 0xC0), RGBColor(0xFF, 0xFF, 0xFF)
+    INK, MUTED, LINE = RGBColor(0x1F, 0x2A, 0x37), RGBColor(0x5A, 0x6B, 0x7C), RGBColor(0xD6, 0xE2, 0xEE)
+    ROWALT = RGBColor(0xF3, 0xF8, 0xFD)
+    HEALTH = {"green": RGBColor(0x2E, 0x9D, 0x5B), "amber": RGBColor(0xE8, 0xA0, 0x00), "red": RGBColor(0xC0, 0x36, 0x2C)}
+    PRIO = {"Urgent": (RGBColor(0xFD, 0xE2, 0xE4), RGBColor(0xB4, 0x23, 0x2C)), "High": (RGBColor(0xFD, 0xE7, 0xD2), RGBColor(0xB0, 0x5A, 0x00)),
+            "Medium": (RGBColor(0xFF, 0xF4, 0xC2), RGBColor(0x7A, 0x5B, 0x00)), "Low": (RGBColor(0xDC, 0xEB, 0xFA), RGBColor(0x1F, 0x5F, 0xA8))}
+    STATUS_FILL = {"now": (RGBColor(0xDC, 0xEB, 0xFA), RGBColor(0x1F, 0x4E, 0x8C)), "next": (RGBColor(0xEE, 0xE6, 0xFA), RGBColor(0x5B, 0x3C, 0x8F)),
+                   "finished": (RGBColor(0xD9, 0xF2, 0xE1), RGBColor(0x1E, 0x7A, 0x45))}
+
+    def title(slide, text, top=True):
+        if slide.shapes.title is not None:
+            slide.shapes.title.text = text
+            if top:   # the template's title box is 1.4in tall and bottom-anchored - pin it above the content
+                t = slide.shapes.title
+                t.left, t.top, t.width, t.height = Inches(0.6), Inches(0.12), Inches(12.0), Inches(0.8)
+                t.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+        else:
+            tb = slide.shapes.add_textbox(Inches(0.6), Inches(0.2), Inches(12), Inches(0.8))
+            tb.text_frame.text = text
+            tb.text_frame.paragraphs[0].runs[0].font.size = Pt(36)
+
+    def put(tf, text, size=11, bold=False, color=INK, align=None):
+        tf.clear()
+        para = tf.paragraphs[0]
+        run = para.add_run(); run.text = text
+        run.font.size = Pt(size); run.font.bold = bold; run.font.color.rgb = color
+        if align is not None:
+            para.alignment = align
+        return para
+
+    def fmt_day(d):
+        return f"{d:%b} {d.day}" + (f", {d.year}" if d.year != today.year else "") if d else ""
+
+    # 1. Title
+    s = prs.slides.add_slide(title_layout)
+    title(s, f"Technology Update - {today:%B %Y}", top=False)
+
+    for team in teams:
+        m = _exec_model(team, today)
+        label = m["label"]
+        # 2. Roadmap Progress table(s), the IT Progress slide's shape: blue header, pill-coloured cells.
+        rows = m["now"] or []
+        chunks = [rows[i:i + 10] for i in range(0, len(rows), 10)] or [[]]
+        for ci, chunk in enumerate(chunks):
+            s = prs.slides.add_slide(body_layout)
+            title(s, f"{label} Roadmap Progress" + (f" ({ci + 1} of {len(chunks)})" if len(chunks) > 1 else ""))
+            if not chunk:
+                tb = s.shapes.add_textbox(Inches(0.6), Inches(1.4), Inches(12), Inches(0.6))
+                put(tb.text_frame, "No projects in progress.", 16, color=MUTED)
+                continue
+            heads = ["#", "Initiative", "Team", "Priority", "Status", "Target", "Progress", "Progress / Outcome"]
+            widths = [0.45, 3.0, 1.45, 1.05, 1.6, 1.05, 1.35, 2.95]
+            gf = s.shapes.add_table(len(chunk) + 1, len(heads), Inches(0.2), Inches(1.0), Inches(sum(widths)), Inches(0.4 * (len(chunk) + 1)))
+            tbl = gf.table
+            for i, w in enumerate(widths):
+                tbl.columns[i].width = Inches(w)
+            for i, h in enumerate(heads):
+                cell = tbl.cell(0, i); cell.fill.solid(); cell.fill.fore_color.rgb = BLUE
+                put(cell.text_frame, h, 11, True, WHITE, PP_ALIGN.CENTER); cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+            for r, c in enumerate(chunk, start=1):
+                base = ci * 10 + r
+                vals = [str(base), c["name"], ", ".join(c["teams"]) or "-", c["priority"] or "-", c["status"],
+                        fmt_day(c["due"]) or "-", "", ""]
+                for i, v in enumerate(vals):
+                    cell = tbl.cell(r, i); cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+                    cell.fill.solid(); cell.fill.fore_color.rgb = ROWALT if r % 2 == 0 else WHITE
+                    cell.margin_left = cell.margin_right = Inches(0.06)
+                    if i == 3 and c["priority"] in PRIO:
+                        bg, fg = PRIO[c["priority"]]; cell.fill.fore_color.rgb = bg
+                        put(cell.text_frame, v, 10, True, fg, PP_ALIGN.CENTER)
+                    elif i == 4:
+                        bg, fg = STATUS_FILL["now"]; cell.fill.fore_color.rgb = bg
+                        put(cell.text_frame, v, 10, True, fg, PP_ALIGN.CENTER)
+                    elif i == 6:
+                        para = put(cell.text_frame, "● ", 12, False, HEALTH[(c["health"] or ("green",))[0]], PP_ALIGN.LEFT)
+                        run = para.add_run(); run.text = (f"{c['done']}/{c['total']} done" if c["total"] else (c["health"] or ("", ""))[1])
+                        run.font.size = Pt(10); run.font.color.rgb = INK
+                    else:
+                        put(cell.text_frame, v, 10, i == 1, INK if i else MUTED, PP_ALIGN.CENTER if i in (0, 2, 5) else PP_ALIGN.LEFT)
+            # legend for the dots
+            lg = s.shapes.add_textbox(Inches(0.2), Inches(1.05 + 0.4 * (len(chunk) + 1)), Inches(8), Inches(0.3))
+            para = lg.text_frame.paragraphs[0]
+            for key, txt in (("green", "On track   "), ("amber", "Due soon or quiet 14+ days   "), ("red", "Past due")):
+                r1 = para.add_run(); r1.text = "● "; r1.font.size = Pt(10); r1.font.color.rgb = HEALTH[key]
+                r2 = para.add_run(); r2.text = txt; r2.font.size = Pt(9); r2.font.color.rgb = MUTED
+
+        # 3. Visible Progress / Next Focus - the two boxes from the IT Progress slide, full height.
+        s = prs.slides.add_slide(body_layout)
+        title(s, f"{label} - Delivered and Next")
+        boxes = [("VISIBLE PROGRESS", f"Finished in the last {_EXEC_FINISHED_DAYS} days", RGBColor(0xE6, 0xF4, 0xEA), RGBColor(0x1E, 0x7A, 0x45),
+                  [f"✓  {c['name']}  ({fmt_day(c['when'])})" for c in m["finished"]] or ["Nothing finished in this window."]),
+                 ("NEXT FOCUS", "Approved and starting next", RGBColor(0xFD, 0xEB, 0xDC), RGBColor(0xB0, 0x5A, 0x00),
+                  [f"{i}.  {c['name']}" + (f"  (starts {fmt_day(c['start'])})" if c["start"] and c["start"] >= today else "") for i, c in enumerate(m["next"], 1)]
+                  or ["Nothing approved and waiting."])]
+        for bi, (head, sub, bg, fg, lines) in enumerate(boxes):
+            x = Inches(0.4 + bi * 6.35)
+            box = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, x, Inches(1.1), Inches(6.1), Inches(5.4))
+            box.adjustments[0] = 0.04
+            box.fill.solid(); box.fill.fore_color.rgb = bg; box.line.color.rgb = fg; box.line.width = Pt(1)
+            tf = box.text_frame; tf.word_wrap = True; tf.vertical_anchor = MSO_ANCHOR.TOP
+            tf.margin_left = tf.margin_right = Inches(0.25); tf.margin_top = Inches(0.2)
+            put(tf, head, 16, True, fg)
+            p2 = tf.add_paragraph(); r2 = p2.add_run(); r2.text = sub; r2.font.size = Pt(10); r2.font.color.rgb = MUTED
+            shown = lines[:14]
+            if len(lines) > 14:
+                shown.append(f"+ {len(lines) - 14} more")
+            for ln in shown:
+                pl = tf.add_paragraph(); pl.space_before = Pt(4)
+                rl = pl.add_run(); rl.text = ln; rl.font.size = Pt(12); rl.font.color.rgb = INK
+
+        # 4. Current Roadmap - a Gantt drawn as native shapes: one bar per project, grouped by team.
+        win_lo = date(today.year, today.month, 1) - timedelta(days=31)
+        win_lo = date(win_lo.year, win_lo.month, 1)
+        mo = win_lo.month + 4
+        win_hi = date(win_lo.year + (mo - 1) // 12, (mo - 1) % 12 + 1, 1)    # four months: last, this, next two
+        items = [c for c in m["now"] + m["next"] + m["finished"] if (c["start"] or c["due"] or c["when"])]
+        order = {t: i for i, t in enumerate(m["teamOrder"])}
+        groups = {}
+        for c in items:
+            groups.setdefault(c["ownTeam"] if c["ownTeam"] in c["teams"] else (c["teams"] or [""])[0], []).append(c)
+        lines = []
+        for t in sorted(groups, key=lambda t: (order.get(t, 999), t)):
+            lines.append(("team", t or "No team"))
+            for c in sorted(groups[t], key=lambda c: (c["start"] or c["due"] or c["when"] or today)):
+                lines.append(("item", c))
+        per = 17
+        pages = [lines[i:i + per] for i in range(0, len(lines), per)] or [[]]
+        X0, X1, Y0, RH = 3.5, 12.95, 1.45, 0.29
+        span = (win_hi - win_lo).days
+
+        def xin(d):
+            d = min(max(d, win_lo), win_hi)
+            return X0 + (X1 - X0) * (d - win_lo).days / span
+        for pi, page in enumerate(pages):
+            s = prs.slides.add_slide(body_layout)
+            title(s, f"{label} Current Roadmap" + (f" ({pi + 1} of {len(pages)})" if len(pages) > 1 else ""))
+            y_top = Y0
+            mcur = win_lo
+            while mcur < win_hi:                                   # month header + gridlines
+                nm = date(mcur.year + (mcur.month // 12), mcur.month % 12 + 1, 1)
+                hx = s.shapes.add_textbox(Inches(xin(mcur)), Inches(y_top - 0.35), Inches(xin(nm) - xin(mcur)), Inches(0.3))
+                put(hx.text_frame, f"{mcur:%b %Y}".upper(), 10, True, MUTED, PP_ALIGN.CENTER)
+                gl = s.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(xin(mcur)), Inches(y_top - 0.05), Inches(xin(mcur)), Inches(y_top + RH * max(len(page), 1)))
+                gl.line.color.rgb = LINE; gl.line.width = Pt(0.75)
+                mcur = nm
+            for li, (kind, v) in enumerate(page):
+                y = y_top + li * RH
+                if kind == "team":
+                    band = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0.3), Inches(y), Inches(X1 - 0.3), Inches(RH))
+                    band.fill.solid(); band.fill.fore_color.rgb = RGBColor(0xEC, 0xF3, 0xFB); band.line.fill.background()
+                    put(band.text_frame, v, 11, True, NAVY, PP_ALIGN.LEFT); band.text_frame.margin_left = Inches(0.1)
+                    band.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+                    continue
+                c = v
+                nb = s.shapes.add_textbox(Inches(0.3), Inches(y), Inches(X0 - 0.4), Inches(RH))
+                nb.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE; nb.text_frame.word_wrap = False
+                nm_txt = c["name"] if len(c["name"]) <= 38 else c["name"][:36] + "..."
+                put(nb.text_frame, nm_txt, 10, False, INK)
+                b0 = c["start"] or c["due"] or c["when"]
+                b1 = (c["when"] if c["col"] == "finished" else c["barEnd"]) or c["due"] or b0
+                if b1 < win_lo or b0 > win_hi:
+                    continue
+                left, right = xin(b0), max(xin(b1), xin(b0) + 0.08)
+                bar = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(left), Inches(y + 0.07), Inches(right - left), Inches(RH - 0.14))
+                bar.adjustments[0] = 0.3
+                if c["col"] == "finished":
+                    bar.fill.solid(); bar.fill.fore_color.rgb = RGBColor(0xB9, 0xC6, 0xD3)
+                elif c["col"] == "next":
+                    bar.fill.solid(); bar.fill.fore_color.rgb = RGBColor(0xEE, 0xE6, 0xFA)
+                    bar.line.color.rgb = RGBColor(0x8E, 0x6C, 0xC4); bar.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+                else:
+                    bar.fill.solid(); bar.fill.fore_color.rgb = HEALTH[(c["health"] or ("green",))[0]]
+                if c["col"] != "next":
+                    bar.line.fill.background()
+            if win_lo <= today <= win_hi:                          # today line
+                tl = s.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(xin(today)), Inches(y_top - 0.05), Inches(xin(today)), Inches(y_top + RH * max(len(page), 1)))
+                tl.line.color.rgb = RGBColor(0x1A, 0x1A, 0x2E); tl.line.width = Pt(1.25); tl.line.dash_style = MSO_LINE_DASH_STYLE.DASH
+            lg = s.shapes.add_textbox(Inches(0.3), Inches(6.45), Inches(12), Inches(0.3))
+            para = lg.text_frame.paragraphs[0]
+            for col_rgb, txt in ((HEALTH["green"], "In progress   "), (HEALTH["amber"], "Needs a look   "), (HEALTH["red"], "Past due   "),
+                                 (RGBColor(0x8E, 0x6C, 0xC4), "Next   "), (RGBColor(0xB9, 0xC6, 0xD3), "Finished   ")):
+                r1 = para.add_run(); r1.text = "■ "; r1.font.size = Pt(10); r1.font.color.rgb = col_rgb
+                r2 = para.add_run(); r2.text = txt; r2.font.size = Pt(9); r2.font.color.rgb = MUTED
+
+    buf = io.BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
+
+
+def send_email_attachment(to_addr: str, subject: str, text_body: str, filename: str, data: bytes,
+                          mime: str = "application/vnd.openxmlformats-officedocument.presentationml.presentation"):
+    """One email with one attachment via SES SendRawEmail (instance role). Raises on failure."""
+    import boto3
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from email.mime.application import MIMEApplication
+    msg = MIMEMultipart()
+    msg["Subject"], msg["From"], msg["To"] = subject, MAIL_FROM, to_addr
+    msg.attach(MIMEText(text_body, "plain", "utf-8"))
+    part = MIMEApplication(data, _subtype=mime.split("/", 1)[1])
+    part.add_header("Content-Disposition", "attachment", filename=filename)
+    part.replace_header("Content-Type", f'{mime}; name="{filename}"')
+    msg.attach(part)
+    boto3.client("ses", region_name=AWS_REGION).send_raw_email(
+        Source=MAIL_FROM, Destinations=[to_addr], RawMessage={"Data": msg.as_bytes()})
+
+
+def send_exec_deck(teams: list, to_addr: str, verbose: bool = False, today: date = None) -> dict:
+    today = today or datetime.now(_MT_ZONE).date()
+    teams = [t for t in teams if os.path.exists(os.path.join(TENANTS_DIR, t, "roadmap.db"))]
+    data = build_exec_deck(teams, today)
+    fname = f"Technology Update - {today:%Y-%m} (Flow).pptx"
+    counts = {t: {k: len(v) for k, v in _exec_model(t, today).items() if k in ("now", "next", "finished")} for t in teams}
+    body = ("Your monthly Technology Update slides from Flow are attached.\n\n"
+            + "\n".join(f"{_exec_org_label(t)}: {c['now']} in progress, {c['finished']} finished in the last "
+                        f"{_EXEC_FINISHED_DAYS} days, {c['next']} next" for t, c in counts.items())
+            + "\n\nThe slides use the company template and are fully editable - copy them into your deck "
+              "and add the story slides as usual.\n")
+    send_email_attachment(to_addr, f"Technology Update slides - {today:%B %Y}", body, fname, data)
+    if verbose:
+        print(f"[exec-deck] sent {fname} ({len(data)} bytes) to {to_addr}: {json.dumps(counts)}")
+    return {"file": fname, "bytes": len(data), "counts": counts}
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     # JIRA-SERVER-SYNC-1: background Jira sync (systemd timer every 5 min): sync due Orgs + exit.
     if "--sync-jira" in sys.argv:
         _only = sys.argv[sys.argv.index("--team") + 1] if "--team" in sys.argv[:-1] else None
         run_jira_sync(verbose=True, only_team=_only, force="--force" in sys.argv)
+        sys.exit(0)
+    # EXEC-DECK-1: monthly exec slides (systemd timer on the 1st): build + email + exit.
+    if "--send-exec-deck" in sys.argv:
+        _teams = sys.argv[sys.argv.index("--teams") + 1].split(",") if "--teams" in sys.argv[:-1] else ["development", "it"]
+        _to = sys.argv[sys.argv.index("--to") + 1] if "--to" in sys.argv[:-1] else os.environ.get("EXEC_DECK_TO", "")
+        if not _to:
+            print("[exec-deck] no recipient (--to or EXEC_DECK_TO)"); sys.exit(1)
+        send_exec_deck([t.strip() for t in _teams if t.strip()], _to, verbose=True)
         sys.exit(0)
     # Weekly queue-health digest (run by a systemd timer): send + exit, never start the server.
     if "--send-digests" in sys.argv:

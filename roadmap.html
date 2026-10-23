@@ -2867,7 +2867,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.62.19';
+const APP_VERSION = '6.62.20';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -21560,6 +21560,10 @@ if ('serviceWorker' in navigator) {
   /* TEAM-BOARD-1: Team Board (teams x Finished/Now/Next). Desktop grid; <=640px stacks per team. */
   .frz-beta #frzTeamBoard { padding:16px 20px 32px; color:var(--frz-text); }
   .frz-beta .frz-tb-note { font-size:12px; color:var(--frz-text-muted); margin:0 0 10px; }
+  .frz-beta .frz-tb-bar { display:flex; justify-content:flex-end; margin:0 0 10px; }
+  .frz-beta .frz-tb-deck { font:inherit; font-size:12px; font-weight:600; padding:5px 12px; border-radius:6px; cursor:pointer; color:var(--frz-accent); background:var(--frz-bg-surface); border:1px solid var(--frz-accent); }
+  .frz-beta .frz-tb-deck:hover { background:var(--frz-accent-soft); }
+  .frz-beta .frz-tb-deck:disabled { opacity:.6; cursor:default; }
   .frz-beta .frz-tb-blank { font-size:13px; color:var(--frz-text-muted); padding:24px 4px; }
   .frz-beta .frz-tb-grid { display:grid; grid-template-columns:minmax(110px,160px) repeat(var(--tb-cols,3), minmax(0,1fr));
     border:1px solid var(--frz-border); border-radius:10px; background:var(--frz-bg-surface); overflow:hidden; }
@@ -25243,6 +25247,24 @@ if ('serviceWorker' in navigator) {
       return ((ai<0?9999:ai)-(bi<0?9999:bi)) || a.localeCompare(b);
     });
     var html='<div class="frz-tb">';
+    // EXEC-DECK-1: the monthly exec slides for this Org, on demand (the 1st-of-month email covers Development + IT).
+    html+='<div class="frz-tb-bar"><button type="button" class="frz-tb-deck" data-tbdeck="1" title="Download the Technology Update slides for this Organization (PowerPoint, company template)">Build exec slides</button></div>';
+    if(!host._deckWired){
+      host._deckWired=1;
+      host.addEventListener('click', function(e){
+        var b=e.target.closest('[data-tbdeck]'); if(!b || b.disabled) return;
+        b.disabled=true; var t0=b.textContent; b.textContent='Building…';
+        fetch('/api/exec-deck', {headers: API._authHeaders()}).then(function(r){
+          if(!r.ok) return r.text().then(function(tx){ throw new Error((tx||'').slice(0,200) || ('HTTP '+r.status)); });
+          var cd=r.headers.get('Content-Disposition')||'', m=cd.match(/filename="([^"]+)"/);
+          return r.blob().then(function(bl){
+            var a=document.createElement('a'); a.href=URL.createObjectURL(bl); a.download=(m&&m[1])||'Technology Update.pptx';
+            document.body.appendChild(a); a.click(); setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+          });
+        }).catch(function(err){ _call('showToast','Could not build the slides: '+((err&&err.message)||err),'error'); })
+          .then(function(){ b.disabled=false; b.textContent=t0; });
+      });
+    }
     if(!model.approved) html+='<div class="frz-tb-note">Next is off: this Organization has no usable Approved status. An admin can set one in Admin &gt; Statuses.</div>';
     if(!names.length){
       html+='<div class="frz-tb-blank">No items are finished, in progress or approved for the current filters.</div></div>';
