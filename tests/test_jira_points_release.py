@@ -107,3 +107,29 @@ def test_server_sync_runs_the_release_date_fill(team, monkeypatch):
             c.execute("INSERT OR REPLACE INTO config(key, value) VALUES(?, ?)", (k, json.dumps(v)))
     out = server.run_jira_sync(only_team=team)
     assert calls == [team] and out[team]["releaseDates"] == 3
+
+
+# ── JIRA-SYNC-NOW-1: the one manual button runs exactly the background job ────────────────────────────────
+def test_sync_now_runs_the_whole_background_job(client, team, admin_headers, editor_headers, monkeypatch):
+    calls = []
+    monkeypatch.setattr(server, "jira_configured", lambda: True)
+    monkeypatch.setattr(server, "jira_pull_all", lambda b, x, auth: calls.append("linked") or {"synced": 4, "changes": 1})
+    monkeypatch.setattr(server, "jira_pull_now", lambda b, auth: calls.append("pull") or {"createdCount": 2})
+    monkeypatch.setattr(server, "_jira_backfill_release_dates", lambda t, a, dry=False: calls.append("release") or {"written": 3})
+    with server.db(team) as c:
+        for k, v in (("jiraEnabled", True), ("jiraSyncConfig", {"enabled": True, "intervalMinutes": 15})):
+            c.execute("INSERT OR REPLACE INTO config(key, value) VALUES(?, ?)", (k, json.dumps(v)))
+    server._write_jira_sync_state(team, {"lastRunAt": datetime.now(server.timezone.utc).isoformat()})   # just ran: still forced
+    r = client.post("/api/jira/sync-now", headers=admin_headers)
+    assert r.status_code == 200, r.text
+    assert calls == ["linked", "pull", "release"]
+    body = r.json()
+    assert body["linked"]["changes"] == 1 and body["pull"]["created"] == 2 and body["releaseDates"] == 3
+    assert client.post("/api/jira/sync-now", headers=editor_headers).status_code == 403
+
+
+def test_sync_now_says_when_sync_is_off(client, team, admin_headers, monkeypatch):
+    monkeypatch.setattr(server, "jira_configured", lambda: True)
+    with server.db(team) as c:
+        c.execute("INSERT OR REPLACE INTO config(key, value) VALUES('jiraSyncConfig', ?)", (json.dumps({"enabled": False}),))
+    assert client.post("/api/jira/sync-now", headers=admin_headers).status_code == 409
