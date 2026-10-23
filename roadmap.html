@@ -25167,8 +25167,15 @@ if ('serviceWorker' in navigator) {
       var starts=[pd(p.start)].concat(d.map(function(x){ return pd(x.start); })).filter(Boolean);
       var ends=(p.revised||p.due) ? [pd(p.revised||p.due)] : d.map(function(x){ return pd(x.revised||x.due); });
       ends=ends.filter(Boolean);
-      var done=d.filter(function(x){ return _call('isTerminalStatus', x.status); }).length;
-      cards.push({ p:p, team:team, col:col, when:when, total:d.length, done:done,
+      // TEAMBOARD-PROGRESS-1: "x/y done" counts the actual work - the same set the Gantt's progress fill uses:
+      // leaf items (no children, or children but its own dates), skipping Duplicate/Transferred. Container
+      // Epics no longer count as work, so the card and the Gantt bar always agree.
+      var work=d.filter(function(x){
+        var kidsLive=(kids[x.id]||[]).some(function(c){ return !c.hidden; });
+        return (!kidsLive || (x.start && x.due)) && !RESERVED_TERMINAL_STATUSES[x.status];
+      });
+      var done=work.filter(function(x){ return _call('isTerminalStatus', x.status); }).length;
+      cards.push({ p:p, team:team, col:col, when:when, total:work.length, done:done,
         start: p.start ? pd(p.start) : (starts.length ? starts.reduce(function(m,x){ return x<m?x:m; }) : null),
         due: ends.length ? ends.reduce(function(m,x){ return x>m?x:m; }) : null });
     });
