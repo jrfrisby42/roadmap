@@ -12312,6 +12312,18 @@ def jira_sync_status(auth: dict = Depends(require_role("admin"))):
     written by run_jira_sync, defined near the entry point). Registered here, ahead of the SPA catch-all."""
     return _read_jira_sync_state(auth["team"])
 
+@app.post("/api/jira/sync-now")
+def jira_sync_now(auth: dict = Depends(require_role("admin"))):
+    """JIRA-SYNC-NOW-1: the Team Settings "Sync with Jira now" button - runs exactly the background job
+    (run_jira_sync: linked-item sync + pull/refresh + release-date fill) for this Org, now, and returns its
+    summary. Replaces the two partial buttons (Sync All Now = linked only, Pull from Jira Now = pull only)."""
+    if not jira_configured():
+        raise HTTPException(503, "Jira is not configured on this server")
+    out = run_jira_sync(only_team=auth["team"], force=True)
+    if auth["team"] not in out:
+        raise HTTPException(409, "Jira sync is turned off for this Organization (Team Settings > Jira sync)")
+    return out[auth["team"]]
+
 @app.post("/api/rollup/sync")
 def rollup_sync(body: dict = Body({}), auth: dict = Depends(require_role("admin"))):
     """ROLLUP-SYNC-1: run the parent roll-up write-back now (the one-time catch-up, or on demand).

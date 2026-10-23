@@ -2834,11 +2834,9 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
           <div id="tsSyncStatus" style="font-size:11px;color:var(--muted)"></div>
           <div id="tsPullStatus" style="font-size:11px;color:var(--muted)"></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button onclick="runManualPullSyncAll()" style="width:fit-content;padding:6px 14px;font-size:12px;background:none;border:1px solid var(--border);border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif;font-weight:700;color:var(--text)">
-              Sync All Now
-            </button>
-            <button onclick="runManualPullNow()" style="width:fit-content;padding:6px 14px;font-size:12px;background:none;border:1px solid var(--border);border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif;font-weight:700;color:var(--text)">
-              Pull from Jira Now
+            <!-- JIRA-SYNC-NOW-1: one button = exactly the background job (replaces Sync All Now + Pull from Jira Now) -->
+            <button id="tsSyncNowBtn" onclick="runJiraSyncNow()" title="Runs the same sync the server runs automatically: updates linked items, pulls new Jira issues and fills release dates" style="width:fit-content;padding:6px 14px;font-size:12px;background:none;border:1px solid var(--border);border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif;font-weight:700;color:var(--text)">
+              Sync with Jira now
             </button>
           </div>
         </div>
@@ -19717,6 +19715,39 @@ async function runManualPullSyncAll(){
     }
   } catch(e){
     if(statusEl) statusEl.textContent = 'Sync failed: ' + e.message;
+  }
+}
+
+// JIRA-SYNC-NOW-1: the one manual sync button - POST /api/jira/sync-now runs the server's background job
+// (linked-item sync + pull/refresh + release-date fill) for this Org and returns its summary.
+async function runJiraSyncNow(){
+  const statusEl = document.getElementById('tsSyncStatus'), pullEl = document.getElementById('tsPullStatus');
+  const btn = document.getElementById('tsSyncNowBtn');
+  if(btn) btn.disabled = true;
+  if(pullEl) pullEl.textContent = '';
+  if(statusEl) statusEl.textContent = 'Syncing with Jira…';
+  try {
+    const r = await API.post('/api/jira/sync-now', {});
+    const lk = r.linked || {}, pl = r.pull || {};
+    const parts = [];
+    if(r.linkedError) parts.push('linked items failed: ' + r.linkedError);
+    else parts.push(`${lk.synced||0} linked items checked, ${lk.changes||0} updated`);
+    if(r.pullError) parts.push('pull failed: ' + r.pullError);
+    else parts.push(`${pl.created||0} new from Jira` + (pl.autoLinked ? ` (${pl.autoLinked} auto-linked)` : '') + `, ${pl.refreshed||0} pulled items refreshed`);
+    if(r.releaseDates) parts.push(`${r.releaseDates} release date${r.releaseDates===1?'':'s'} filled`);
+    _jiraSyncLastRun = new Date().toISOString();
+    if(statusEl) statusEl.textContent = `Done - ${parts.join(' · ')} · ${fmtTS(_jiraSyncLastRun)}`;
+    if((lk.changes||0) + (pl.created||0) + (pl.refreshed||0) + (r.releaseDates||0) > 0){
+      if(_frzTeamChangedSinceBoot()){ location.reload(); return; }
+      const data = await API.get('/api/all');
+      projects = data.projects || projects;
+      render();
+      if(_itemPageId){ const p = projects.find(x=>x.id===_itemPageId); if(p) renderItemPage(p); }
+    }
+  } catch(e){
+    if(statusEl) statusEl.textContent = 'Sync failed: ' + (e.message||String(e));
+  } finally {
+    if(btn) btn.disabled = false;
   }
 }
 
