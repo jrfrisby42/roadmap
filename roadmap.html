@@ -21579,6 +21579,8 @@ if ('serviceWorker' in navigator) {
     font-size:13px; font-weight:600; line-height:1.3; }
   .frz-beta .frz-tb-meta { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; margin-top:5px; font-size:11.5px; color:var(--frz-text-muted); }
   .frz-beta .frz-tb-overdue { color:var(--frz-danger); font-weight:600; }
+  .frz-beta .frz-tb-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; vertical-align:1px; flex-shrink:0; }
+  .frz-beta .frz-tb-dot.is-green { background:#2e9d5b; } .frz-beta .frz-tb-dot.is-amber { background:var(--frz-warn); } .frz-beta .frz-tb-dot.is-red { background:var(--frz-danger); }
   .frz-beta .frz-tb-empty { padding:2px 4px; font-size:12px; color:var(--frz-text-muted); }
   .frz-beta .frz-tb-more { align-self:flex-start; padding:2px 4px; font:inherit; font-size:12px; color:var(--frz-accent); background:none; border:0; cursor:pointer; }
   @media (max-width:640px){
@@ -25141,43 +25143,73 @@ if ('serviceWorker' in navigator) {
     function ageDays(d){ return (today - d) / 86400000; }
     function fmt(d){ return d ? d.toLocaleDateString('en-US',{timeZone:tz, month:'short', day:'numeric'}) : ''; }
     function pd(s){ return _call('parseD', s); }
-    function isTop(p){ var par=p.parent!=null && p.parent!=='' ? byId[p.parent] : null; return !par || par.hidden || par.archived || !inScope(par); }
-    var cards=[];
+    // TEAMBOARD-2 (1): projects only - the same "project types" setting as the Gantt's Projects focus. A card
+    // is a project with no project above it; anything inside a project is its work, not a card. A project
+    // under a hidden or archived project is left out with it (as on the Gantt).
+    var projTypes={}; (_val('projectTypes',[])||[]).forEach(function(t){ projTypes[t]=1; });
+    function inProj(p){ var seen={}; for(var q=p; q && !seen[q.id]; q=(q.parent!=null && q.parent!=='') ? byId[q.parent] : null){ seen[q.id]=1; if(projTypes[q.type||'']) return true; } return false; }
+    function isTop(p){ var par=p.parent!=null && p.parent!=='' ? byId[p.parent] : null; return !par || !inProj(par); }
+    // (2): an item's team is its own, else the nearest ancestor's - so a story with no team counts for its project's team.
+    var _eff={};
+    function effTeam(x){
+      if(x.id in _eff) return _eff[x.id];
+      var t='', seen={};
+      for(var q=x; q && !seen[q.id]; q=(q.parent!=null && q.parent!=='') ? byId[q.parent] : null){ seen[q.id]=1; if(q.dev){ t=q.dev; break; } }
+      return (_eff[x.id]=t);
+    }
+    function isWork(x){ var kidsLive=(kids[x.id]||[]).some(function(c){ return !c.hidden; }); return (!kidsLive || (x.start && x.due)) && !RESERVED_TERMINAL_STATUSES[x.status]; }
+    var DAY=86400000, cards=[];
     ps.forEach(function(p){
-      if(p.archived || p.hidden || !inScope(p) || !isTop(p)) return;
+      if(p.archived || p.hidden || !inScope(p) || !inProj(p) || !isTop(p)) return;
       if(_call('isScheduledType', p.type||'')===false) return;   // same baseline as the Gantt (tracking-only types stay off)
       var d=desc(p.id);
-      var ct={}; d.forEach(function(c){ if(c.dev) ct[c.dev]=(ct[c.dev]||0)+1; });
-      var team=p.dev || Object.keys(ct).sort(function(x,y){ return (ct[y]-ct[x]) || x.localeCompare(y); })[0] || '';
-      if(ownerScope && team!==ownerScope) return;
-      if(!_frzPillMatch(Object.assign({}, p, {dev:team}), f)) return;   // chips + search; Team chip matches the placed team
-      var col='', when=null, fd=_call('itemFinishDate', p);
-      if(fd){ if(ageDays(fd)>45) return; col='finished'; when=fd; }
-      else if(_call('isTerminalStatus', p.status)) return;   // finished but undated: cannot be placed in "last 45 days"
-      else {
-        var phases=[p].concat(d).map(function(x){ return model.phase(x.status); });
-        if(phases.indexOf('now')>=0) col='now';
-        else if(phases.indexOf('next')>=0) col='next';
-        else if(d.length){   // every descendant finished (dated) -> the parent finished when the last one did
-          var fds=d.map(function(x){ return _call('itemFinishDate', x); });
-          if(fds.every(Boolean)){ var last=fds.reduce(function(m,x){ return x>m?x:m; }); if(ageDays(last)<=45){ col='finished'; when=last; } }
+      // (2) a shared project shows under every team with work in it; each card is that team's slice.
+      var teamSet={};
+      d.forEach(function(x){ if(isWork(x)) teamSet[effTeam(x)]=1; });
+      if(!d.length || (p.start && p.due) || !Object.keys(teamSet).length) teamSet[effTeam(p)]=1;
+      var fd=_call('itemFinishDate', p);
+      if(!fd && _call('isTerminalStatus', p.status)) return;   // finished but undated: cannot be placed in "last 45 days"
+      if(fd && ageDays(fd)>45) return;
+      Object.keys(teamSet).forEach(function(team){
+        if(ownerScope && team!==ownerScope) return;
+        if(!_frzPillMatch(Object.assign({}, p, {dev:team}), f)) return;   // chips + search; Team chip matches this card's team
+        var self=(effTeam(p)===team);
+        var dT=d.filter(function(x){ return effTeam(x)===team; });
+        var col='', when=null;
+        if(fd){ col='finished'; when=fd; }
+        else {
+          var phases=(self?[p]:[]).concat(dT).map(function(x){ return model.phase(x.status); });
+          if(phases.indexOf('now')>=0) col='now';
+          else if(phases.indexOf('next')>=0) col='next';
+          else if(dT.length){   // all of this team's work finished (dated) -> finished when its last piece did
+            var fds=dT.map(function(x){ return _call('itemFinishDate', x); });
+            if(fds.every(Boolean)){ var last=fds.reduce(function(m,x){ return x>m?x:m; }); if(ageDays(last)<=45){ col='finished'; when=last; } }
+          }
         }
-      }
-      if(!col) return;
-      var starts=[pd(p.start)].concat(d.map(function(x){ return pd(x.start); })).filter(Boolean);
-      var ends=(p.revised||p.due) ? [pd(p.revised||p.due)] : d.map(function(x){ return pd(x.revised||x.due); });
-      ends=ends.filter(Boolean);
-      // TEAMBOARD-PROGRESS-1: "x/y done" counts the actual work - the same set the Gantt's progress fill uses:
-      // leaf items (no children, or children but its own dates), skipping Duplicate/Transferred. Container
-      // Epics no longer count as work, so the card and the Gantt bar always agree.
-      var work=d.filter(function(x){
-        var kidsLive=(kids[x.id]||[]).some(function(c){ return !c.hidden; });
-        return (!kidsLive || (x.start && x.due)) && !RESERVED_TERMINAL_STATUSES[x.status];
+        if(!col) return;
+        var starts=(self?[pd(p.start)]:[]).concat(dT.map(function(x){ return pd(x.start); })).filter(Boolean);
+        var ends=(self && (p.revised||p.due)) ? [pd(p.revised||p.due)] : dT.map(function(x){ return pd(x.revised||x.due); });
+        ends=ends.filter(Boolean);
+        // TEAMBOARD-PROGRESS-1: "x/y done" counts the actual work - the same set the Gantt's progress fill uses:
+        // leaf items (no children, or children but its own dates), skipping Duplicate/Transferred.
+        var work=dT.filter(isWork);
+        var done=work.filter(function(x){ return _call('isTerminalStatus', x.status); }).length;
+        var due=ends.length ? ends.reduce(function(m,x){ return x>m?x:m; }) : null;
+        var touched=(self?[p]:[]).concat(dT).map(function(x){ return x.updated_ts ? new Date(x.updated_ts) : null; }).filter(function(x){ return x && !isNaN(x); });
+        var lastChange=touched.length ? touched.reduce(function(m,x){ return x>m?x:m; }) : null;
+        // (3) health, for in-flight work only - computed, never set by hand.
+        var health=null;
+        if(col==='now'){
+          var left=work.length-done, daysToDue=due ? Math.floor((due-today)/DAY) : null, idle=lastChange ? Math.floor((today-lastChange)/DAY) : null;
+          if(due && due<today) health={k:'red', why:'Past due ('+fmt(due)+')'+(work.length?' with '+left+' of '+work.length+' still open':'')};
+          else if(daysToDue!=null && daysToDue<=7 && work.length && done/work.length<0.75) health={k:'amber', why:'Due '+fmt(due)+' with '+left+' of '+work.length+' still open'};
+          else if(idle!=null && idle>=14) health={k:'amber', why:'No changes in '+idle+' days'};
+          else health={k:'green', why:'On track'};
+        }
+        cards.push({ p:p, team:team, col:col, when:when, total:work.length, done:done, health:health,
+          start: (self && p.start) ? pd(p.start) : (starts.length ? starts.reduce(function(m,x){ return x<m?x:m; }) : null),
+          due: due });
       });
-      var done=work.filter(function(x){ return _call('isTerminalStatus', x.status); }).length;
-      cards.push({ p:p, team:team, col:col, when:when, total:work.length, done:done,
-        start: p.start ? pd(p.start) : (starts.length ? starts.reduce(function(m,x){ return x<m?x:m; }) : null),
-        due: ends.length ? ends.reduce(function(m,x){ return x>m?x:m; }) : null });
     });
     var cols=[{k:'finished', t:'Finished', h:'Finished in the last 45 days'},
               {k:'now', t:'Now', h:'Started and not finished (any part of it)'}];
@@ -25198,8 +25230,9 @@ if ('serviceWorker' in navigator) {
       else if(c.col==='next' && c.start) meta.push('<span>'+(c.start<today?'Start was ':'Starts ')+fmt(c.start)+'</span>');
       if(c.total) meta.push('<span>'+c.done+'/'+c.total+' done</span>');
       if(p.assignee) meta.push('<span>'+esc(_call('displayName', p.assignee)||p.assignee)+'</span>');
-      return '<button type="button" class="frz-tb-card" data-open="'+p.id+'" title="'+escA(p.name||'')+'">'+
-        '<span class="frz-tb-name">'+(ic?ic+' ':'')+esc(p.name||'(untitled)')+'</span>'+
+      var dot=c.health ? '<span class="frz-tb-dot is-'+c.health.k+'" role="img" aria-label="'+escA(c.health.why)+'" title="'+escA(c.health.why)+'"></span>' : '';   // TEAMBOARD-2 (3)
+      return '<button type="button" class="frz-tb-card" data-open="'+p.id+'" title="'+escA(p.name||'')+(c.health?' - '+c.health.why:'')+'">'+
+        '<span class="frz-tb-name">'+dot+(ic?ic+' ':'')+esc(p.name||'(untitled)')+'</span>'+
         '<span class="frz-tb-meta">'+meta.join('')+'</span></button>';
     }
     var teams={};
