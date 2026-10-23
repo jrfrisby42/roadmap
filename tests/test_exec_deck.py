@@ -71,9 +71,21 @@ def test_deck_has_the_expected_slides(team):
     assert "Technology Update - November 2026" in slides[0]
     assert f"{label} Roadmap Progress" in slides[1] and "Platform" in slides[1] and "1/2 done" in slides[1]
     assert "Late project" in slides[1] and "Queued project" not in slides[1]
-    assert f"{label} - Delivered and Next" in slides[2] and "Shipped project" in slides[2] and "Queued project" in slides[2]
-    assert f"{label} Current Roadmap" in slides[3] and "Platform" in slides[3]
-    assert len(slides) == 4
+    assert "This month: 1 story done - Done story" in slides[1]                        # EXEC-DECK-2 outcome facts
+    assert f"{label} - Work Delivered" in slides[2] and "items delivered" in slides[2]   # EXEC-DECK-2
+    assert f"{label} - Delivered and Next" in slides[3] and "Shipped project" in slides[3] and "Queued project" in slides[3]
+    assert f"{label} Current Roadmap" in slides[4] and "Platform" in slides[4]
+    assert f"{label} - Shipped, Last 30 Days" in slides[5] and "Done story" in slides[5] and "Platform  (1)" in slides[5]
+    assert len(slides) == 6
+
+
+def test_work_delivered_counts_finished_work_not_projects(team):
+    _seed(team)
+    d = server._exec_model(team, TODAY)["delivered"]
+    assert d["count"] == 2                                   # Done story + the childless Shipped project; not Old/Dup/open
+    assert dict(d["byType"]) == {"Story": 1, "Roadmap Item": 1}
+    assert dict(d["byTeam"]) == {"Wasatch": 2}
+    assert [n for _, n in d["perMonth"]] == [1, 0, 0, 0, 2, 0]   # Jun (Old project) .. Nov; Oct has the two
 
 
 def test_email_carries_the_deck(team, monkeypatch):
