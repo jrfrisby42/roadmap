@@ -21560,7 +21560,10 @@ if ('serviceWorker' in navigator) {
   /* TEAM-BOARD-1: Team Board (teams x Finished/Now/Next). Desktop grid; <=640px stacks per team. */
   .frz-beta #frzTeamBoard { padding:16px 20px 32px; color:var(--frz-text); }
   .frz-beta .frz-tb-note { font-size:12px; color:var(--frz-text-muted); margin:0 0 10px; }
-  .frz-beta .frz-tb-bar { display:flex; justify-content:flex-end; margin:0 0 10px; }
+  .frz-beta .frz-tb-bar { display:flex; justify-content:flex-end; gap:8px; margin:0 0 10px; }
+  .frz-beta .frz-tb-attn { font:inherit; font-size:12px; font-weight:600; padding:5px 12px; border-radius:6px; cursor:pointer; color:var(--frz-text-secondary); background:var(--frz-bg-surface); border:1px solid var(--frz-border); display:inline-flex; align-items:center; }
+  .frz-beta .frz-tb-attn:hover { border-color:var(--frz-danger); }
+  .frz-beta .frz-tb-attn.is-on { color:var(--frz-danger); border-color:var(--frz-danger); background:color-mix(in srgb, var(--frz-danger) 9%, transparent); }
   .frz-beta .frz-tb-deck { font:inherit; font-size:12px; font-weight:600; padding:5px 12px; border-radius:6px; cursor:pointer; color:var(--frz-accent); background:var(--frz-bg-surface); border:1px solid var(--frz-accent); }
   .frz-beta .frz-tb-deck:hover { background:var(--frz-accent-soft); }
   .frz-beta .frz-tb-deck:disabled { opacity:.6; cursor:default; }
@@ -23398,6 +23401,7 @@ if ('serviceWorker' in navigator) {
     tboard.addEventListener('click', function(e){
       var more = e.target.closest('[data-tbmore]');
       if(more){ var k=more.getAttribute('data-tbmore'); _tbOpen[k]=!_tbOpen[k]; renderTeamBoard(); return; }
+      if(e.target.closest('[data-tbattn]')){ _tbAttention=!_tbAttention; syncURL(true); renderTeamBoard(); return; }   // TB-ATTENTION-1
       var card = e.target.closest('[data-open]');
       if(card) navigate('/item/'+card.getAttribute('data-open'), false);
     });
@@ -24358,6 +24362,7 @@ if ('serviceWorker' in navigator) {
     if (view==='reports') _rptEmitURL(params);   // RPT-DRILL-1 Stage 2: report-owned r-prefixed controls (+ D4 drill dims when Stage 3 sets them)
     if ((view==='list' || view==='kanban') && _betaFlagged) params.set('flag','1');   // FN5: the Flagged toggle in the URL (shareable)
     if (view==='gantt' && _ganttSpan==='all') params.set('span','all');   // GANTT-DECLUTTER-1: absent = Now (the default)
+    if (view==='team-board' && _tbAttention) params.set('attn','1');   // TB-ATTENTION-1
     if (view==='gantt' && _ganttItems==='all') params.set('items','all');   // GANTT-FOCUS-1: absent = Projects only (the default)
     var qs = params.toString();
     var base = '/'+view;
@@ -24416,6 +24421,7 @@ if ('serviceWorker' in navigator) {
     if (view==='reports') _rptSeedURL(qp);   // RPT-DRILL-1 Stage 2: seed report-local controls (+ D4 dims) from the URL; absent -> defaults
     if (view==='list' || view==='kanban') _betaFlagged = (qp.get('flag')==='1');   // FN5: seed the Flagged toggle from the URL (absent -> off)
     if (view==='gantt') _ganttSpan = (qp.get('span')==='all') ? 'all' : 'now';      // GANTT-DECLUTTER-1: seed Now/All from the URL (absent -> Now)
+    if (view==='team-board') _tbAttention = (qp.get('attn')==='1');   // TB-ATTENTION-1
     if (view==='gantt') _ganttItems = (qp.get('items')==='all') ? 'all' : 'projects';   // GANTT-FOCUS-1: seed Projects only (default) / Everything
     if (view==='list' && typeof _listState!=='undefined') _listState.sort = qp.get('sort') || '';   // ADOPT-1: seed the List sort from the URL (round-trip); absent -> default (empty = server updated_ts:desc)
   }
@@ -25097,6 +25103,7 @@ if ('serviceWorker' in navigator) {
   // status lags its Stories still reads as in flight. Runs over in-memory projects (already team- and
   // contributor-scoped), so there is no endpoint.
   var _tbOpen = {};                                   // 'team|col' -> true when a capped cell is expanded
+  var _tbAttention = false;                           // TB-ATTENTION-1: show only red/amber cards; URL ?attn=1
   var _TB_CAP = { finished:5, now:6, next:3 };
   function setTeamBoard(){
     if(!_val('isAdmin',false)){ navigate('/gantt', true); return; }   // admin-only (route belt; the rail + tab strip also hide it)
@@ -25215,6 +25222,10 @@ if ('serviceWorker' in navigator) {
           due: due });
       });
     });
+    // TB-ATTENTION-1: the management view - only the cards with a red or amber health dot (in-flight work that is
+    // past due, due soon with work open, or quiet for 14+ days). The count shows on the toggle either way.
+    var attnCount=cards.filter(function(c){ return c.health && c.health.k!=='green'; }).length;
+    if(_tbAttention) cards=cards.filter(function(c){ return c.health && c.health.k!=='green'; });
     var cols=[{k:'finished', t:'Finished', h:'Finished in the last 45 days'},
               {k:'now', t:'Now', h:'Started and not finished (any part of it)'}];
     if(model.approved) cols.push({k:'next', t:'Next', h:'In "'+model.approved+'" and not started'});
@@ -25248,7 +25259,7 @@ if ('serviceWorker' in navigator) {
     });
     var html='<div class="frz-tb">';
     // EXEC-DECK-1: the monthly exec slides for this Org, on demand (the 1st-of-month email covers Development + IT).
-    html+='<div class="frz-tb-bar"><button type="button" class="frz-tb-deck" data-tbdeck="1" title="Download the Technology Update slides for this Organization (PowerPoint, company template)">Build exec slides</button></div>';
+    html+='<div class="frz-tb-bar"><button type="button" class="frz-tb-attn'+(_tbAttention?' is-on':'')+'" data-tbattn="1" aria-pressed="'+(_tbAttention?'true':'false')+'" title="Show only work that is past due, due soon with work still open, or has had no changes in 14+ days"><span class="frz-tb-dot is-red"></span>Needs attention ('+attnCount+')</button><button type="button" class="frz-tb-deck" data-tbdeck="1" title="Download the Technology Update slides for this Organization (PowerPoint, company template)">Build exec slides</button></div>';
     if(!host._deckWired){
       host._deckWired=1;
       host.addEventListener('click', function(e){
@@ -25267,7 +25278,7 @@ if ('serviceWorker' in navigator) {
     }
     if(!model.approved) html+='<div class="frz-tb-note">Next is off: this Organization has no usable Approved status. An admin can set one in Admin &gt; Statuses.</div>';
     if(!names.length){
-      html+='<div class="frz-tb-blank">No items are finished, in progress or approved for the current filters.</div></div>';
+      html+='<div class="frz-tb-blank">'+(_tbAttention ? 'Nothing needs attention right now.' : 'No items are finished, in progress or approved for the current filters.')+'</div></div>';
       host.innerHTML=html; return;
     }
     html+='<div class="frz-tb-grid" style="--tb-cols:'+cols.length+'"><div class="frz-tb-hd">Team</div>';
