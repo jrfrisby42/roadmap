@@ -1834,7 +1834,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.62.20"
+APP_VERSION = "6.62.21"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -14782,6 +14782,23 @@ EXEC_DECK_TEMPLATE = os.environ.get("EXEC_DECK_TEMPLATE") or os.path.join(
     os.path.dirname(TENANTS_DIR.rstrip("/\\")) or ".", "exec_deck_template.pptx")
 _EXEC_PRIORITY = {"1": "Urgent", "2": "High", "3": "Medium", "4": "Low"}
 _EXEC_FINISHED_DAYS = 45
+_EXEC_DELIVERED_DAYS = 30   # EXEC-DECK-2: the "work delivered" window (items, not projects)
+
+
+def _exec_plural(word: str, n: int) -> str:
+    w = (word or "item").strip()
+    if n == 1 or w.lower() in ("support", "maintenance", "onboarding", "offboarding", "other"):
+        return w.lower()
+    if w.lower().endswith(("x", "s", "ch", "sh")):
+        return (w + "es").lower()
+    if w.lower().endswith("y") and w[-2:-1].lower() not in "aeiou":
+        return (w[:-1] + "ies").lower()
+    return (w + "s").lower()
+
+
+def _exec_kind_phrase(counter) -> str:
+    """'4 stories, 1 bug fix' from a Counter of item types (largest first)."""
+    return ", ".join(f"{n} {_exec_plural(t, n)}" for t, n in counter.most_common())
 
 
 def _exec_org_label(team: str) -> str:
@@ -14933,17 +14950,61 @@ def _exec_model(team: str, today: date = None) -> dict:
                 health = ("amber", f"No changes in {idle} days")
             else:
                 health = ("green", "On track")
-        cards.append({"id": p["id"], "key": p.get("itemKey") or "", "name": p.get("name") or "(untitled)",
+        recent = sorted([x for x in work if is_term(x.get("status")) and finish(x) and 0 <= (today - finish(x)).days <= _EXEC_DELIVERED_DAYS],
+                        key=lambda x: finish(x), reverse=True)   # EXEC-DECK-2: what this project finished this month
+        cards.append({"id": p["id"], "key": p.get("itemKey") or "", "name": p.get("name") or "(untitled)", "recent": recent,
                       "teams": teams, "ownTeam": eff_team(p), "priority": _EXEC_PRIORITY.get(str(p.get("priority") or ""), ""),
                       "prioRank": int(p["priority"]) if str(p.get("priority") or "").isdigit() and int(p["priority"]) > 0 else 100,
                       "status": p.get("status") or "", "col": col, "when": when, "start": start, "due": due,
                       "barEnd": bar_end, "total": len(work), "done": done, "health": health})
+    # EXEC-DECK-2: the actual work delivered - every finished piece of work (leaf items, any type, in or out of a
+    # project; Duplicate/Transferred and hidden copies excluded), over the last 30 days and per month for six months.
+    from collections import Counter
+
+    def top_project(x):
+        seen, q, top = set(), x, None
+        while q and q["id"] not in seen:
+            seen.add(q["id"])
+            if (q.get("type") or "") in proj_types:
+                top = q
+            q = parent_of(q)
+        return top
+    done_work = []
+    for x in ps:
+        if x.get("hidden") or not is_term(x.get("status")) or not is_work(x):
+            continue
+        f = finish(x)
+        if f and f <= today:
+            done_work.append((f, x))
+    recent_all = sorted([(f, x) for f, x in done_work if (today - f).days <= _EXEC_DELIVERED_DAYS], key=lambda t: t[0], reverse=True)
+    pts = 0.0
+    for _, x in recent_all:
+        try:
+            pts += float(x.get("storyPoints") or 0)
+        except (TypeError, ValueError):
+            pass
+    months = []
+    yy, mm = today.year, today.month
+    for _ in range(6):
+        months.insert(0, (yy, mm))
+        yy, mm = (yy - 1, 12) if mm == 1 else (yy, mm - 1)
+    per_month = [(date(a, b, 1), sum(1 for f, _ in done_work if (f.year, f.month) == (a, b))) for a, b in months]
+    while len(per_month) > 1 and per_month[0][1] == 0:     # an Org that started later: no fake zero months
+        per_month.pop(0)
+    shipped = {}
+    for f, x in recent_all:
+        tp = top_project(x)
+        shipped.setdefault((tp or {}).get("name") or "Other work", []).append(x)
+    delivered = {"count": len(recent_all), "points": round(pts, 1), "metric": cfg.get("metricLabel") or "Story Points",
+                 "byType": Counter((x.get("type") or "Other") for _, x in recent_all),
+                 "byTeam": Counter((eff_team(x) or "No team") for _, x in recent_all),
+                 "perMonth": per_month, "shipped": shipped, "since": today - timedelta(days=_EXEC_DELIVERED_DAYS)}
     far = date(9999, 1, 1)
     now_c = sorted([c for c in cards if c["col"] == "now"], key=lambda c: (c["prioRank"], c["due"] or far, c["name"]))
     next_c = sorted([c for c in cards if c["col"] == "next"], key=lambda c: (c["prioRank"], c["start"] or far, c["name"]))
     fin_c = sorted([c for c in cards if c["col"] == "finished"], key=lambda c: c["when"], reverse=True)
     return {"team": team, "label": _exec_org_label(team), "today": today, "now": now_c, "next": next_c,
-            "finished": fin_c, "teamOrder": cfg.get("developers") or []}
+            "finished": fin_c, "teamOrder": cfg.get("developers") or [], "delivered": delivered}
 
 
 def _exec_layout(prs, name, fallback_idx):
@@ -15035,8 +15096,15 @@ def build_exec_deck(teams: list, today: date = None, template: str = None) -> by
                 put(cell.text_frame, h, 11, True, WHITE, PP_ALIGN.CENTER); cell.vertical_anchor = MSO_ANCHOR.MIDDLE
             for r, c in enumerate(chunk, start=1):
                 base = ci * 10 + r
+                outcome = ""
+                if c["recent"]:   # EXEC-DECK-2: facts, not commentary - what finished under it this month
+                    from collections import Counter as _C
+                    names = [x.get("name") or "" for x in c["recent"][:3]]
+                    names = [n if len(n) <= 34 else n[:32] + "..." for n in names]
+                    outcome = (f"This month: {_exec_kind_phrase(_C((x.get('type') or 'item') for x in c['recent']))} done - "
+                               + "; ".join(names) + (f" +{len(c['recent']) - 3} more" if len(c["recent"]) > 3 else ""))
                 vals = [str(base), c["name"], ", ".join(c["teams"]) or "-", c["priority"] or "-", c["status"],
-                        fmt_day(c["due"]) or "-", "", ""]
+                        fmt_day(c["due"]) or "-", "", outcome]
                 for i, v in enumerate(vals):
                     cell = tbl.cell(r, i); cell.vertical_anchor = MSO_ANCHOR.MIDDLE
                     cell.fill.solid(); cell.fill.fore_color.rgb = ROWALT if r % 2 == 0 else WHITE
@@ -15051,14 +15119,64 @@ def build_exec_deck(teams: list, today: date = None, template: str = None) -> by
                         para = put(cell.text_frame, "● ", 12, False, HEALTH[(c["health"] or ("green",))[0]], PP_ALIGN.LEFT)
                         run = para.add_run(); run.text = (f"{c['done']}/{c['total']} done" if c["total"] else (c["health"] or ("", ""))[1])
                         run.font.size = Pt(10); run.font.color.rgb = INK
+                    elif i == 7:
+                        put(cell.text_frame, v, 8, False, INK, PP_ALIGN.LEFT); cell.text_frame.word_wrap = True
                     else:
                         put(cell.text_frame, v, 10, i == 1, INK if i else MUTED, PP_ALIGN.CENTER if i in (0, 2, 5) else PP_ALIGN.LEFT)
             # legend for the dots
-            lg = s.shapes.add_textbox(Inches(0.2), Inches(1.05 + 0.4 * (len(chunk) + 1)), Inches(8), Inches(0.3))
+            lg = s.shapes.add_textbox(Inches(0.2), Inches(6.5), Inches(8), Inches(0.3))   # bottom: outcome text makes rows taller
             para = lg.text_frame.paragraphs[0]
             for key, txt in (("green", "On track   "), ("amber", "Due soon or quiet 14+ days   "), ("red", "Past due")):
                 r1 = para.add_run(); r1.text = "● "; r1.font.size = Pt(10); r1.font.color.rgb = HEALTH[key]
                 r2 = para.add_run(); r2.text = txt; r2.font.size = Pt(9); r2.font.color.rgb = MUTED
+
+        # 2b. Work Delivered (EXEC-DECK-2): how much actually got done - every finished piece of work, not just projects.
+        dv = m["delivered"]
+        s = prs.slides.add_slide(body_layout)
+        title(s, f"{label} - Work Delivered")
+        sub = s.shapes.add_textbox(Inches(0.6), Inches(0.9), Inches(8), Inches(0.35))
+        put(sub.text_frame, f"Last {_EXEC_DELIVERED_DAYS} days ({fmt_day(dv['since'])} - {fmt_day(today)}): every finished story, bug fix, task and ticket", 12, False, MUTED)
+
+        def tile(x, y, w, h, big, small, big_size=26, color=BLUE, fill=RGBColor(0xF3, 0xF8, 0xFD)):
+            t = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
+            t.adjustments[0] = 0.08; t.fill.solid(); t.fill.fore_color.rgb = fill; t.line.color.rgb = LINE; t.line.width = Pt(0.75)
+            tf = t.text_frame; tf.word_wrap = True; tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+            put(tf, str(big), big_size, True, color, PP_ALIGN.CENTER)
+            p2 = tf.add_paragraph(); p2.alignment = PP_ALIGN.CENTER
+            r2 = p2.add_run(); r2.text = small; r2.font.size = Pt(11); r2.font.color.rgb = MUTED
+        tile(0.5, 1.45, 3.1, 1.75, dv["count"], "items delivered", 48)
+        if dv["points"]:
+            tile(3.75, 1.45, 2.75, 1.75, f"{dv['points']:g}", dv["metric"], 36, NAVY)   # the Org's own metric (IT: hours)
+        hd = s.shapes.add_textbox(Inches(0.5), Inches(3.35), Inches(6), Inches(0.3)); put(hd.text_frame, "BY KIND", 11, True, MUTED)
+        kinds = dv["byType"].most_common()
+        if len(kinds) > 4:
+            kinds = kinds[:3] + [("Other", sum(n for _, n in kinds[3:]))]
+        for ki, (k, n) in enumerate(kinds):
+            tile(0.5 + ki * 1.52, 3.65, 1.42, 1.05, n, _exec_plural(k, n), 22, NAVY)
+        hd = s.shapes.add_textbox(Inches(0.5), Inches(4.85), Inches(6), Inches(0.3)); put(hd.text_frame, "BY TEAM", 11, True, MUTED)
+        teams_c = dv["byTeam"].most_common()
+        if len(teams_c) > 4:
+            teams_c = teams_c[:3] + [("Others", sum(n for _, n in teams_c[3:]))]
+        for ki, (k, n) in enumerate(teams_c):
+            tile(0.5 + ki * 1.52, 5.15, 1.42, 1.05, n, k, 22, NAVY)
+        from pptx.chart.data import CategoryChartData
+        from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION
+        cd = CategoryChartData()
+        cd.categories = [f"{d:%b}" + (" (to date)" if (d.year, d.month) == (today.year, today.month) else "") for d, _ in dv["perMonth"]]
+        cd.add_series("Items delivered", [n for _, n in dv["perMonth"]])
+        ch = s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(6.9), Inches(1.35), Inches(6.0), Inches(4.9), cd).chart
+        ch.has_legend = False
+        ch.has_title = True; ch.chart_title.text_frame.text = "Items delivered per month"
+        ch.chart_title.text_frame.paragraphs[0].runs[0].font.size = Pt(13)
+        ch.chart_title.text_frame.paragraphs[0].runs[0].font.color.rgb = NAVY
+        ch.value_axis.has_major_gridlines = False; ch.value_axis.visible = False
+        ch.category_axis.tick_labels.font.size = Pt(10); ch.category_axis.tick_labels.font.color.rgb = MUTED
+        pl = ch.plots[0]; pl.gap_width = 60; pl.has_data_labels = True
+        pl.data_labels.font.size = Pt(11); pl.data_labels.font.bold = True; pl.data_labels.position = XL_LABEL_POSITION.OUTSIDE_END
+        ser = pl.series[0]; ser.format.fill.solid(); ser.format.fill.fore_color.rgb = BLUE
+        if dv["perMonth"] and dv["perMonth"][0][0] < date(2026, 9, 1):   # finish dates were only reliably stamped from Sept 2026
+            nt = s.shapes.add_textbox(Inches(6.9), Inches(6.25), Inches(6.0), Inches(0.3))
+            put(nt.text_frame, "Months before September 2026 may undercount: older finished work was not always dated.", 8, False, MUTED)
 
         # 3. Visible Progress / Next Focus - the two boxes from the IT Progress slide, full height.
         s = prs.slides.add_slide(body_layout)
@@ -15158,6 +15276,48 @@ def build_exec_deck(teams: list, today: date = None, template: str = None) -> by
                 r1 = para.add_run(); r1.text = "■ "; r1.font.size = Pt(10); r1.font.color.rgb = col_rgb
                 r2 = para.add_run(); r2.text = txt; r2.font.size = Pt(9); r2.font.color.rgb = MUTED
 
+    # 5. Appendix (EXEC-DECK-2): everything shipped in the last 30 days, grouped by project, for "what exactly?".
+    for team in teams:
+        m = _exec_model(team, today)
+        shipped = m["delivered"]["shipped"]
+        groups = sorted(shipped.items(), key=lambda kv: (kv[0] == "Other work", -len(kv[1]), kv[0]))
+        lines = []
+        for gname, xs in groups:
+            lines.append(("head", f"{gname}  ({len(xs)})"))
+            for x in xs:
+                nm = x.get("name") or ""
+                lines.append(("item", (x.get("itemKey") or "") + "  " + (nm if len(nm) <= 58 else nm[:56] + "...")))
+        per_col, cols_per = 26, 2
+        per_slide = per_col * cols_per
+        pages = [lines[i:i + per_slide] for i in range(0, len(lines), per_slide)] or [[]]
+        extra = 0
+        if len(pages) > 3:
+            extra = sum(1 for pg in pages[3:] for k, _ in pg if k == "item")
+            pages = pages[:3]
+        for pi, page in enumerate(pages):
+            s = prs.slides.add_slide(body_layout)
+            title(s, f"{m['label']} - Shipped, Last {_EXEC_DELIVERED_DAYS} Days" + (f" ({pi + 1}/{len(pages)})" if len(pages) > 1 else ""))
+            if not page:
+                tb = s.shapes.add_textbox(Inches(0.6), Inches(1.2), Inches(12), Inches(0.5))
+                put(tb.text_frame, "Nothing finished in this window.", 14, False, MUTED)
+                continue
+            for ci in range(cols_per):
+                chunk = page[ci * per_col:(ci + 1) * per_col]
+                if not chunk:
+                    continue
+                tb = s.shapes.add_textbox(Inches(0.5 + ci * 6.3), Inches(1.0), Inches(6.1), Inches(5.6))
+                tf = tb.text_frame; tf.word_wrap = True
+                for li, (kind, txt) in enumerate(chunk):
+                    para = tf.paragraphs[0] if li == 0 else tf.add_paragraph()
+                    run = para.add_run(); run.text = txt
+                    run.font.size = Pt(10 if kind == "head" else 9); run.font.bold = kind == "head"
+                    run.font.color.rgb = NAVY if kind == "head" else INK
+                    if kind == "head" and li:
+                        para.space_before = Pt(5)
+            if extra and pi == len(pages) - 1:
+                nt = s.shapes.add_textbox(Inches(0.5), Inches(6.5), Inches(8), Inches(0.3))
+                put(nt.text_frame, f"+ {extra} more items not shown", 9, False, MUTED)
+
     buf = io.BytesIO()
     prs.save(buf)
     return buf.getvalue()
@@ -15186,9 +15346,11 @@ def send_exec_deck(teams: list, to_addr: str, verbose: bool = False, today: date
     teams = [t for t in teams if os.path.exists(os.path.join(TENANTS_DIR, t, "roadmap.db"))]
     data = build_exec_deck(teams, today)
     fname = f"Technology Update - {today:%Y-%m} (Flow).pptx"
-    counts = {t: {k: len(v) for k, v in _exec_model(t, today).items() if k in ("now", "next", "finished")} for t in teams}
+    models = {t: _exec_model(t, today) for t in teams}
+    counts = {t: {k: len(mm[k]) for k in ("now", "next", "finished")} for t, mm in models.items()}
     body = ("Your monthly Technology Update slides from Flow are attached.\n\n"
-            + "\n".join(f"{_exec_org_label(t)}: {c['now']} in progress, {c['finished']} finished in the last "
+            + "\n".join(f"{_exec_org_label(t)}: {models[t]['delivered']['count']} items delivered in the last "
+                        f"{_EXEC_DELIVERED_DAYS} days; projects - {c['now']} in progress, {c['finished']} finished in the last "
                         f"{_EXEC_FINISHED_DAYS} days, {c['next']} next" for t, c in counts.items())
             + "\n\nThe slides use the company template and are fully editable - copy them into your deck "
               "and add the story slides as usual.\n")
