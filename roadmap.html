@@ -7387,7 +7387,10 @@ async function createJiraIssueFromModalForItem(p){
     }).catch(()=>{});
     showToast(`Jira issue ${result.key} created and linked`);
   } catch(e){
-    alert('Failed to create Jira issue: ' + e.message);
+    // JIRA-ISSUETYPE-1: show the server's detail, not the raw {"detail":...} JSON body.
+    let msg = e.message;
+    try { const d = JSON.parse(msg).detail; if(typeof d === 'string' && d) msg = d; } catch(_){}
+    alert('Failed to create Jira issue: ' + msg);
   }
 }
 
@@ -19203,6 +19206,7 @@ window.addEventListener('popstate', e=>{
 let _tsJiraProjects  = []; // fetched from Jira
 let _tsJiraStatuses  = []; // fetched from Jira
 let _tsJiraTypes     = []; // fetched from Jira
+let _tsProjectTypes  = {}; // { jiraProjectKey: [allowed issue type names] } (JIRA-ISSUETYPE-1)
 let _jiraProjectMapping = {}; // { roadmapProject: jiraProjectKey }
 let _jiraStatusMapping  = {}; // { roadmapStatus: jiraStatus }
 let _jiraTypeMapping    = {}; // { roadmapType: jiraIssueType }
@@ -19478,7 +19482,28 @@ async function tsLoadJiraMetadata(){
   _tsJiraProjects = projR.status==='fulfilled' ? projR.value : [];
   _tsJiraStatuses = statR.status==='fulfilled' ? statR.value : [];
   _tsJiraTypes    = typeR.status==='fulfilled' ? typeR.value : [];
+  await tsLoadProjectIssueTypes();
   tsRenderMappings();
+}
+
+// JIRA-ISSUETYPE-1: which issue types each mapped Jira project allows, so a type mapping that a project's
+// scheme lacks is flagged here instead of failing later at "Create Jira issue". Best-effort: on failure
+// the map stays empty and no warnings show.
+async function tsLoadProjectIssueTypes(){
+  const keys = [...new Set(Object.values(_jiraProjectMapping).filter(Boolean))];
+  _tsProjectTypes = {};
+  if(!keys.length) return;
+  try { _tsProjectTypes = await API.get('/api/jira/project-issuetypes?keys=' + encodeURIComponent(keys.join(','))) || {}; }
+  catch(e){ _tsProjectTypes = {}; }
+}
+
+// The mapped Jira projects (that we have type lists for) that do NOT allow Jira type `jt`.
+function tsProjectsMissingType(jt){
+  if(!jt) return [];
+  const want = jt.trim().toLowerCase();
+  return Object.keys(_tsProjectTypes).filter(k =>
+    Object.values(_jiraProjectMapping).includes(k) &&
+    !(_tsProjectTypes[k]||[]).some(n => String(n).trim().toLowerCase() === want));
 }
 
 function tsRenderMappings(){
@@ -19520,7 +19545,9 @@ function tsRenderMappings(){
       const jt = _jiraTypeMapping[tp]||'';
       const on = jt && _jiraPullTypes.includes(jt);
       const pull = `<label title="${jt?('Pull Jira "'+escA(jt)+'" issues into Flow'):'Map a Jira type first'}" style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:var(--muted);flex-shrink:0;cursor:${jt?'pointer':'not-allowed'};white-space:nowrap"><input type="checkbox" class="ts-pull-type" data-jira="${escA(jt)}" ${on?'checked':''} ${jt?'':'disabled'} style="accent-color:var(--accent);width:14px;height:14px"> Pull</label>`;
-      return tsMapRow(tp, jt, jiraTypeOpts, `tsType_${i}`, true, pull);
+      const missing = tsProjectsMissingType(jt);
+      return tsMapRow(tp, jt, jiraTypeOpts, `tsType_${i}`, true, pull) +
+        (missing.length?`<div style="font-size:10px;color:#e8a000;margin-top:2px;padding-left:170px">⚠ ${esc(missing.join(', '))} ${missing.length>1?'do':'does'} not allow "${esc(jt)}" - creating a Jira issue for this type will fail there</div>`:'');
     }).join('') || '<div style="color:var(--muted);font-size:12px">No item types configured.</div>';
     typeEl.querySelectorAll('.ts-pull-type').forEach(cb => cb.onchange = () => {
       const jt = cb.getAttribute('data-jira');
@@ -19691,6 +19718,8 @@ async function saveTeamSettings(){
     statusEl.textContent = '✓ Saved';
     statusEl.style.color = '#22b96e';
     tsUpdateValidationSummary();
+    // JIRA-ISSUETYPE-1: refresh the "project does not allow this type" warnings against the saved mappings.
+    tsLoadProjectIssueTypes().then(tsRenderMappings).catch(()=>{});
     setTimeout(()=>{ statusEl.textContent=''; }, 3000);
   } catch(e){
     statusEl.textContent = '✗ Save failed: ' + e.message;
