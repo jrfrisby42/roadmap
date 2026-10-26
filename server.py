@@ -1834,7 +1834,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.62.22"
+APP_VERSION = "6.62.23"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -10402,6 +10402,34 @@ def _jira_account_id(email: str) -> str:
     _JIRA_ACCOUNT_CACHE[email] = acct
     return acct
 
+# JIRA-ISSUETYPE-1: the issue types a project actually allows ([{id, name}]), from its create metadata.
+# The admin type picker lists every type on the Jira site, so a mapping can name a type the project's
+# scheme does not include (development's Enhancement -> Improvement, which FRAZ lacks), and a name can be
+# shared by several project-scoped types (the site has three "Task"s) - both make Jira reject a create by
+# name with "Specify a valid issue type". Resolving against this list and creating by id avoids both.
+def _jira_project_issuetypes(project_key: str) -> list:
+    data = _jira_req("GET", f"/rest/api/3/issue/createmeta/{_urlq(project_key, safe='')}/issuetypes?maxResults=100") or {}
+    rows = data.get("issueTypes") or data.get("values") or []
+    return [{"id": str(t.get("id", "")), "name": t.get("name", "")} for t in rows if t.get("id") and t.get("name")]
+
+def _match_issuetype(allowed: list, name: str):
+    """The allowed type whose name matches `name` (case/whitespace-insensitive), else None."""
+    want = (name or "").strip().lower()
+    return next((t for t in allowed if t["name"].strip().lower() == want), None) if want else None
+
+@app.get("/api/jira/project-issuetypes")
+def list_jira_project_issuetypes(keys: str = "", auth: dict = Depends(require_role("admin"))):
+    """{projectKey: [type names]} for the given comma-separated keys. A key whose lookup fails is left
+    out, so the admin screen simply shows no warning for it rather than a false one."""
+    if not jira_configured(): raise HTTPException(400, "Jira not configured")
+    out = {}
+    for k in dict.fromkeys(x.strip().upper() for x in keys.split(",") if x.strip()):
+        try:
+            out[k] = [t["name"] for t in _jira_project_issuetypes(k)]
+        except Exception as e:
+            log.warning(f"[Jira] issue types for {k} failed: {e}")
+    return out
+
 @app.post("/api/jira/create-issue")
 def create_jira_issue(body: dict = Body(...),
                       auth: dict = Depends(require_role("admin", "editor"))):
@@ -10445,11 +10473,30 @@ def create_jira_issue(body: dict = Body(...),
     adf_content = [{"type":"paragraph","content":[{"type":"text","text":"\n".join(lines)}]},
                    {"type":"paragraph","content":[{"type":"text","text":description or item_name}]}]
 
+    # JIRA-ISSUETYPE-1: resolve the mapped type against what this project allows and create by id. A type
+    # the project lacks is a mapping mistake the admin can fix, so say exactly that instead of passing
+    # Jira's raw error through. If the lookup itself fails, fall back to the name as before.
+    issuetype_field = {"name": issue_type}
+    try:
+        allowed = _jira_project_issuetypes(project_key)
+    except Exception as e:
+        log.warning(f"[Jira] issue type lookup for {project_key} failed, creating by name: {e}")
+        allowed = []
+    if allowed:
+        hit = _match_issuetype(allowed, issue_type)
+        if not hit:
+            flow_type = (item.get("type") or "").strip()
+            names = ", ".join(t["name"] for t in allowed)
+            who = f'Flow type "{flow_type}" maps to Jira type "{issue_type}"' if flow_type else f'Jira type "{issue_type}"'
+            raise HTTPException(422, f"{who}, which Jira project {project_key} does not allow. "
+                                     f"{project_key} allows: {names}. Change the mapping in Admin > Jira > Type mapping.")
+        issuetype_field = {"id": hit["id"]}
+
     payload = {
         "fields": {
             "project": {"key": project_key},
             "summary": item_name,
-            "issuetype": {"name": issue_type},
+            "issuetype": issuetype_field,
             "description": {"type":"doc","version":1,"content":adf_content}
         }
     }
