@@ -1834,7 +1834,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.62.29"
+APP_VERSION = "6.62.30"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -10913,6 +10913,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
     released_map = cfg("statusIsReleased")   # JIRA-RELDATE-2: a sync INTO a released status stamps releaseDate
     points_cfg   = cfg("pointsEstimate")     # POINTS-ESTIMATE-1
     active_map   = cfg("statusIsActive")     # START-ON-ACTIVE-1
+    assignee_map = cfg("jiraAssigneeMap")    # JIRA-ASSIGNEE-1
 
     def status_rank(s):
         return _status_rank(s, all_statuses)   # extracted to a shared module helper (identical behavior)
@@ -11074,6 +11075,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
     # forward-only status advance is applied only if the current status still equals
     # the one the decision was based on (else the user changed it - don't override).
     points_changed = False
+    assignee_filled = ""
     with db(team) as c:
         cur_row = c.execute("SELECT data, updated_ts FROM projects WHERE id=?", (pid,)).fetchone()
         if cur_row:
@@ -11107,13 +11109,23 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
                 current["storyPoints"] = _sp
                 if _apply_points_estimate(current, points_cfg, terminal_map):   # POINTS-ESTIMATE-1
                     audit_details.append(f"Estimate from points: {current.get('dueWeeks')} wk, due {current.get('due') or '-'}")
+            # JIRA-ASSIGNEE-1: a BLANK Flow assignee is filled from the primary ticket's Jira assignee when that
+            # person is in jiraAssigneeMap. Fill-only - an assignee Flow already has is never changed (on a
+            # Flow-created item it is Flow's decision; the pulled-item refresh keeps owning pulled items).
+            if not (current.get("assignee") or "").strip() and tickets:
+                _acct = ((fields_by_ticket.get(tickets[0]) or {}).get("assignee") or {}).get("accountId", "")
+                _who = (assignee_map or {}).get(_acct, "") if _acct else ""
+                if _who:
+                    current["assignee"] = _who
+                    assignee_filled = _who
+                    audit_details.append(f"Assignee set from Jira: {_who}")
             # PRESERVE the optimistic-concurrency token (updated_ts) on a no-op poll.
             # Background jira sync runs on a timer and on item-page open; if every poll
             # bumped updated_ts it would invalidate every open editor's base token and
             # produce a persistent spurious "update conflict" on save (T3 regression).
             # Only a user-meaningful change (status advance, feature-flag or points change)
             # bumps it; pure sync-metadata refreshes keep the existing token.
-            _keep_ts = None if (any_changed or ff_changed or points_changed) else cur_row["updated_ts"]
+            _keep_ts = None if (any_changed or ff_changed or points_changed or assignee_filled) else cur_row["updated_ts"]
             _save_project(c, pid, current, _keep_ts)
         else:
             _save_project(c, pid, p)
@@ -11135,13 +11147,22 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
         except Exception as e:
             log.warning(f"[Notify] jira status hook failed for item {pid}: {e}")
 
+    # JIRA-ASSIGNEE-1: the filled-in assignee watches the item, as an assignment made in Flow does (no
+    # notification - this is a background sync, like the pulled-item refresh).
+    if assignee_filled:
+        try:
+            _add_watchers(team, pid, [assignee_filled])
+        except Exception as e:
+            log.warning(f"[Jira] watcher add failed for item {pid}: {e}")
+
     # Everything else → audit log only (skip when nothing changed to reduce noise)
-    if any_changed or ff_changed or points_changed:
+    if any_changed or ff_changed or points_changed or assignee_filled:
         write_audit(team, "jira:pull", username, pid, p.get("name",""),
                     changes={
                         "tickets": tickets,
                         "statusChanged": any_changed,
                         "ffChanged": ff_changed,
+                        "assigneeFilled": assignee_filled or None,
                         "syncedAt": now_ts,
                         "details": audit_details,
                     })
@@ -11151,6 +11172,7 @@ def jira_pull_sync(pid: int, body: dict = Body({}), x_team: Optional[str] = Head
         _rollup_sync_safe(team, username)
     return {
         "changed": any_changed, "pointsChanged": points_changed, "syncedAt": now_ts, "issues": issues_data,
+        "assigneeFilled": assignee_filled or None,
         "statusChange": {"from": old_status, "to": best_new_status} if any_changed else None,
     }
 
@@ -11313,7 +11335,7 @@ def jira_pull_all(body: dict = Body({}), x_team: Optional[str] = Header(None),
             # Pull-sync Jira status changes
             result = jira_pull_sync(r["id"], body, x_team, auth)
             synced += 1
-            if result.get("changed") or result.get("pointsChanged"):   # JIRA-POINTS-1: a points-only update reloads clients too
+            if result.get("changed") or result.get("pointsChanged") or result.get("assigneeFilled"):   # JIRA-POINTS-1 / JIRA-ASSIGNEE-1: reload clients too
                 changes += 1
 
             # Child sync: for items with syncChildren enabled and not terminal
@@ -11586,11 +11608,30 @@ def _jira_display_to_username(display: str):
         return None
     return f"{parts[0]}.{parts[-1]}".lower()
 
-def _seed_assignee_map(jira_users: list, flow_usernames: list, existing: dict):
+def _flow_user_aliases(flow_usernames: list, flow_users: list = None) -> dict:
+    """JIRA-ASSIGNEE-1: other 'first.last' spellings of a Flow user - the part before '@' of a username that is
+    an email address (tim.cottrell@company.com) and of the user's email. An alias two users share is dropped
+    (never guess between two people)."""
+    seen = {}
+    def add(alias, uname):
+        a = (alias or "").strip().lower()
+        if a:
+            seen.setdefault(a, set()).add(uname)
+    for u in (flow_usernames or []):
+        if "@" in str(u):
+            add(str(u).split("@", 1)[0], str(u))
+    for u in (flow_users or []):
+        if isinstance(u, dict) and u.get("username") and "@" in str(u.get("email") or ""):
+            add(str(u["email"]).split("@", 1)[0], str(u["username"]))
+    return {a: next(iter(us)) for a, us in seen.items() if len(us) == 1}
+
+def _seed_assignee_map(jira_users: list, flow_usernames: list, existing: dict, flow_users: list = None):
     """Pure: build the additions to jiraAssigneeMap from Jira users.
     jira_users: [{accountId, displayName}]. Never clobbers an existing accountId (J.R.'s corrections win).
+    A display name matches a Flow username exactly, else one unambiguous alias (_flow_user_aliases).
     Returns (merged, matched_count, unmatched_names, skipped_names)."""
-    flow_lower = {str(u).lower(): str(u) for u in (flow_usernames or [])}
+    flow_lower = {**_flow_user_aliases(flow_usernames, flow_users),
+                  **{str(u).lower(): str(u) for u in (flow_usernames or [])}}   # an exact username wins
     merged = dict(existing or {})
     matched, unmatched, skipped = 0, [], []
     for u in (jira_users or []):
@@ -11624,23 +11665,12 @@ def set_jira_pull_floor(body: dict = Body({}), auth: dict = Depends(require_role
     write_audit(team, "jira:set-pull-floor", auth["username"], changes={"floor": val})
     return {"floor": val, "changed": True}
 
-@app.post("/api/jira/seed-assignee-map")
-def seed_jira_assignee_map(body: dict = Body({}), auth: dict = Depends(require_role("admin"))):
-    """Seed jiraAssigneeMap once from Jira display names (First Last -> first.last matched to Flow
-    usernames). Never clobbers existing entries. Returns matched/unmatched COUNTS (+ unmatched display
-    names for correction) - never email addresses. Service accounts resolve to nothing."""
-    team = auth["team"]
-    if not jira_configured():
-        raise HTTPException(503, "Jira not configured")
+def _jira_assignable_users(team) -> list:
+    """Distinct assignable Jira users across the Org's mapped Jira projects: [{accountId, displayName}]."""
     with db(team) as c:
-        urow = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
-        arow = c.execute("SELECT value FROM config WHERE key='jiraAssigneeMap'").fetchone()
         prow = c.execute("SELECT value FROM config WHERE key='jiraProjectMapping'").fetchone()
-    flow_usernames = [u.get("username") for u in (json.loads(urow["value"]) if urow else []) if u.get("username")]
-    existing = json.loads(arow["value"]) if arow else {}
     proj_map = json.loads(prow["value"]) if prow else {}
     proj_keys = sorted({v for v in proj_map.values() if v})   # mapped Jira projects only (Fraznet -> FRAZ)
-    # Collect distinct assignable Jira users across the mapped projects.
     seen, jira_users = set(), []
     for pk in proj_keys:
         try:
@@ -11654,7 +11684,34 @@ def seed_jira_assignee_map(body: dict = Body({}), auth: dict = Depends(require_r
             if acct and acct not in seen:
                 seen.add(acct)
                 jira_users.append({"accountId": acct, "displayName": u.get("displayName", "")})
-    merged, matched, unmatched, skipped = _seed_assignee_map(jira_users, flow_usernames, existing)
+    return jira_users
+
+@app.get("/api/jira/assignable-users")
+def jira_assignable_users(auth: dict = Depends(require_role("admin"))):
+    """JIRA-ASSIGNEE-1: every assignable Jira person (by name), so the admin can map the ones the seed could
+    not match. Service accounts are left out. Read-only; display names and account ids only (no emails)."""
+    if not jira_configured():
+        raise HTTPException(503, "Jira not configured")
+    users = [u for u in _jira_assignable_users(auth["team"])
+             if (u.get("displayName") or "").strip().lower() not in _JIRA_SERVICE_ACCOUNT_NAMES]
+    return {"users": sorted(users, key=lambda u: (u.get("displayName") or "").lower())}
+
+@app.post("/api/jira/seed-assignee-map")
+def seed_jira_assignee_map(body: dict = Body({}), auth: dict = Depends(require_role("admin"))):
+    """Seed jiraAssigneeMap once from Jira display names (First Last -> first.last matched to Flow
+    usernames). Never clobbers existing entries. Returns matched/unmatched COUNTS (+ unmatched display
+    names for correction) - never email addresses. Service accounts resolve to nothing."""
+    team = auth["team"]
+    if not jira_configured():
+        raise HTTPException(503, "Jira not configured")
+    with db(team) as c:
+        urow = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+        arow = c.execute("SELECT value FROM config WHERE key='jiraAssigneeMap'").fetchone()
+    flow_users = json.loads(urow["value"]) if urow else []
+    flow_usernames = [u.get("username") for u in flow_users if u.get("username")]
+    existing = json.loads(arow["value"]) if arow else {}
+    jira_users = _jira_assignable_users(team)
+    merged, matched, unmatched, skipped = _seed_assignee_map(jira_users, flow_usernames, existing, flow_users)
     with db(team) as c:
         c.execute("INSERT INTO config(key,value) VALUES('jiraAssigneeMap',?) "
                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(merged),))
