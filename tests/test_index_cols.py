@@ -34,15 +34,18 @@ def test_update_refreshes_columns_and_timestamp(client, team, admin_headers):
                       json={"name": "Item", "status": "Planned", "dev": "PodA"},
                       headers=admin_headers).json()["id"]
     ts1 = _cols(team, pid)["updated_ts"]
+    # ITEM-PAGE-PARENT-1: a changed parent must exist, so point at a real item
+    par = client.post("/api/projects", json={"name": "Parent", "status": "Planned"},
+                      headers=admin_headers).json()["id"]
     r = client.put(f"/api/projects/{pid}",
                    json={"name": "Item", "status": "In Progress", "dev": "PodB",
-                         "parent": pid + 1000},
+                         "parent": par},
                    headers=admin_headers)
     assert r.status_code == 200
     cols = _cols(team, pid)
     assert cols["status"] == "In Progress"
     assert cols["owner"] == "PodB"
-    assert cols["parent_id"] == pid + 1000
+    assert cols["parent_id"] == par
     assert cols["updated_ts"] != ts1        # timestamp advanced
 
 

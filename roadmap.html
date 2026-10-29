@@ -18433,6 +18433,59 @@ function ipShowAddLink(){ const r=document.getElementById('ipAddLinkRow'); if(r)
 function ipLinkItem(){ const s=document.getElementById('ipLinkSelect'); const id=s?parseInt(s.value):0; if(!id) return; saveItemPagePatch({requires:id, parallel:false}); }
 function ipUnlinkRequires(){ saveItemPagePatch({requires:null, parallel:false}); }
 
+// ── ITEM-PAGE-PARENT-1: Parent Item picker (was modal-only) ──
+// Candidates exclude the item itself, its own descendants (a loop) and Duplicate/Transferred items.
+// Saved through the guarded _ipPersist (409-aware); update_project validates the same rules.
+function _ipDescendantIds(id){
+  const out = new Set(), queue = [id];
+  while(queue.length){
+    const cur = queue.shift();
+    projects.forEach(x => { if(x.parent != null && x.parent !== '' && Number(x.parent) === cur && !out.has(x.id)){ out.add(x.id); queue.push(x.id); } });
+  }
+  return out;
+}
+function ipShowParentPicker(){
+  const w = document.getElementById('ipParentPick'); if(!w) return;
+  w.style.display = '';
+  const inp = document.getElementById('ipParentInput');
+  if(inp){ inp.value = ''; inp.focus(); }
+  ipParentSearch();
+}
+function ipHideParentPicker(){
+  const w = document.getElementById('ipParentPick'); if(w) w.style.display = 'none';
+}
+function ipParentSearch(){
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  const res = document.getElementById('ipParentResults'); if(!res) return;
+  const q = (document.getElementById('ipParentInput')?.value || '').trim().toLowerCase();
+  const desc = _ipDescendantIds(p.id);
+  const curPar = (p.parent != null && p.parent !== '') ? Number(p.parent) : null;
+  const cands = projects.filter(x => x.id !== p.id && x.id !== curPar && !desc.has(x.id) && !RESERVED_TERMINAL_STATUSES.has(x.status));
+  const hits = (q
+    ? cands.filter(x => (x.itemKey||'').toLowerCase().includes(q) || (x.name||'').toLowerCase().includes(q))
+    : cands.filter(x => !isTerminalStatus(x.status)))          // no query: open items only, a short useful list
+    .sort((a,b) => {
+      const ak = (a.itemKey||'').toLowerCase() === q, bk = (b.itemKey||'').toLowerCase() === q;
+      if(ak !== bk) return ak ? -1 : 1;
+      return (a.name||'').localeCompare(b.name||'');
+    })
+    .slice(0, 25);
+  res.style.display = '';
+  res.innerHTML = hits.length
+    ? hits.map(x => `<div onmousedown="event.preventDefault();ipSetParent(${x.id})" style="display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--row-sep)" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+        ${x.itemKey?`<span style="font-family:monospace;font-size:11px;color:var(--muted);flex-shrink:0">${esc(x.itemKey)}</span>`:''}
+        <span style="flex:1;color:var(--text)">${esc(x.name||'')}</span>
+        <span style="font-size:11px;color:var(--muted);flex-shrink:0">${esc(x.status||'')}${x.product?' · '+esc(x.product):''}</span></div>`).join('')
+    : `<div style="padding:8px 10px;font-size:12px;color:var(--muted)">No matching items</div>`;
+}
+function ipSetParent(id){
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  if(id && p.requires){ if(typeof showToast==='function') showToast('Remove the dependency first - an item has a parent or a dependency, not both.','error'); return; }
+  if(id && (id === p.id || _ipDescendantIds(p.id).has(id))){ if(typeof showToast==='function') showToast('That item is one of this item\'s own sub-items.','error'); return; }
+  ipHideParentPicker();
+  _ipPersist({...p, parent: id || null, _username: getUsername()}, { msg: id ? 'Parent set' : 'Parent removed' });
+}
+
 // ── Typed relationship links (/beta) - informational, separate from the scheduling
 // `requires` dependency. Stored as p.links=[{id,type,parallel}] on the SOURCE item;
 // the inverse is rendered on the target by scanning. Reuses the parallel concept.
@@ -18740,11 +18793,18 @@ function renderItemPage(p){
     else if(_relatedStubs[p.requires]) depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
       <span style="font-size:var(--fs-label);font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Depends On</span>${_relStub(p.requires)}</div>`);
   }
+  // ITEM-PAGE-PARENT-1: the parent is editable here (it was modal-only). Editors cannot change it on a
+  // finished item (the modal locks a finished item for them); the server validates loops/exclusion.
+  const parentCanEdit = depCanEdit && !termRO;
   if(p.parent){
     const par = projects.find(x=>x.id===p.parent);
     if(par) depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
       <span style="font-size:var(--fs-label);font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Parent</span>
-      <button onclick="openItemPage(${par.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0">${esc(par.name)}</button>
+      <button onclick="openItemPage(${par.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0;text-align:left;flex:1">${par.itemKey?`<span style="font-family:monospace;font-size:11px;color:var(--muted);font-weight:400">${esc(par.itemKey)}</span> `:''}${esc(par.name)}</button>
+      ${parentCanEdit
+        ? `<button onclick="ipShowParentPicker()" title="Change the parent item" style="font-size:11px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:5px;padding:1px 8px;cursor:pointer">Change</button>
+           <button onclick="ipSetParent(null)" title="Remove the parent" style="background:none;border:none;color:var(--accent2);cursor:pointer;font-size:14px;padding:0 2px;line-height:1">✕</button>`
+        : ''}
     </div>`);
     else if(_relatedStubs[p.parent]) depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
       <span style="font-size:var(--fs-label);font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Parent</span>${_relStub(p.parent)}</div>`);
@@ -18779,7 +18839,23 @@ function renderItemPage(p){
         </div></div>`;
     }
   }
-  depsEl.innerHTML = depRows.join('') + linkControl + _ipTypedLinksHtml(p, depCanEdit);
+  // ITEM-PAGE-PARENT-1: set / change the parent. Same mutual exclusion as the modal: a parent OR a
+  // dependency, never both.
+  let parentControl = '';
+  if(parentCanEdit){
+    if(p.requires && !p.parent){
+      parentControl = `<div style="font-size:11px;color:var(--muted);font-style:italic">Parent unavailable - this item depends on another item. Remove the dependency to set a parent.</div>`;
+    } else {
+      parentControl = `<div>
+        ${p.parent ? '' : `<button onclick="ipShowParentPicker()" style="background:none;border:1px solid var(--border);color:var(--accent);padding:3px 10px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Set parent item</button>`}
+        <div id="ipParentPick" style="display:none;margin-top:6px">
+          <input id="ipParentInput" type="text" placeholder="Search by key or name…" autocomplete="off" oninput="ipParentSearch()" onkeydown="if(event.key==='Escape'){ipHideParentPicker();}"
+            style="width:100%;box-sizing:border-box;padding:6px 8px;font-size:13px;border:1px solid var(--accent);border-radius:6px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif;outline:none">
+          <div id="ipParentResults" style="margin-top:4px;max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;background:var(--surface);display:none"></div>
+        </div></div>`;
+    }
+  }
+  depsEl.innerHTML = depRows.join('') + parentControl + linkControl + _ipTypedLinksHtml(p, depCanEdit);
   if(!depsEl.innerHTML.trim()) depsEl.innerHTML = `<div style="font-size:12px;color:var(--muted)">No dependencies</div>`;
 
   // Subtasks (children) - own card with roll-up + inline create
