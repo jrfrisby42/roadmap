@@ -6986,7 +6986,10 @@ function openProjectModal(id){
   const parentWrap = parentSel.closest('.form-row');
   if(isAdmin || isEditor){
     parentWrap && (parentWrap.style.display = '');
-    const parentOptions = projects.filter(x => x.id !== editingId);
+    // ITEM-PAGE-PARENT-1: also exclude this item's own descendants (a loop) - the comment above always
+    // said so, the code never did; update_project now refuses one.
+    const _desc = editingId ? _ipDescendantIds(editingId) : new Set();
+    const parentOptions = projects.filter(x => x.id !== editingId && !_desc.has(x.id));
     // Populate hidden select so the value is saved correctly
     parentSel.innerHTML = '<option value="">\u2014 None \u2014</option>' +
       parentOptions.map(x => `<option value="${x.id}">${x.name.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}</option>`).join('');
