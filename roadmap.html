@@ -17999,14 +17999,10 @@ function ipField(label, value, opts={}){
   </div>`;
 }
 
-// ITEM-PAGE-PARITY-1 Stage 3: an editor scoped to one Team (ownerFilter) cannot edit another Team's item - the
-// modal will not open one for them; the page shows it read-only. UI-only, like the rest of ownerFilter.
-function _ipOutOfScope(p){
-  if(!p || !isEditor || isAdmin) return false;
-  const of = getCurrentOwnerFilter();
-  return !!of && (p.dev||'') !== of;
-}
-function _ipCanWrite(p){ return isAdmin || (isEditor && !_ipOutOfScope(p)); }
+// Who may edit on the item page. HOTFIX 6.62.29: a Team-scoped editor (ownerFilter) can edit ANY item here again,
+// as before 6.62.27 - limiting them to their own Team locked Support out of every item with no Team set
+// (new tickets) and of other Teams' items assigned to them, including setting the Team itself.
+function _ipCanWrite(p){ return isAdmin || isEditor; }
 
 // ── Inline-editable Item Page fields (inline-edit overhaul, Stage 1) ──
 function ipEditField(field, label, displayHtml, kind, opts={}){
@@ -18153,10 +18149,6 @@ async function saveItemPageField(field, value, opts={}){
   const id = opts.id != null ? opts.id : _itemPageId;
   const refresh = opts.refresh || renderItemPage;
   const p = projects.find(x=>x.id===id); if(!p) return;
-  if(_ipOutOfScope(p)){   // ITEM-PAGE-PARITY-1 Stage 3 (the List detail panel saves through here too)
-    if(typeof showToast==='function') showToast("This item belongs to another Team - you can only change your own Team's items.",'error');
-    refresh(p); return;
-  }
   if(field==='priority') value = (value===''||value==null) ? '' : parseInt(value);
   // Preserve the rule: can't move to an active status without an owner.
   if(field==='status' && isActiveStatus(value) && !p.dev){
@@ -18760,7 +18752,7 @@ function renderItemPage(p){
   // (server-gated). No !isTerm guard for them: writing resolution on a completed item is
   // valid, and the status subset separately forbids terminal/backward targets.
   const inContribScope = isContributor && itemInContributorScope(p);
-  const canEdit     = (_ipCanWrite(p) && !isTerm) || inContribScope;   // Stage 3: not another Team's item for a scoped editor
+  const canEdit     = (_ipCanWrite(p) && !isTerm) || inContribScope;
   const timeRO      = !isAdmin;               // start / test period / release date stay admin-only (as in the modal)
   const prRO        = !isAdmin || isLocked;   // + locked for everyone while active (server 422)
   // ITEM-PAGE-PARITY-1: a finished item is read-only for editors, as in the modal (name, status, Team,
@@ -18773,11 +18765,10 @@ function renderItemPage(p){
   const edEstRO     = !isAdmin && (!isEditor || isTerm || isLocked);
   const edExpRO     = !isAdmin && (!isEditor || isTerm);
   const edDelayRO   = !isAdmin && (!isEditor || isTerm || !p.due || !isActiveStatus(p.status));
-  // Stage 3: Space and Type are fixed once the item is linked to Jira (the modal locks them for everyone), and
-  // a Team-scoped editor cannot move an item to another Team (the modal locks the field to their Team).
+  // Stage 3: Space and Type are fixed once the item is linked to Jira (the modal locks them for everyone).
   const jiraLocked  = Array.isArray(p.jiraTickets) && p.jiraTickets.length > 0;
   const jiraLockIc  = jiraLocked ? ` <span title="Linked to Jira - change it in Jira" style="cursor:help"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-1px"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>` : '';
-  const teamRO      = termRO || (isEditor && !isAdmin && !!getCurrentOwnerFilter());
+  const teamRO      = termRO;   // HOTFIX 6.62.29: a Team-scoped editor can set the Team again (new tickets arrive with none)
 
   // Header
   document.getElementById('ipTitle').textContent = p.name||'Untitled';
@@ -19455,7 +19446,7 @@ function _ipDescShowRead(p, canEdit){
 }
 function _ipDescOnClick(e){
   if(_ipDescEditing) return;
-  if(!_ipCanWrite(projects.find(x=>x.id===_itemPageId))) return;   // viewers (and a Team-scoped editor on another Team's item): no-op
+  if(!_ipCanWrite(projects.find(x=>x.id===_itemPageId))) return;   // viewers: no-op
   if(e.target.closest && e.target.closest('a, .frz-mention, summary')) return;   // guard a: links / mentions / expand toggles follow, don't edit
   const notesEl=document.getElementById('ipNotes');
   const sel=window.getSelection();                                   // guard b: a real selection = copy intent, not an edit trigger
