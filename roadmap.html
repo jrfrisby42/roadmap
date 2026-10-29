@@ -2865,7 +2865,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.62.26';
+const APP_VERSION = '6.62.27';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -7396,9 +7396,11 @@ async function createJiraIssueFromModalForItem(p){
     });
     // Immediately persist ticket to item
     p.jiraTickets = [...(p.jiraTickets||[]), result.key];
-    await API.put('/api/projects/'+p.id, {...p, _username: getUsername()});
+    // Plain PUT on purpose: the Jira issue already exists, so the link must not be lost to a conflict prompt.
+    // ITEM-PAGE-PARITY-1 Stage 3: keep the server copy (new updated_ts) so the next guarded edit is not a self-conflict.
+    const savedP = await API.put('/api/projects/'+p.id, {...p, _username: getUsername()});
     const idx = projects.findIndex(x=>x.id===p.id);
-    if(idx>-1) projects[idx] = p;
+    if(idx>-1) projects[idx] = {...p, ...(savedP && typeof savedP==='object' ? savedP : {}), id: p.id};
     API.post('/api/activities', {
       activity_type:'Jira Created', source:'Flow',
       item_id:p.id, item_name:p.name, owner:p.dev||'', project:p.product||'',
@@ -8068,7 +8070,13 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
     // Time fields: preserve existing values for editors
     start:    isEditor ? (existingProject?.start    ?? document.getElementById('fStart').value)    : document.getElementById('fStart').value,
     dueWeeks: (parseFloat(document.getElementById('fDueWeeks').value) || 2),
-    due:      isEditor ? (existingProject?.due      ?? '') : (()=>{
+    // ITEM-PAGE-PARITY-1 Stage 3 (J.R. 2026-10-29): an editor's estimate change recalculates the due date from the
+    // item's own start (the reason is asked for below), the same as the item page. Unchanged estimate -> stored due.
+    due:      isEditor ? (()=>{
+      const w = parseFloat(document.getElementById('fDueWeeks').value) || 2;
+      if(!existingProject || !existingProject.start || String(w) === String(existingProject.dueWeeks ?? '')) return existingProject?.due ?? '';
+      return computeItemDue({...existingProject, dueWeeks: w});
+    })() : (()=>{
       const s = document.getElementById('fStart').value;
       const w = parseFloat(document.getElementById('fDueWeeks').value) || 2;
       const tw = parseFloat(document.getElementById('fTestWeeks').value) || 0;
@@ -8146,8 +8154,10 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
   // Always compute delay-date change - reason required regardless of lock state
   const nowRevised    = data.revised || '';
   const delayChanged  = existing && (nowRevised !== (existing.revised||'')) && nowRevised !== '';
+  // An editor's estimate change moved a due date that was already set - needs a reason (no approval).
+  const editorDueMoved = !isAdmin && existing && !!existing.due && (data.due||'') !== existing.due;
 
-  if(itemIsLocked || delayChanged){
+  if(itemIsLocked || delayChanged || editorDueMoved){
     const nowDueWeeks = data.dueWeeks;
     const nowStart    = data.start;
     const nowStatus   = data.status;
@@ -8173,7 +8183,7 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
       return;
     }
     // Non-admin: block start/estimate changes (but delay-only is allowed - that's the editor path)
-    if(!isAdmin && scheduleChanged){
+    if(!isAdmin && scheduleChanged && itemIsLocked){
       alert('Timeline fields are locked for active items. Use Delay to adjust the schedule.');
       return;
     }
@@ -8275,8 +8285,19 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
         showToast('Delay date change submitted for admin approval.');
       }
 
-      // Non-admin due date change → approval workflow (apply old due, queue approval)
-      if(!isAdmin && dueDateChanged){
+      // An editor's estimate change (not active) applies with the reason, logged to the item's history.
+      if(!isAdmin && scheduleChanged){
+        const changes = [`Time Estimate: ${existing.dueWeeks??'-'}wk → ${nowDueWeeks}wk`];
+        if(dueDateChanged) changes.push(`Due Date: ${fmtD(parseD(existing.due))} → ${fmtD(parseD(data.due))}`);
+        logActionOnItem(editingId, existing.name||'', existing.dev||'', existing.product||'',
+          `Timeline change by ${getUsername()} - ${reason}${note?' ('+note+')':''}: ${changes.join(' | ')}`,
+          { dueWeeks: existing.dueWeeks, due: existing.due },
+          { dueWeeks: nowDueWeeks, due: data.due });
+      }
+
+      // Non-admin due date change → approval workflow (apply old due, queue approval). Not one that comes
+      // from the editor's own estimate change above.
+      if(!isAdmin && dueDateChanged && !scheduleChanged){
         await triggerDueDateApproval({...data, id: editingId}, existing.due||'', `${reason}${note?' - '+note:''}`);
         data = {...data, due: existing.due, dueWeeks: existing.dueWeeks};
       }
@@ -17978,9 +17999,19 @@ function ipField(label, value, opts={}){
   </div>`;
 }
 
+// ITEM-PAGE-PARITY-1 Stage 3: an editor scoped to one Team (ownerFilter) cannot edit another Team's item - the
+// modal will not open one for them; the page shows it read-only. UI-only, like the rest of ownerFilter.
+function _ipOutOfScope(p){
+  if(!p || !isEditor || isAdmin) return false;
+  const of = getCurrentOwnerFilter();
+  return !!of && (p.dev||'') !== of;
+}
+function _ipCanWrite(p){ return isAdmin || (isEditor && !_ipOutOfScope(p)); }
+
 // ── Inline-editable Item Page fields (inline-edit overhaul, Stage 1) ──
 function ipEditField(field, label, displayHtml, kind, opts={}){
-  let editable = (opts.adminOnly ? isAdmin : (isAdmin||isEditor)) && !opts.readonly;   // IP1: adminOnly for Recurrence (matches the modal's gating)
+  const _cur = projects.find(x=>x.id===_itemPageId);
+  let editable = (opts.adminOnly ? isAdmin : _ipCanWrite(_cur)) && !opts.readonly;   // IP1: adminOnly for Recurrence (matches the modal's gating)
   // Contributor: only the allowed fields (notes/resolution/status) on an in-scope item.
   // Server-enforced; this just shows/hides the click-to-edit affordance.
   if(!editable && !opts.readonly && isContributor && contributorCanEditField(projects.find(x=>x.id===_itemPageId), field)) editable = true;
@@ -18122,6 +18153,10 @@ async function saveItemPageField(field, value, opts={}){
   const id = opts.id != null ? opts.id : _itemPageId;
   const refresh = opts.refresh || renderItemPage;
   const p = projects.find(x=>x.id===id); if(!p) return;
+  if(_ipOutOfScope(p)){   // ITEM-PAGE-PARITY-1 Stage 3 (the List detail panel saves through here too)
+    if(typeof showToast==='function') showToast("This item belongs to another Team - you can only change your own Team's items.",'error');
+    refresh(p); return;
+  }
   if(field==='priority') value = (value===''||value==null) ? '' : parseInt(value);
   // Preserve the rule: can't move to an active status without an owner.
   if(field==='status' && isActiveStatus(value) && !p.dev){
@@ -18450,7 +18485,7 @@ function renderItemPageSubtasks(p){
   const addBtn = document.getElementById('ipAddSubtaskBtn');
   if(!listEl) return;
   const kids = projects.filter(x=>x.parent===p.id);
-  if(addBtn) addBtn.style.display = (isAdmin||isEditor) ? '' : 'none';
+  if(addBtn) addBtn.style.display = _ipCanWrite(p) ? '' : 'none';
   const done = kids.filter(k=>isTerminalStatus(k.status)).length;
   if(rollEl) rollEl.textContent = kids.length ? `· ${done}/${kids.length} done` : '';
   const rows = kids.map(ch => `<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
@@ -18484,12 +18519,26 @@ async function ipCreateSubtask(){
   } catch(e){ if(typeof showToast==='function') showToast('Failed to add subtask: '+(e.message||e),'error'); else alert(e.message||e); }
 }
 
+// ITEM-PAGE-PARITY-1 Stage 3: a conflict-checked save of a few fields, taking the server copy into the cache.
+// Returns the saved item, or null when the user chose Reload on a conflict (the page was refreshed). Throws on error.
+async function _ipSaveItem(id, patch){
+  const p = projects.find(x=>x.id===id); if(!p) return null;
+  const updated = {...p, ...patch, _username: getUsername()};
+  const saved = await putItemGuarded(id, updated);
+  if(!saved) return null;
+  const merged = {...updated, ...(typeof saved==='object' ? saved : {}), id};
+  const idx = projects.findIndex(x=>x.id===id);
+  if(idx>=0) projects[idx] = merged;
+  return merged;
+}
+
 // ── Linked work items (dependency: this item "depends on" another) ──
 async function saveItemPagePatch(patch){
   const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
   const updated = {...p, ...patch, _username:getUsername()};
   try {
-    const saved = await API.put('/api/projects/'+p.id, updated);
+    const saved = await putItemGuarded(p.id, updated);   // Stage 3: conflict-checked like every other page edit
+    if(!saved) return;                                   // conflict -> the user chose Reload; the page was refreshed
     const idx = projects.findIndex(x=>x.id===p.id);
     if(idx>=0) projects[idx] = {...updated, ...(saved&&typeof saved==='object'?saved:{}), id:p.id};
     if(typeof showToast==='function') showToast('Saved','success');
@@ -18497,7 +18546,28 @@ async function saveItemPagePatch(patch){
   } catch(e){ if(typeof showToast==='function') showToast('Save failed: '+(e.message||e),'error'); else alert(e.message||e); renderItemPage(p); }
 }
 function ipShowAddLink(){ const r=document.getElementById('ipAddLinkRow'); if(r){ r.style.display='flex'; const s=document.getElementById('ipLinkSelect'); if(s) s.focus(); } }
-function ipLinkItem(){ const s=document.getElementById('ipLinkSelect'); const id=s?parseInt(s.value):0; if(!id) return; saveItemPagePatch({requires:id, parallel:false}); }
+function ipLinkItem(){ const s=document.getElementById('ipLinkSelect'); const id=s?parseInt(s.value):0; if(!id) return; _ipSaveSequence({requires:id, parallel:false}); }
+// ITEM-PAGE-PARITY-1 Stage 3: Parallel / Sequential on the page. Going sequential moves the start to when the
+// item it depends on reaches testing (parentWorkEnd), as unticking Parallel does in the modal, and the due
+// follows; a moved committed due asks for a reason. An editor's active item keeps its start (locked).
+function ipToggleParallel(){
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  _ipSaveSequence({parallel: !p.parallel});
+}
+function _ipSaveSequence(patch){
+  const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
+  const updated = {...p, ...patch, _username: getUsername()};
+  if(!updated.parallel && updated.requires && (isAdmin || !isLockedActive(p))){
+    const we = parentWorkEnd(projects.find(x=>x.id===updated.requires));
+    if(we && we !== p.start){
+      updated.start = we;
+      if(parseFloat(updated.dueWeeks) > 0) updated.due = computeItemDue(updated);
+    }
+  }
+  const msg = updated.requires ? (updated.parallel ? 'Runs alongside its dependency' : 'Runs after its dependency') : 'Saved';
+  if(updated.start !== p.start && _ipNeedsReason(p, 'start', updated)){ _ipOpenReason(updated, 'start'); return; }
+  _ipPersist(updated, { msg });
+}
 function ipUnlinkRequires(){ saveItemPagePatch({requires:null, parallel:false}); }
 
 // ── ITEM-PAGE-PARENT-1: Parent Item picker (was modal-only) ──
@@ -18690,7 +18760,7 @@ function renderItemPage(p){
   // (server-gated). No !isTerm guard for them: writing resolution on a completed item is
   // valid, and the status subset separately forbids terminal/backward targets.
   const inContribScope = isContributor && itemInContributorScope(p);
-  const canEdit     = ((isAdmin||isEditor) && !isTerm) || inContribScope;
+  const canEdit     = (_ipCanWrite(p) && !isTerm) || inContribScope;   // Stage 3: not another Team's item for a scoped editor
   const timeRO      = !isAdmin;               // start / test period / release date stay admin-only (as in the modal)
   const prRO        = !isAdmin || isLocked;   // + locked for everyone while active (server 422)
   // ITEM-PAGE-PARITY-1: a finished item is read-only for editors, as in the modal (name, status, Team,
@@ -18698,18 +18768,23 @@ function renderItemPage(p){
   // stay open on purpose. Contributors keep their own server-enforced subset.
   const termRO      = isTerm && isEditor && !isAdmin;
   // ITEM-PAGE-PARITY-1 Stage 2.2: what the modal lets an editor change in the schedule - the Time Estimate
-  // while the item is not active, the Expected Date, and a delay date (an admin approves it before it
-  // applies; see saveItemPageField). Nothing on a finished item.
+  // while the item is not active, the Expected Date, and a delay date on an ACTIVE item (an admin approves it
+  // before it applies; see saveItemPageField). Nothing on a finished item.
   const edEstRO     = !isAdmin && (!isEditor || isTerm || isLocked);
   const edExpRO     = !isAdmin && (!isEditor || isTerm);
-  const edDelayRO   = !isAdmin && (!isEditor || isTerm || !p.due);
+  const edDelayRO   = !isAdmin && (!isEditor || isTerm || !p.due || !isActiveStatus(p.status));
+  // Stage 3: Space and Type are fixed once the item is linked to Jira (the modal locks them for everyone), and
+  // a Team-scoped editor cannot move an item to another Team (the modal locks the field to their Team).
+  const jiraLocked  = Array.isArray(p.jiraTickets) && p.jiraTickets.length > 0;
+  const jiraLockIc  = jiraLocked ? ` <span title="Linked to Jira - change it in Jira" style="cursor:help"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-1px"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>` : '';
+  const teamRO      = termRO || (isEditor && !isAdmin && !!getCurrentOwnerFilter());
 
   // Header
   document.getElementById('ipTitle').textContent = p.name||'Untitled';
   // Inline title editing (click to edit the item name)
   const titleEl = document.getElementById('ipTitle');
   if(titleEl){
-    const canEditTitle = (isAdmin||isEditor) && !termRO;
+    const canEditTitle = _ipCanWrite(p) && !termRO;
     titleEl.contentEditable = canEditTitle ? 'true' : 'false';
     titleEl.spellcheck = false;
     titleEl.style.outline = 'none';
@@ -18773,14 +18848,14 @@ function renderItemPage(p){
 
   document.getElementById('ipFields').innerHTML = [
     ipEditField('status',     'Status',       p.status ? `<span class="${statusCls(p.status)}" style="background:none;border:none;padding:0">${esc(p.status)}</span>` : '', 'select', {bold:true, readonly: RESERVED_TERMINAL_STATUSES.has(p.status) || termRO}),   // POLISH-2: reserved statuses (Transferred/Duplicate) are locked - no inline picker (server-enforced; use "Not a duplicate" to reopen)
-    ipEditField('dev',        'Team',         esc(p.dev||''),    'select', {bold:true, readonly:termRO}),
+    ipEditField('dev',        'Team',         esc(p.dev||''),    'select', {bold:true, readonly:teamRO}),
     ipEditField('assignee',   'Assignee',     esc(p.assignee ? displayName(p.assignee) : ''), 'select'),
-    ipEditField('type',       'Type',         esc(p.type||''),   'select', {readonly:termRO}),
+    ipEditField('type',       'Type',         p.type ? esc(p.type)+jiraLockIc : '',   'select', {readonly:termRO || jiraLocked}),
     ipEditField('priority',   'Priority',     p.priority ? `<span style="background:${PRIO_COLORS[p.priority]}22;color:${PRIO_COLORS[p.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[p.priority])}</span>` : '', 'select'),   // pill treatment: reuse the production priority badge from List view (canonical) - same PRIO_COLORS, unmodified
     ipEditField('storyPoints',metricLabel, (p.storyPoints==null||p.storyPoints==='') ? '' : String(p.storyPoints), 'number'),   // METRIC-LABEL-1: team label
     _sprintFieldOn() ? ipField('Sprint', p.sprintId ? esc(p.sprintId) : '', {always:true}) : '',   // FIELDS-2: gated on team-has-sprints + Planning enabled
     ipField('Key', p.itemKey ? `<span style="font-family:monospace">${esc(p.itemKey)}</span>` : '-', {bold:true}),
-    ipEditField('product',    'Space',         esc(p.product||''), 'select', {readonly:termRO}),
+    ipEditField('product',    'Space',         p.product ? esc(p.product)+jiraLockIc : '', 'select', {readonly:termRO || jiraLocked}),
     ipField('Reporter',      esc(p.reporter||'-')),
     ipField('Reporter Email', p.reporterEmail ? `<a href="mailto:${escA(p.reporterEmail)}" style="color:var(--accent);text-decoration:none">${esc(p.reporterEmail)}</a>` : ''),
     // FIELDS-1: coded Location / Resolution Type selects, GATED on the team having configured the list.
@@ -18816,7 +18891,7 @@ function renderItemPage(p){
   // is typically written after release); pre-wrap so line breaks render in the read view.
   const _ipTxtVal = (v, placeholder) => (v && String(v).trim())
     ? `<span style="white-space:pre-wrap">${esc(v)}</span>`
-    : ((isAdmin||isEditor) ? `<span style="color:var(--muted)">${placeholder}</span>` : '');
+    : (_ipCanWrite(p) ? `<span style="color:var(--muted)">${placeholder}</span>` : '');
   const txtEl = document.getElementById('ipTextFields');
   if(txtEl) txtEl.innerHTML = [
     ipEditField('notes',      'Notes',              _ipTxtVal(p.notes, 'Add notes'), 'textarea'),
@@ -18841,7 +18916,7 @@ function renderItemPage(p){
 
   // Dependencies
   const depsEl = document.getElementById('ipDeps');
-  const depCanEdit = (isAdmin||isEditor);
+  const depCanEdit = _ipCanWrite(p);
   const depRows = [];
   // Phase B2: an out-of-scope parent/requires (Contributor read scoping) has no entry in
   // `projects`. Render a read-only stub from _relatedStubs (key + name + status, not clickable)
@@ -18859,7 +18934,7 @@ function renderItemPage(p){
       <span style="font-size:var(--fs-label);font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Depends On</span>
       <button onclick="openItemPage(${req.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;font-weight:700;color:var(--accent);padding:0;text-align:left;flex:1">${esc(req.name)}</button>
       ${depCanEdit
-        ? `<button onclick="saveItemPagePatch({parallel:${!p.parallel}})" title="Toggle parallel / sequential" style="font-size:11px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:5px;padding:1px 8px;cursor:pointer">${p.parallel?'Parallel':'Sequential'}</button>
+        ? `<button onclick="ipToggleParallel()" title="Toggle parallel / sequential" style="font-size:11px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:5px;padding:1px 8px;cursor:pointer">${p.parallel?'Parallel':'Sequential'}</button>
            <button onclick="ipUnlinkRequires()" title="Remove link" style="background:none;border:none;color:var(--accent2);cursor:pointer;font-size:14px;padding:0 2px;line-height:1">✕</button>`
         : `<span style="font-size:11px;color:var(--muted);margin-left:auto">${p.parallel?'Parallel':'Sequential'}</span>`}
     </div>`);
@@ -19380,7 +19455,7 @@ function _ipDescShowRead(p, canEdit){
 }
 function _ipDescOnClick(e){
   if(_ipDescEditing) return;
-  if(!(isAdmin||isEditor)) return;                                   // viewers: no-op
+  if(!_ipCanWrite(projects.find(x=>x.id===_itemPageId))) return;   // viewers (and a Team-scoped editor on another Team's item): no-op
   if(e.target.closest && e.target.closest('a, .frz-mention, summary')) return;   // guard a: links / mentions / expand toggles follow, don't edit
   const notesEl=document.getElementById('ipNotes');
   const sel=window.getSelection();                                   // guard b: a real selection = copy intent, not an edit trigger
@@ -19389,7 +19464,7 @@ function _ipDescOnClick(e){
 }
 function _ipDescEnterEdit(){
   const notesEl=document.getElementById('ipNotes'); if(!notesEl) return;
-  if(_ipDescEditing || !(isAdmin||isEditor)) return;
+  if(_ipDescEditing || !_ipCanWrite(projects.find(x=>x.id===_itemPageId))) return;
   const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
   _ipDescEditing = true;
   _ipDescOriginal = p.description||'';            // edit-entry snapshot (Cancel)
@@ -19411,7 +19486,7 @@ function _ipDescExitEdit(){
   if(typeof window._frzDescTeardown === 'function') window._frzDescTeardown();   // /beta: destroy the Tiptap instance + remove its toolbar
   else if(notesEl) notesEl.contentEditable='false';                             // classic
   const p = projects.find(x=>x.id===_itemPageId);
-  _ipDescShowRead(p, (isAdmin||isEditor));        // re-render READ (saved → p.description; cancel → p.description, never mutated)
+  _ipDescShowRead(p, _ipCanWrite(p));        // re-render READ (saved → p.description; cancel → p.description, never mutated)
 }
 function cancelItemPageNotes(){ if(_ipDescEditing) _ipDescExitEdit(); }
 
@@ -19430,7 +19505,9 @@ async function saveItemPageNotes(){
   _nClone.querySelectorAll('img[data-att-key]').forEach(im=>im.removeAttribute('src'));
   p.description = _nClone.innerHTML;
   try {
-    await API.put('/api/projects/'+_itemPageId, {...p, _username:getUsername()});
+    const saved = await putItemGuarded(_itemPageId, {...p, _username:getUsername()});   // Stage 3: conflict-checked
+    if(!saved){ _ipDescExitEdit(); return; }   // conflict -> Reload: show the latest description
+    if(saved.updated_ts) p.updated_ts = saved.updated_ts;
     // Sync description to Jira if changed - append roadmap notes
     if(jiraConfigured && p.jiraTickets?.length && oldDescription.trim() !== p.description.trim()){
       for(const t of p.jiraTickets){
@@ -20363,7 +20440,7 @@ async function loadItemPageJira(p){
   if(syncBtn && p.jiraLastSync) syncBtn.title = `Last synced: ${fmtTS(p.jiraLastSync)}`;
 
   if(!p.jiraTickets?.length){
-    const canCreate = (isAdmin||isEditor) && jiraConfigured;
+    const canCreate = _ipCanWrite(p) && jiraConfigured;
     jiraEl.innerHTML = canCreate
       ? `<div style="font-size:12px;color:var(--muted);margin-bottom:8px">No Jira issues linked.</div>
          <button onclick="createJiraFromItemPage(this)" style="font-size:12px;font-weight:700;background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif">+ Create Jira Issue</button>
@@ -20375,7 +20452,7 @@ async function loadItemPageJira(p){
   }
 
   if(syncBtn) syncBtn.style.display = jiraConfigured ? 'flex' : 'none';
-  const canEdit = isAdmin||isEditor;
+  const canEdit = _ipCanWrite(p);
   const cache   = p.jiraCache || {};
   const cached  = p.jiraTickets.map(t=>cache[t]).filter(Boolean);
 
@@ -20407,7 +20484,7 @@ function renderItemPageFeatureFlags(p){
   // jiraFeatureFlags holds the raw Jira-sourced subset for badge display
   const allFlags   = Array.isArray(p?.featureFlags)     ? p.featureFlags.filter(Boolean)     : [];
   const jiraFlags  = new Set(Array.isArray(p?.jiraFeatureFlags) ? p.jiraFeatureFlags.filter(Boolean) : []);
-  const canEdit    = (isAdmin || isEditor);
+  const canEdit    = _ipCanWrite(p);
 
   if(!allFlags.length && !canEdit){ card.style.display = 'none'; return; }
   card.style.display = '';
@@ -20513,7 +20590,7 @@ async function syncJiraFromItemPage(silent=false){
       const cache  = p.jiraCache||{};
       const issues = p.jiraTickets.map(t=>cache[t]).filter(Boolean);
       const jiraEl = document.getElementById('ipJira');
-      if(jiraEl && issues.length) jiraEl.innerHTML = issues.map(d=>renderJiraIssueCard(d,isAdmin||isEditor)).join('') + _ipJiraLinkRowHtml();
+      if(jiraEl && issues.length) jiraEl.innerHTML = issues.map(d=>renderJiraIssueCard(d,_ipCanWrite(projects.find(x=>x.id===_itemPageId)))).join('') + _ipJiraLinkRowHtml();
       // Always refresh the Feature Flags card after sync (server may have updated jiraFeatureFlags)
       renderJiraFeatureFlags(p);
       if(result.changed && result.statusChange){
@@ -20557,9 +20634,11 @@ async function unlinkJiraFromItemPage(ticket){
   const p = projects.find(x=>x.id===_itemPageId);
   if(!p) return;
   const before = [...(p.jiraTickets||[])];
-  p.jiraTickets = before.filter(t=>t!==ticket);
   try {
-    await API.put('/api/projects/'+p.id, {...p, _username:getUsername()});
+    // ITEM-PAGE-PARITY-1 Stage 3: conflict-checked, and the cached item takes the server copy (its new
+    // updated_ts), so the next edit on the page does not report a conflict with this one.
+    const saved = await _ipSaveItem(p.id, { jiraTickets: before.filter(t=>t!==ticket) });
+    if(!saved) return;
     // Log unlink
     API.post('/api/activities', {
       activity_type:'Jira Unlinked', source:'Flow',
@@ -20570,7 +20649,7 @@ async function unlinkJiraFromItemPage(ticket){
       previous_value:ticket, new_value:null,
       status:'Auto-Cleared'
     }).catch(()=>{});
-    renderItemPage(p);
+    renderItemPage(saved);
     showToast(`${ticket} unlinked`);
   } catch(e){ showToast('Failed to unlink: '+e.message); }
 }
@@ -20580,7 +20659,7 @@ async function unlinkJiraFromItemPage(ticket){
 // create. Gated to admin/editor + jiraConfigured (the whole Jira card is already hidden unless
 // jiraConfigured && the product is mapped). Rendered by loadItemPageJira + syncJiraFromItemPage.
 function _ipJiraLinkRowHtml(){
-  if(!((isAdmin||isEditor) && jiraConfigured)) return '';
+  if(!(_ipCanWrite(projects.find(x=>x.id===_itemPageId)) && jiraConfigured)) return '';
   return `<div style="display:flex;gap:6px;align-items:center;margin-top:10px">
       <input id="ipJiraLinkInput" placeholder="Link existing (e.g. FRAZ-1234)" autocomplete="off"
         onkeydown="if(event.key==='Enter'){event.preventDefault();linkJiraFromItemPage();}"
@@ -20629,9 +20708,9 @@ async function linkJiraFromItemPage(){
       return;
     }
   }
-  p.jiraTickets = [...(p.jiraTickets||[]), val];
   try {
-    await API.put('/api/projects/'+p.id, {...p, _username:getUsername()});
+    const saved = await _ipSaveItem(p.id, { jiraTickets: [...(p.jiraTickets||[]), val] });   // Stage 3: conflict-checked
+    if(!saved) return;
     API.post('/api/activities', {
       activity_type:'Jira Linked', source:'Flow',
       item_id:p.id, item_name:p.name, owner:p.dev||'', project:p.product||'',
@@ -20639,7 +20718,7 @@ async function linkJiraFromItemPage(){
       message:`Linked Jira issue ${val}${summary?' ('+summary+')':''}`,
       previous_value:null, new_value:val, status:'Auto-Cleared'
     }).catch(()=>{});
-    renderItemPage(p);
+    renderItemPage(saved);
     syncJiraFromItemPage(true);   // pull the newly linked ticket's data so its card renders
     showToast(`${val} linked`);
   } catch(e){ showToast('Failed to link: '+(e.message||String(e))); }
@@ -32849,7 +32928,10 @@ if ('serviceWorker' in navigator) {
     var oldDesc=p.description||'';
     if(clean===oldDesc) return Promise.resolve();   // dirty check - no redundant writes
     p.description=clean;
-    return API.put('/api/projects/'+p.id, Object.assign({}, p, {_username:_call('getUsername')})).then(function(){
+    // ITEM-PAGE-PARITY-1 Stage 3: conflict-checked (null = the user chose Reload; nothing to push to Jira).
+    return _call('putItemGuarded', p.id, Object.assign({}, p, {_username:_call('getUsername')})).then(function(saved){
+      if(!saved) return;
+      if(saved.updated_ts) p.updated_ts=saved.updated_ts;
       var jc=_val('jiraConfigured',false);
       if(jc && p.jiraTickets && p.jiraTickets.length && _call('_frzAdfSyncKey', oldDesc)!==_call('_frzAdfSyncKey', clean)){
         // Stage 2B replace-mode: the Flow description IS the Jira description. Convert to ADF
