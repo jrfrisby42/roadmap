@@ -219,7 +219,9 @@ def test_stage3_validation_reveals_collapsed_group():
         "a collapsed group with an error auto-opens, is marked, and focus moves to the field"
     # wired at the schedule-buried validations (test-period and release-required)
     assert "_frzRevealComposerField('fTestWeeks')" in src, "the test-period guard reveals the Schedule group"
-    assert "_frzRevealComposerField('fRelease')" in src, "the release-required guard reveals the Schedule group"
+    # ITEM-PAGE-PARITY-1: a Released status with no release date is no longer refused - it gets today
+    assert "if(statusIsReleased[data.status] && !data.releaseDate){" in src and "data.releaseDate = todayStrMT();" in src, \
+        "a Released status with no release date fills in today (MT) instead of blocking the save"
 
 
 def test_stage3_server_untouched():
@@ -472,9 +474,10 @@ def test_6399_status_options_are_space_intersect_org():
     body = m.group(0)
     assert "getStatusesForProduct(productName).filter(s => statuses.includes(s))" in body, \
         "the option list is the Space workflow list intersected with the Org `statuses`"
-    # the item page control (the reference) lists the full Org `statuses`
-    assert "if(field==='status'){" in src and "return statuses.map(s=>o(s,s));" in src, \
-        "the item page status control lists the Org statuses (the full set)"
+    # the item page control (the reference) lists the full Org `statuses` - minus, for an editor, the ones
+    # the shared editor rule refuses (ITEM-PAGE-PARITY-1: no Released; an active item cannot go back)
+    assert "if(field==='status'){" in src and "return statuses.filter(s => !editorStatusBlock(cur, s)).map(s=>o(s,s));" in src, \
+        "the item page status control lists the Org statuses, filtered by the editor status rule"
 
 
 # ── 6.39.9 Fix A: projects-only /api/all refreshes are refused across a team change ─────────────────
