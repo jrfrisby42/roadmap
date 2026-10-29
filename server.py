@@ -1834,7 +1834,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.62.25"
+APP_VERSION = "6.62.26"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -5604,6 +5604,21 @@ def update_project(pid: int, body: dict, background: BackgroundTasks = None,
         elif auth.get("role") == "editor" and "status" in body:
             _enforce_editor_status(old, body.get("status") or "", active_map, terminal_map, released_map,
                                    (blocked_map, offflow_map, waiting_map, parked_map))
+
+        # ITEM-PAGE-PARENT-1: a CHANGED parent must be a real, different item that is not one of this item's
+        # own descendants (no loops), and an item has a parent OR a dependency, never both (CLAUDE.md rule 9).
+        # Only checked when the parent changes, so a re-save of existing data is never refused.
+        if "parent" in body:
+            _new_par = _pid_or_none(body.get("parent"))
+            if _new_par is not None and _new_par != _pid_or_none(old.get("parent")):
+                if _new_par == pid:
+                    raise HTTPException(422, "An item cannot be its own parent")
+                if not c.execute("SELECT 1 FROM projects WHERE id=?", (_new_par,)).fetchone():
+                    raise HTTPException(422, f"Parent item {_new_par} was not found")
+                if _pid_or_none(body.get("requires", old.get("requires"))) is not None:
+                    raise HTTPException(422, "An item can have a parent or a dependency, not both - remove the dependency first")
+                if _pull_would_cycle(c, pid, _new_par, {}):
+                    raise HTTPException(422, "That item is one of this item's own sub-items - choosing it would make a loop")
 
         # Validate: parallelResources cannot be changed while item is in an active status
         current_status = old.get("status", "")
