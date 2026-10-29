@@ -10410,7 +10410,10 @@ def _jira_account_id(email: str) -> str:
 def _jira_project_issuetypes(project_key: str) -> list:
     data = _jira_req("GET", f"/rest/api/3/issue/createmeta/{_urlq(project_key, safe='')}/issuetypes?maxResults=100") or {}
     rows = data.get("issueTypes") or data.get("values") or []
-    return [{"id": str(t.get("id", "")), "name": t.get("name", "")} for t in rows if t.get("id") and t.get("name")]
+    # JIRA-SUBTASK-1: carry the sub-task flag. A sub-task-level type (FRAZ's "Feature Request" is one) is
+    # allowed by the project but Jira only creates it under a parent issue.
+    return [{"id": str(t.get("id", "")), "name": t.get("name", ""), "subtask": bool(t.get("subtask"))}
+            for t in rows if t.get("id") and t.get("name")]
 
 def _match_issuetype(allowed: list, name: str):
     """The allowed type whose name matches `name` (case/whitespace-insensitive), else None."""
@@ -10419,13 +10422,13 @@ def _match_issuetype(allowed: list, name: str):
 
 @app.get("/api/jira/project-issuetypes")
 def list_jira_project_issuetypes(keys: str = "", auth: dict = Depends(require_role("admin"))):
-    """{projectKey: [type names]} for the given comma-separated keys. A key whose lookup fails is left
+    """{projectKey: [{name, subtask}]} for the given comma-separated keys. A key whose lookup fails is left
     out, so the admin screen simply shows no warning for it rather than a false one."""
     if not jira_configured(): raise HTTPException(400, "Jira not configured")
     out = {}
     for k in dict.fromkeys(x.strip().upper() for x in keys.split(",") if x.strip()):
         try:
-            out[k] = [t["name"] for t in _jira_project_issuetypes(k)]
+            out[k] = [{"name": t["name"], "subtask": t["subtask"]} for t in _jira_project_issuetypes(k)]
         except Exception as e:
             log.warning(f"[Jira] issue types for {k} failed: {e}")
     return out
@@ -10477,6 +10480,7 @@ def create_jira_issue(body: dict = Body(...),
     # the project lacks is a mapping mistake the admin can fix, so say exactly that instead of passing
     # Jira's raw error through. If the lookup itself fails, fall back to the name as before.
     issuetype_field = {"name": issue_type}
+    hit = None
     try:
         allowed = _jira_project_issuetypes(project_key)
     except Exception as e:
@@ -10492,6 +10496,28 @@ def create_jira_issue(body: dict = Body(...),
                                      f"{project_key} allows: {names}. Change the mapping in Admin > Jira > Type mapping.")
         issuetype_field = {"id": hit["id"]}
 
+    # JIRA-SUBTASK-1: a sub-task-level type can only be created under a parent issue. Use the Jira issue of
+    # the item's Parent Item (one in this same Jira project); with none, say so plainly rather than pass
+    # Jira's "parent issue key or id not specified" through.
+    jira_parent = ""
+    if hit and hit.get("subtask"):
+        par_id = item.get("parent")
+        if par_id not in (None, ""):
+            try:
+                with db(team) as c:
+                    prow = c.execute("SELECT data FROM projects WHERE id=?", (par_id,)).fetchone()
+                ptix = (json.loads(prow["data"]).get("jiraTickets") or []) if prow else []
+                jira_parent = next((k for k in ptix if str(k).upper().startswith(project_key.upper() + "-")), "")
+            except Exception as e:
+                log.warning(f"[Jira] parent lookup for item {item_id} failed: {e}")
+        if not jira_parent:
+            flow_type = (item.get("type") or "").strip()
+            std = ", ".join(t["name"] for t in allowed if not t.get("subtask"))
+            what = f'Flow type "{flow_type}" maps to Jira type "{hit["name"]}"' if flow_type else f'Jira type "{hit["name"]}"'
+            raise HTTPException(422, f'{what}, which is a sub-task type in {project_key}, so Jira can only create it '
+                                     f"under a parent issue. Give this item a Parent Item that is linked to a {project_key} "
+                                     f"Jira issue, or map it to a standard type ({std}) in Admin > Jira > Type mapping.")
+
     payload = {
         "fields": {
             "project": {"key": project_key},
@@ -10500,6 +10526,8 @@ def create_jira_issue(body: dict = Body(...),
             "description": {"type":"doc","version":1,"content":adf_content}
         }
     }
+    if jira_parent:
+        payload["fields"]["parent"] = {"key": jira_parent}
     # Reporter: the requester's Jira account if they have one, else the launcher's, else none (Jira then
     # records the integration account, as before). Looked up by email.
     reporter_id = (_jira_account_id(req_email) if req_email else "") or _jira_account_id(_user_email(team, launcher))
@@ -11463,17 +11491,31 @@ def _get_jira_children(ticket: str) -> list:
     log.info(f"[Jira] _get_jira_children({ticket}) → {len(children)} children")
     return [c for c in children if c.get("key")]
 
+def _jira_type_reverse(fwd_map: dict) -> dict:
+    """Reverse jiraTypeMapping ({flowType: jiraType}) into {jiraType: flowType} for Jira -> Flow.
+    JIRA-SUBTASK-1: several Flow types may map to one Jira type (Enhancement and Story both -> Story, so
+    Enhancements are CREATED as Stories). A pulled Jira issue then takes the Flow type of the SAME name
+    when there is one (a Jira Story stays a Flow Story), else the first mapping - so adding a create-side
+    mapping never re-types what the pull brings in. Jira values are whitespace-stripped."""
+    pairs = [(k, str(v or "").strip()) for k, v in (fwd_map or {}).items()]
+    rev = {}
+    for k, jt in pairs:                                      # first mapping per Jira type...
+        if jt and jt not in rev:
+            rev[jt] = k
+    for k, jt in pairs:                                      # ...unless a Flow type of the same name maps to it
+        if jt and str(k).strip().lower() == jt.lower():
+            rev[jt] = k
+    return rev
+
 def _jira_type_to_roadmap(jira_type: str, team: str) -> str | None:
     """Map a Jira issue type to a roadmap type using the team's jiraTypeMapping.
-    Stored as {roadmapType: jiraType}, so reverse it.
+    Stored as {roadmapType: jiraType}, so reverse it (_jira_type_reverse).
     Returns the roadmap type string, or None if not mapped."""
     with db(team) as c:
         row = c.execute("SELECT value FROM config WHERE key='jiraTypeMapping'").fetchone()
     if not row:
         return None
-    fwd_map = json.loads(row["value"])  # {roadmapType: jiraType}
-    rev_map = {v.strip(): k for k, v in fwd_map.items() if v}  # strip whitespace from Jira values
-    return rev_map.get(jira_type.strip())
+    return _jira_type_reverse(json.loads(row["value"])).get((jira_type or "").strip())
 
 def _jira_status_to_roadmap(jira_status: str, team: str) -> str | None:
     """Map a Jira status name to a roadmap status using the team's jiraStatusMapping.
@@ -11921,10 +11963,7 @@ def _pull_context(team):
                 except (TypeError, ValueError):
                     pass
         terminal_map = g("statusIsTerminal", {})          # JIRA-COMPLETED-1: completedAt on a refresh into a terminal status
-    type_rev = {}
-    for k, v in tmap.items():
-        if v:
-            type_rev.setdefault(str(v).strip(), k)       # first mapping wins on a collision (1:1 today)
+    type_rev = _jira_type_reverse(tmap)                  # same-name Flow type wins a collision, else first
     status_eff = {**{v: k for k, v in smap.items() if v}, **overlay}   # jiraPullStatusMap overlay wins
     proj_rev = {str(v).strip(): k for k, v in pmap.items() if v}       # FRAZ -> Fraznet
     released = {s for s, v in (released_map or {}).items() if v}       # released Flow status names

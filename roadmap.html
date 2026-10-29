@@ -19206,7 +19206,7 @@ window.addEventListener('popstate', e=>{
 let _tsJiraProjects  = []; // fetched from Jira
 let _tsJiraStatuses  = []; // fetched from Jira
 let _tsJiraTypes     = []; // fetched from Jira
-let _tsProjectTypes  = {}; // { jiraProjectKey: [allowed issue type names] } (JIRA-ISSUETYPE-1)
+let _tsProjectTypes  = {}; // { jiraProjectKey: [{name, subtask}] } allowed issue types (JIRA-ISSUETYPE-1/JIRA-SUBTASK-1)
 let _jiraProjectMapping = {}; // { roadmapProject: jiraProjectKey }
 let _jiraStatusMapping  = {}; // { roadmapStatus: jiraStatus }
 let _jiraTypeMapping    = {}; // { roadmapType: jiraIssueType }
@@ -19497,13 +19497,19 @@ async function tsLoadProjectIssueTypes(){
   catch(e){ _tsProjectTypes = {}; }
 }
 
-// The mapped Jira projects (that we have type lists for) that do NOT allow Jira type `jt`.
-function tsProjectsMissingType(jt){
-  if(!jt) return [];
+// The mapped Jira projects (that we have type lists for) where Jira type `jt` is missing, or is a sub-task
+// type (JIRA-SUBTASK-1: allowed, but Jira only creates it under a parent issue).
+function tsProjectsTypeIssues(jt){
+  const out = { missing: [], subtask: [] };
+  if(!jt) return out;
   const want = jt.trim().toLowerCase();
-  return Object.keys(_tsProjectTypes).filter(k =>
-    Object.values(_jiraProjectMapping).includes(k) &&
-    !(_tsProjectTypes[k]||[]).some(n => String(n).trim().toLowerCase() === want));
+  Object.keys(_tsProjectTypes).forEach(k => {
+    if(!Object.values(_jiraProjectMapping).includes(k)) return;
+    const t = (_tsProjectTypes[k]||[]).find(x => String(x && x.name).trim().toLowerCase() === want);
+    if(!t) out.missing.push(k);
+    else if(t.subtask) out.subtask.push(k);
+  });
+  return out;
 }
 
 function tsRenderMappings(){
@@ -19545,9 +19551,11 @@ function tsRenderMappings(){
       const jt = _jiraTypeMapping[tp]||'';
       const on = jt && _jiraPullTypes.includes(jt);
       const pull = `<label title="${jt?('Pull Jira "'+escA(jt)+'" issues into Flow'):'Map a Jira type first'}" style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:var(--muted);flex-shrink:0;cursor:${jt?'pointer':'not-allowed'};white-space:nowrap"><input type="checkbox" class="ts-pull-type" data-jira="${escA(jt)}" ${on?'checked':''} ${jt?'':'disabled'} style="accent-color:var(--accent);width:14px;height:14px"> Pull</label>`;
-      const missing = tsProjectsMissingType(jt);
+      const iss = tsProjectsTypeIssues(jt);
+      const warn = t => `<div style="font-size:10px;color:#e8a000;margin-top:2px;padding-left:170px">⚠ ${t}</div>`;
       return tsMapRow(tp, jt, jiraTypeOpts, `tsType_${i}`, true, pull) +
-        (missing.length?`<div style="font-size:10px;color:#e8a000;margin-top:2px;padding-left:170px">⚠ ${esc(missing.join(', '))} ${missing.length>1?'do':'does'} not allow "${esc(jt)}" - creating a Jira issue for this type will fail there</div>`:'');
+        (iss.missing.length?warn(`${esc(iss.missing.join(', '))} ${iss.missing.length>1?'do':'does'} not allow "${esc(jt)}" - creating a Jira issue for this type will fail there`):'') +
+        (iss.subtask.length?warn(`"${esc(jt)}" is a sub-task type in ${esc(iss.subtask.join(', '))} - Jira can only create it under a parent issue, so only items with a Parent Item linked to Jira can be created`):'');
     }).join('') || '<div style="color:var(--muted);font-size:12px">No item types configured.</div>';
     typeEl.querySelectorAll('.ts-pull-type').forEach(cb => cb.onchange = () => {
       const jt = cb.getAttribute('data-jira');
