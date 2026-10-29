@@ -12305,7 +12305,7 @@ async function triggerDueDateApproval(itemData, prevValue, reason, isDelayChange
 }
 
 function openDueDateApproval(actId){
-  const a = activities.find(x=>x.id===+actId);
+  const a = _acFind(+actId);   // ITEM-PAGE-PARITY-1: the open set too (a request can age out of the capped window)
   if(!a) return;
   const isDelay = a.activity_type === 'Delay Date Change';
   const prevLabel = isDelay ? 'Previous Delay Date' : 'Previous Due Date';
@@ -12331,6 +12331,10 @@ function openDueDateApproval(actId){
     if(proj){
       if(isDelay){
         proj.revised = a.new_value;
+        // ITEM-PAGE-PARITY-1: stamp the requester's reason as the delay reason, as an admin's own delay
+        // does (the request note is "<reason>" or "<reason> - <note>"; "Other" keeps the note).
+        const [r0, ...rest] = String(a.note||'').split(' - ');
+        proj.delay = a.new_value ? ((r0==='Other' ? rest.join(' - ') : r0) || proj.delay || '') : '';
       } else {
         proj.due = a.new_value;
       }
@@ -12345,7 +12349,7 @@ function openDueDateApproval(actId){
       isDelay ? {revised: a.previous_value} : {due: a.previous_value},
       isDelay ? {revised: a.new_value}      : {due: a.new_value});
     document.getElementById('dueDateApprovalBg').classList.remove('open');
-    await loadActivities(); render(); renderAcOpen();
+    await loadActivities(); render(); renderAcOpen(); _ipRefreshIfShowing(a.item_id);
   };
   document.getElementById('rejectDueDateBtn').onclick = ()=>{
     const noteRow = document.getElementById('rejectionNoteRow');
@@ -12366,7 +12370,7 @@ function openDueDateApproval(actId){
           null, null);
       }
       document.getElementById('dueDateApprovalBg').classList.remove('open');
-      await loadActivities(); render(); renderAcOpen();
+      await loadActivities(); render(); renderAcOpen(); _ipRefreshIfShowing(a.item_id);
     });
   };
   document.getElementById('dueDateApprovalBg').classList.add('open');
@@ -18154,6 +18158,13 @@ async function saveItemPageField(field, value, opts={}){
       return;   // defer: the persist happens only after the reason is confirmed
     }
   }
+  // ITEM-PAGE-PARITY-1 Stage 2.2: an editor's delay date is a REQUEST, as in the modal - capture the reason,
+  // send it to the Activity Center for an admin to approve, and leave the item's date as it is until then.
+  if(field==='revised' && !isAdmin){
+    if((p.revised||'') === (value||'')){ refresh(p); return; }
+    _ipOpenReason({...p, revised: value||''}, 'revised', { refresh, request: true });
+    return;
+  }
   const updated = {...p, [field]: value, _username: getUsername()};
   // UI polish (item 6): DEFAULT-NEVER-OVERRIDE. Selecting an owner (pod) whose recorded membership
   // is EXACTLY ONE member fills a BLANK assignee with that member. Never overwrites an existing
@@ -18212,6 +18223,30 @@ async function _ipPersist(updated, opts={}){
   }
 }
 
+// ITEM-PAGE-PARITY-1 Stage 2.2: an editor's delay request still waiting for an admin, shown under Revised
+// Due so nobody asks twice. Admins get a Review button that opens the Activity Center's approval dialog.
+function _ipPendingDelay(p){
+  const pool = (_openActs && _openActs.length) ? _openActs : (activities || []);
+  return pool.find(a => a.item_id===p.id && a.activity_type==='Delay Date Change' && (a.status==='Open' || a.status==='Read')) || null;
+}
+function _ipPendingDelayHtml(p){
+  const a = _ipPendingDelay(p); if(!a) return '';
+  const when = a.new_value ? fmtD(parseD(a.new_value)) : 'no delay';
+  const who = a.created_by ? (displayName(a.created_by) || a.created_by) : 'someone';
+  return `<div style="font-size:11px;color:var(--muted);line-height:1.4">Delay to <strong style="color:var(--text)">${esc(when)}</strong> requested by ${esc(who)} - waiting for an admin`
+    + (isAdmin ? ` <button onclick="ipReviewDelay(${a.id})" style="margin-left:4px;font-size:11px;font-weight:700;color:var(--accent);background:none;border:1px solid var(--border);border-radius:5px;padding:0 8px;cursor:pointer">Review</button>` : '')
+    + `</div>`;
+}
+function ipReviewDelay(actId){
+  const bg = document.getElementById('dueDateApprovalBg'); if(bg) bg.style.zIndex = '1000';   // above the item page
+  openDueDateApproval(actId);
+}
+function _ipRefreshIfShowing(id){
+  const ov = document.getElementById('itemPageOverlay');
+  if(_itemPageId !== id || !ov || ov.style.display === 'none') return;
+  const fr = projects.find(x=>x.id===id); if(fr) renderItemPage(fr);
+}
+
 // ── Change-reason capture for inline timeline edits (mirrors the modal) ──
 let _ipPendingReason = null;
 function _ipNeedsReason(p, field, updated){
@@ -18225,14 +18260,19 @@ function _ipNeedsReason(p, field, updated){
 function _ipOpenReason(updated, field, opts={}){
   // ITEM-PAGE-PARITY-1: carry the caller's refresh (the List detail panel saves through here too, where
   // the item page is not open) and word the prompt for a status move.
-  _ipPendingReason = { updated, field, refresh: opts.refresh || renderItemPage };
+  _ipPendingReason = { updated, field, refresh: opts.refresh || renderItemPage, request: !!opts.request };
   const isStatus = field === 'status';
   const ttl = document.getElementById('ipReasonTitle');
-  if(ttl) ttl.textContent = isStatus ? 'Reason for moving this item back' : 'Reason for timeline change';
+  if(ttl) ttl.textContent = opts.request ? 'Request a delay date'
+    : (isStatus ? 'Reason for moving this item back' : 'Reason for timeline change');
   const sub = document.getElementById('ipReasonSub');
-  if(sub) sub.textContent = isStatus
+  if(sub) sub.textContent = opts.request
+    ? `An admin approves the new date (${updated.revised ? fmtD(parseD(updated.revised)) : 'no delay'}) before it changes - capture why (logged to its history and sent to the Activity Center).`
+    : isStatus
     ? `This active item is moving back to ${updated.status} - capture why (logged to its history and the Activity Center).`
     : "This item's schedule is changing - capture why (logged to its history).";
+  const ok = document.getElementById('ipReasonOk');
+  if(ok) ok.textContent = opts.request ? 'Send request' : 'Save change';
   const sel = document.getElementById('ipReasonSelect');
   if(sel){
     const reasons = (changeReasons && changeReasons.length) ? changeReasons : ['Timeline Change','Other'];
@@ -18256,9 +18296,26 @@ function ipReasonConfirm(){
   const err = document.getElementById('ipReasonError');
   if(!reason){ if(err){ err.textContent='Please select a reason.'; err.style.display=''; } return; }
   if(reason==='Other' && !noteVal){ if(err){ err.textContent='"Other" requires a note.'; err.style.display=''; } return; }
-  const { updated, field, refresh } = _ipPendingReason; _ipPendingReason = null;
+  const { updated, field, refresh, request } = _ipPendingReason; _ipPendingReason = null;
   const modal = document.getElementById('ipReasonModal'); if(modal) modal.style.display = 'none';
   const p = projects.find(x=>x.id===updated.id);
+  // ITEM-PAGE-PARITY-1 Stage 2.2: an editor's delay request - item history + an open "Delay Date Change"
+  // in the Activity Center (what the modal sends). The item keeps its date until an admin approves.
+  if(request && p){
+    const changeMsg = `Delay Date: ${p.revised||'none'} → ${updated.revised||'none'}`;
+    try {
+      logActionOnItem(p.id, p.name||'', p.dev||'', p.product||'',
+        `Delay date change requested by ${getUsername()} - ${reason}${noteVal?' ('+noteVal+')':''}: ${changeMsg} (pending approval)`,
+        { revised: p.revised||'' }, { revised: updated.revised||'' });
+    } catch(e){}
+    triggerDueDateApproval({...p, revised: updated.revised||''}, p.revised||'', `${reason}${noteVal?' - '+noteVal:''}`, true)
+      .then(()=>{
+        if(typeof showToast==='function') showToast('Delay date sent to an admin for approval.','success');
+        const fr = projects.find(x=>x.id===p.id); if(fr) refresh(fr);
+      })
+      .catch(e=>{ if(typeof showToast==='function') showToast('Request failed: '+(e.message||e),'error'); });
+    return;
+  }
   // ITEM-PAGE-PARITY-1: an admin moving an active item back - item history + an Admin Override in the
   // Activity Center, exactly as the modal logs it.
   if(field === 'status' && p){
@@ -18364,10 +18421,17 @@ function ipCopyLink(){
 async function ipDeleteItem(){
   const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
   if(!confirm(`Delete "${p.name||'this item'}"? This cannot be undone.`)) return;
+  // ITEM-PAGE-PARITY-1 Stage 2.5: offer to delete the linked Jira issues too, as the modal does.
+  const tix = (jiraConfigured && Array.isArray(p.jiraTickets)) ? [...p.jiraTickets] : [];
+  const delJira = tix.length > 0 && confirm(
+    `This item has ${tix.length} linked Jira ticket${tix.length!==1?'s':''} (${tix.join(', ')}).\n\nDo you also want to delete the Jira issue${tix.length!==1?'s':''} from Jira?\n\nClick OK to delete from Jira, Cancel to keep them.`);
   try {
-    await API.del('/api/projects/'+p.id);
+    await API.del('/api/projects/'+p.id+'?username='+encodeURIComponent(getUsername()));
     const idx = projects.findIndex(x=>x.id===p.id); if(idx>=0) projects.splice(idx,1);
-    if(typeof showToast==='function') showToast('Item deleted','success');
+    if(delJira){
+      for(const t of tix) API.del('/api/jira/issue/'+t).catch(e => { if(typeof showToast==='function') showToast(`Could not delete Jira issue ${t}: ${e.message||e}`,'error'); });
+    }
+    if(typeof showToast==='function') showToast(delJira ? `Deleted item and ${tix.length} Jira issue${tix.length!==1?'s':''}` : 'Item deleted','success');
     closeItemPage();
     if(viewMode==='list' && typeof renderList==='function') renderList();
     else if(typeof render==='function') render();
@@ -18627,13 +18691,18 @@ function renderItemPage(p){
   // valid, and the status subset separately forbids terminal/backward targets.
   const inContribScope = isContributor && itemInContributorScope(p);
   const canEdit     = ((isAdmin||isEditor) && !isTerm) || inContribScope;
-  const timeRO      = !isAdmin;               // inline schedule/date edits are admin-only - editors change
-                                              // schedule via the modal, which has the approval workflow
+  const timeRO      = !isAdmin;               // start / test period / release date stay admin-only (as in the modal)
   const prRO        = !isAdmin || isLocked;   // + locked for everyone while active (server 422)
   // ITEM-PAGE-PARITY-1: a finished item is read-only for editors, as in the modal (name, status, Team,
   // Space, Type; the schedule fields are admin-only already). Notes/Resolution, comments and attachments
   // stay open on purpose. Contributors keep their own server-enforced subset.
   const termRO      = isTerm && isEditor && !isAdmin;
+  // ITEM-PAGE-PARITY-1 Stage 2.2: what the modal lets an editor change in the schedule - the Time Estimate
+  // while the item is not active, the Expected Date, and a delay date (an admin approves it before it
+  // applies; see saveItemPageField). Nothing on a finished item.
+  const edEstRO     = !isAdmin && (!isEditor || isTerm || isLocked);
+  const edExpRO     = !isAdmin && (!isEditor || isTerm);
+  const edDelayRO   = !isAdmin && (!isEditor || isTerm || !p.due);
 
   // Header
   document.getElementById('ipTitle').textContent = p.name||'Untitled';
@@ -18719,7 +18788,7 @@ function renderItemPage(p){
     // absent everywhere, per the defining rule. _ipFieldOptions supplies the choices.
     locations.length ? ipEditField('location', 'Location', esc(p.location||''), 'select') : '',
     resolutionTypes.length ? ipEditField('resolutionType', 'Resolution Type', esc(p.resolutionType||''), 'select') : '',
-    ipEditField('dueWeeks',          'Time Estimate',      p.dueWeeks ? fmtEstimate(p.dueWeeks) : '', 'number', {readonly:timeRO}),
+    ipEditField('dueWeeks',          'Time Estimate',      p.dueWeeks ? fmtEstimate(p.dueWeeks) : '', 'number', {readonly:edEstRO}),
     ipEditField('testWeeks',         'Test Period',        (p.testWeeks!==undefined && p.testWeeks!=='') ? fmtEstimate(p.testWeeks) : '', 'number', {readonly:timeRO}),
     ipEditField('parallelResources', 'Parallel Resources', String(p.parallelResources||1), 'number', {readonly:prRO}),
     p.featureFlags?.length ? `<div><div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:5px">Feature Flags</div><div style="display:flex;flex-wrap:wrap;gap:4px">${renderFeatureFlagsInline(p.featureFlags||[], new Set(p.jiraFeatureFlags||[]))}</div></div>` : '',
@@ -18735,8 +18804,9 @@ function renderItemPage(p){
     ipEditField('start', 'Start Date', fmtDate(startD)||'', 'date', {readonly:timeRO}),
     ipCodeComplete ? `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--surface2)"><span style="color:#0090d4;font-weight:700;font-size:12px">Code Complete</span><span style="color:#0090d4;font-weight:700;font-size:12px">${fmtDate(ipCodeComplete)}</span></div>` : '',
     ipField('Due Date', fmtDate(dueD), {bold:true}),   // derived from start + estimate
-    ipEditField('revised',     'Revised Due',   fmtDate(revD)||'', 'date', {bold:true, readonly:timeRO}),
-    ipEditField('expected',    'Expected Date', fmtDate(expD)||'', 'date', {readonly:timeRO}),
+    ipEditField('revised',     'Revised Due',   fmtDate(revD)||'', 'date', {bold:true, readonly:edDelayRO}),
+    _ipPendingDelayHtml(p),
+    ipEditField('expected',    'Expected Date', fmtDate(expD)||'', 'date', {readonly:edExpRO}),
     ipEditField('releaseDate', 'Release Date',  fmtDate(relD)||'', 'date', {readonly:timeRO}),
     p.delay ? ipField('Delay Reason', esc(stripHtml(p.delay))) : '',
   ].join('') + lockNote;
@@ -18819,9 +18889,26 @@ function renderItemPage(p){
       const xi = projects.find(x=>x.id===xId);
       if(xi) depRows.push(`<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
         <span style="font-size:var(--fs-label);font-weight:700;color:var(--muted);width:80px;flex-shrink:0">Ignore Conflict</span>
-        <button onclick="openItemPage(${xi.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text);padding:0">${esc(xi.name)}</button>
+        <button onclick="openItemPage(${xi.id})" style="background:none;border:none;cursor:pointer;font-family:'Lato',sans-serif;font-size:13px;color:var(--text);padding:0;text-align:left;flex:1">${esc(xi.name)}</button>
+        ${isAdmin ? `<button onclick="ipSetIgnoreConflict(${xi.id}, false)" title="Check conflicts with this item again" style="background:none;border:none;color:var(--accent2);cursor:pointer;font-size:14px;padding:0 2px;line-height:1">✕</button>` : ''}
       </div>`);
     });
+  }
+  // ITEM-PAGE-PARITY-1 Stage 2.3: admins add an ignored conflict here (same-Team items, as in the modal).
+  let ignoreControl = '';
+  if(isAdmin && p.dev){
+    const _ign = new Set(p.ignoreConflictsWith||[]);
+    const elig = projects.filter(x => x.id!==p.id && x.dev===p.dev && !_ign.has(x.id))
+      .sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+    if(elig.length) ignoreControl = `<div>
+        <button onclick="const r=document.getElementById('ipIgnoreRow'); r.style.display = r.style.display==='none' ? 'flex' : 'none'" style="background:none;border:1px solid var(--border);color:var(--accent);padding:3px 10px;border-radius:5px;font-family:'Lato',sans-serif;font-weight:700;font-size:11px;cursor:pointer">+ Ignore conflicts with…</button>
+        <div id="ipIgnoreRow" style="display:none;gap:6px;margin-top:6px">
+          <select id="ipIgnoreSelect" style="flex:1;min-width:0;padding:6px 8px;font-size:13px;border:1px solid var(--accent);border-radius:6px;background:var(--bg);color:var(--text);font-family:'Lato',sans-serif;outline:none">
+            <option value="">Choose a ${esc(p.dev)} item…</option>
+            ${elig.map(x=>`<option value="${x.id}">${x.itemKey?esc(x.itemKey)+' · ':''}${esc(x.name)}</option>`).join('')}
+          </select>
+          <button onclick="ipSetIgnoreConflict(document.getElementById('ipIgnoreSelect').value, true)" style="background:var(--accent);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Ignore</button>
+        </div></div>`;
   }
   // Add linked work item (set a dependency). Mutual exclusion: parent OR requires, not both.
   let linkControl = '';
@@ -18858,7 +18945,7 @@ function renderItemPage(p){
         </div></div>`;
     }
   }
-  depsEl.innerHTML = depRows.join('') + parentControl + linkControl + _ipTypedLinksHtml(p, depCanEdit);
+  depsEl.innerHTML = depRows.join('') + parentControl + linkControl + ignoreControl + _ipTypedLinksHtml(p, depCanEdit);
   if(!depsEl.innerHTML.trim()) depsEl.innerHTML = `<div style="font-size:12px;color:var(--muted)">No dependencies</div>`;
 
   // Subtasks (children) - own card with roll-up + inline create
@@ -18883,6 +18970,14 @@ function renderItemPage(p){
     adminEl.innerHTML = [
       ipEditField('recurrence', 'Recurrence', (p.recurrence&&p.recurrence!=='none')?esc(p.recurrence):'none', 'select', {always:true, adminOnly:true}),
       p.recurrence_parent ? ipField('Recurrence Parent', `Item #${p.recurrence_parent}`) : '',
+      // ITEM-PAGE-PARITY-1 Stage 2.4: the modal's "Sync Children from Jira" switch (recurring items, Jira on).
+      (jiraConfigured && p.recurrence && p.recurrence !== 'none') ? `<div>
+        <div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:3px">Sync children from Jira</div>
+        <button onclick="ipToggleSyncChildren(${p.id})" title="When on, subitems are created from the linked Jira ticket's subtasks. Click to toggle."
+          style="padding:5px 12px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:12px;font-weight:700;background:${p.syncChildren?'var(--accent)':'var(--surface)'};color:${p.syncChildren?'#fff':'var(--text)'}">
+          ${p.syncChildren?'On':'Off'}
+        </button>
+      </div>` : '',
       showSyncBtn ? `<div>
         <button onclick="syncChildrenFromJira(${p.id})" id="syncChildrenBtn"
           style="width:100%;padding:8px 14px;background:var(--accent);color:#fff;border:none;border-radius:7px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px">
@@ -18922,6 +19017,37 @@ function ipToggleHidden(id){
   if(!p || !isAdmin) return;
   _ipPersist({...p, hidden: !p.hidden, _username: getUsername()},
              {msg: (!p.hidden ? 'Item hidden (Gantt only)' : 'Item is now visible')});
+}
+
+// ITEM-PAGE-PARITY-1 Stage 2.3: Ignore Conflicts With (admin only - was modal-only). A pair is ignored when
+// EITHER item lists the other (buildIgnorePairs), so both sides are written: an add mirrors the modal's
+// two-way sync, and a removal clears both sides (else the other side would keep ignoring it).
+async function ipSetIgnoreConflict(otherId, on){
+  const p = projects.find(x=>x.id===_itemPageId);
+  otherId = parseInt(otherId);
+  if(!p || !isAdmin || !otherId || otherId===p.id) return;
+  const list = (p.ignoreConflictsWith||[]).filter(x=>x!==otherId);
+  if(on) list.push(otherId);
+  await _ipPersist({...p, ignoreConflictsWith: list, _username: getUsername()},
+                   {msg: on ? 'Conflicts with that item are ignored' : 'Conflict check restored'});
+  const other = projects.find(x=>x.id===otherId);
+  if(!other) return;
+  const ol = (other.ignoreConflictsWith||[]).filter(x=>x!==p.id);
+  if(on) ol.push(p.id);
+  if(ol.join(',') === (other.ignoreConflictsWith||[]).join(',')) return;
+  try {
+    const saved = await API.put('/api/projects/'+otherId, {...other, ignoreConflictsWith: ol, _username: getUsername()});
+    const i = projects.findIndex(x=>x.id===otherId);
+    if(i>=0) projects[i] = {...other, ignoreConflictsWith: ol, ...(saved&&typeof saved==='object'?saved:{}), id: otherId};
+  } catch(e){}
+}
+
+// ITEM-PAGE-PARITY-1 Stage 2.4: Sync children from Jira (admin only - was modal-only), for recurring items.
+function ipToggleSyncChildren(id){
+  const p = projects.find(x=>x.id===id);
+  if(!p || !isAdmin) return;
+  _ipPersist({...p, syncChildren: !p.syncChildren, _username: getUsername()},
+             {msg: (!p.syncChildren ? 'Children will sync from Jira' : 'Child sync turned off')});
 }
 
 // ── TRANSFER-1: cross-team transfer (admin only; lives in ipAdminCard) ──────────────────
@@ -20967,7 +21093,7 @@ if ('serviceWorker' in navigator) {
     <div id="ipReasonError" style="display:none;font-size:11px;color:var(--accent2);font-weight:700;margin-bottom:6px"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
       <button onclick="ipReasonCancel()" style="background:none;border:1px solid var(--border);color:var(--muted);padding:7px 16px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Cancel</button>
-      <button onclick="ipReasonConfirm()" style="background:var(--accent);color:#fff;border:none;padding:7px 16px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Save change</button>
+      <button id="ipReasonOk" onclick="ipReasonConfirm()" style="background:var(--accent);color:#fff;border:none;padding:7px 16px;border-radius:6px;font-family:'Lato',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Save change</button>
     </div>
   </div>
 </div>
