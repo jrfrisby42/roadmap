@@ -2865,7 +2865,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.62.24';
+const APP_VERSION = '6.62.25';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -4726,6 +4726,23 @@ const RESERVED_TERMINAL_STATUSES = new Set([TRANSFERRED_STATUS, DUPLICATE_STATUS
 const isTerminalStatus = s => RESERVED_TERMINAL_STATUSES.has(s) || !!(statusIsTerminal[s]);
 const isActiveStatus   = s => !!(statusIsActive[s]);
 const isLockedActive   = p => !!(p.dev && isActiveStatus(p.status));
+// ITEM-PAGE-PARITY-1: the editor status rules, ONE definition for the item page, List panel, modal and
+// Kanban (the server enforces the same in _enforce_editor_status). Returns a message when a non-admin
+// editor may NOT move item p to `target`, else ''. Admins and contributors (own rules) return ''.
+// - no Released status (other terminal statuses such as Done are allowed);
+// - an active item with a Team never moves back to a non-active, non-terminal status, except into a
+//   parking state (Blocked / off-flow / waiting / parked) - flagging Blocked is not a regression.
+function isStatusRegression(p, target){   // also: an admin doing this must give a reason, like the modal
+  if(!p || !target || target === p.status || !isLockedActive(p)) return false;
+  if(isActiveStatus(target) || isTerminalStatus(target)) return false;
+  return !(statusIsBlocked[target] || statusIsOffFlow[target] || statusIsWaiting[target] || statusIsParked[target]);
+}
+function editorStatusBlock(p, target){
+  if(isAdmin || !isEditor || !p || !target || target === p.status) return '';
+  if(statusIsReleased[target]) return `Editors cannot set the status to "${target}" - ask an admin to release it.`;
+  if(isStatusRegression(p, target)) return `Editors cannot move an active item back to "${target}" - ask an admin.`;
+  return '';
+}
 const getDefaultStatus  = () => statuses.find(s => statusIsDefault[s])  || statuses[0] || 'Backlogged';
 const getDeferredStatus = () => statuses.find(s => statusIsDeferred[s]) || '';
 const getReleasedStatus = () => statuses.find(s => statusIsReleased[s]) || '';
@@ -8110,11 +8127,12 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
   }
   document.getElementById('testWeeksError').style.display = 'none';
 
-  // Require release date when status is Released
+  // ITEM-PAGE-PARITY-1: a Released status with no release date gets today (Mountain Time) - the same rule
+  // on every screen (was: block the save until one was typed). It stays editable afterwards.
   if(statusIsReleased[data.status] && !data.releaseDate){
-    document.getElementById('releaseError').style.display = 'block';
-    _frzRevealComposerField('fRelease');   // Stage 3: auto-open the collapsed Schedule group + focus
-    return;
+    data.releaseDate = todayStrMT();
+    const relEl = document.getElementById('fRelease');
+    if(relEl && !relEl.value) relEl.value = data.releaseDate;
   }
   document.getElementById('releaseError').style.display = 'none';
 
@@ -8142,7 +8160,8 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
     // timelineChanged: any of schedule OR delay (used for reason requirement)
     const timelineChanged = scheduleChanged || delayChanged;
     const dueDateChanged  = (data.due||'') !== (existing.due||'');
-    const statusRegressed = wasActive && !nowActive && !nowTerm;
+    // ITEM-PAGE-PARITY-1: the shared regression test (parking statuses such as Blocked are not a regression)
+    const statusRegressed = isStatusRegression(existing, nowStatus);
     const needsReason     = timelineChanged || statusRegressed || delayChanged;
 
     // Non-admin: block status regression outright
@@ -8354,57 +8373,9 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
 
     showSaveBadge();
 
-    // Auto-clear activities if item saved with a terminal status
     const savedId = editingId || projects[projects.length - 1]?.id;
     const savedProject = projects.find(x => x.id === savedId);
-    if(savedProject && isTerminalStatus(savedProject.status)){
-      const openActs = activities.filter(a => a.item_id===savedProject.id && (a.status==='Open'||a.status==='Read'));
-      for(const a of openActs){
-        const reason = statusIsReleased[savedProject.status]
-          ? 'Auto-cleared: item Released'
-          : 'Auto-cleared: terminal status';
-        API.put('/api/activities/'+a.id, {status:'Auto-Cleared', action_taken:reason, resolved_by:'System'}).catch(()=>{});
-      }
-      if(openActs.length) loadActivities().then(updateActivityBadge);
-      // Also clear any capacity conflict activities for this item (it leaves the active pool)
-      const conflictActs = activities.filter(a =>
-        a.activity_type==='Capacity Conflict' &&
-        (a.status==='Open'||a.status==='Read') &&
-        a.previous_value && (() => {
-          try { return JSON.parse(a.previous_value||'[]').includes(savedProject.id); } catch(e){ return false; }
-        })()
-      );
-      for(const a of conflictActs){
-        API.put('/api/activities/'+a.id, {status:'Auto-Cleared', action_taken:'Auto-cleared: item released', resolved_by:'System'}).catch(()=>{});
-      }
-      // Spawn recurrence if configured
-      handleRecurrenceOnSave(savedProject);
-    }
-
-    // Re-evaluate capacity conflicts after any save (dates/owner may have changed)
-    runCapacityConflictNotifications().catch(()=>{});
-
-    // Roadmap → Jira sync: push status change, date change, owner change to Jira
-    if(savedProject && jiraConfigured){
-      syncRoadmapToJira(savedProject, _originalItemValues).catch(()=>{});
-    }
-    if(savedProject){
-      const newWorkEnd = parentWorkEnd(savedProject);
-      if(newWorkEnd){
-        const children = projects.filter(x => x.requires === savedProject.id && !x.parallel);
-        for(const child of children){
-          if(child.start === newWorkEnd) continue;
-          const childDueWks  = child.dueWeeks || 2;
-          const newChildDue  = nextMonday(addDays(parseD(newWorkEnd), childDueWks * 7)).toISOString().slice(0,10);
-          const updatedChild = { ...child, start: newWorkEnd, due: newChildDue, _username: getUsername() };
-          try {
-            const saved = await API.put('/api/projects/' + child.id, updatedChild);
-            const idx = projects.findIndex(x => x.id === child.id);
-            if(idx > -1) projects[idx] = saved;
-          } catch(e){ console.warn('Cascade failed for', child.name, e); }
-        }
-      }
-    }
+    await _afterItemSave(savedProject, _originalItemValues);
   } catch(e){ alert('Save failed: ' + e.message); return; }
 
   populateDevSelects();
@@ -14466,15 +14437,13 @@ function wireKanbanDragDrop(){
         }
       }
 
-      // Block: terminal columns - admin only
-      if(isTerminalStatus(newStatus) && !isAdmin){
+      // ITEM-PAGE-PARITY-1: the shared editor rules (no Released; no moving an active item back, parking
+      // states such as Blocked exempt) - editors may now close work out as Done here, as in the modal.
+      // Contributors keep their own subset (never terminal; server-enforced).
+      const _edBlock = editorStatusBlock(p, newStatus);
+      if(_edBlock){ alert(_edBlock); return; }
+      if(isContributor && !isAdmin && !isEditor && isTerminalStatus(newStatus)){
         alert('Only admins can move items to a terminal status.');
-        return;
-      }
-
-      // Block non-admin: active → non-active, non-terminal (status regression)
-      if(!isAdmin && isLockedActive(p) && !isActiveStatus(newStatus) && !isTerminalStatus(newStatus)){
-        alert('You cannot move an active item to a non-active status. Contact an admin to regress this item.');
         return;
       }
 
@@ -14483,28 +14452,21 @@ function wireKanbanDragDrop(){
       // (no re-render needed: the card only moves on the render() after a successful save).
       if(isTerminalStatus(newStatus) && !kanbanTerminalDropConfirm(p, newStatus)) return;
 
-      const oldStatus = p.status, oldStart = p.start, oldDev = p.dev;
+      const oldStatus = p.status, oldStart = p.start, oldDev = p.dev, oldRel = p.releaseDate;
       p.status = newStatus;
       if(_setStart) p.start = _setStart;
       if(_setOwner) p.dev = _setOwner;
+      if(statusIsReleased[newStatus] && !p.releaseDate) p.releaseDate = todayStrMT();   // ITEM-PAGE-PARITY-1
       try {
         const updated = await API.put('/api/projects/'+p.id, {...p, _username:getUsername()});
         const i = projects.findIndex(x=>x.id===p.id);
         if(i>-1) projects[i] = updated;
-        // Jira sync - non-fatal, runs silently
-        if(jiraConfigured && p.jiraTickets?.length){
-          syncRoadmapToJira(updated, {status: oldStatus, due: updated.due, start: updated.start, dev: updated.dev}).catch(()=>{});
-        }
-        // Auto-clear activities if now terminal
-        if(isTerminalStatus(newStatus)){
-          const open = activities.filter(a=>a.item_id===p.id&&(a.status==='Open'||a.status==='Read'));
-          for(const a of open){
-            API.put('/api/activities/'+a.id, {status:'Auto-Cleared',action_taken:'Item became terminal',resolved_by:'System'}).catch(()=>{});
-          }
-          await loadActivities();
-        }
+        // ITEM-PAGE-PARITY-1: the shared after-save step (Jira push, alert clean-up, recurrence spawn -
+        // Kanban never spawned the next occurrence before - capacity re-run, dependents). Only the status
+        // is compared for Jira, as before (a filled-in start/Team is not commented).
+        await _afterItemSave(updated, {status: oldStatus, due: updated.due, start: updated.start, dev: updated.dev});
         render(); renderKanban();
-      } catch(err){ p.status = oldStatus; p.start = oldStart; p.dev = oldDev; alert('Save failed: '+err.message); }
+      } catch(err){ p.status = oldStatus; p.start = oldStart; p.dev = oldDev; p.releaseDate = oldRel; alert('Save failed: '+err.message); }
     });
   });
 }
@@ -14582,8 +14544,10 @@ function applyModalLocking(p){
     return;
   }
 
-  // Non-admin, locked active: lock Time Estimate, Start Date, Status
-  const lockFields = ['fDueWeeks', 'fStart', 'fStatus'];
+  // Non-admin, locked active: lock Time Estimate, Start Date (+ Status for non-editors).
+  // ITEM-PAGE-PARITY-1: editors keep Status (Kanban rule) - they may move between active statuses or close
+  // the item out; moving it back is refused at save by editorStatusBlock / isStatusRegression.
+  const lockFields = isEditor ? ['fDueWeeks', 'fStart'] : ['fDueWeeks', 'fStart', 'fStatus'];
   lockFields.forEach(id => {
     const el = document.getElementById(id);
     if(el) el.disabled = true;
@@ -17599,6 +17563,64 @@ async function syncChildrenFromJira(itemId){
   }
 }
 
+// ITEM-PAGE-PARITY-1: everything that follows a saved item change, ONE routine for the modal, the item
+// page / List panel (_ipPersist) and Kanban. Lifted verbatim from the modal save, where it used to live
+// alone - so the page and Kanban silently skipped the Jira push, the recurrence spawn and the alert
+// clean-up. `before` = the values the change started from ({status, due, start, dev, description}; only
+// keys present are compared by syncRoadmapToJira).
+async function _afterItemSave(savedProject, before){
+  if(!savedProject) return;
+  // Auto-clear activities if item saved with a terminal status
+  if(isTerminalStatus(savedProject.status)){
+    const openActs = activities.filter(a => a.item_id===savedProject.id && (a.status==='Open'||a.status==='Read'));
+    for(const a of openActs){
+      const reason = statusIsReleased[savedProject.status]
+        ? 'Auto-cleared: item Released'
+        : 'Auto-cleared: terminal status';
+      API.put('/api/activities/'+a.id, {status:'Auto-Cleared', action_taken:reason, resolved_by:'System'}).catch(()=>{});
+    }
+    if(openActs.length) loadActivities().then(updateActivityBadge);
+    // Also clear any capacity conflict activities for this item (it leaves the active pool)
+    const conflictActs = activities.filter(a =>
+      a.activity_type==='Capacity Conflict' &&
+      (a.status==='Open'||a.status==='Read') &&
+      a.previous_value && (() => {
+        try { return JSON.parse(a.previous_value||'[]').includes(savedProject.id); } catch(e){ return false; }
+      })()
+    );
+    for(const a of conflictActs){
+      API.put('/api/activities/'+a.id, {status:'Auto-Cleared', action_taken:'Auto-cleared: item released', resolved_by:'System'}).catch(()=>{});
+    }
+    // Spawn recurrence if configured - only on the move INTO a terminal status, so re-saving an
+    // already-finished item never spawns a second occurrence.
+    if(!before || before.status === undefined || !isTerminalStatus(before.status)) handleRecurrenceOnSave(savedProject);
+  }
+
+  // Re-evaluate capacity conflicts after any save (dates/owner may have changed)
+  runCapacityConflictNotifications().catch(()=>{});
+
+  // Roadmap → Jira sync: push status change, date change, owner change to Jira
+  if(jiraConfigured){
+    syncRoadmapToJira(savedProject, before).catch(()=>{});
+  }
+  // Sequential dependents start when this item's work ends
+  const newWorkEnd = parentWorkEnd(savedProject);
+  if(newWorkEnd){
+    const children = projects.filter(x => x.requires === savedProject.id && !x.parallel);
+    for(const child of children){
+      if(child.start === newWorkEnd) continue;
+      const childDueWks  = child.dueWeeks || 2;
+      const newChildDue  = nextMonday(addDays(parseD(newWorkEnd), childDueWks * 7)).toISOString().slice(0,10);
+      const updatedChild = { ...child, start: newWorkEnd, due: newChildDue, _username: getUsername() };
+      try {
+        const saved = await API.put('/api/projects/' + child.id, updatedChild);
+        const idx = projects.findIndex(x => x.id === child.id);
+        if(idx > -1) projects[idx] = saved;
+      } catch(e){ console.warn('Cascade failed for', child.name, e); }
+    }
+  }
+}
+
 async function handleRecurrenceOnSave(savedProject){
   if(!savedProject) return;
   if(!isTerminalStatus(savedProject.status)) return;
@@ -17961,12 +17983,16 @@ function ipEditField(field, label, displayHtml, kind, opts={}){
   if(!editable) return `<div>${lbl}<div style="${vs}">${val}</div></div>`;
   return `<div>${lbl}<div class="ip-edit" data-field="${field}" data-kind="${kind}" title="Click to edit" style="${vs};cursor:text;border-radius:4px;padding:2px 5px;margin:-2px -5px" onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background=''">${val}</div></div>`;
 }
-function _ipFieldOptions(field){
+function _ipFieldOptions(field, itemId){
   const o = (v,l)=>({value:v, label:l});
   if(field==='status'){
+    // itemId: the List detail panel passes its own item (the item page may not be the one open).
+    const cur = projects.find(x=>x.id===(itemId != null ? itemId : _itemPageId));
     // Contributors see only the forward-only, non-terminal, non-Released subset (mirrors server).
-    if(isContributor) return contributorStatusOptions(projects.find(x=>x.id===_itemPageId)).map(s=>o(s,s));
-    return statuses.map(s=>o(s,s));
+    if(isContributor) return contributorStatusOptions(cur).map(s=>o(s,s));
+    // ITEM-PAGE-PARITY-1: editors are offered only the statuses they may move to (no Released; an active
+    // item cannot go back) - the same rule the modal, Kanban and the server apply.
+    return statuses.filter(s => !editorStatusBlock(cur, s)).map(s=>o(s,s));
   }
   if(field==='type')     return types.map(t=>o(t.name,t.name));
   if(field==='product')  return products.map(pr=>{ var n=(pr&&pr.name)||pr; return o(n,n); });   // changing Project re-keys the item server-side (prefix follows the product)
@@ -18095,6 +18121,11 @@ async function saveItemPageField(field, value, opts={}){
     if(typeof showToast==='function') showToast('Assign a Team before moving to an active status.','error');
     refresh(p); return;
   }
+  // ITEM-PAGE-PARITY-1: the shared editor status rules (also enforced server-side).
+  if(field==='status'){
+    const _blk = editorStatusBlock(p, value);
+    if(_blk){ if(typeof showToast==='function') showToast(_blk,'error'); refresh(p); return; }
+  }
   // BLOCK-REASON-2: capture the reason on an interactive block. BOTH the item-page status control
   // AND the List detail-panel status select land here, so one intercept covers 2.2 + 2.3. Prompt only
   // when moving INTO the team's blocked status (resolved via getBlockedStatus, never hardcoded), the
@@ -18140,10 +18171,18 @@ async function saveItemPageField(field, value, opts={}){
     }
     updated.due = computeItemDue(updated);
   }
+  // ITEM-PAGE-PARITY-1: what the modal / Kanban fill in on a status change - a start date (today, the Kanban
+  // and Jira-pull rule) when work starts with none set, and a release date (today) for a Released status.
+  if(field==='status'){
+    if(isActiveStatus(value) && !updated.start){
+      updated.start = todayStrMT();
+      if(parseFloat(updated.dueWeeks) > 0) updated.due = computeItemDue(updated);
+    }
+    if(statusIsReleased[value] && !updated.releaseDate) updated.releaseDate = todayStrMT();
+  }
   // Timeline change on a committed item → capture a change reason first (like the modal).
-  // (Status never needs a reason, so the reusable status path never hits this; reason-
-  // requiring fields remain item-page-only.)
-  if(_ipNeedsReason(p, field, updated)){ _ipOpenReason(updated, field); return; }
+  // ITEM-PAGE-PARITY-1: so does an admin moving an active item back (editors were refused above).
+  if(_ipNeedsReason(p, field, updated)){ _ipOpenReason(updated, field, { refresh }); return; }
   _ipPersist(updated, { refresh });
 }
 
@@ -18158,6 +18197,12 @@ async function _ipPersist(updated, opts={}){
     if(idx>=0) projects[idx] = {...updated, ...(saved&&typeof saved==='object'?saved:{}), id:updated.id};
     if(typeof showToast==='function') showToast(opts.msg||'Saved','success');
     refresh(idx>=0?projects[idx]:updated);
+    // ITEM-PAGE-PARITY-1: the modal's after-save step (Jira push, recurrence spawn, alert clean-up,
+    // capacity re-run, dependents) - when something it acts on changed, not on every notes edit.
+    const cur = idx>=0 ? projects[idx] : updated;
+    if(prev && ['status','due','start','dev','dueWeeks','revised','parallelResources'].some(k => String(prev[k]??'') !== String(cur[k]??''))){
+      _afterItemSave(cur, { status: prev.status ?? '', due: prev.due ?? '', start: prev.start ?? '', dev: prev.dev ?? '' }).catch(()=>{});
+    }
   } catch(e){
     if(typeof showToast==='function') showToast('Save failed: '+(e.message||e),'error'); else alert(e.message||e);
     if(prev) refresh(prev);
@@ -18167,14 +18212,24 @@ async function _ipPersist(updated, opts={}){
 // ── Change-reason capture for inline timeline edits (mirrors the modal) ──
 let _ipPendingReason = null;
 function _ipNeedsReason(p, field, updated){
+  if(field==='status') return isAdmin && isStatusRegression(p, updated.status);   // ITEM-PAGE-PARITY-1
   if(field==='revised')
     return !!p.due && !!updated.revised && (p.revised||'') !== (updated.revised||'');  // a delay on a committed item
   if(['start','dueWeeks','testWeeks','parallelResources'].includes(field))
     return !!p.due && !!updated.due && p.due !== updated.due;                          // committed due moved
   return false;
 }
-function _ipOpenReason(updated, field){
-  _ipPendingReason = { updated, field };
+function _ipOpenReason(updated, field, opts={}){
+  // ITEM-PAGE-PARITY-1: carry the caller's refresh (the List detail panel saves through here too, where
+  // the item page is not open) and word the prompt for a status move.
+  _ipPendingReason = { updated, field, refresh: opts.refresh || renderItemPage };
+  const isStatus = field === 'status';
+  const ttl = document.getElementById('ipReasonTitle');
+  if(ttl) ttl.textContent = isStatus ? 'Reason for moving this item back' : 'Reason for timeline change';
+  const sub = document.getElementById('ipReasonSub');
+  if(sub) sub.textContent = isStatus
+    ? `This active item is moving back to ${updated.status} - capture why (logged to its history and the Activity Center).`
+    : "This item's schedule is changing - capture why (logged to its history).";
   const sel = document.getElementById('ipReasonSelect');
   if(sel){
     const reasons = (changeReasons && changeReasons.length) ? changeReasons : ['Timeline Change','Other'];
@@ -18187,8 +18242,9 @@ function _ipOpenReason(updated, field){
 }
 function ipReasonCancel(){
   const modal = document.getElementById('ipReasonModal'); if(modal) modal.style.display = 'none';
-  _ipPendingReason = null;
-  const fr = projects.find(x=>x.id===_itemPageId); if(fr) renderItemPage(fr);   // discard the edit
+  const pend = _ipPendingReason; _ipPendingReason = null;
+  const id = pend ? pend.updated.id : _itemPageId;
+  const fr = projects.find(x=>x.id===id); if(fr) ((pend && pend.refresh) || renderItemPage)(fr);   // discard the edit
 }
 function ipReasonConfirm(){
   if(!_ipPendingReason) return;
@@ -18197,9 +18253,28 @@ function ipReasonConfirm(){
   const err = document.getElementById('ipReasonError');
   if(!reason){ if(err){ err.textContent='Please select a reason.'; err.style.display=''; } return; }
   if(reason==='Other' && !noteVal){ if(err){ err.textContent='"Other" requires a note.'; err.style.display=''; } return; }
-  const { updated } = _ipPendingReason; _ipPendingReason = null;
+  const { updated, field, refresh } = _ipPendingReason; _ipPendingReason = null;
   const modal = document.getElementById('ipReasonModal'); if(modal) modal.style.display = 'none';
-  const p = projects.find(x=>x.id===_itemPageId);
+  const p = projects.find(x=>x.id===updated.id);
+  // ITEM-PAGE-PARITY-1: an admin moving an active item back - item history + an Admin Override in the
+  // Activity Center, exactly as the modal logs it.
+  if(field === 'status' && p){
+    const changeMsg = `Status: ${p.status} → ${updated.status}`;
+    try {
+      logActionOnItem(p.id, p.name||'', p.dev||'', p.product||'',
+        `Status change by ${getUsername()} - ${reason}${noteVal?' ('+noteVal+')':''}: ${changeMsg}`,
+        { status: p.status }, { status: updated.status });
+    } catch(e){}
+    API.post('/api/activities', {
+      activity_type: 'Admin Override', source: 'User',
+      item_id: p.id, item_name: p.name, owner: p.dev || '', project: p.product || '',
+      created_by: getUsername(), message: changeMsg, note: noteVal || reason,
+      previous_value: JSON.stringify({ status: p.status }), new_value: JSON.stringify({ status: updated.status }),
+      status: 'Resolved', action_taken: `Admin Override: ${reason}`,
+    }).then(()=>loadActivities()).catch(()=>{});
+    _ipPersist(updated, { msg:'Saved with reason', refresh });
+    return;
+  }
   // Stamp the delay reason when a revised (delay) date is set - mirrors the modal.
   if(updated.revised) updated.delay = (reason==='Other' ? noteVal : reason);
   // Log to item history.
@@ -18211,7 +18286,7 @@ function ipReasonConfirm(){
         { due:updated.due, revised:updated.revised||'', dueWeeks:updated.dueWeeks, start:updated.start });
     }
   } catch(e){}
-  _ipPersist(updated, {msg:'Saved with reason'});
+  _ipPersist(updated, {msg:'Saved with reason', refresh});
 }
 // Document-level delegation so it works regardless of when the overlay is built.
 document.addEventListener('click', e=>{
@@ -18499,13 +18574,17 @@ function renderItemPage(p){
   const timeRO      = !isAdmin;               // inline schedule/date edits are admin-only - editors change
                                               // schedule via the modal, which has the approval workflow
   const prRO        = !isAdmin || isLocked;   // + locked for everyone while active (server 422)
+  // ITEM-PAGE-PARITY-1: a finished item is read-only for editors, as in the modal (name, status, Team,
+  // Space, Type; the schedule fields are admin-only already). Notes/Resolution, comments and attachments
+  // stay open on purpose. Contributors keep their own server-enforced subset.
+  const termRO      = isTerm && isEditor && !isAdmin;
 
   // Header
   document.getElementById('ipTitle').textContent = p.name||'Untitled';
   // Inline title editing (click to edit the item name)
   const titleEl = document.getElementById('ipTitle');
   if(titleEl){
-    const canEditTitle = (isAdmin||isEditor);
+    const canEditTitle = (isAdmin||isEditor) && !termRO;
     titleEl.contentEditable = canEditTitle ? 'true' : 'false';
     titleEl.spellcheck = false;
     titleEl.style.outline = 'none';
@@ -18568,15 +18647,15 @@ function renderItemPage(p){
   const lockNote = isLocked && !isAdmin ? `<span style="font-size:10px;color:#e8a000;display:block;margin-top:2px"><svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><rect x="3.5" y="7.2" width="9" height="6" rx="1.2"/><path d="M5.5 7.2V5.2a2.5 2.5 0 0 1 5 0v2"/></svg> Locked - active item</span>` : '';
 
   document.getElementById('ipFields').innerHTML = [
-    ipEditField('status',     'Status',       p.status ? `<span class="${statusCls(p.status)}" style="background:none;border:none;padding:0">${esc(p.status)}</span>` : '', 'select', {bold:true, readonly: RESERVED_TERMINAL_STATUSES.has(p.status)}),   // POLISH-2: reserved statuses (Transferred/Duplicate) are locked - no inline picker (server-enforced; use "Not a duplicate" to reopen)
-    ipEditField('dev',        'Team',         esc(p.dev||''),    'select', {bold:true}),
+    ipEditField('status',     'Status',       p.status ? `<span class="${statusCls(p.status)}" style="background:none;border:none;padding:0">${esc(p.status)}</span>` : '', 'select', {bold:true, readonly: RESERVED_TERMINAL_STATUSES.has(p.status) || termRO}),   // POLISH-2: reserved statuses (Transferred/Duplicate) are locked - no inline picker (server-enforced; use "Not a duplicate" to reopen)
+    ipEditField('dev',        'Team',         esc(p.dev||''),    'select', {bold:true, readonly:termRO}),
     ipEditField('assignee',   'Assignee',     esc(p.assignee ? displayName(p.assignee) : ''), 'select'),
-    ipEditField('type',       'Type',         esc(p.type||''),   'select'),
+    ipEditField('type',       'Type',         esc(p.type||''),   'select', {readonly:termRO}),
     ipEditField('priority',   'Priority',     p.priority ? `<span style="background:${PRIO_COLORS[p.priority]}22;color:${PRIO_COLORS[p.priority]};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700">${esc(PRIO_LABELS[p.priority])}</span>` : '', 'select'),   // pill treatment: reuse the production priority badge from List view (canonical) - same PRIO_COLORS, unmodified
     ipEditField('storyPoints',metricLabel, (p.storyPoints==null||p.storyPoints==='') ? '' : String(p.storyPoints), 'number'),   // METRIC-LABEL-1: team label
     _sprintFieldOn() ? ipField('Sprint', p.sprintId ? esc(p.sprintId) : '', {always:true}) : '',   // FIELDS-2: gated on team-has-sprints + Planning enabled
     ipField('Key', p.itemKey ? `<span style="font-family:monospace">${esc(p.itemKey)}</span>` : '-', {bold:true}),
-    ipEditField('product',    'Space',         esc(p.product||''), 'select'),
+    ipEditField('product',    'Space',         esc(p.product||''), 'select', {readonly:termRO}),
     ipField('Reporter',      esc(p.reporter||'-')),
     ipField('Reporter Email', p.reporterEmail ? `<a href="mailto:${escA(p.reporterEmail)}" style="color:var(--accent);text-decoration:none">${esc(p.reporterEmail)}</a>` : ''),
     // FIELDS-1: coded Location / Resolution Type selects, GATED on the team having configured the list.
@@ -20082,7 +20161,7 @@ async function loadItemPageJira(p){
     const canCreate = (isAdmin||isEditor) && jiraConfigured;
     jiraEl.innerHTML = canCreate
       ? `<div style="font-size:12px;color:var(--muted);margin-bottom:8px">No Jira issues linked.</div>
-         <button onclick="createJiraFromItemPage()" style="font-size:12px;font-weight:700;background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif">+ Create Jira Issue</button>
+         <button onclick="createJiraFromItemPage(this)" style="font-size:12px;font-weight:700;background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif">+ Create Jira Issue</button>
          ${_ipJiraLinkRowHtml()}`
       : `<div style="font-size:12px;color:var(--muted)">No Jira issues linked.</div>`;
     if(syncBtn) syncBtn.style.display='none';
@@ -20256,15 +20335,16 @@ async function syncJiraFromItemPage(silent=false){
 }
 
 
-async function createJiraFromItemPage(){
+// IP-JIRA-CREATE-1: create in place. This used to hide the item page, open the edit modal and fire the
+// modal's create 400ms later (from before the standalone createJiraIssueFromModalForItem existed), so
+// the user was dropped into the modal. Now the page creates directly and re-renders, like unlink does.
+async function createJiraFromItemPage(btn){
   if(!_itemPageId) return;
-  // Close item page, open modal with Jira create flow
   const p = projects.find(x=>x.id===_itemPageId);
   if(!p) return;
-  document.getElementById('itemPageOverlay').style.display = 'none';
-  openProjectModal(_itemPageId);
-  // Give modal time to open then trigger create
-  setTimeout(()=>{ createJiraIssueFromModal(); }, 400);
+  if(btn){ btn.disabled = true; btn.textContent = 'Creating…'; }
+  await createJiraIssueFromModalForItem(p);   // alerts on failure itself
+  if(_itemPageId === p.id) renderItemPage(projects.find(x=>x.id===p.id) || p);
 }
 
 async function unlinkJiraFromItemPage(ticket){
@@ -20799,8 +20879,8 @@ if ('serviceWorker' in navigator) {
 <!-- Item Page change-reason prompt (inline schedule edits) -->
 <div id="ipReasonModal" style="display:none;position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,0.45);align-items:center;justify-content:center;font-family:'Lato',sans-serif">
   <div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:22px 24px;width:380px;max-width:92vw;box-shadow:0 12px 48px rgba(0,0,0,0.2)">
-    <div style="font-size:15px;font-weight:900;color:var(--text);margin-bottom:4px">Reason for timeline change</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">This item's schedule is changing - capture why (logged to its history).</div>
+    <div id="ipReasonTitle" style="font-size:15px;font-weight:900;color:var(--text);margin-bottom:4px">Reason for timeline change</div>
+    <div id="ipReasonSub" style="font-size:12px;color:var(--muted);margin-bottom:14px">This item's schedule is changing - capture why (logged to its history).</div>
     <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">Reason</label>
     <select id="ipReasonSelect" style="width:100%;padding:8px 10px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-family:'Lato',sans-serif;outline:none;margin:4px 0 12px"></select>
     <label style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px">Note <span style="font-weight:400;text-transform:none">(required for "Other")</span></label>
@@ -33387,7 +33467,7 @@ if ('serviceWorker' in navigator) {
     // POLISH-2: a reserved terminal status (Transferred/Duplicate) is locked - fall through to the
     // read-only badge (no picker) even for editors; the server refuses the change regardless.
     var statusCtl = (canEdit && !RESERVED_TERMINAL_STATUSES[p.status])
-      ? '<select id="frzLpStatus" class="frz-lp-status '+sCls+'" title="'+escA(p.status||'')+'">'+ ((_call('_ipFieldOptions','status')||[]).map(function(o){ return '<option value="'+escA(o.value)+'"'+(String(p.status||'')===String(o.value)?' selected':'')+'>'+esc(o.label)+'</option>'; }).join('')) +'</select>'   // REM-2 (7.2): title = full status name, hover fallback when a long name ellipsizes at max-width:150px
+      ? '<select id="frzLpStatus" class="frz-lp-status '+sCls+'" title="'+escA(p.status||'')+'">'+ ((_call('_ipFieldOptions','status',p.id)||[]).map(function(o){ return '<option value="'+escA(o.value)+'"'+(String(p.status||'')===String(o.value)?' selected':'')+'>'+esc(o.label)+'</option>'; }).join('')) +'</select>'   // REM-2 (7.2): title = full status name, hover fallback when a long name ellipsizes at max-width:150px
       : '<span class="'+sCls+'" style="padding:1px 9px;border-radius:9px;font-size:11px;font-weight:700">'+esc(p.status||'-')+'</span>';
     // REM-1: the panel's flag entry point (REM-1b moved it from the now-removed .frz-lp-badges row into the
     // header top row's middle zone, beside the status control - it is an item action, and .frz-lp-actions

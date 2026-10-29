@@ -1834,7 +1834,7 @@ def _audit_actor(requested, auth):
     return "System" if requested == "System" else auth.get("username", "")
 
 # ── App ───────────────────────────────────────────────────────────────────────
-APP_VERSION = "6.62.24"
+APP_VERSION = "6.62.25"
 
 # ── SYS-STATUS-1: process start (uptime) + operator allowlist ─────────────────
 # _PROCESS_START_TS is recorded once at import; uptime is (now - this). SYS_STATUS_USERS is a
@@ -5266,6 +5266,29 @@ def _enforce_contributor_status(current: str, target: str, all_statuses: list,
     if _status_rank(target, all_statuses) < _status_rank(current, all_statuses):
         raise HTTPException(403, "Contributors can only move an item's status forward")
 
+def _enforce_editor_status(old: dict, target: str, active_map: dict, terminal_map: dict, released_map: dict,
+                           parking_maps: tuple):
+    """ITEM-PAGE-PARITY-1: the editor status rules, enforced here for every screen (item page, List panel,
+    modal, Kanban, mobile) and the API. Mirrors the client's editorStatusBlock(). Raises 403.
+    - An editor cannot set a Released status. Exception: a recurring item whose due date has passed - the
+      client auto-release (runAutoNotifications) runs in whoever's browser is open, editors included.
+    - An editor cannot move an ACTIVE item that has a Team (the client's isLockedActive) back to a
+      non-active, non-terminal status. Parking states (Blocked, off-flow, waiting, parked) are exempt:
+      flagging an item Blocked or waiting on someone is not a regression."""
+    current = old.get("status", "") or ""
+    if not target or target == current:
+        return
+    if released_map.get(target):
+        recurring = (old.get("recurrence") or "none") != "none"
+        due = old.get("due") or ""
+        if not (recurring and due and due <= _today_mt_key()):
+            raise HTTPException(403, f'Editors cannot set the status to "{target}" - ask an admin to release it')
+    locked_active = bool((old.get("dev") or "").strip()) and bool(active_map.get(current))
+    if locked_active and not active_map.get(target) and not terminal_map.get(target):
+        if any(m.get(target) for m in parking_maps):
+            return
+        raise HTTPException(403, f'Editors cannot move an active item back to "{target}" - ask an admin')
+
 def _resolve_assignee(c, value, users=None):
     """Normalize an item's `assignee` to a canonical USERNAME.
 
@@ -5578,6 +5601,9 @@ def update_project(pid: int, body: dict, background: BackgroundTasks = None,
             if "status" in changed:
                 _enforce_contributor_status(old.get("status", ""), body.get("status", ""),
                                             statuses_cfg, terminal_map, released_map, offflow_map)
+        elif auth.get("role") == "editor" and "status" in body:
+            _enforce_editor_status(old, body.get("status") or "", active_map, terminal_map, released_map,
+                                   (blocked_map, offflow_map, waiting_map, parked_map))
 
         # Validate: parallelResources cannot be changed while item is in an active status
         current_status = old.get("status", "")
