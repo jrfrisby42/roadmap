@@ -20082,7 +20082,7 @@ async function loadItemPageJira(p){
     const canCreate = (isAdmin||isEditor) && jiraConfigured;
     jiraEl.innerHTML = canCreate
       ? `<div style="font-size:12px;color:var(--muted);margin-bottom:8px">No Jira issues linked.</div>
-         <button onclick="createJiraFromItemPage()" style="font-size:12px;font-weight:700;background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif">+ Create Jira Issue</button>
+         <button onclick="createJiraFromItemPage(this)" style="font-size:12px;font-weight:700;background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif">+ Create Jira Issue</button>
          ${_ipJiraLinkRowHtml()}`
       : `<div style="font-size:12px;color:var(--muted)">No Jira issues linked.</div>`;
     if(syncBtn) syncBtn.style.display='none';
@@ -20256,15 +20256,16 @@ async function syncJiraFromItemPage(silent=false){
 }
 
 
-async function createJiraFromItemPage(){
+// IP-JIRA-CREATE-1: create in place. This used to hide the item page, open the edit modal and fire the
+// modal's create 400ms later (from before the standalone createJiraIssueFromModalForItem existed), so
+// the user was dropped into the modal. Now the page creates directly and re-renders, like unlink does.
+async function createJiraFromItemPage(btn){
   if(!_itemPageId) return;
-  // Close item page, open modal with Jira create flow
   const p = projects.find(x=>x.id===_itemPageId);
   if(!p) return;
-  document.getElementById('itemPageOverlay').style.display = 'none';
-  openProjectModal(_itemPageId);
-  // Give modal time to open then trigger create
-  setTimeout(()=>{ createJiraIssueFromModal(); }, 400);
+  if(btn){ btn.disabled = true; btn.textContent = 'Creating…'; }
+  await createJiraIssueFromModalForItem(p);   // alerts on failure itself
+  if(_itemPageId === p.id) renderItemPage(projects.find(x=>x.id===p.id) || p);
 }
 
 async function unlinkJiraFromItemPage(ticket){
