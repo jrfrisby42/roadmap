@@ -2803,7 +2803,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
           </div>
           <div>
             <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:4px">Assignee map</div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Maps each Jira person to a Flow user. Seed it from Jira (matching <b>First Last</b> to <b>first.last</b>), then correct any unmatched rows below. Saved with the Save button.</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Maps each Jira person to a Flow user. Seed it from Jira (matching <b>First Last</b> to <b>first.last</b>, or an email that starts with it), then pick a Flow user for anyone left unresolved below. Saved with the Save button. A Flow item with no assignee takes its Jira ticket's mapped assignee on the next sync.</div>
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
               <button type="button" id="tsSeedAssigneeBtn" onclick="tsSeedAssigneeMap()" style="padding:5px 11px;font-size:12px;font-weight:700;border:1px solid var(--accent);border-radius:6px;background:var(--surface);color:var(--accent);cursor:pointer">Seed from Jira</button>
               <span id="tsAssigneeStatus" style="font-size:11px;color:var(--muted)"></span>
@@ -19960,21 +19960,42 @@ function tsRenderPullSection(){
     if(setBtn){ setBtn.disabled = !!_jiraPullFloor; setBtn.style.opacity = _jiraPullFloor ? '0.5' : '1'; setBtn.style.cursor = _jiraPullFloor ? 'not-allowed' : 'pointer'; }
   }
   tsRenderAssigneeMap();
+  if(_tsJiraPeople === null && jiraConfigured) tsLoadJiraPeople();
+}
+
+// JIRA-ASSIGNEE-1: every assignable Jira person by name, so the ones the seed could not match (a Flow username
+// that is an email address, a different spelling) can be mapped here by hand. null = not loaded yet.
+let _tsJiraPeople = null;
+async function tsLoadJiraPeople(){
+  _tsJiraPeople = [];   // one load per page; a failure leaves the plain list
+  try {
+    const r = await API.get('/api/jira/assignable-users');
+    _tsJiraPeople = Array.isArray(r && r.users) ? r.users : [];
+  } catch(e){ _tsJiraPeople = []; }
+  tsRenderAssigneeMap();
 }
 
 function tsRenderAssigneeMap(){
   const wrap = document.getElementById('tsAssigneeMap');
   if(!wrap) return;
-  const accts = Object.keys(_jiraAssigneeMap||{});
   const userOpts = (users||[]).map(u => (u&&u.username)||u).filter(Boolean);
+  // Everyone Jira lists, plus any mapped account it no longer lists (shown by id).
+  const names = {};
+  (_tsJiraPeople||[]).forEach(u => { if(u && u.accountId) names[u.accountId] = u.displayName || ''; });
+  const accts = [...new Set([...(_tsJiraPeople||[]).map(u => u.accountId).filter(Boolean), ...Object.keys(_jiraAssigneeMap||{})])];
   if(!accts.length){
     wrap.innerHTML = '<span style="font-size:12px;color:var(--muted)">No assignees mapped yet. Click "Seed from Jira".</span>';
     return;
   }
-  wrap.innerHTML = accts.map(acct => {
+  const unmapped = accts.filter(a => !_jiraAssigneeMap[a]).length;
+  wrap.innerHTML = (names && Object.keys(names).length
+      ? `<div style="font-size:11px;color:var(--muted)">${accts.length - unmapped} of ${accts.length} Jira people mapped${unmapped ? ' - pick a Flow user for anyone whose Jira work should show as theirs' : ''}.</div>`
+      : '')
+    + accts.map(acct => {
     const uname = _jiraAssigneeMap[acct] || '';
+    const label = names[acct] || acct;
     return `<div style="display:flex;align-items:center;gap:10px">
-      <span title="Jira accountId" style="font-size:11px;font-family:ui-monospace,Menlo,monospace;color:var(--muted);min-width:150px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(acct)}</span>
+      <span title="Jira accountId ${escA(acct)}" style="font-size:${names[acct]?'12px':'11px'};${names[acct]?'':'font-family:ui-monospace,Menlo,monospace;'}color:${uname?'var(--text)':'var(--muted)'};min-width:150px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label)}</span>
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="var(--muted)" stroke-width="2" stroke-linecap="round" style="flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
       <select class="ts-assignee-user" data-acct="${escA(acct)}" style="flex:1;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:5px;background:#fff;font-family:'Lato',sans-serif;outline:none">
         <option value="">- unresolved -</option>
@@ -19985,7 +20006,7 @@ function tsRenderAssigneeMap(){
   wrap.querySelectorAll('.ts-assignee-user').forEach(sel => sel.onchange = () => {
     const acct = sel.getAttribute('data-acct');
     if(sel.value) _jiraAssigneeMap[acct] = sel.value;
-    else delete _jiraAssigneeMap[acct];   // unresolved -> drop the row on next render, saved on Save
+    else delete _jiraAssigneeMap[acct];   // unresolved -> removed from the map (the person stays listed), saved on Save
   });
 }
 
