@@ -2865,7 +2865,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.62.30';
+const APP_VERSION = '6.62.31';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -22008,6 +22008,11 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-tb-attn { font:inherit; font-size:12px; font-weight:600; padding:5px 12px; border-radius:6px; cursor:pointer; color:var(--frz-text-secondary); background:var(--frz-bg-surface); border:1px solid var(--frz-border); display:inline-flex; align-items:center; }
   .frz-beta .frz-tb-attn:hover { border-color:var(--frz-danger); }
   .frz-beta .frz-tb-attn.is-on { color:var(--frz-danger); border-color:var(--frz-danger); background:color-mix(in srgb, var(--frz-danger) 9%, transparent); }
+  .frz-beta .frz-tb-seg { display:inline-flex; margin-right:auto; border:1px solid var(--frz-border); border-radius:6px; overflow:hidden; }
+  .frz-beta .frz-tb-seg button { font:inherit; font-size:12px; font-weight:600; padding:5px 12px; border:0; cursor:pointer; color:var(--frz-text-secondary); background:var(--frz-bg-surface); }
+  .frz-beta .frz-tb-seg button + button { border-left:1px solid var(--frz-border); }
+  .frz-beta .frz-tb-seg button.is-on { color:var(--frz-accent); background:var(--frz-accent-soft); }
+  .frz-beta .frz-tb-team.is-unassigned { color:var(--frz-warn); }
   .frz-beta .frz-tb-deck { font:inherit; font-size:12px; font-weight:600; padding:5px 12px; border-radius:6px; cursor:pointer; color:var(--frz-accent); background:var(--frz-bg-surface); border:1px solid var(--frz-accent); }
   .frz-beta .frz-tb-deck:hover { background:var(--frz-accent-soft); }
   .frz-beta .frz-tb-deck:disabled { opacity:.6; cursor:default; }
@@ -23846,6 +23851,8 @@ if ('serviceWorker' in navigator) {
       var more = e.target.closest('[data-tbmore]');
       if(more){ var k=more.getAttribute('data-tbmore'); _tbOpen[k]=!_tbOpen[k]; renderTeamBoard(); return; }
       if(e.target.closest('[data-tbattn]')){ _tbAttention=!_tbAttention; syncURL(true); renderTeamBoard(); return; }   // TB-ATTENTION-1
+      var by = e.target.closest('[data-tbby]');   // TB-PEOPLE-1
+      if(by){ _tbBy=by.getAttribute('data-tbby')==='people' ? 'people' : 'teams'; syncURL(true); renderTeamBoard(); return; }
       var card = e.target.closest('[data-open]');
       if(card) navigate('/item/'+card.getAttribute('data-open'), false);
     });
@@ -24807,6 +24814,7 @@ if ('serviceWorker' in navigator) {
     if ((view==='list' || view==='kanban') && _betaFlagged) params.set('flag','1');   // FN5: the Flagged toggle in the URL (shareable)
     if (view==='gantt' && _ganttSpan==='all') params.set('span','all');   // GANTT-DECLUTTER-1: absent = Now (the default)
     if (view==='team-board' && _tbAttention) params.set('attn','1');   // TB-ATTENTION-1
+    if (view==='team-board' && _tbBy==='people') params.set('by','people');   // TB-PEOPLE-1: absent = Teams (the default)
     if (view==='gantt' && _ganttItems==='all') params.set('items','all');   // GANTT-FOCUS-1: absent = Projects only (the default)
     var qs = params.toString();
     var base = '/'+view;
@@ -24866,6 +24874,7 @@ if ('serviceWorker' in navigator) {
     if (view==='list' || view==='kanban') _betaFlagged = (qp.get('flag')==='1');   // FN5: seed the Flagged toggle from the URL (absent -> off)
     if (view==='gantt') _ganttSpan = (qp.get('span')==='all') ? 'all' : 'now';      // GANTT-DECLUTTER-1: seed Now/All from the URL (absent -> Now)
     if (view==='team-board') _tbAttention = (qp.get('attn')==='1');   // TB-ATTENTION-1
+    if (view==='team-board') _tbBy = (qp.get('by')==='people') ? 'people' : 'teams';   // TB-PEOPLE-1
     if (view==='gantt') _ganttItems = (qp.get('items')==='all') ? 'all' : 'projects';   // GANTT-FOCUS-1: seed Projects only (default) / Everything
     if (view==='list' && typeof _listState!=='undefined') _listState.sort = qp.get('sort') || '';   // ADOPT-1: seed the List sort from the URL (round-trip); absent -> default (empty = server updated_ts:desc)
   }
@@ -25548,6 +25557,7 @@ if ('serviceWorker' in navigator) {
   // contributor-scoped), so there is no endpoint.
   var _tbOpen = {};                                   // 'team|col' -> true when a capped cell is expanded
   var _tbAttention = false;                           // TB-ATTENTION-1: show only red/amber cards; URL ?attn=1
+  var _tbBy = 'teams';                                // TB-PEOPLE-1: rows by 'teams' or 'people'; URL ?by=people
   var _TB_CAP = { finished:5, now:6, next:3 };
   function setTeamBoard(){
     if(!_val('isAdmin',false)){ navigate('/gantt', true); return; }   // admin-only (route belt; the rail + tab strip also hide it)
@@ -25613,23 +25623,39 @@ if ('serviceWorker' in navigator) {
       return (_eff[x.id]=t);
     }
     function isWork(x){ var kidsLive=(kids[x.id]||[]).some(function(c){ return !c.hidden; }); return (!kidsLive || (x.start && x.due)) && !RESERVED_TERMINAL_STATUSES[x.status]; }
+    // TB-PEOPLE-1: rows by person instead of team. A person's slice of a project is the work items assigned to
+    // them (own assignee, never inherited, so blanks surface as "Unassigned"). The Team chip and a Team-scoped
+    // editor's scope narrow the WORK (the item's team), and the Assignee chip matches the row's person.
+    var people=(_tbBy==='people');
+    var fP=people ? Object.assign({}, f, {dev:null}) : f;
+    function teamOk(x){ var t=effTeam(x); return (!ownerScope || t===ownerScope) && (!f.dev || f.dev.indexOf(t)>=0); }
+    var keyOf=people ? function(x){ return x.assignee||''; } : effTeam;
     var DAY=86400000, cards=[];
     ps.forEach(function(p){
       if(p.archived || p.hidden || !inScope(p) || !inProj(p) || !isTop(p)) return;
       if(_call('isScheduledType', p.type||'')===false) return;   // same baseline as the Gantt (tracking-only types stay off)
       var d=desc(p.id);
       // (2) a shared project shows under every team with work in it; each card is that team's slice.
-      var teamSet={};
-      d.forEach(function(x){ if(isWork(x)) teamSet[effTeam(x)]=1; });
-      if(!d.length || (p.start && p.due) || !Object.keys(teamSet).length) teamSet[effTeam(p)]=1;
+      var teamSet={}, pool=d, selfIn=true;
+      if(people){
+        // The project itself is someone's work only when it has no work under it, or it is assigned and has its
+        // own dates (an unassigned parent of assigned stories would otherwise add a false "Unassigned" card).
+        pool=d.filter(function(x){ return isWork(x) && teamOk(x); });
+        selfIn=teamOk(p) && (!d.some(isWork) || !!(p.assignee && p.start && p.due));
+        pool.forEach(function(x){ teamSet[keyOf(x)]=1; });
+        if(selfIn) teamSet[keyOf(p)]=1;
+      } else {
+        d.forEach(function(x){ if(isWork(x)) teamSet[effTeam(x)]=1; });
+        if(!d.length || (p.start && p.due) || !Object.keys(teamSet).length) teamSet[effTeam(p)]=1;
+      }
       var fd=_call('itemFinishDate', p);
       if(!fd && _call('isTerminalStatus', p.status)) return;   // finished but undated: cannot be placed in "last 45 days"
       if(fd && ageDays(fd)>45) return;
       Object.keys(teamSet).forEach(function(team){
-        if(ownerScope && team!==ownerScope) return;
-        if(!_frzPillMatch(Object.assign({}, p, {dev:team}), f)) return;   // chips + search; Team chip matches this card's team
-        var self=(effTeam(p)===team);
-        var dT=d.filter(function(x){ return effTeam(x)===team; });
+        if(!people && ownerScope && team!==ownerScope) return;
+        if(!_frzPillMatch(Object.assign({}, p, people ? {assignee:team} : {dev:team}), fP)) return;   // chips + search; Team (or Assignee) chip matches this card's row
+        var self=selfIn && keyOf(p)===team;
+        var dT=pool.filter(function(x){ return keyOf(x)===team; });
         var col='', when=null;
         if(fd){ col='finished'; when=fd; }
         else {
@@ -25661,7 +25687,7 @@ if ('serviceWorker' in navigator) {
           else if(idle!=null && idle>=14) health={k:'amber', why:'No changes in '+idle+' days'};
           else health={k:'green', why:'On track'};
         }
-        cards.push({ p:p, team:team, col:col, when:when, total:work.length, done:done, health:health,
+        cards.push({ p:p, team:team, col:col, when:when, total:work.length, done:done, health:health, unit:people ? effTeam(dT[0]||p) : '',
           start: (self && p.start) ? pd(p.start) : (starts.length ? starts.reduce(function(m,x){ return x<m?x:m; }) : null),
           due: due });
       });
@@ -25688,7 +25714,8 @@ if ('serviceWorker' in navigator) {
       else if(c.col==='now' && c.due){ var od=c.due<today; meta.push('<span class="'+(od?'frz-tb-overdue':'')+'">'+(od?'Overdue, due ':'Due ')+fmt(c.due)+'</span>'); }
       else if(c.col==='next' && c.start) meta.push('<span>'+(c.start<today?'Start was ':'Starts ')+fmt(c.start)+'</span>');
       if(c.total) meta.push('<span>'+c.done+'/'+c.total+' done</span>');
-      if(p.assignee) meta.push('<span>'+esc(_call('displayName', p.assignee)||p.assignee)+'</span>');
+      if(people){ if(c.unit) meta.push('<span>'+esc(c.unit)+'</span>'); }   // TB-PEOPLE-1: the row is the person, so show the team
+      else if(p.assignee) meta.push('<span>'+esc(_call('displayName', p.assignee)||p.assignee)+'</span>');
       var dot=c.health ? '<span class="frz-tb-dot is-'+c.health.k+'" role="img" aria-label="'+escA(c.health.why)+'" title="'+escA(c.health.why)+'"></span>' : '';   // TEAMBOARD-2 (3)
       return '<button type="button" class="frz-tb-card" data-open="'+p.id+'" title="'+escA(p.name||'')+(c.health?' - '+c.health.why:'')+'">'+
         '<span class="frz-tb-name">'+dot+(ic?ic+' ':'')+esc(p.name||'(untitled)')+'</span>'+
@@ -25696,14 +25723,19 @@ if ('serviceWorker' in navigator) {
     }
     var teams={};
     cards.forEach(function(c){ (teams[c.team]=teams[c.team]||[]).push(c); });
+    function personName(u){ return u ? (_call('displayName', u)||u) : 'Unassigned'; }
     var names=Object.keys(teams).sort(function(a,b){
-      if(!a) return 1; if(!b) return -1;   // no team last
+      if(!a) return 1; if(!b) return -1;   // no team (Unassigned) last
+      if(people) return personName(a).localeCompare(personName(b));
       var ai=devOrder.indexOf(a), bi=devOrder.indexOf(b);
       return ((ai<0?9999:ai)-(bi<0?9999:bi)) || a.localeCompare(b);
     });
     var html='<div class="frz-tb">';
     // EXEC-DECK-1: the monthly exec slides for this Org, on demand (the 1st-of-month email covers Development + IT).
-    html+='<div class="frz-tb-bar"><button type="button" class="frz-tb-attn'+(_tbAttention?' is-on':'')+'" data-tbattn="1" aria-pressed="'+(_tbAttention?'true':'false')+'" title="Show only work that is past due, due soon with work still open, or has had no changes in 14+ days"><span class="frz-tb-dot is-red"></span>Needs attention ('+attnCount+')</button><button type="button" class="frz-tb-deck" data-tbdeck="1" title="Download the Technology Update slides for this Organization (PowerPoint, company template)">Build exec slides</button></div>';
+    html+='<div class="frz-tb-bar"><span class="frz-tb-seg" role="group" aria-label="Rows">'+
+      '<button type="button" data-tbby="teams" class="'+(people?'':'is-on')+'" aria-pressed="'+(people?'false':'true')+'">Teams</button>'+
+      '<button type="button" data-tbby="people" class="'+(people?'is-on':'')+'" aria-pressed="'+(people?'true':'false')+'" title="One row per person: the work assigned to them, plus Unassigned work">People</button></span>'+
+      '<button type="button" class="frz-tb-attn'+(_tbAttention?' is-on':'')+'" data-tbattn="1" aria-pressed="'+(_tbAttention?'true':'false')+'" title="Show only work that is past due, due soon with work still open, or has had no changes in 14+ days"><span class="frz-tb-dot is-red"></span>Needs attention ('+attnCount+')</button><button type="button" class="frz-tb-deck" data-tbdeck="1" title="Download the Technology Update slides for this Organization (PowerPoint, company template)">Build exec slides</button></div>';
     if(!host._deckWired){
       host._deckWired=1;
       host.addEventListener('click', function(e){
@@ -25725,17 +25757,17 @@ if ('serviceWorker' in navigator) {
       html+='<div class="frz-tb-blank">'+(_tbAttention ? 'Nothing needs attention right now.' : 'No items are finished, in progress or approved for the current filters.')+'</div></div>';
       host.innerHTML=html; return;
     }
-    html+='<div class="frz-tb-grid" style="--tb-cols:'+cols.length+'"><div class="frz-tb-hd">Team</div>';
+    html+='<div class="frz-tb-grid" style="--tb-cols:'+cols.length+'"><div class="frz-tb-hd">'+(people?'Person':'Team')+'</div>';
     cols.forEach(function(col){
       var n=cards.filter(function(c){ return c.col===col.k; }).length;
       html+='<div class="frz-tb-hd" title="'+escA(col.h)+'">'+col.t+'<span class="frz-tb-n">'+n+'</span></div>';
     });
     names.forEach(function(t){
-      var label=t||'No team';
-      html+='<div class="frz-tb-team">'+esc(label)+'</div>';
+      var label=people ? personName(t) : (t||'No team');
+      html+='<div class="frz-tb-team'+(people && !t ? ' is-unassigned' : '')+'"'+(people && !t ? ' title="Work items with no assignee"' : '')+'>'+esc(label)+'</div>';
       cols.forEach(function(col){
         var list=teams[t].filter(function(c){ return c.col===col.k; }).sort(sorters[col.k]);
-        var key=t+'|'+col.k, open=!!_tbOpen[key], cap=_TB_CAP[col.k];
+        var key=_tbBy+'|'+t+'|'+col.k, open=!!_tbOpen[key], cap=_TB_CAP[col.k];
         var shown=open ? list : list.slice(0, cap);
         html+='<div class="frz-tb-cell" data-label="'+escA(col.t)+'">';
         html+= list.length ? shown.map(cardHtml).join('') : '<span class="frz-tb-empty">-</span>';
