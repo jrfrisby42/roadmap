@@ -460,6 +460,24 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .left-row.unsched-row { cursor: pointer; color: var(--muted); font-style: italic; }
   .left-row.unsched-row .proj-name { flex: 1; }
   .left-row.span-foot { color: var(--muted); font-size: 12px; cursor: default; }
+  /* GANTT-WORK-1: project-row pulse (sub-line, people, health dot) + the per-team Other work row */
+  .proj-name.pn-2 { display: flex; flex-direction: column; justify-content: center; min-width: 0; line-height: 1.25; }
+  .pn-main { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pn-sub { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; }
+  .g-ppl { display: inline-flex; gap: 2px; }
+  .g-av { display: inline-flex; align-items: center; justify-content: center; min-width: 15px; height: 15px; padding: 0 2px; border-radius: 8px; font-size: 8.5px; font-weight: 800; color: var(--text); background: var(--surface2); border: 1px solid var(--border); }
+  .g-av-more { color: var(--muted); }
+  .g-health { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+  .g-health.is-red { background: var(--frz-danger, #d93025); }
+  .g-health.is-amber { background: var(--frz-warn, #e8a000); }
+  .left-row.ow-row { background: var(--surface); }
+  .left-row.ow-row .proj-name { flex: 1; font-weight: 600; }
+  .left-row.ow-row .pn-sub { font-weight: 400; }
+  .chart-row.ow-row { background: var(--surface); }
+  .ow-layer { position: absolute; inset: 0; pointer-events: none; }
+  .ow-col { position: absolute; bottom: 4px; background: var(--accent); opacity: .35; border-radius: 2px 2px 0 0; pointer-events: auto; cursor: default; }
+  .ow-col:hover, .ow-col.is-now { opacity: .6; }
+  .ow-n { position: absolute; font-size: 9px; font-weight: 700; line-height: 1; text-align: center; color: var(--muted); }
   .left-row.span-foot .proj-name { flex: 1; }
   .span-foot-btn { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--accent); font: inherit; font-weight: 600; padding: 2px 8px; cursor: pointer; white-space: nowrap; }
   .span-foot-btn:hover { background: var(--surface2); }
@@ -2865,7 +2883,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.62.31';
+const APP_VERSION = '6.62.32';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -4403,6 +4421,18 @@ function _ganttScrollToToday(){ _ganttKeep = null; render(); }
 function isParentCollapsed(id, depth){ const v = collapsedParents[id]; return v === undefined ? (depth > 0 || _ganttProjectsOnly()) : v; }
 function _ganttProjectsOnly(){ return _ganttItems === 'projects' && document.body.classList.contains('frz-beta-active'); }
 const unschedOpen = {};       // GANTT-DECLUTTER-1: group label -> true when its "Unscheduled (N)" bucket is expanded (default collapsed)
+const otherWorkOpen = {};     // GANTT-WORK-1: team key -> true when its "Other work" row lists the in-progress items
+// GANTT-WORK-1: one health rule for in-flight work, shared by the Team Board cards and the Gantt project rows,
+// so the two views never disagree. due: Date|null; total/done: leaf work; lastChange: Date|null.
+// Red = past due; amber = due within 7 days with under 75% done, or no changes in 14+ days; else green.
+function workHealth(due, total, done, lastChange){
+  const DAY = 86400000, f = d => d.toLocaleDateString('en-US',{timeZone:MT_TZ, month:'short', day:'numeric'});
+  const left = total - done, daysToDue = due ? Math.floor((due - TODAY) / DAY) : null, idle = lastChange ? Math.floor((TODAY - lastChange) / DAY) : null;
+  if(due && due < TODAY) return {k:'red', why:'Past due ('+f(due)+')'+(total ? ' with '+left+' of '+total+' still open' : '')};
+  if(daysToDue != null && daysToDue <= 7 && total && done / total < 0.75) return {k:'amber', why:'Due '+f(due)+' with '+left+' of '+total+' still open'};
+  if(idle != null && idle >= 14) return {k:'amber', why:'No changes in '+idle+' days'};
+  return {k:'green', why:'On track'};
+}
 // GANTT-DECLUTTER-1: an item's finish date - releaseDate, else (terminal items only) the server-stamped
 // completedAt. Drives the 45-day aging, so finished work with no releaseDate (IT "Closed", ops "Completed")
 // ages off the Gantt like released work does. Neither present -> null -> the item stays visible (as before).
@@ -5086,11 +5116,17 @@ function render(){
     const pods = Object.keys(podCt).sort((a,b)=> (podCt[b]-podCt[a]) || a.localeCompare(b));   // most children wins, alpha tie-break
     const asg = {}; kids.forEach(c => { if(c.assignee) asg[c.assignee]=1; });
     const ak = Object.keys(asg);
+    // GANTT-WORK-1: what is moving now - leaf work in an active status, who is on it (most items first), and
+    // the last change anywhere under the parent. Display only, like the rest of the roll-up.
+    const _act = _leaves.filter(c => c.status && statusIsActive[c.status] && !statusIsTerminal[c.status] && !RESERVED_TERMINAL_STATUSES.has(c.status));
+    const _pc = {}; _act.forEach(c => { if(c.assignee) _pc[c.assignee] = (_pc[c.assignee]||0) + 1; });
+    let _last = 0; kids.forEach(c => { const t = c.updated_ts ? Date.parse(c.updated_ts) : 0; if(t > _last) _last = t; });
     return { start:starts[0]||'', due:(dues.length?dues[dues.length-1]:''), status,
       release:(allReleased && rels.length)?rels[rels.length-1]:'',
       dev:(pods[0]||''), teamLabel:(pods.length>1?(pods[0]+' +'+(pods.length-1)):(pods[0]||'')),
       multiPod:pods.length>1, assignee:(ak.length===1?ak[0]:(ak.length>1?'Multiple':'')),
-      empty:!(starts.length || dues.length), progress, done:_done, total:_cnt.length };
+      empty:!(starts.length || dues.length), progress, done:_done, total:_cnt.length,
+      active:_act.length, people:Object.keys(_pc).sort((a,b) => (_pc[b]-_pc[a]) || a.localeCompare(b)), lastTs:_last };
   }
   function _rollupAll(p){ if(!(p.id in _rollupCache)) _rollupCache[p.id]=_computeRollup(p); return _rollupCache[p.id]; }
   // GANTT-TEAM-SLICES-1: inside a team group (Projects only, grouped by Team) a parent's bar is that team's
@@ -5131,6 +5167,43 @@ function render(){
   // Placement dev for the filter + grouping ONLY (the one place a derived value may steer grouping, per
   // the prompt). Everywhere else derived values stay out of filters, sorts, counts and exports.
   function _rollupDev(p){ const r=_rollupOf(p); return (r && r.dev) || ''; }
+
+  // GANTT-WORK-1: a project row's pulse (Projects only, top-level rows) - "3 in progress · 8/14 done", the people
+  // on the in-progress work, and a red/amber health dot (the Team Board's rule via workHealth; green is left off so
+  // the chart stays quiet). Team-sliced inside a team group, like the bar. Display only.
+  function _initials(u){
+    const w = String(displayName(u) || u || '').replace(/@.*$/, '').split(/[\s._-]+/).filter(Boolean);   // "Jacob Smith", "jacob.smith" or an email -> JS
+    return ((w[0]||'?')[0] + (w.length > 1 ? w[w.length-1][0] : '')).toUpperCase();
+  }
+  function _pulseHtml(p){
+    const ru = _rollupOf(p), r = ru || _kidsSpanOf(p);
+    const ownT = p.updated_ts ? Date.parse(p.updated_ts) : 0;
+    const st = (ru && ru.status) || p.status || '';
+    let active, done, total, people, due, last;
+    if(r){
+      active = r.active; done = r.done; total = r.total; people = r.people; last = Math.max(r.lastTs || 0, ownT);
+      due = ru ? r.due : (p.revised || p.due);
+    } else {
+      active = (statusIsActive[st] && !statusIsTerminal[st]) ? 1 : 0; done = 0; total = 0;
+      people = (active && p.assignee) ? [p.assignee] : []; due = p.revised || p.due; last = ownT;
+    }
+    let dot = '';
+    if(!statusIsTerminal[st] && (active || statusIsActive[st])){
+      const h = workHealth(parseD(due), total, done, last ? new Date(last) : null);
+      if(h.k !== 'green') dot = `<span class="g-health is-${h.k}" role="img" aria-label="${escA(h.why)}" title="${escA(h.why)}"></span>`;
+    }
+    const parts = [];
+    if(r && active) parts.push(`${active} in progress`);
+    if(r && total) parts.push(`${done}/${total} done`);
+    let ppl = '';
+    if(people.length){
+      const shown = people.slice(0, 3), more = people.length - shown.length;
+      ppl = `<span class="g-ppl" title="${escA('Working on it now: ' + people.map(u => displayName(u) || u).join(', '))}">` +
+        shown.map(u => `<span class="g-av">${esc(_initials(u))}</span>`).join('') + (more ? `<span class="g-av g-av-more">+${more}</span>` : '') + `</span>`;
+    }
+    const sub = (parts.length || ppl) ? `<span class="pn-sub">${esc(parts.join(' · '))}${ppl}</span>` : '';
+    return { dot, sub };
+  }
 
   // GANTT-DECLUTTER-1: does the item draw anything on the chart? A rollup parent needs a derived span;
   // a normal item needs a start+due bar, an expected diamond or a release marker. Items that draw
@@ -5314,6 +5387,65 @@ function render(){
     }
   }
 
+  // GANTT-WORK-1: "Other work" - in Projects only, the work that is not under any project (bugs, support, small
+  // items, most of them unscheduled types that never draw a bar) shows as ONE row per team group: a column per week
+  // sized by how many items finished that week, plus "N in progress · M done in 30 days". Collapsed by default;
+  // opening it lists the in-progress items. Leaf work only (a parent with live children is counted through them).
+  // Same chip filters as the chart; team = the item's own, else its nearest ancestor's. Display only.
+  const _owBy = {};
+  let _owMax = 0, _owRowItem = false;
+  if(_projOnly){
+    const _d30 = addDays(TODAY, -30);
+    projects.forEach(p => {
+      if(p.archived || p.hidden || RESERVED_TERMINAL_STATUSES.has(p.status) || _inProject(p)) return;
+      if((_kidsByParent[p.id] || []).some(c => !c.hidden && !c.archived)) return;
+      const t = _effTeam(p);
+      if((fDev && !fDev.includes(t)) || (ownerScope && t !== ownerScope)) return;
+      if((fSt && !fSt.includes(p.status)) || (fAsg && !fAsg.includes(p.assignee || '')) || (fProd && !fProd.includes(p.product || '')) ||
+         (fType && !fType.includes(p.type || '')) || !priorityMatches(p, fPrio) || !departmentMatches(p, fDept) || !itemMatchesSearch(p, searchQ)) return;
+      const isAct = statusIsActive[p.status] && !statusIsTerminal[p.status], fd = itemFinishDate(p);
+      const wi = fd ? Math.floor(px(fd) / wkPx) : -1, inChart = wi >= 0 && wi < weeks.length, recent = !!fd && fd >= _d30 && fd <= TODAY;
+      if(!isAct && !inChart && !recent) return;   // nothing to show for it (and it must not create an empty team group)
+      const k = _teamSplitOn ? t : '*';
+      const o = _owBy[k] = _owBy[k] || { active:[], weeks:{}, done30:0 };
+      if(isAct) o.active.push(p);
+      if(recent) o.done30++;
+      if(inChart){ o.weeks[wi] = (o.weeks[wi] || 0) + 1; if(o.weeks[wi] > _owMax) _owMax = o.weeks[wi]; }
+    });
+    if(_teamSplitOn){
+      // A team with only non-project work (a support team) still gets its group, so its row is not lost.
+      const _have = new Set(groups.map(g => g.label));
+      Object.keys(_owBy).forEach(t => { const lbl = t || 'Unassigned'; if(!_have.has(lbl)) groups.push({ label: lbl, items: [] }); });
+      const _di = l => { const i = developers.indexOf(l); return i < 0 ? 9999 : i; };
+      groups.sort((a, b) => _di(a.label) - _di(b.label));
+    } else if(_owBy['*']){
+      groups.push({ label: null, items: [], _owOnly: true });   // one row for everything, after the last group
+    }
+  }
+  let _renderRowRef = null;   // the group's row renderer, so the Other work row can list its items the same way
+  function _owRowHtml(key){
+    const o = key == null ? null : _owBy[key]; if(!o) return;
+    const open = !!otherWorkOpen[key];
+    const sub = `${o.active.length} in progress · ${o.done30} done in 30 days`;
+    lRows += `<div class="left-row ow-row" data-ow="${escA(key)}" title="Work that is not under a project. Each column is the items finished that week. Click to ${open ? 'hide' : 'list'} what is in progress."><span class="proj-name pn-2"><span class="pn-main">Other work</span><span class="pn-sub">${esc(sub)}</span></span><span class="grp-tog">${_caretSvg(!open)}</span></div>`;
+    let cols = '';
+    Object.keys(o.weeks).forEach(wi => {
+      const c = o.weeks[wi], wk = weeks[+wi], h = Math.max(3, Math.round(c / (_owMax || 1) * 22)), x = px(wk);
+      const w = Math.max(2, Math.min(24, wkPx - 4)), l = x + (wkPx - w) / 2, cur = TODAY >= wk && TODAY < addDays(wk, 7);   // a column, centred in its week, never a bar-wide block
+      cols += `<div class="ow-col${cur ? ' is-now' : ''}" title="${escA('Week of ' + fmtD(wk) + ': ' + c + ' finished')}" style="left:${l.toFixed(1)}px;width:${w}px;height:${h}px"></div>`;
+      if(wkPx >= 16) cols += `<span class="ow-n" style="left:${l.toFixed(1)}px;width:${w}px;bottom:${h + 5}px">${c}</span>`;
+    });
+    cH += `<div class="chart-row ow-row" style="width:${totalPx}px">${wCells}<div class="ow-layer">${cols}</div></div>`;
+    rowIndex++;
+    if(open && _renderRowRef){
+      _owRowItem = true;
+      const pr = x => (+x.priority > 0 ? +x.priority : 100);
+      o.active.slice().sort((a, b) => (pr(a) - pr(b)) || String(a.name || '').localeCompare(String(b.name || '')))
+        .forEach(p => _renderRowRef({ p, isChild: true, depth: 1 }));
+      _owRowItem = false;
+    }
+  }
+
   // Month bands
   const mbands = [];
   weeks.forEach(w=>{
@@ -5363,7 +5495,7 @@ function render(){
 
   groups.forEach(g => {
     _rollTeam = _teamSplitOn ? (g.label === 'Unassigned' ? '' : g.label) : null;   // GANTT-TEAM-SLICES-1
-    if(g.label!==null){
+    if(g.label!==null && !g._owOnly){
       const coll=collapsed[g.label];
 
       // Phase 4: capacity graph overlaid on the group header row (no extra row)
@@ -5389,7 +5521,7 @@ function render(){
       // item tucked inside them - otherwise "Team A 12" sits over 3 rows. Everything mode keeps the full count.
       const _grpIds = _projOnly ? new Set(g.items.map(x => x.id)) : null;
       const _grpCnt = _projOnly ? g.items.filter(x => !x.parent || !_grpIds.has(x.parent)).length : g.items.length;
-      lRows += `<div class="left-row grp" data-group="${escA(g.label)}"><span class="grp-lbl" title="${escA(g.label)}">${_grpLbl}</span>${grpLabelExtra}<span class="grp-cnt">${_grpCnt}</span><span class="grp-tog">${_caretSvg(coll)}</span></div>`;   /* COUNTER-ALIGN-1: title = full group label (hover recovery when truncated) */
+      lRows += `<div class="left-row grp" data-group="${escA(g.label)}"><span class="grp-lbl" title="${escA(g.label)}">${_grpLbl}</span>${grpLabelExtra}${(_projOnly && !_grpCnt) ? '' : `<span class="grp-cnt">${_grpCnt}</span>`}<span class="grp-tog">${_caretSvg(coll)}</span></div>`;   /* COUNTER-ALIGN-1: title = full group label (hover recovery when truncated) */
       cH += `<div class="chart-row grp" style="width:${totalPx}px;overflow:hidden">${wCells}${grpChartExtra}</div>`;
       rowIndex++;
     }
@@ -5449,8 +5581,10 @@ function render(){
           const _stBadge = _ru.status ? `<span class="sbadge ${statusCls(_ru.status)}">${esc(_ru.status)}</span>` : `<span class="sbadge" style="opacity:.5">-</span>`;
           const _ds=parseD(_ru.start), _dd=_ru.due?nextMonday(parseD(_ru.due)):null;
           const _schedTxt = _dd ? _dd.toLocaleDateString('en-US',{timeZone:MT_TZ,month:'short',day:'numeric'}) : '-';
+          const _pl = (_projOnly && !depth) ? _pulseHtml(p) : null;   // GANTT-WORK-1
+          const _nm = `${_pl ? _pl.dot : ''}${(()=>{const ic=typeIconHTML(p.type);return ic?ic+' ':'';})()}${esc(p.name)}${_tchip}`;
           lRows += `<div class="left-row rollup-row${isChild?' child-row':''}" data-id="${p.id}"${_indent}>
-            <span class="proj-name" title="${escA(p.name)}">${(()=>{const ic=typeIconHTML(p.type);return ic?ic+' ':'';})()}${esc(p.name)}${_tchip}</span>
+            ${(_pl && _pl.sub) ? `<span class="proj-name pn-2" title="${escA(p.name)}"><span class="pn-main">${_nm}</span>${_pl.sub}</span>` : `<span class="proj-name" title="${escA(p.name)}">${_nm}</span>`}
             ${priorityDot(p.priority)}
             ${_stBadge}
             <span class="sched-date muted-sched">${_schedTxt}</span>
@@ -5559,8 +5693,10 @@ function render(){
         const statusTitle = statusOverridden ? ` title="Actual: ${escA(p.status)} - in testing period"` : '';
         const statusText = statusOverridden ? `<span style="color:var(--accent2)">⚠</span> ${displayStatus} <span style="color:var(--accent2)">⚠</span>` : displayStatus;
 
+        const _pl = (_projOnly && !depth && !_owRowItem) ? _pulseHtml(p) : null;   // GANTT-WORK-1
+        const _nm = `${_pl ? _pl.dot : ''}${(()=>{ const ic=typeIconHTML(p.type); return ic?ic+' ':''; })()}${esc(p.name)}${conflictIcon}${activityIndicator}`;
         lRows += `<div class="left-row${isEffectivelyHidden(p)?' hidden-row':''}${isChild?' child-row':''}" data-id="${p.id}"${_indent}>
-          <span class="proj-name" title="${escA(p.name)}">${(()=>{ const ic=typeIconHTML(p.type); return ic?ic+' ':''; })()}${esc(p.name)}${conflictIcon}${activityIndicator}</span>
+          ${(_pl && _pl.sub) ? `<span class="proj-name pn-2" title="${escA(p.name)}"><span class="pn-main">${_nm}</span>${_pl.sub}</span>` : `<span class="proj-name" title="${escA(p.name)}">${_nm}</span>`}
           ${priorityDot(p.priority)}
           <span class="sbadge ${statusOverridden ? '' : statusCls(displayStatus)}" style="${statusStyle}"${statusTitle}>${statusText}</span>
           <span class="${schedClass}">${schedStr}${codeCompleteStr}</span>
@@ -5668,6 +5804,7 @@ function render(){
         }
       }; // end _renderRow
 
+      _renderRowRef = _renderRow;   // GANTT-WORK-1
       orderedItems.forEach(_renderRow);
 
       // GANTT-DECLUTTER-1: one collapsed "Unscheduled (N)" row per group for items that draw nothing.
@@ -5679,6 +5816,7 @@ function render(){
         rowIndex++;
         if(_uOpen) unschedItems.forEach(_renderRow);
       }
+      if(_projOnly) _owRowHtml(g._owOnly ? '*' : (_teamSplitOn ? (g.label === 'Unassigned' ? '' : g.label) : null));   // GANTT-WORK-1
     }
   }); // end groups.forEach
   _rollTeam = null;   // GANTT-TEAM-SLICES-1: later readers (hover, connectors) see whole items
@@ -5899,7 +6037,12 @@ function render(){
     el.addEventListener('click', ()=>{ unschedOpen[el.dataset.unsched]=!unschedOpen[el.dataset.unsched]; render(); })
   );
 
-  leftPanel.querySelectorAll('.left-row:not(.grp):not(.echo-row):not(.unsched-row):not(.span-foot)').forEach(el => {
+  // GANTT-WORK-1: the Other work row toggles its list of in-progress items
+  leftPanel.querySelectorAll('.left-row.ow-row').forEach(el =>
+    el.addEventListener('click', ()=>{ otherWorkOpen[el.dataset.ow]=!otherWorkOpen[el.dataset.ow]; render(); })
+  );
+
+  leftPanel.querySelectorAll('.left-row:not(.grp):not(.echo-row):not(.unsched-row):not(.span-foot):not(.ow-row)').forEach(el => {
     el.addEventListener('click', e => {
       // If the caret button was clicked, toggle collapse - don't open modal
       const caret = e.target.closest('.caret-btn');
@@ -25680,13 +25823,7 @@ if ('serviceWorker' in navigator) {
         var lastChange=touched.length ? touched.reduce(function(m,x){ return x>m?x:m; }) : null;
         // (3) health, for in-flight work only - computed, never set by hand.
         var health=null;
-        if(col==='now'){
-          var left=work.length-done, daysToDue=due ? Math.floor((due-today)/DAY) : null, idle=lastChange ? Math.floor((today-lastChange)/DAY) : null;
-          if(due && due<today) health={k:'red', why:'Past due ('+fmt(due)+')'+(work.length?' with '+left+' of '+work.length+' still open':'')};
-          else if(daysToDue!=null && daysToDue<=7 && work.length && done/work.length<0.75) health={k:'amber', why:'Due '+fmt(due)+' with '+left+' of '+work.length+' still open'};
-          else if(idle!=null && idle>=14) health={k:'amber', why:'No changes in '+idle+' days'};
-          else health={k:'green', why:'On track'};
-        }
+        if(col==='now') health=_call('workHealth', due, work.length, done, lastChange) || null;   // GANTT-WORK-1: the rule is shared with the Gantt
         cards.push({ p:p, team:team, col:col, when:when, total:work.length, done:done, health:health, unit:people ? effTeam(dT[0]||p) : '',
           start: (self && p.start) ? pd(p.start) : (starts.length ? starts.reduce(function(m,x){ return x<m?x:m; }) : null),
           due: due });

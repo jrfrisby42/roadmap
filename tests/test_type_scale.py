@@ -29,7 +29,8 @@ TOKENS = {
 # badge glyph (.frz-cal-mile-g) and the timeline marker head (.frz-cal-tl-mile-h) - both correct
 # icon geometry. The baseline was not bumped then (a `pytest | tail` pipeline masked the failing
 # exit code on that deploy); it is corrected here. CAL-DATES-2 adds zero new line-height:1 sites.
-LH1_COUNT = 49
+# GANTT-WORK-1 adds one: the Other work row's per-week count label (.ow-n), positioned off its column's top.
+LH1_COUNT = 50
 LH0_COUNT = 5
 
 
