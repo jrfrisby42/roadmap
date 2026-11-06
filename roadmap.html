@@ -477,6 +477,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .ow-layer { position: absolute; inset: 0; pointer-events: none; }
   .ow-col { position: absolute; bottom: 4px; background: var(--accent); opacity: .35; border-radius: 2px 2px 0 0; pointer-events: auto; cursor: default; }
   .ow-col:hover, .ow-col.is-now { opacity: .6; }
+  .ow-col.is-cap { border-top: 2px solid var(--accent); }   /* GANTT-OW-SCALE-1: taller than the scale, drawn at full height */
   .ow-n { position: absolute; font-size: 9px; font-weight: 700; line-height: 1; text-align: center; color: var(--muted); }
   .left-row.span-foot .proj-name { flex: 1; }
   .span-foot-btn { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--accent); font: inherit; font-weight: 600; padding: 2px 8px; cursor: pointer; white-space: nowrap; }
@@ -5393,7 +5394,7 @@ function render(){
   // opening it lists the in-progress items. Leaf work only (a parent with live children is counted through them).
   // Same chip filters as the chart; team = the item's own, else its nearest ancestor's. Display only.
   const _owBy = {};
-  let _owMax = 0, _owRowItem = false;
+  let _owRowItem = false;
   if(_projOnly){
     const _d30 = addDays(TODAY, -30);
     projects.forEach(p => {
@@ -5410,7 +5411,7 @@ function render(){
       const o = _owBy[k] = _owBy[k] || { active:[], weeks:{}, done30:0 };
       if(isAct) o.active.push(p);
       if(recent) o.done30++;
-      if(inChart){ o.weeks[wi] = (o.weeks[wi] || 0) + 1; if(o.weeks[wi] > _owMax) _owMax = o.weeks[wi]; }
+      if(inChart) o.weeks[wi] = (o.weeks[wi] || 0) + 1;
     });
     if(_teamSplitOn){
       // A team with only non-project work (a support team) still gets its group, so its row is not lost.
@@ -5422,6 +5423,14 @@ function render(){
       groups.push({ label: null, items: [], _owOnly: true });   // one row for everything, after the last group
     }
   }
+  // GANTT-OW-SCALE-1: columns scale against twice a typical busy week (2 x the 75th percentile of every week shown,
+  // never more than the biggest), not the single biggest week, so one spike (a bulk close of old tickets) cannot
+  // flatten every other week. A week above it draws at full height with a cap mark; its number and tooltip still
+  // give the real count. (A plain high percentile fails with few weeks: it lands on the spike itself.)
+  const _owVals = [];
+  Object.values(_owBy).forEach(o => Object.values(o.weeks).forEach(c => _owVals.push(c)));
+  _owVals.sort((a, b) => a - b);
+  const _owScale = _owVals.length ? Math.max(1, Math.min(_owVals[_owVals.length - 1], 2 * _owVals[Math.max(0, Math.ceil(_owVals.length * 0.75) - 1)])) : 1;
   let _renderRowRef = null;   // the group's row renderer, so the Other work row can list its items the same way
   function _owRowHtml(key){
     const o = key == null ? null : _owBy[key]; if(!o) return;
@@ -5430,9 +5439,9 @@ function render(){
     lRows += `<div class="left-row ow-row" data-ow="${escA(key)}" title="Work that is not under a project. Each column is the items finished that week. Click to ${open ? 'hide' : 'list'} what is in progress."><span class="proj-name pn-2"><span class="pn-main">Other work</span><span class="pn-sub">${esc(sub)}</span></span><span class="grp-tog">${_caretSvg(!open)}</span></div>`;
     let cols = '';
     Object.keys(o.weeks).forEach(wi => {
-      const c = o.weeks[wi], wk = weeks[+wi], h = Math.max(3, Math.round(c / (_owMax || 1) * 22)), x = px(wk);
+      const c = o.weeks[wi], wk = weeks[+wi], capped = c > _owScale, h = Math.max(3, Math.round(Math.min(c, _owScale) / _owScale * 22)), x = px(wk);
       const w = Math.max(2, Math.min(24, wkPx - 4)), l = x + (wkPx - w) / 2, cur = TODAY >= wk && TODAY < addDays(wk, 7);   // a column, centred in its week, never a bar-wide block
-      cols += `<div class="ow-col${cur ? ' is-now' : ''}" title="${escA('Week of ' + fmtD(wk) + ': ' + c + ' finished')}" style="left:${l.toFixed(1)}px;width:${w}px;height:${h}px"></div>`;
+      cols += `<div class="ow-col${cur ? ' is-now' : ''}${capped ? ' is-cap' : ''}" title="${escA('Week of ' + fmtD(wk) + ': ' + c + ' finished')}" style="left:${l.toFixed(1)}px;width:${w}px;height:${h}px"></div>`;
       if(wkPx >= 16) cols += `<span class="ow-n" style="left:${l.toFixed(1)}px;width:${w}px;bottom:${h + 5}px">${c}</span>`;
     });
     cH += `<div class="chart-row ow-row" style="width:${totalPx}px">${wCells}<div class="ow-layer">${cols}</div></div>`;
