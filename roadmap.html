@@ -2884,7 +2884,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.62.34';
+const APP_VERSION = '6.62.35';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -12587,6 +12587,9 @@ async function runAutoNotifications(){
     // over Flow), so a date/decision alert here is one nobody can resolve in Flow. Fix it in Jira; the
     // project-level picture is on the Team Board. Person-raised alerts on these items are untouched.
     if(p.jiraSource === 'pull'){ clearStranded(p, 'dates and status come from Jira - fix them there'); continue; }
+    // AC-PROJECTS-ONLY-1: date/decision alerts only for projects (the Org's project types, Team Settings) - a
+    // late Story or Task never pings anyone; the project it belongs to does. Same setting as Gantt Projects only.
+    if(!(projectTypes || []).includes(p.type || '')){ clearStranded(p, 'only projects raise date alerts'); continue; }
     if(isTerminalStatus(p.status)){ clearStranded(p, 'item is finished'); continue; }
     if(statusIgnoreConflicts[p.status] || productIgnoreConflicts[p.product]){ clearStranded(p, 'status or space is excluded from alerts'); continue; }
     if(!p.start){ clearStranded(p, 'item has no start date'); continue; }
