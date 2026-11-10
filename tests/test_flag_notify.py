@@ -20,7 +20,7 @@ W = "watcher.wanda"       # a watcher who is NOT the flagger
 
 
 def _mk(client, headers, **fields):
-    body = {"name": "Item", "status": "Planned", **fields}
+    body = {"name": "Item", "status": "Planned", "type": "Roadmap Item", **fields}   # AC-PROJECTS-ONLY-1: rule alerts need a project type
     return client.post("/api/projects", json=body, headers=headers).json()["id"]
 
 

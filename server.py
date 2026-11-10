@@ -9172,6 +9172,45 @@ def _is_jira_pulled(c, item_id) -> bool:
     return bool(row and row["js"] == "pull")
 
 
+def _project_types_c(c) -> set:
+    row = c.execute("SELECT value FROM config WHERE key='projectTypes'").fetchone()
+    try:
+        v = json.loads(row["value"]) if row else None
+    except (TypeError, ValueError):
+        v = None
+    return set(v or ["Roadmap Item", "Epic", "Feature", "Project"])
+
+
+def _is_project_item(c, item_id) -> bool:
+    row = c.execute("SELECT json_extract(data, '$.type') AS t FROM projects WHERE id=?", (item_id,)).fetchone()
+    return bool(row) and (row["t"] or "") in _project_types_c(c)
+
+
+def _ac_clear_non_project(team: str, actor: str = "System", dry_run: bool = False) -> dict:
+    """AC-PROJECTS-ONLY-1 one-time clean-up: Auto-Clear the open System rule alerts (At Risk / Needs Decision /
+    Needs Date Check) on items that are not of a project type. Person-raised alerts and other types untouched."""
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    marks = ",".join("?" * len(SYSTEM_RULE_TYPES))
+    with db(team) as c:
+        pt = _project_types_c(c)
+        rows = c.execute(
+            f"SELECT a.id, a.activity_type, json_extract(p.data, '$.type') AS t FROM activities a"
+            f" JOIN projects p ON p.id = a.item_id WHERE a.source='System' AND a.status IN ('Open','Read')"
+            f" AND a.activity_type IN ({marks})", SYSTEM_RULE_TYPES).fetchall()
+        rows = [r for r in rows if (r["t"] or "") not in pt]
+        ids = [r["id"] for r in rows]
+        by_type = {}
+        for r in rows:
+            by_type[r["activity_type"]] = by_type.get(r["activity_type"], 0) + 1
+        if ids and not dry_run:
+            c.executemany(
+                "UPDATE activities SET status='Auto-Cleared', resolved_by='System', resolved_ts=?,"
+                " action_taken='Auto-cleared: only projects raise date alerts' WHERE id=?", [(ts, i) for i in ids])
+    if ids and not dry_run:
+        write_audit(team, "activity:clear-non-project", actor, changes={"cleared": len(ids), "byType": by_type, "ids": ids})
+    return {"dryRun": dry_run, "cleared": len(ids), "byType": by_type, "ids": ids}
+
+
 def _ac_clear_jira_owned(team: str, actor: str = "System", dry_run: bool = False) -> dict:
     """AC-JIRA-QUIET-1 one-time clean-up: Auto-Clear the open System rule alerts (At Risk / Needs Decision /
     Needs Date Check) on items pulled from Jira. Person-raised alerts and every other type are untouched.
@@ -9237,6 +9276,9 @@ def _insert_activity(body: dict, team: str) -> dict:
             # AC-JIRA-QUIET-1: Jira owns a pulled item's dates and status - a date/decision alert on it can't be
             # resolved in Flow. Refused here too so an old open tab's rules engine can't re-raise one.
             return {"skipped": True, "reason": "jira-pulled item", "activity_type": activity_type, "item_id": item_id}
+        if is_rule and not _is_project_item(c, item_id):
+            # AC-PROJECTS-ONLY-1: date/decision alerts are for projects (the Org's projectTypes) only.
+            return {"skipped": True, "reason": "not a project", "activity_type": activity_type, "item_id": item_id}
         if cap_key:
             c.execute("BEGIN IMMEDIATE")
             owner = body.get("owner", "")
