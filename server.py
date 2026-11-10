@@ -9167,6 +9167,36 @@ def _rule_alert_snoozed(c, closed, item_id) -> bool:
     # Activity ts are whole seconds; compare at that precision so a same-second write doesn't read as "after".
     return not (upd and upd.replace(microsecond=0) > closed_at)
 
+def _is_jira_pulled(c, item_id) -> bool:
+    row = c.execute("SELECT json_extract(data, '$.jiraSource') AS js FROM projects WHERE id=?", (item_id,)).fetchone()
+    return bool(row and row["js"] == "pull")
+
+
+def _ac_clear_jira_owned(team: str, actor: str = "System", dry_run: bool = False) -> dict:
+    """AC-JIRA-QUIET-1 one-time clean-up: Auto-Clear the open System rule alerts (At Risk / Needs Decision /
+    Needs Date Check) on items pulled from Jira. Person-raised alerts and every other type are untouched.
+    One audit row; reversible (the rows keep their content, only status/resolution change)."""
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    marks = ",".join("?" * len(SYSTEM_RULE_TYPES))
+    with db(team) as c:
+        rows = c.execute(
+            f"SELECT a.id, a.activity_type FROM activities a JOIN projects p ON p.id = a.item_id"
+            f" WHERE a.source='System' AND a.status IN ('Open','Read') AND a.activity_type IN ({marks})"
+            f" AND json_extract(p.data, '$.jiraSource') = 'pull'", SYSTEM_RULE_TYPES).fetchall()
+        ids = [r["id"] for r in rows]
+        by_type = {}
+        for r in rows:
+            by_type[r["activity_type"]] = by_type.get(r["activity_type"], 0) + 1
+        if ids and not dry_run:
+            c.executemany(
+                "UPDATE activities SET status='Auto-Cleared', resolved_by='System', resolved_ts=?,"
+                " action_taken='Auto-cleared: dates and status come from Jira - fix them there' WHERE id=?",
+                [(ts, i) for i in ids])
+    if ids and not dry_run:
+        write_audit(team, "activity:clear-jira-owned", actor, changes={"cleared": len(ids), "byType": by_type, "ids": ids})
+    return {"dryRun": dry_run, "cleared": len(ids), "byType": by_type, "ids": ids}
+
+
 @app.post("/api/activities")
 def create_activity(body: dict = Body(...), x_team: Optional[str] = Header(None),
                     auth: dict = Depends(require_role("admin", "editor"))):
@@ -9203,6 +9233,10 @@ def _insert_activity(body: dict, team: str) -> dict:
     # Dismissed one for the same team + item set stays quiet for RULE_ALERT_SNOOZE_DAYS.
     cap_key = activity_type == "Capacity Conflict" and body.get("note")
     with db(team) as c:
+        if is_rule and _is_jira_pulled(c, item_id):
+            # AC-JIRA-QUIET-1: Jira owns a pulled item's dates and status - a date/decision alert on it can't be
+            # resolved in Flow. Refused here too so an old open tab's rules engine can't re-raise one.
+            return {"skipped": True, "reason": "jira-pulled item", "activity_type": activity_type, "item_id": item_id}
         if cap_key:
             c.execute("BEGIN IMMEDIATE")
             owner = body.get("owner", "")
