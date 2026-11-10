@@ -3777,7 +3777,10 @@ function getWkPx(){
 // Position functions: working days only (5 per week)
 const dayOff = d => workingDaysBetween(CHART_START, d);
 const px     = d => dayOff(d) / 5 * getWkPx();
-const pxW    = (a,b) => Math.max(0, workingDaysBetween(a, b) / 5 * getWkPx());
+// GANTT-BAR-JOINS-1: width = end position - start position. px() pins a date before CHART_START to the left
+// edge, so measuring the width from the true start (as before) drew a bar that began off-screen too long - it
+// spilled past its real end and overlapped the next segment. Identical for every bar that starts on-chart.
+const pxW    = (a,b) => Math.max(0, px(b) - px(a));
 
 // Parse a YYYY-MM-DD date string as local midnight (avoids UTC-to-MT day shift)
 const parseD = s => {
@@ -5605,7 +5608,9 @@ function render(){
             // (100% = solid once the parent is finished). Still display only - never counted in capacity.
             const _pct = Math.round((_ru.progress || 0) * 100);
             const _ptip = _ru.total ? `${_ru.done} of ${_ru.total} finished (${_pct}%)` : 'no child work yet';
-            _bar = `<div class="bar derived${_pct>0?' derived-prog':''}${_pct>=100?' derived-done':''}" data-id="${p.id}" title="Summary of children: ${_ptip}" style="left:${px(_ds).toFixed(1)}px;width:${pxW(_ds,_dd).toFixed(1)}px">${_pct>0?`<div class="derived-fill" style="width:${_pct}%"></div>`:''}</div>`;
+            const _rlJoin = parseD(_ru.release || p.releaseDate);   // GANTT-BAR-JOINS-1: square the end a release segment joins
+            const _sq = (_rlJoin && px(_dd) < px(_rlJoin)) ? ';border-top-right-radius:0;border-bottom-right-radius:0' : '';
+            _bar = `<div class="bar derived${_pct>0?' derived-prog':''}${_pct>=100?' derived-done':''}" data-id="${p.id}" title="Summary of children: ${_ptip}" style="left:${px(_ds).toFixed(1)}px;width:${pxW(_ds,_dd).toFixed(1)}px${_sq}">${_pct>0?`<div class="derived-fill" style="width:${_pct}%"></div>`:''}</div>`;
             // ROLLUP-OVERRUN-1: a release later than the children's span gets the same hatched overrun segment a
             // normal item draws (UI-TRIO-1 P3), so the release marker attaches to the bar instead of floating
             // past it (FRZ-951: children Sep 8 - Oct 2, last release Oct 13). Display only, nothing is written.
@@ -5713,28 +5718,37 @@ function render(){
         </div>`;
         cH += `<div class="chart-row${isEffectivelyHidden(p)?' hidden-row':''}" style="width:${totalPx}px">${wCells}<div class="bar-layer">`;
 
+        // GANTT-BAR-JOINS-1: work out up front which hatched segments follow the bar, so whatever they join
+        // (green, delay or testing) gets a square end - only the true end of the run is rounded.
+        const _ownEnd  = hasDelay ? r : d;
+        const _relOver = !!(rl && _ownEnd && px(_ownEnd) < px(rl));                   // release later than the scheduled end
+        const _ks      = _kidsSpanOf(p);                                               // PARENT-OVERRUN-1
+        const _kEnd    = (_ks && _ks.due) ? nextMonday(parseD(_ks.due)) : null;
+        const _kidFrom = (rl && _ownEnd && px(rl) > px(_ownEnd)) ? rl : _ownEnd;
+        const _kidOver = !!(_kEnd && _ownEnd && px(_kEnd) > px(_ownEnd) && px(_kEnd) > px(_kidFrom));
+        const _tail    = _relOver || _kidOver;
         if(s && d){
           // Green dev bar: start → devEnd (compressed if parallel)
           const gLeft  = px(s);
           const gWidth = pxW(s, devEnd);
           const devBarClass = isParallel
-            ? (hasDelay || testDays > 0 ? 'plan parallel-dev' : 'plan solo parallel-dev')
-            : (hasDelay ? 'plan' : (testDays > 0 ? 'plan' : 'plan solo'));
-          const rightRadius = (testDays > 0 || hasDelay) ? '0 0 4px' : '4px 4px 4px';
+            ? (hasDelay || testDays > 0 || _tail ? 'plan parallel-dev' : 'plan solo parallel-dev')
+            : (hasDelay || testDays > 0 || _tail ? 'plan' : 'plan solo');
+          const rightRadius = (testDays > 0 || hasDelay || _tail) ? '0 0 4px' : '4px 4px 4px';
           cH += `<div class="bar ${devBarClass}" data-id="${p.id}" style="left:${gLeft.toFixed(1)}px;width:${gWidth.toFixed(1)}px;border-radius:4px ${rightRadius}"></div>`;
           if(hasDelay){
             // Red delay bar: devEnd → testStart
             const delayBarStart = testDays > 0 ? devEnd : d;
             const delayBarEnd   = testDays > 0 ? testStart : r;
             if(delayBarStart && delayBarEnd && px(delayBarStart) < px(delayBarEnd)){
-              const delayRadius = testDays > 0 ? '0' : '0 4px 4px 0';
+              const delayRadius = (testDays > 0 || _tail) ? '0' : '0 4px 4px 0';
               cH += `<div class="bar delay" data-id="${p.id}" style="left:${px(delayBarStart).toFixed(1)}px;width:${pxW(delayBarStart,delayBarEnd).toFixed(1)}px;border-radius:${delayRadius}"></div>`;
             }
           }
         }
         // Testing bar
         if(testDays > 0 && s && testStart && testEnd){
-          cH += `<div class="bar testing-bar" data-id="${p.id}" style="left:${px(testStart).toFixed(1)}px;width:${pxW(testStart,testEnd).toFixed(1)}px"></div>`;
+          cH += `<div class="bar testing-bar" data-id="${p.id}" style="left:${px(testStart).toFixed(1)}px;width:${pxW(testStart,testEnd).toFixed(1)}px${_tail ? ';border-radius:0' : ''}"></div>`;
         }
         if(e){
           cH += `<div class="diamond" data-id="${p.id}" title="Expected: ${fmtD(e)}" style="left:${px(e).toFixed(1)}px"></div>`;
@@ -5747,9 +5761,8 @@ function render(){
         // inside the bar (3.4, unchanged). DISPLAY ONLY - `revised` is never written (that would fire
         // the delay-reason prompt + an audit trail); it is rendered HATCHED, distinct from .bar.delay.
         if(rl){
-          const overrunStart = hasDelay ? r : d;
-          if(overrunStart && px(overrunStart) < px(rl)){
-            cH += `<div class="bar overrun" data-id="${p.id}" title="Released ${fmtD(rl)} - past the ${hasDelay?'revised':'due'} date (no delay reason recorded)" style="left:${px(overrunStart).toFixed(1)}px;width:${pxW(overrunStart,rl).toFixed(1)}px"></div>`;
+          if(_relOver){
+            cH += `<div class="bar overrun" data-id="${p.id}" title="Released ${fmtD(rl)} - past the ${hasDelay?'revised':'due'} date (no delay reason recorded)" style="left:${px(_ownEnd).toFixed(1)}px;width:${pxW(_ownEnd,rl).toFixed(1)}px${_kidOver ? ';border-radius:0' : ''}"></div>`;
           }
           cH += `<div class="plane-marker" data-id="${p.id}" title="Released: ${fmtD(rl)}" style="left:${px(rl).toFixed(1)}px">${PLANE_SVG}</div>`;
         }
@@ -5757,16 +5770,8 @@ function render(){
         // dates from Jira - FRZ-964 planned Oct-Nov 2025, its work still running Oct 2026) the bar carries on to
         // the end of that work as a hatched overrun, so current work is never hidden behind old dates. Starts
         // where the bar (or a later release marker) ends. Display only - nothing is written to the item.
-        {
-          const _ks = _kidsSpanOf(p);
-          const _kEnd = (_ks && _ks.due) ? nextMonday(parseD(_ks.due)) : null;
-          const _ownEnd = hasDelay ? r : d;
-          if(_kEnd && _ownEnd && px(_kEnd) > px(_ownEnd)){
-            const _from = (rl && px(rl) > px(_ownEnd)) ? rl : _ownEnd;
-            if(px(_kEnd) > px(_from)){
-              cH += `<div class="bar overrun" data-id="${p.id}" title="Work under this item runs to ${fmtD(_kEnd)} - past its own ${hasDelay?'revised':'due'} date (${fmtD(_ownEnd)})" style="left:${px(_from).toFixed(1)}px;width:${pxW(_from,_kEnd).toFixed(1)}px"></div>`;
-            }
-          }
+        if(_kidOver){
+          cH += `<div class="bar overrun" data-id="${p.id}" title="Work under this item runs to ${fmtD(_kEnd)} - past its own ${hasDelay?'revised':'due'} date (${fmtD(_ownEnd)})" style="left:${px(_kidFrom).toFixed(1)}px;width:${pxW(_kidFrom,_kEnd).toFixed(1)}px"></div>`;
         }
         cH += `</div></div>`;
 
