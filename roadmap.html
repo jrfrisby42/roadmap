@@ -768,6 +768,16 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .modal.frz-composer .composer-id a.composer-key { text-decoration: none; cursor: pointer; border-radius: 4px; }
   .modal.frz-composer .composer-id a.composer-key:hover { text-decoration: underline; color: var(--accent); }
   .modal.frz-composer .composer-id a.composer-key:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* COPY-LINK-1: the shared copy-link icon button (List rows, List panel, modal, item page). */
+  .copy-link-btn { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; background:none; border:0; margin:0; padding:3px; border-radius:5px; color:var(--muted); cursor:pointer; line-height:0; vertical-align:middle; transition:color .15s, background-color .15s, opacity .15s; }
+  .copy-link-btn:hover { color:var(--accent); background:var(--surface2); }
+  .copy-link-btn:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .copy-link-btn.copied, .copy-link-btn.copied:hover { color:#1a7f37; }
+  .list-row .copy-link-btn { margin-left:4px; opacity:0; }
+  .list-row:hover .copy-link-btn, .list-row .copy-link-btn:focus-visible, .list-row .copy-link-btn.copied { opacity:1; }
+  @media (hover:none) { .list-row .copy-link-btn { opacity:.6; } }
+  .modal.frz-composer .composer-id .copy-link-btn { margin-left:2px; }
+  body.dark-mode .copy-link-btn.copied, body.dark-mode .copy-link-btn.copied:hover { color:#4ac26b; }
   .modal.frz-composer .composer-id .composer-title { font-size: 16px; font-weight: 900; color: var(--text); }
   .modal.frz-composer .composer-id .composer-space { font-size: 13px; font-weight: 700; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   .modal.frz-composer .composer-id .composer-jira { font-size: 12px; font-weight: 700; color: var(--accent); text-decoration: none; white-space: nowrap; }
@@ -2884,7 +2894,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.62.36';
+const APP_VERSION = '6.62.37';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -6551,6 +6561,55 @@ function _frzItemPageUrl(id){
   return location.origin + '/item/' + id + (t ? ('?team='+encodeURIComponent(t)) : '');
 }
 
+// COPY-LINK-1: one copy-link action for the List rows, the List panel, the modal and the item page.
+// The clipboard gets two flavours: text/plain is the bare URL (address bar, plain editors), text/html is
+// a titled link "FRZ-123 Name" (Slack, Teams, Outlook, Jira paste it as a named link). The button that
+// was clicked flips to a check (and "Copied" when it has a text label) for a moment.
+const _COPY_LINK_IC  = '<svg class="cl-ic" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.4 9.6l3.2-3.2"/><path d="M7.3 5.2l1-1a2.4 2.4 0 0 1 3.4 3.4l-1.3 1.3"/><path d="M8.7 10.8l-1 1a2.4 2.4 0 0 1-3.4-3.4l1.3-1.3"/></svg>';
+const _COPY_DONE_IC  = '<svg class="cl-ic" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>';
+function copyLinkBtnHtml(id, cls){
+  return '<button type="button" class="copy-link-btn'+(cls?' '+cls:'')+'" data-copy-link="'+id+'" title="Copy link to this item" aria-label="Copy link to this item"'
+       + ' onclick="event.stopPropagation();event.preventDefault();copyItemLink('+id+',this)">'+_COPY_LINK_IC+'</button>';
+}
+function _copyLinkFlash(el){
+  if(!el) return;
+  if(el._clTimer){ clearTimeout(el._clTimer); } else { el._clHtml = el.innerHTML; }
+  const lbl = el.querySelector('span');
+  const svg = el.querySelector('svg');
+  if(svg) svg.outerHTML = _COPY_DONE_IC;
+  if(lbl) lbl.textContent = 'Copied';
+  el.classList.add('copied');
+  el._clTimer = setTimeout(function(){ el.innerHTML = el._clHtml; el.classList.remove('copied'); el._clTimer = null; }, 1400);
+}
+function _copyLinkFallback(text){
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.setAttribute('readonly',''); ta.style.cssText = 'position:fixed;top:-1000px;opacity:0';
+  document.body.appendChild(ta); ta.select();
+  let ok = false; try { ok = document.execCommand('copy'); } catch(e){}
+  ta.remove();
+  return ok;
+}
+function copyItemLink(id, el){
+  id = parseInt(id, 10); if(!id) return;
+  const url = _frzItemPageUrl(id);
+  const p = (typeof projects!=='undefined' && Array.isArray(projects)) ? projects.find(x=>x.id===id) : null;
+  const label = p ? ((p.itemKey ? p.itemKey+' ' : '') + (p.name||'')).trim() : '';
+  const done = function(){ _copyLinkFlash(el); if(typeof showToast==='function') showToast('Link copied'+(p && p.itemKey ? ' - '+p.itemKey : ''), 'success', 2000); };
+  const fail = function(){ if(_copyLinkFallback(url)) done(); else if(typeof showToast==='function') showToast('Could not copy - '+url, 'error', 6000); };
+  const plain = function(){ if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, fail); else fail(); };
+  try {
+    if(label && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write){
+      const html = '<a href="'+escA(url)+'">'+esc(label)+'</a>';
+      navigator.clipboard.write([new ClipboardItem({
+        'text/html':  new Blob([html], {type:'text/html'}),
+        'text/plain': new Blob([url],  {type:'text/plain'})
+      })]).then(done, plain);
+      return;
+    }
+    plain();
+  } catch(e){ plain(); }
+}
+
 // Jump from the quick-edit modal to the full item page (closes the modal first).
 function openItemPageFromModal(){
   const id = editingId;
@@ -6599,7 +6658,7 @@ function _frzComposerHeader(p, id){
     var _k = esc(p.itemKey||('#'+p.id));
     var _keyLink = '<a class="composer-key" id="composerKeyLink" href="'+escA(_frzItemPageUrl(p.id))
                  + '" title="Open the item page in this tab" aria-label="Open item '+_k+' in this tab">'+_k+'</a>';
-    html = '<span class="composer-ic">'+tIc+'</span>'+_keyLink+_frzComposerSpaceChip(p.product||'')+jira;
+    html = '<span class="composer-ic">'+tIc+'</span>'+_keyLink+copyLinkBtnHtml(p.id)+_frzComposerSpaceChip(p.product||'')+jira;   // COPY-LINK-1
   } else {  // CREATE: context icon + "New item" + destination Space chip (when known)
     var pe = document.getElementById('fProduct');
     var space = pe ? (pe.value||'') : '';
@@ -13172,7 +13231,7 @@ function _listJira(it){
 }
 const _LIST_COL_DEF = {
   key:        { label:'Key',         sort:'item_key',
-                td:(it,ctx)=>`<td style="${ctx.firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${ctx.chevron}${_listCell(it.itemKey)}</td>` },
+                td:(it,ctx)=>`<td style="${ctx.firstPad};font-family:monospace;color:var(--muted);white-space:nowrap">${ctx.chevron}${_listCell(it.itemKey)}${copyLinkBtnHtml(it.id)}</td>` },
   type:       { label:'Type',        sort:'type',
                 td:(it)=>`<td style="padding:7px 10px;white-space:nowrap">${(()=>{ const ic=typeIconHTML(it.type); return ic ? `<span style="display:inline-flex;align-items:center;gap:5px">${ic}${_listCell(it.type)}</span>` : _listCell(it.type); })()}</td>` },
   name:       { label:'Name',        sort:'name',
@@ -13821,6 +13880,7 @@ document.getElementById('listBody')?.addEventListener('click', (e)=>{
   const ghd = e.target.closest('tr.list-grouphd');  // LIST-GROUPBY-1: collapse/expand a group
   if(ghd){ e.stopPropagation(); _listToggleGroup(ghd); return; }
   if(e.target.closest('.list-cb-cell')) return;   // checkbox clicks don't open the item
+  if(e.target.closest('.copy-link-btn')) return;  // COPY-LINK-1: copying a link doesn't open the item
   const row = e.target.closest('tr.list-row');
   if(row && row.dataset.id) openItemPage(parseInt(row.dataset.id));
 });
@@ -18604,11 +18664,7 @@ function ipToggleMenu(e){
   if(_ot && _itemPageId != null) _ot.href = _frzItemPageUrl(_itemPageId);
 }
 function closeIpMenu(){ const m = document.getElementById('ipMenu'); if(m) m.style.display='none'; }
-function ipCopyLink(){
-  const url = `${location.origin}${location.pathname}?item=${_itemPageId}`;
-  try { navigator.clipboard.writeText(url); if(typeof showToast==='function') showToast('Link copied','success'); }
-  catch(e){ if(typeof showToast==='function') showToast(url); }
-}
+function ipCopyLink(){ copyItemLink(_itemPageId); }   // COPY-LINK-1: shared helper (canonical /item/{id}?team= URL)
 async function ipDeleteItem(){
   const p = projects.find(x=>x.id===_itemPageId); if(!p) return;
   if(!confirm(`Delete "${p.name||'this item'}"? This cannot be undone.`)) return;
@@ -22700,6 +22756,9 @@ if ('serviceWorker' in navigator) {
      into the standalone new-tab document (see openManual). Nothing here in the shell. */
   /* Stage 3b - watch toggle + @mention chips */
   .frz-beta .frz-watch { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); color:var(--frz-text-secondary); font-weight:700; font-size:11px; border-radius:999px; padding:3px 11px; cursor:pointer; }
+  .frz-beta .frz-watch .cl-ic { width:13px; height:13px; }   /* COPY-LINK-1: the "Copied" check matches the link icon size */
+  .frz-beta .frz-watch.copied, .frz-beta .frz-watch.copied:hover { color:#1a7f37; border-color:#1a7f37; }
+  body.dark-mode .frz-beta .frz-watch.copied, body.dark-mode .frz-list-panel .frz-lp-copy.copied { color:#4ac26b; border-color:#4ac26b; }
   .frz-beta .frz-watch .frz-ic { width:13px; height:13px; }
   .frz-beta .frz-watch:hover { border-color:var(--frz-accent); color:var(--frz-accent); }
   /* ITEM-VIEWNAV-1 2.1: the Views pill reuses .frz-watch (same height/radius/border as Watch + Flag); it adds
@@ -23053,6 +23112,9 @@ if ('serviceWorker' in navigator) {
   .frz-list-panel .frz-lp-actions { flex:1 1 0; min-width:0; display:flex; align-items:center; justify-content:flex-end; gap:4px; }
   .frz-list-panel .frz-lp-close, .frz-list-panel .frz-lp-full { background:none; border:0; cursor:pointer; color:var(--frz-text-secondary); font-size:16px; line-height:1; padding:4px 6px; border-radius:6px; }
   .frz-list-panel .frz-lp-close:hover, .frz-list-panel .frz-lp-full:hover { background:var(--frz-bg-app); color:var(--frz-accent); }
+  .frz-list-panel .frz-lp-copy { color:var(--frz-text-secondary); padding:5px; border-radius:6px; }   /* COPY-LINK-1 */
+  .frz-list-panel .frz-lp-copy:hover { background:var(--frz-bg-app); color:var(--frz-accent); }
+  .frz-list-panel .frz-lp-copy.copied, .frz-list-panel .frz-lp-copy.copied:hover { color:#1a7f37; }
   .frz-list-panel .frz-lp-name { font-size:17px; font-weight:800; color:var(--frz-text); margin:8px 0 8px; line-height:1.3; }
   .frz-list-panel .frz-lp-openbtn { display:inline-flex; align-items:center; gap:6px; background:var(--frz-accent); color:#fff; border:0; padding:6px 13px; border-radius:var(--frz-radius-control); font-family:'Lato',sans-serif; font-weight:600; font-size:13px; cursor:pointer; }
   .frz-list-panel .frz-lp-openbtn:hover { background:var(--frz-accent-hover); }
@@ -28364,6 +28426,7 @@ if ('serviceWorker' in navigator) {
     if(_frzIA()){
       badges += '<button class="frz-watch frz-views-pill" id="frzViewsPill" aria-haspopup="menu" aria-expanded="false" title="Go to a view (keeps your current filters)"><span>Views</span>'+IC.caret+'</button>';
     }
+    badges += '<button class="frz-watch" id="frzCopyLinkBtn" title="Copy link to this item">'+IC.link+'<span>Copy link</span></button>';   // COPY-LINK-1
     badges += '<button class="frz-watch" id="frzWatchBtn" title="Watch this item">'+IC.bell+'<span>Watch</span></button>';   // Stage 3b
     badges += '<button class="frz-watch" id="frzFlagBtn" title="Flag an issue"><svg class="frz-ic" viewBox="0 0 16 16" style="width:13px;height:13px"><path d="M4 14V3M4 3.5C5.5 2.5 7 2.5 8.5 3.5S11.5 4.5 13 3.5V9c-1.5 1-3 1-4.5 0S5.5 8 4 9"/></svg><span>Flag</span></button>';   // item 4: reuse production flag dialog
     document.getElementById('frzBadges').innerHTML = badges;
@@ -28386,6 +28449,7 @@ if ('serviceWorker' in navigator) {
       _scs.addEventListener('keydown', function(ev){ if(ev.key==='Enter' || ev.key===' '){ ev.preventDefault(); _goSpace(); } });
     }
     var fb=document.getElementById('frzFlagBtn'); if(fb) fb.addEventListener('click', function(){ _call('openFlagIssue', id); });
+    var clb=document.getElementById('frzCopyLinkBtn'); if(clb) clb.addEventListener('click', function(){ _call('copyItemLink', id, clb); });   // COPY-LINK-1
     document.getElementById('frzBack').addEventListener('click', goBack);
     var ck=document.getElementById('frzCrumbKey'); if(ck && p.itemKey) ck.addEventListener('click', function(){ try{ navigator.clipboard.writeText(p.itemKey); _call('showToast','Copied '+p.itemKey); }catch(e){} });
     var pc=document.getElementById('frzParentCrumb'); if(pc && parent) pc.addEventListener('click', function(){ openItem(parent.id); });
@@ -33941,6 +34005,7 @@ if ('serviceWorker' in navigator) {
       lb.addEventListener('click', function(e){
         if(!root || state.view!=='list') return;                       // beta List view only
         if(e.target.closest('.list-chevron') || e.target.closest('.list-cb-cell')) return;  // expand/select → classic
+        if(e.target.closest('.copy-link-btn')) return;                  // COPY-LINK-1: the row's copy-link button handles itself
         var row=e.target.closest('tr.list-row'); if(!row || !row.dataset.id) return;
         e.stopPropagation();                                            // pre-empt classic openItemPage
         var _rid=parseInt(row.dataset.id,10);
@@ -34012,7 +34077,7 @@ if ('serviceWorker' in navigator) {
       + '<div class="frz-lp-hd-top">'
         + '<div class="frz-lp-hdside">'+(p.itemKey?'<span class="frz-bcard-key" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle">'+(_call('typeIconHTML',p.type,{size:13})||'')+'<span>'+esc(p.itemKey)+'</span></span>':'')+'</div>'
         + '<div class="frz-lp-hdmid">'+statusCtl+flagBtn+'</div>'   // REM-2 (7.1): status then Flag, Flag RIGHTMOST - matches the item page (#frzBadges builds Watch then Flag, Flag rightmost) and the modal (primary Flag button bottom-right). If a Watch button is ever added here it belongs LEFT of Flag, so the relative order still matches the item page. Flag's right edge sits ~8px from ⤢ and ~61px from ✕, so no mis-click concern.
-        + '<div class="frz-lp-actions"><a class="frz-lp-full" href="'+_frzItemPageUrl(p.id)+'" title="Open the full item page" aria-label="Open the full item page" style="text-decoration:none">⤢</a>'   // NEWTAB-FIX-1: no target/rel -> the interceptor opens it IN-APP (J.R.'s decision)
+        + '<div class="frz-lp-actions">'+_call('copyLinkBtnHtml', p.id, 'frz-lp-copy')+'<a class="frz-lp-full" href="'+_frzItemPageUrl(p.id)+'" title="Open the full item page" aria-label="Open the full item page" style="text-decoration:none">⤢</a>'   // NEWTAB-FIX-1: no target/rel -> the interceptor opens it IN-APP (J.R.'s decision)
         + '<button type="button" class="frz-lp-close" title="Close" aria-label="Close">✕</button></div>'
       + '</div>'
       + '<div class="frz-lp-name">'+esc(p.name||'')+'</div></div>'
