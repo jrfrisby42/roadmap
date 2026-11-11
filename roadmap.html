@@ -3551,6 +3551,16 @@ let blockedReasons = []; // BLOCK-REASON-1: admin-managed coded Blocked reasons 
 let locations = [];       // FIELDS-1: per-team Location value list. EMPTY = the Location field is hidden EVERYWHERE.
 let resolutionTypes = []; // FIELDS-1: per-team Resolution Type value list. EMPTY = the field is hidden EVERYWHERE.
 let metricLabel = 'Story Points'; // METRIC-LABEL-1: team-defined display label for the storyPoints metric (field key unchanged; only the label is configurable)
+let statusSince = {};   // KANBAN-AGE-1: {pid: [status, sinceISO]} from /api/all (server keeps it via triggers on every item write)
+// KANBAN-AGE-1: whole days the item has held its current status, or null when unknown. An item whose
+// status changed since the last /api/all load (local edit, drop) reads 0 until the next refresh.
+function daysInStatus(p){
+  const e = p && statusSince ? statusSince[p.id] : null;
+  if(!e) return null;
+  if(e[0] !== p.status) return 0;
+  const t = Date.parse(e[1]); if(isNaN(t)) return null;
+  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
+}
 let projectTypes = ['Roadmap Item','Epic','Feature','Project'];   // GANTT-FOCUS-1: types the Gantt's "Focus: Projects only" treats as projects (Team Settings)
 let pointsEstimate = {enabled:false, rows:[]}; // POINTS-ESTIMATE-1: points -> time estimate table (applied server-side; edited in Team Settings)
 let handoffLabel = 'Handoff';     // CAL-DATES-1: per-Org label for the item handoff (devEnd) milestone badge on the Calendar
@@ -9644,6 +9654,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
     metricLabel   = data.metricLabel   || metricLabel;   // METRIC-LABEL-1 (secondary data-apply path)
     pointsEstimate = data.pointsEstimate || pointsEstimate;   // POINTS-ESTIMATE-1
     if (Array.isArray(data.projectTypes) && data.projectTypes.length) projectTypes = data.projectTypes;   // GANTT-FOCUS-1
+    if (data.statusSince && typeof data.statusSince === 'object') statusSince = data.statusSince;   // KANBAN-AGE-1
     handoffLabel  = data.handoffLabel  || handoffLabel;  // CAL-DATES-1
     dueLabel      = data.dueLabel      || dueLabel;       // CAL-DATES-1
     departments   = data.departments   || departments;
@@ -21009,6 +21020,7 @@ async function boot(){
     metricLabel   = data.metricLabel   || 'Story Points';   // METRIC-LABEL-1: boot loader (the RIGHT block - see the 6.15.2 fix)
     pointsEstimate = data.pointsEstimate || {enabled:false, rows:[]};   // POINTS-ESTIMATE-1
     if (Array.isArray(data.projectTypes) && data.projectTypes.length) projectTypes = data.projectTypes;   // GANTT-FOCUS-1
+    if (data.statusSince && typeof data.statusSince === 'object') statusSince = data.statusSince;   // KANBAN-AGE-1
     // METRIC-LABEL-1: the ONE static label site is the classic List <th> (the shell List rebuilds its
     // header from _LIST_COL_DEF, which reads metricLabel live). Set it once post-load so classic follows too.
     try { var _mlTh=document.querySelector('th[data-sort="story_points"]'); if(_mlTh) _mlTh.innerHTML=esc(metricLabel)+'<span class="sort-arrow"></span>'; } catch(e){}
@@ -22756,7 +22768,35 @@ if ('serviceWorker' in navigator) {
      into the standalone new-tab document (see openManual). Nothing here in the shell. */
   /* Stage 3b - watch toggle + @mention chips */
   .frz-beta .frz-watch { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); color:var(--frz-text-secondary); font-weight:700; font-size:11px; border-radius:999px; padding:3px 11px; cursor:pointer; }
-  .frz-beta .frz-crumb-copy { margin-left:-2px; }   /* COPY-LINK-1: item page link icon after the key */
+  .frz-beta .frz-crumb-copy { margin-left:-2px; }
+  /* KANBAN-AGE-1: days-in-status chip + column limit count */
+  .frz-beta .frz-bcard-age { display:inline-flex; align-items:center; gap:3px; color:var(--frz-text-muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .frz-beta .frz-bcard-age.is-amber { color:#a15c00; font-weight:700; }
+  .frz-beta .frz-bcard-age.is-red { color:var(--accent2); font-weight:700; }
+  body.dark-mode .frz-beta .frz-bcard-age.is-amber { color:#f0b44a; }
+  .frz-beta .frz-colcount { color:var(--frz-text-muted); background:rgba(128,128,128,0.15); }
+  .frz-beta .frz-colcount.is-at { color:#a15c00; background:rgba(232,160,0,0.16); font-weight:700; }
+  .frz-beta .frz-colcount.is-over { color:#fff; background:var(--accent2); font-weight:700; }
+  body.dark-mode .frz-beta .frz-colcount.is-at { color:#f0b44a; }
+  /* QUICK-JUMP-1: Ctrl+K palette */
+  .frz-beta .frz-qj-bg { position:fixed; inset:0; z-index:400; background:rgba(15,25,40,.38); display:flex; justify-content:center; align-items:flex-start; padding:12vh 16px 16px; }
+  .frz-beta .frz-qj { width:100%; max-width:600px; background:var(--frz-bg-surface); color:var(--frz-text); border:1px solid var(--frz-border); border-radius:12px; box-shadow:0 18px 50px rgba(15,25,40,.28); overflow:hidden; display:flex; flex-direction:column; max-height:70vh; }
+  .frz-beta .frz-qj-inrow { display:flex; align-items:center; gap:10px; padding:12px 14px; border-bottom:1px solid var(--frz-border); color:var(--frz-text-muted); }
+  .frz-beta .frz-qj-inrow svg { width:16px; height:16px; flex-shrink:0; }
+  .frz-beta .frz-qj-in { flex:1; min-width:0; border:0; outline:0; background:transparent; color:var(--frz-text); font:inherit; font-size:15px; }
+  .frz-beta .frz-qj-list { overflow-y:auto; padding:6px 0; }
+  .frz-beta .frz-qj-hd { padding:8px 16px 4px; font-size:10px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--frz-text-muted); }
+  .frz-beta .frz-qj-row { display:flex; align-items:center; gap:10px; padding:7px 16px; cursor:pointer; font-size:13px; }
+  .frz-beta .frz-qj-row.is-sel { background:var(--frz-accent-soft); box-shadow:inset 3px 0 0 var(--frz-accent); }
+  .frz-beta .frz-qj-ic { width:16px; display:inline-flex; justify-content:center; flex-shrink:0; color:var(--frz-text-secondary); }
+  .frz-beta .frz-qj-ic svg { width:15px; height:15px; }
+  .frz-beta .frz-qj-key { font-family:ui-monospace, Menlo, monospace; font-size:11px; color:var(--frz-text-muted); flex-shrink:0; }
+  .frz-beta .frz-qj-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .frz-beta .frz-qj-meta { font-size:11px; color:var(--frz-text-muted); flex-shrink:0; }
+  .frz-beta .frz-qj-empty { padding:18px 16px; font-size:13px; color:var(--frz-text-muted); }
+  .frz-beta .frz-qj-foot { display:flex; gap:16px; padding:8px 14px; border-top:1px solid var(--frz-border); font-size:11px; color:var(--frz-text-muted); background:var(--frz-bg-app); }
+  .frz-beta .frz-qj kbd { font:inherit; font-size:10px; border:1px solid var(--frz-border-strong); border-bottom-width:2px; border-radius:4px; padding:0 4px; margin:0 1px; background:var(--frz-bg-surface); color:var(--frz-text-secondary); }
+  @media (max-width:640px) { .frz-beta .frz-qj-bg { padding-top:8vh; } .frz-beta .frz-qj-foot { display:none; } }   /* COPY-LINK-1: item page link icon after the key */
   body.dark-mode .frz-list-panel .frz-lp-copy.copied { color:#4ac26b; }
   .frz-beta .frz-watch .frz-ic { width:13px; height:13px; }
   .frz-beta .frz-watch:hover { border-color:var(--frz-accent); color:var(--frz-accent); }
@@ -23922,7 +23962,7 @@ if ('serviceWorker' in navigator) {
             '<div class="frz-badges" id="frzBadges"></div>'+
             '<div id="frzSearchSlot" class="frz-search">'+
               '<svg class="frz-search-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/></svg>'+
-              '<input id="frzSearch" type="text" placeholder="Search items…" autocomplete="off" aria-label="Search items">'+
+              '<input id="frzSearch" type="text" placeholder="Search items…" autocomplete="off" aria-label="Search items" title="Tip: press Ctrl+K (Cmd+K on Mac) to jump to any item or view">'+
               '<div id="frzSearchResults" class="frz-search-results" hidden></div>'+
             '</div>'+
             '<div class="frz-bell-wrap">'+
@@ -29572,6 +29612,107 @@ if ('serviceWorker' in navigator) {
     }).catch(function(){ box.hidden=true; });
   }
 
+  // ════════ QUICK-JUMP-1: Ctrl+K / Cmd+K quick jump ════════
+  // One box to jump to an item (key, bare number, Jira key or words of the name - in memory over projects[],
+  // so it is instant), go to a view, or create an item. Empty box = your recently viewed items + the views.
+  // Enter opens, Ctrl/Cmd+Enter opens an item in a new tab, arrows move, Esc closes.
+  var _qj=null;
+  function _qjCommands(){
+    var cmds=[];
+    if(_val('isAdmin',false)||_val('isEditor',false)) cmds.push({label:'New item', hint:'Create', icon:IC.plus, run:function(){ _call('openProjectModal', null); }});
+    cmds.push({label:'My Home', hint:'Go to', icon:IC.home||'', run:function(){ navigate('/my-home', false); }});
+    _frzOrderedViews().forEach(function(v){ cmds.push({label:VIEW_LABEL[v]||v, hint:'Go to', icon:_frzViewIcon(v), run:function(){ _frzNavView(v); }}); });
+    return cmds;
+  }
+  function _qjItems(q){
+    var ql=q.toLowerCase(), words=ql.split(/\s+/).filter(Boolean), num=/^\d+$/.test(ql), out=[], jids={};
+    var jk=_frzJiraKeyFromQuery(q), ps=_val('projects',[])||[];
+    if(jk) ps.forEach(function(p){ if((p.jiraTickets||[]).some(function(k){ return String(k).toUpperCase()===jk; })) jids[p.id]=1; });
+    ps.forEach(function(p){
+      var key=(p.itemKey||'').toLowerCase(), name=(p.name||'').toLowerCase(), sc=null;
+      if(jids[p.id] || (key && key===ql)) sc=0;
+      else if(num && key && key.slice(-(ql.length+1))==='-'+ql) sc=0.5;   // "964" finds FRZ-964
+      else if(key && key.indexOf(ql)===0) sc=1;
+      else if(name.indexOf(ql)===0) sc=2;
+      else if(name.indexOf(ql)>=0) sc=3;
+      else if(words.length>1 && words.every(function(w){ return name.indexOf(w)>=0 || key.indexOf(w)>=0; })) sc=4;
+      if(sc==null) return;
+      if(p.hidden) sc+=10;
+      if(_call('isTerminalStatus', p.status)) sc+=0.25;
+      out.push({p:p, sc:sc});
+    });
+    out.sort(function(a,b){ return (a.sc-b.sc) || ((b.p.id||0)-(a.p.id||0)); });
+    return out.slice(0,8).map(function(o){ return o.p; });
+  }
+  function _qjItemRow(p, i){
+    return '<div class="frz-qj-row" role="option" data-qj="'+i+'">'
+      + '<span class="frz-qj-ic">'+(_call('typeIconHTML',p.type,{size:15})||'')+'</span>'
+      + (p.itemKey?'<span class="frz-qj-key">'+esc(p.itemKey)+'</span>':'')
+      + '<span class="frz-qj-name">'+esc(p.name||'Untitled')+'</span>'
+      + '<span class="frz-qj-meta">'+esc(p.status||'')+'</span></div>';
+  }
+  function _qjCmdRow(c, i){
+    return '<div class="frz-qj-row" role="option" data-qj="'+i+'">'
+      + '<span class="frz-qj-ic">'+(c.icon||'')+'</span>'
+      + '<span class="frz-qj-name">'+esc(c.label)+'</span>'
+      + '<span class="frz-qj-meta">'+esc(c.hint)+'</span></div>';
+  }
+  function _qjRender(){
+    if(!_qj) return;
+    var q=_qj.input.value.trim(), ql=q.toLowerCase(), html='', rows=[];
+    var items=q ? _qjItems(q) : (_qj.recent||[]).slice(0,6);
+    var cmds=_qjCommands(); if(q) cmds=cmds.filter(function(c){ return c.label.toLowerCase().indexOf(ql)>=0; });
+    if(items.length){
+      html+='<div class="frz-qj-hd">'+(q?'Items':'Recently viewed')+'</div>';
+      items.forEach(function(p){ html+=_qjItemRow(p, rows.length); rows.push({item:p}); });
+    }
+    if(cmds.length){
+      html+='<div class="frz-qj-hd">'+(q?'Views and actions':'Go to')+'</div>';
+      cmds.forEach(function(c){ html+=_qjCmdRow(c, rows.length); rows.push({cmd:c}); });
+    }
+    if(!rows.length) html='<div class="frz-qj-empty">No items or views match "'+esc(q)+'"</div>';
+    _qj.list.innerHTML=html; _qj.rows=rows; _qj.sel=rows.length?0:-1; _qjMark();
+  }
+  function _qjMark(){
+    var els=_qj.list.querySelectorAll('.frz-qj-row');
+    for(var i=0;i<els.length;i++){ var on=(i===_qj.sel); els[i].classList.toggle('is-sel', on); els[i].setAttribute('aria-selected', on?'true':'false'); if(on) els[i].scrollIntoView({block:'nearest'}); }
+  }
+  function _qjClose(){ if(!_qj) return; var b=_qj.bg, f=_qj.lastFocus; _qj=null; b.remove(); try{ if(f && f.focus) f.focus(); }catch(e){} }
+  function _qjRun(i, newTab){
+    var r=_qj && _qj.rows[i]; if(!r) return;
+    _qjClose();
+    if(r.item){ if(newTab) window.open(_call('_frzItemPageUrl', r.item.id), '_blank', 'noopener'); else openItem(r.item.id); }
+    else if(r.cmd) r.cmd.run();
+  }
+  function openQuickJump(){
+    if(_qj){ _qj.input.focus(); _qj.input.select(); return; }
+    var bg=document.createElement('div'); bg.className='frz-qj-bg';
+    bg.innerHTML='<div class="frz-qj" role="dialog" aria-modal="true" aria-label="Quick jump">'
+      + '<div class="frz-qj-inrow">'+'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>'+'<input class="frz-qj-in" type="text" placeholder="Jump to an item, key, Jira key or view..." aria-label="Jump to an item or view" autocomplete="off" spellcheck="false"><kbd class="frz-qj-kbd">Esc</kbd></div>'
+      + '<div class="frz-qj-list" role="listbox"></div>'
+      + '<div class="frz-qj-foot"><span><kbd>&uarr;</kbd><kbd>&darr;</kbd> move</span><span><kbd>Enter</kbd> open</span><span><kbd>Ctrl</kbd>+<kbd>Enter</kbd> new tab</span></div></div>';
+    (root||document.body).appendChild(bg);
+    _qj={bg:bg, input:bg.querySelector('.frz-qj-in'), list:bg.querySelector('.frz-qj-list'), rows:[], sel:-1, recent:null, lastFocus:document.activeElement};
+    var mine=_qj;
+    _qj.input.addEventListener('input', _qjRender);
+    _qj.input.addEventListener('keydown', function(e){
+      if(e.key==='ArrowDown'){ e.preventDefault(); if(_qj.rows.length){ _qj.sel=(_qj.sel+1)%_qj.rows.length; _qjMark(); } }
+      else if(e.key==='ArrowUp'){ e.preventDefault(); if(_qj.rows.length){ _qj.sel=(_qj.sel-1+_qj.rows.length)%_qj.rows.length; _qjMark(); } }
+      else if(e.key==='Enter'){ e.preventDefault(); _qjRun(_qj.sel, e.ctrlKey||e.metaKey); }
+      else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); _qjClose(); }
+    });
+    _qj.list.addEventListener('mousemove', function(e){ var r=e.target.closest('.frz-qj-row'); if(r && +r.dataset.qj!==_qj.sel){ _qj.sel=+r.dataset.qj; _qjMark(); } });
+    _qj.list.addEventListener('click', function(e){ var r=e.target.closest('.frz-qj-row'); if(r) _qjRun(+r.dataset.qj, e.ctrlKey||e.metaKey); });
+    bg.addEventListener('mousedown', function(e){ if(e.target===bg) _qjClose(); });
+    _qjRender(); _qj.input.focus();
+    API.get('/api/my/recent').then(function(d){
+      if(_qj!==mine) return;
+      mine.recent=((d&&d.items)||[]).map(function(r){ return _itemById(r.item_id); }).filter(Boolean);
+      if(!mine.input.value.trim()) _qjRender();
+    }).catch(function(){});
+  }
+  window.openQuickJump = openQuickJump;
+
   // ════════ wiring ════════
   function wire(){
     // delegated rail nav / projects / saved
@@ -29664,6 +29805,12 @@ if ('serviceWorker' in navigator) {
       if(!document.body.classList.contains('frz-beta-active') || state.onItem) return;
       e.preventDefault(); toggleCollapse();
     });
+    // QUICK-JUMP-1: Ctrl+K / Cmd+K opens the quick jump from anywhere in the shell, including while typing.
+    document.addEventListener('keydown', function(e){
+      if(!(e.ctrlKey||e.metaKey) || e.altKey || e.shiftKey || (e.key||'').toLowerCase()!=='k') return;
+      if(!document.body.classList.contains('frz-beta-active')) return;
+      e.preventDefault(); e.stopPropagation(); openQuickJump();
+    }, true);
     // SHELL-IA-1 Stage 3.2: re-flow the tab strip ONLY when the breakpoint BAND changes (not on every
     // resize pixel) - the overflow set (visible vs More) is band-driven per _frzTabLayout.
     var _frzTabBand=null, _frzWasPhone=_frzIsPhone();
@@ -30281,7 +30428,7 @@ if ('serviceWorker' in navigator) {
                   + (_clip?'<span style="flex:0 0 auto;margin-left:4px;display:inline-flex;align-items:center">'+_clip+'</span>':'')
                   + (_ind?'<span style="flex:0 0 auto;margin-left:4px;display:inline-flex;align-items:center">'+_ind+'</span>':'')
                   + '</div>'; })()
-            + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+(function(){ var s=_call('slaBadgeHtml',p,true); return s?' '+s:''; })()
+            + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+(function(){ var s=_call('slaBadgeHtml',p,true); return s?' '+s:''; })()+_frzAgeChip(p)
               // ADOPT-2: relative due date, ONLY when one exists (no dash/placeholder on a dense card, so
               // cards without a due date get no new node and are height-identical). Overdue = past AND
               // positively non-terminal (Released/duplicated never reads overdue); same red token as the List.
@@ -30290,6 +30437,19 @@ if ('serviceWorker' in navigator) {
         + '</div>'
       + '</div>'
       + '</div>';
+  }
+  // KANBAN-AGE-1: "Nd" days-in-status chip on board cards. Skipped for terminal statuses, the default
+  // (backlog) status, and when the start of the status is unknown. Only ACTIVE statuses age into colour:
+  // amber at 7 days, red at 14 - stuck work shows on the card instead of as another alert.
+  function _frzAgeChip(p){
+    var n=_call('daysInStatus', p); if(n==null) return '';
+    if(_call('isTerminalStatus', p.status) || p.status===_call('getDefaultStatus')) return '';
+    var act=!!_call('isActiveStatus', p.status);
+    var cls='frz-bcard-age'+(act && n>=14 ? ' is-red' : act && n>=7 ? ' is-amber' : '');
+    var e=(_val('statusSince',{})||{})[p.id], since='';
+    if(e && e[0]===p.status){ var d=new Date(e[1]); if(!isNaN(d)) since=' (since '+d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+')'; }
+    var ttl=(p.status||'This status')+' for '+(n<1?'less than a day':n+(n===1?' day':' days'))+since;
+    return ' <span class="'+cls+'" title="'+escA(ttl)+'" aria-label="'+escA(ttl)+'"><svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.8V8l2.2 1.4"/></svg>'+(n<1?'&lt;1d':n+'d')+'</span>';
   }
   function renderBetaKanban(){
     var inner=document.getElementById('kanbanInner'); if(!inner) return;
@@ -30334,7 +30494,10 @@ if ('serviceWorker' in navigator) {
       return '<div class="kanban-col" style="width:'+colW+'px;min-width:220px;flex:1;background:var(--frz-kanban-lane);border-radius:10px;padding:10px">'   // COUNTER-ALIGN-1 Addendum A: floor raised 160->220 (flex:1 retained); 7 readable columns beat 11 clipped ones, board h-scrolls for the rest
         + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;padding-bottom:8px;border-bottom:2px solid var(--frz-border-strong)">'
         + '<span title="'+escA(col.name)+'" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:900;color:var(--frz-text)">'+esc(col.name)+'</span>'   // COUNTER-ALIGN-1: name flexes/truncates
-        + '<span style="margin-left:auto;flex-shrink:0;box-sizing:border-box;min-width:24px;text-align:center;font-size:10px;color:var(--frz-text-muted);background:rgba(128,128,128,0.15);padding:1px 6px;border-radius:8px">'+s.items.length+'</span>'   // COUNTER-ALIGN-1: count right-pinned + 2-digit box
+        + (function(){ var lim=+col.wip||0, n=s.items.length, over=lim && n>lim, at=lim && n===lim;   // KANBAN-AGE-1: "n / limit" when the column has a limit; at = amber, over = red
+            var cls='frz-colcount'+(over?' is-over':at?' is-at':'');
+            var ttl=lim ? (n+' of a '+lim+' item limit'+(over?' - over by '+(n-lim):'')) : (n+' item'+(n===1?'':'s'));
+            return '<span class="'+cls+'" title="'+escA(ttl)+'" style="margin-left:auto;flex-shrink:0;box-sizing:border-box;min-width:24px;text-align:center;font-size:10px;padding:1px 6px;border-radius:8px">'+n+(lim?' / '+lim:'')+'</span>'; })()   // COUNTER-ALIGN-1: count right-pinned + 2-digit box
         + '</div>'
         + '<div class="frz-board-zone" data-drop="'+escA(col.dropStatus)+'">'+cards+'</div>'
         + '</div>';
@@ -30504,7 +30667,9 @@ if ('serviceWorker' in navigator) {
           + '</div>'
           + '<div class="frz-stat-grid">'+stHtml+'</div>'
           + '<div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="frz-lbl" style="margin:0">Drop status</span>'
-          +   '<select class="frz-fld" data-coldrop="'+idx+'" style="width:auto;min-width:150px" '+((col.statuses||[]).length?'':'disabled')+'>'+ph+(dropOpts||'<option value="">-</option>')+'</select></div>'
+          +   '<select class="frz-fld" data-coldrop="'+idx+'" style="width:auto;min-width:150px" '+((col.statuses||[]).length?'':'disabled')+'>'+ph+(dropOpts||'<option value="">-</option>')+'</select>'
+          +   '<span class="frz-lbl" style="margin:0 0 0 12px" title="Optional: the column count turns amber at the limit and red above it">Limit</span>'   // KANBAN-AGE-1
+          +   '<input class="frz-fld" type="number" min="1" max="999" step="1" data-colwip="'+idx+'" value="'+(col.wip?escA(String(col.wip)):'')+'" placeholder="None" style="width:72px"></div>'
           + '</div>';
       }).join('');
       host.querySelectorAll('[data-colname]').forEach(function(inp){ inp.addEventListener('input', function(){ draft.columns[+inp.dataset.colname].name=inp.value; }); });
@@ -30520,6 +30685,7 @@ if ('serviceWorker' in navigator) {
         renderCols(); updateUnassigned();
       }); });
       host.querySelectorAll('[data-coldrop]').forEach(function(sel){ sel.addEventListener('change', function(){ var col=draft.columns[+sel.dataset.coldrop]; col.dropStatus=sel.value; col._dropExplicit=!!sel.value; }); });
+      host.querySelectorAll('[data-colwip]').forEach(function(inp){ inp.addEventListener('input', function(){ var col=draft.columns[+inp.dataset.colwip], v=(inp.value||'').trim(); if(v==='') delete col.wip; else col.wip=Number(v); }); });   // KANBAN-AGE-1
       host.querySelectorAll('[data-colup]').forEach(function(b){ b.addEventListener('click', function(){ var i=+b.dataset.colup; if(i>0){ var t=draft.columns[i-1]; draft.columns[i-1]=draft.columns[i]; draft.columns[i]=t; renderCols(); } }); });
       host.querySelectorAll('[data-coldown]').forEach(function(b){ b.addEventListener('click', function(){ var i=+b.dataset.coldown; if(i<draft.columns.length-1){ var t=draft.columns[i+1]; draft.columns[i+1]=draft.columns[i]; draft.columns[i]=t; renderCols(); } }); });
       host.querySelectorAll('[data-coldel]').forEach(function(b){ b.addEventListener('click', function(){ var i=+b.dataset.coldel; if(draft.columns.length>1){ draft.columns.splice(i,1); renderCols(); updateUnassigned(); } }); });
@@ -30538,6 +30704,7 @@ if ('serviceWorker' in navigator) {
         if(!(c.statuses||[]).length){ err.textContent='Every column needs at least one status.'; return; }
         if((c.statuses||[]).length===1) c.dropStatus=c.statuses[0];   // single status → implicit
         if((c.statuses||[]).indexOf(c.dropStatus)<0){ err.textContent='Choose a drop status for column "'+(c.name||'')+'".'; return; }
+        if(c.wip!=null && !(Number.isInteger(c.wip) && c.wip>=1 && c.wip<=999)){ err.textContent='The limit for column "'+(c.name||'')+'" must be a whole number from 1 to 999, or blank.'; return; }   // KANBAN-AGE-1
       }
       draft.name=draft.name.trim();
       draft.columns.forEach(function(c){ delete c._dropExplicit; });   // strip transient flag
