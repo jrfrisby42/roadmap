@@ -17,7 +17,8 @@ def test_all_four_surfaces_use_it():
     assert "${_listCell(it.itemKey)}${copyLinkBtnHtml(it.id)}" in HTML                # List row (Key cell)
     assert "_call('copyLinkBtnHtml', p.id, 'frz-lp-copy')" in HTML                    # List side panel
     assert "_keyLink+copyLinkBtnHtml(p.id)" in HTML                                    # item modal header
-    assert 'id="frzCopyLinkBtn"' in HTML and "_call('copyItemLink', id, clb)" in HTML  # item page
+    assert "selfCrumb+_call('copyLinkBtnHtml', p.id, 'frz-crumb-copy')" in HTML      # item page (icon after the key)
+    assert 'id="frzCopyLinkBtn"' not in HTML                                           # the old top-bar pill is gone
     assert "function ipCopyLink(){ copyItemLink(_itemPageId); }" in HTML               # classic menu entry
 
 
