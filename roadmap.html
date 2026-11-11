@@ -7624,6 +7624,7 @@ async function createJiraIssueFromModalForItem(p){
       new_value:result.key, status:'Auto-Cleared'
     }).catch(()=>{});
     showToast(`Jira issue ${result.key} created and linked`);
+    return result.key;   // CREATED-TOAST-1: the create flow folds this into its "Item created" toast
   } catch(e){
     // JIRA-ISSUETYPE-1: show the server's detail, not the raw {"detail":...} JSON body.
     let msg = e.message;
@@ -8584,6 +8585,7 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
         showToast('Saved, but these links were not added (need http:// or https://): ' + created.linksDropped.join(', '), 'error');
       }
       projects.push(created);
+      _createdToast = { id: created.id, jira: '' };   // CREATED-TOAST-1
       // Issue 2: offer to create a Jira issue for new items with no ticket
       if(jiraConfigured && !jiraTickets.length){
         const createJira = confirm(`Item "${created.name}" saved!\n\nWould you like to create and link a Jira issue for this item?`);
@@ -8592,7 +8594,8 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
           // Close modal first so Jira prompt works cleanly
           document.getElementById('modalBg').classList.remove('open');
           // Re-open just long enough to trigger Jira create, then close
-          await createJiraIssueFromModalForItem(created);
+          const _jk = await createJiraIssueFromModalForItem(created);
+          if(_jk) _createdToast.jira = _jk;
         }
       }
     }
@@ -8616,7 +8619,8 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
     const savedId = editingId || projects[projects.length - 1]?.id;
     const savedProject = projects.find(x => x.id === savedId);
     await _afterItemSave(savedProject, _originalItemValues);
-  } catch(e){ alert('Save failed: ' + e.message); return; }
+    if(_createdToast){ const _ct = _createdToast; _createdToast = null; showItemCreatedToast(projects.find(x => x.id === _ct.id), _ct.jira); }   // CREATED-TOAST-1: last, so nothing in the save tail overwrites it
+  } catch(e){ _createdToast = null; alert('Save failed: ' + e.message); return; }
 
   populateDevSelects();
   if(data.hidden && showHidden){
@@ -17911,6 +17915,7 @@ function showToast(msg, type='info', duration=3500, action=null){
   }
   toast.style.background = type === 'error' ? '#e8394a' : '#1a1a2e';
   toast.style.color = '#fff';
+  toast.onmouseenter = toast.onmouseleave = null;   // CREATED-TOAST-1 sets hover-hold handlers; a later toast starts clean
   if(action && action.label && typeof action.fn === 'function'){
     toast.textContent = msg + '  ';
     toast.style.pointerEvents = 'auto';
@@ -17928,6 +17933,37 @@ function showToast(msg, type='info', duration=3500, action=null){
   toast.style.opacity = '1';
   clearTimeout(toast._timer);
   toast._timer = setTimeout(()=>{ toast.style.opacity='0'; }, duration);
+}
+
+// CREATED-TOAST-1: "Item FRZ-123 created" after a new item saves (after the Jira prompt), with the key as a
+// real link to the item page: a plain click opens it in-app, Ctrl/Cmd/middle click opens a new tab. Reuses
+// the one #appToast element (showToast positions + styles it); stays 8s, and hovering holds it open.
+let _createdToast = null;
+function showItemCreatedToast(p, jiraKey){
+  if(!p || !p.id) return;
+  showToast('', 'info', 8000);
+  const toast = document.getElementById('appToast'); if(!toast) return;
+  const label = p.itemKey || ('#' + p.id);
+  toast.innerHTML = 'Item <a class="created-toast-link" href="' + escA(_frzItemPageUrl(p.id)) + '" title="Open ' + escA(label) + '">' + esc(label) + '</a> created'
+    + (jiraKey ? ' <span style="font-weight:400;opacity:.85">&middot; Jira ' + esc(jiraKey) + ' linked</span>' : '');
+  toast.style.pointerEvents = 'auto';
+  const a = toast.querySelector('a');
+  a.style.cssText = 'color:#7fc4ff;font-weight:800;text-decoration:underline;cursor:pointer';
+  const _hide = () => { toast.style.opacity = '0'; clearTimeout(toast._timer); toast.style.pointerEvents = 'none'; };
+  const _plain = (e) => e.button === 0 && !(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey);
+  // In the Flow shell the document-level link interceptor claims a plain click on an /item/ link (capture
+  // phase, before this anchor's own listener) and opens it in-app, so the toast is dismissed on PRESS.
+  a.addEventListener('pointerdown', (e) => { if(_plain(e)) setTimeout(_hide, 120); });
+  a.addEventListener('click', (e) => {   // reached only where nothing intercepted it (classic): open in-app here
+    if(!_plain(e)) return;               // modified/middle click: let the browser open a new tab
+    e.preventDefault(); e.stopPropagation(); _hide();
+    const mb = document.getElementById('modalBg'); if(mb) mb.classList.remove('open');
+    openItemPage(p.id);
+  });
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => { toast.style.opacity = '0'; toast.style.pointerEvents = 'none'; }, 8000);   // faded = not clickable
+  toast.onmouseenter = () => { clearTimeout(toast._timer); toast.style.opacity = '1'; };
+  toast.onmouseleave = () => { clearTimeout(toast._timer); toast._timer = setTimeout(() => { toast.style.opacity = '0'; toast.style.pointerEvents = 'none'; }, 2500); };
 }
 
 // ── FEATURE FLAGS ───────────────────────────────────────────────────────────
