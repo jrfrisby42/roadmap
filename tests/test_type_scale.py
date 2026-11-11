@@ -31,7 +31,7 @@ TOKENS = {
 # exit code on that deploy); it is corrected here. CAL-DATES-2 adds zero new line-height:1 sites.
 # GANTT-WORK-1 adds one: the Other work row's per-week count label (.ow-n), positioned off its column's top.
 LH1_COUNT = 50
-LH0_COUNT = 5
+LH0_COUNT = 6   # COPY-LINK-1: +1 (.copy-link-btn icon button, line-height:0 is its icon geometry)
 
 
 def _html():
