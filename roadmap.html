@@ -2894,7 +2894,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.62.37';
+const APP_VERSION = '6.62.38';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -22756,9 +22756,8 @@ if ('serviceWorker' in navigator) {
      into the standalone new-tab document (see openManual). Nothing here in the shell. */
   /* Stage 3b - watch toggle + @mention chips */
   .frz-beta .frz-watch { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--frz-border-strong); background:var(--frz-bg-surface); color:var(--frz-text-secondary); font-weight:700; font-size:11px; border-radius:999px; padding:3px 11px; cursor:pointer; }
-  .frz-beta .frz-watch .cl-ic { width:13px; height:13px; }   /* COPY-LINK-1: the "Copied" check matches the link icon size */
-  .frz-beta .frz-watch.copied, .frz-beta .frz-watch.copied:hover { color:#1a7f37; border-color:#1a7f37; }
-  body.dark-mode .frz-beta .frz-watch.copied, body.dark-mode .frz-list-panel .frz-lp-copy.copied { color:#4ac26b; border-color:#4ac26b; }
+  .frz-beta .frz-crumb-copy { margin-left:-2px; }   /* COPY-LINK-1: item page link icon after the key */
+  body.dark-mode .frz-list-panel .frz-lp-copy.copied { color:#4ac26b; }
   .frz-beta .frz-watch .frz-ic { width:13px; height:13px; }
   .frz-beta .frz-watch:hover { border-color:var(--frz-accent); color:var(--frz-accent); }
   /* ITEM-VIEWNAV-1 2.1: the Views pill reuses .frz-watch (same height/radius/border as Watch + Flag); it adds
@@ -28414,7 +28413,7 @@ if ('serviceWorker' in navigator) {
     var selfCrumb = '<span class="frz-crumb-key" id="frzCrumbKey"'+(p.itemKey?' title="Copy key"':'')+' style="display:inline-flex;align-items:center;gap:4px">'+(_call('typeIconHTML',p.type,{size:14})||'')+'<span>'+(p.itemKey?esc(p.itemKey):esc(p.name||''))+'</span></span>';   // type icon (left) + key, or name fallback if keyless
     document.getElementById('frzLeft').innerHTML =
       '<button class="frz-back" id="frzBack">'+IC.back+' Back</button>'+
-      '<span class="frz-crumbs">'+projDot+spaceCrumb+' › '+parentCrumb+selfCrumb+'</span>';
+      '<span class="frz-crumbs">'+projDot+spaceCrumb+' › '+parentCrumb+selfCrumb+_call('copyLinkBtnHtml', p.id, 'frz-crumb-copy')+'</span>';   // COPY-LINK-1: link icon after the key, as on the List/panel/modal
     // Stage 1: status + priority DISPLAY chips relocated into the page header
     // (_frzItemHeader, via the render→_frzItemLayout chain); rail keeps the editable
     // status. The top bar keeps only the action buttons.
@@ -28426,7 +28425,6 @@ if ('serviceWorker' in navigator) {
     if(_frzIA()){
       badges += '<button class="frz-watch frz-views-pill" id="frzViewsPill" aria-haspopup="menu" aria-expanded="false" title="Go to a view (keeps your current filters)"><span>Views</span>'+IC.caret+'</button>';
     }
-    badges += '<button class="frz-watch" id="frzCopyLinkBtn" title="Copy link to this item">'+IC.link+'<span>Copy link</span></button>';   // COPY-LINK-1
     badges += '<button class="frz-watch" id="frzWatchBtn" title="Watch this item">'+IC.bell+'<span>Watch</span></button>';   // Stage 3b
     badges += '<button class="frz-watch" id="frzFlagBtn" title="Flag an issue"><svg class="frz-ic" viewBox="0 0 16 16" style="width:13px;height:13px"><path d="M4 14V3M4 3.5C5.5 2.5 7 2.5 8.5 3.5S11.5 4.5 13 3.5V9c-1.5 1-3 1-4.5 0S5.5 8 4 9"/></svg><span>Flag</span></button>';   // item 4: reuse production flag dialog
     document.getElementById('frzBadges').innerHTML = badges;
@@ -28449,7 +28447,6 @@ if ('serviceWorker' in navigator) {
       _scs.addEventListener('keydown', function(ev){ if(ev.key==='Enter' || ev.key===' '){ ev.preventDefault(); _goSpace(); } });
     }
     var fb=document.getElementById('frzFlagBtn'); if(fb) fb.addEventListener('click', function(){ _call('openFlagIssue', id); });
-    var clb=document.getElementById('frzCopyLinkBtn'); if(clb) clb.addEventListener('click', function(){ _call('copyItemLink', id, clb); });   // COPY-LINK-1
     document.getElementById('frzBack').addEventListener('click', goBack);
     var ck=document.getElementById('frzCrumbKey'); if(ck && p.itemKey) ck.addEventListener('click', function(){ try{ navigator.clipboard.writeText(p.itemKey); _call('showToast','Copied '+p.itemKey); }catch(e){} });
     var pc=document.getElementById('frzParentCrumb'); if(pc && parent) pc.addEventListener('click', function(){ openItem(parent.id); });
