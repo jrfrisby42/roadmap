@@ -868,6 +868,74 @@ def _mark_migration_done(c, key: str):
     c.execute("INSERT OR IGNORE INTO schema_meta(key, applied_ts) VALUES(?, ?)",
               (key, datetime.now(timezone.utc).isoformat()))
 
+# ── KANBAN-AGE-1: when each item entered its current status ───────────────────
+# A side table kept by triggers on `projects`, so EVERY writer records it - update_project, the Jira
+# sync, planning commits, Kanban drops, intake, direct SQL - without touching the item blob (so there
+# is nothing to add to SERVER_OWNED_FIELDS / RECURRENCE_SKIP_KEYS, and nothing a client PUT can forge).
+# The upsert only moves `since` when the status actually differs, so a save that keeps the status keeps
+# the original timestamp. json_valid guards mean a malformed blob can never fail the item write.
+_STATUS_SINCE_NOW = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
+_STATUS_SINCE_UPSERT = (
+    "INSERT INTO status_since(pid,status,since,source) "
+    "VALUES(NEW.id, json_extract(NEW.data,'$.status'), " + _STATUS_SINCE_NOW + ", 'live') "
+    "ON CONFLICT(pid) DO UPDATE SET status=excluded.status, since=excluded.since, source='live' "
+    "WHERE status_since.status IS NOT excluded.status;")
+
+def _status_since_audit_ts(ts: str) -> str:
+    """audit_log ts ('2026-11-10 16:51:01 UTC') -> '2026-11-10T16:51:01Z'; '' if unparseable."""
+    try:
+        return datetime.strptime((ts or "").replace(" UTC", ""), "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return ""
+
+def _init_status_since(c, team: str):
+    c.execute("CREATE TABLE IF NOT EXISTS status_since ("
+              " pid INTEGER PRIMARY KEY, status TEXT, since TEXT NOT NULL, source TEXT)")
+    c.execute("CREATE TRIGGER IF NOT EXISTS trg_status_since_ins AFTER INSERT ON projects "
+              "WHEN json_valid(NEW.data) BEGIN " + _STATUS_SINCE_UPSERT + " END")
+    c.execute("CREATE TRIGGER IF NOT EXISTS trg_status_since_upd AFTER UPDATE OF data ON projects "
+              "WHEN json_valid(NEW.data) AND (NOT json_valid(OLD.data) OR "
+              "json_extract(OLD.data,'$.status') IS NOT json_extract(NEW.data,'$.status')) "
+              "BEGIN " + _STATUS_SINCE_UPSERT + " END")
+    c.execute("CREATE TRIGGER IF NOT EXISTS trg_status_since_del AFTER DELETE ON projects "
+              "BEGIN DELETE FROM status_since WHERE pid=OLD.id; END")
+    if c.execute("SELECT 1 FROM schema_meta WHERE key=?", ("kanban_age_backfill",)).fetchone():
+        return
+    # One-time backfill for items that existed before the triggers (writes ONLY the new side table).
+    # Latest audited status change whose new value is the item's current status -> that moment. An item
+    # with NO status change in the audit log has held its status since it was created -> createdAt.
+    # Anything else (the audit disagrees with the item) stays unknown: no badge until its next change.
+    last = {}
+    for pid, ts, ch in c.execute("SELECT project_id, ts, changes FROM audit_log "
+                                 "WHERE project_id IS NOT NULL AND changes LIKE '%\"status\"%' ORDER BY id"):
+        try:
+            v = (json.loads(ch) or {}).get("status")
+        except Exception:
+            continue
+        if isinstance(v, (list, tuple)) and len(v) == 2:
+            last[pid] = (ts, v[1])
+        elif isinstance(v, dict) and ("to" in v or "new" in v):
+            last[pid] = (ts, v.get("to", v.get("new")))
+    rows = []
+    for pid, data in c.execute("SELECT id, data FROM projects").fetchall():
+        try:
+            p = json.loads(data)
+        except Exception:
+            continue
+        st = p.get("status")
+        if not st:
+            continue
+        if pid in last:
+            if last[pid][1] == st:
+                since = _status_since_audit_ts(last[pid][0])
+                if since:
+                    rows.append((pid, st, since, "audit"))
+        elif p.get("createdAt"):
+            rows.append((pid, st, str(p["createdAt"]), "created"))
+    c.executemany("INSERT OR IGNORE INTO status_since(pid,status,since,source) VALUES(?,?,?,?)", rows)  # DML: opens the txn
+    _mark_migration_done(c, "kanban_age_backfill")                                                        # DML: adjacent, same txn
+    log.info(f"[KANBAN-AGE-1] status_since backfilled {len(rows)} items for team '{team}'")
+
 def init_team_db(team: str):
     if team in _initialized_teams:
         return
@@ -1198,6 +1266,7 @@ def init_team_db(team: str):
             c.execute("ALTER TABLE notifications ADD COLUMN todo_id INTEGER")
         except Exception:
             pass  # column already exists
+        _init_status_since(c, team)   # KANBAN-AGE-1
         # ── Phase 1 (JIRA-REPLACEMENT.md): indexed columns mirrored from item JSON ──
         for _col, _defn in [
             ("item_key", "TEXT"), ("type", "TEXT"), ("status", "TEXT"),
@@ -3998,7 +4067,12 @@ def get_all(auth: dict = Depends(require_auth)):
                    "fte": u.get("fte"),                             # per-user FTE for derived pod capacity (null -> 1.0 at read)
                    "topbarViews": bool(u.get("topbarViews", True)),  # SHELL-IA-1 Stage 3: top-bar-views IA. Default ON (opt-OUT); absent = ON, explicit false = the old left-rail (admin-settable)
                    "revokedAt": u.get("revokedAt")} for u in users_raw]
-    return {"projects": projects, "developers": cfg("developers"),
+    # KANBAN-AGE-1: {pid: [status, since]} for the items in THIS payload only (contributor-scoped above).
+    _ids = {p["id"] for p in projects}
+    with db(team) as c:
+        status_since = {r["pid"]: [r["status"], r["since"]]
+                        for r in c.execute("SELECT pid, status, since FROM status_since") if r["pid"] in _ids}
+    return {"projects": projects, "statusSince": status_since, "developers": cfg("developers"),
             "statuses": cfg("statuses"), "delayReasons": cfg("delayReasons"),
             "products": cfg("products"), "users": users_safe,
             "types": cfg("types"),
@@ -6438,6 +6512,12 @@ def put_boards(body = Body(...), auth: dict = Depends(require_role("admin", "edi
                 seen.add(s)
             if col.get("dropStatus") not in sts:
                 raise HTTPException(422, "a column's drop status must be one of its statuses")
+            # KANBAN-AGE-1: optional work-in-progress limit per column (blank/absent = no limit)
+            wip = col.get("wip")
+            if wip in (None, "", 0):
+                col.pop("wip", None)
+            elif isinstance(wip, bool) or not isinstance(wip, int) or not (1 <= wip <= 999):
+                raise HTTPException(422, f"column '{col.get('name') or ''}' limit must be a whole number from 1 to 999")
     with db(team) as c:
         c.execute("INSERT INTO config(key,value) VALUES('boards',?) "
                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
