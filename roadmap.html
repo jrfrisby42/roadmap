@@ -22578,7 +22578,25 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-sprint-closed-msg { font-size:13px; color:var(--frz-text-muted); max-width:440px; line-height:1.5; }
   /* Releases tab (Feature C) */
   .frz-beta .frz-rel-wrap { display:flex; flex-direction:column; gap:10px; }
-  .frz-beta .frz-rel-top { display:flex; justify-content:flex-end; }
+  .frz-beta .frz-rel-top { display:flex; justify-content:space-between; align-items:center; margin-top:8px; }
+  /* SHIPPED-1: Shipped section at the top of the Releases tab */
+  .frz-beta .frz-ship { border:1px solid var(--frz-border); border-radius:10px; background:var(--frz-bg-surface); padding:12px 14px; min-width:0; }   /* min-width:0: the 2-column list's min-content is its 420px column width, which would push the card past a phone screen */
+  .frz-beta .frz-ship-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .frz-beta .frz-ship-title { font-size:15px; font-weight:800; color:var(--frz-text); margin-right:4px; }
+  .frz-beta .frz-ship-sel { display:inline-block; width:auto; padding:5px 8px; font-size:12.5px; }
+  .frz-beta .frz-ship-sum { flex:1; font-size:12.5px; font-weight:600; color:var(--frz-text-secondary); white-space:nowrap; }
+  .frz-beta .frz-ship-groups { margin-top:10px; columns:2 420px; column-gap:28px; }
+  .frz-beta .frz-ship-grp { break-inside:avoid; padding:6px 0 8px; }
+  .frz-beta .frz-ship-gh { display:flex; align-items:center; gap:8px; padding-bottom:3px; margin-bottom:2px; border-bottom:1px solid var(--frz-border); }
+  .frz-beta .frz-ship-gname { font-size:13px; font-weight:800; color:var(--frz-text); text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .frz-beta a.frz-ship-gname:hover { color:var(--frz-accent); text-decoration:underline; }
+  .frz-beta .frz-ship-gname.is-other { color:var(--frz-text-secondary); }
+  .frz-beta .frz-ship-gn { font-size:11px; font-weight:700; color:var(--frz-text-muted); background:rgba(128,128,128,0.15); border-radius:999px; padding:0 7px; }
+  .frz-beta .frz-ship-row { text-decoration:none; color:inherit; justify-content:space-between; min-width:0; }
+  .frz-beta .frz-ship-row .frz-bl-name { min-width:0; }
+  .frz-beta .frz-ship-row .frz-bl-meta { margin-top:0; white-space:nowrap; flex-shrink:0; }
+  .frz-beta .frz-ship-empty { color:var(--frz-text-muted); font-size:13px; padding:10px 0 4px; }
+  .frz-beta .frz-ship-note { margin-top:8px; font-size:11px; color:var(--frz-text-muted); }
   .frz-beta .frz-rel-list { border:1px solid var(--frz-border); border-radius:10px; overflow:hidden; background:var(--frz-bg-surface); }
   .frz-beta .frz-rel-row { display:grid; grid-template-columns:2fr .9fr 1.8fr auto; gap:12px; align-items:center; padding:11px 14px; border-top:1px solid var(--frz-border); }
   .frz-beta .frz-rel-row:first-child { border-top:0; }
@@ -31864,6 +31882,106 @@ if ('serviceWorker' in navigator) {
     });
     refreshNotesDirty();   // initial pass: surfaces the "• unsaved" cue + beforeunload when a preserved draft was re-injected
   }
+  // ════════ SHIPPED-1: "Shipped" at the top of the Releases tab ════════
+  // Finished work for one calendar month, grouped by the project it belongs to, from GET /api/shipped. The
+  // server counts with the exec deck's own rules (_exec_ctx), so this page and the monthly slides agree.
+  // Nothing to create or link: each item's ship date is its Jira Done date, else the day Flow saw it finish.
+  var _ship = { month:'', team:'*', cache:{} };   // cache[YYYY-MM] = {d, ts}
+  var _SHIP_FRESH_MS = 60000;
+  function _shipMonthLabel(ym){ var a=String(ym||'').split('-'); var d=new Date(+a[0], (+a[1]||1)-1, 1); return isNaN(d) ? String(ym) : d.toLocaleDateString('en-US',{month:'long',year:'numeric'}); }
+  function _shipDay(iso){ var a=String(iso||'').split('-'); var d=new Date(+a[0], (+a[1]||1)-1, +a[2]||1); return isNaN(d) ? String(iso) : d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
+  function _shipVisible(d){ return (d.items||[]).filter(function(x){ return _ship.team==='*' || (x.team||'')===_ship.team; }); }
+  function _shipGroups(items){
+    var g={}, order=[];
+    items.forEach(function(x){ var k=x.project||''; if(!g[k]){ g[k]={ name:k, id:x.projectId, items:[] }; order.push(k); } g[k].items.push(x); });
+    return order.map(function(k){ return g[k]; }).sort(function(a,b){
+      if(!a.name !== !b.name) return a.name ? -1 : 1;              // "Other work" always last
+      return (b.items.length-a.items.length) || a.name.localeCompare(b.name);
+    });
+  }
+  function _shipUrl(id){ return _call('_frzItemPageUrl', id) || (location.origin+'/item/'+id); }
+  function _shipRow(x){
+    var key = x.key ? '<span class="frz-bcard-key" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle">'+(_call('typeIconHTML', x.type, {size:13})||'')+'<span>'+esc(x.key)+'</span></span> ' : '';
+    var meta=[x.team, _shipDay(x.shipped)].filter(Boolean).join(' · ');
+    return '<a class="frz-mini-row frz-ship-row" href="'+escA(_shipUrl(x.id))+'"><span class="frz-bl-name">'+key+esc(x.name)+'</span><span class="frz-bl-meta">'+esc(meta)+'</span></a>';
+  }
+  function _shipSummary(d, vis){
+    var pts=0, any=false; vis.forEach(function(x){ if(x.points!=null){ pts+=x.points; any=true; } });
+    return vis.length+(vis.length===1?' item':' items')+(any ? ' · '+(Math.round(pts*10)/10)+' '+(d.metric||'Story Points') : '');
+  }
+  function _shipCopy(d){
+    var vis=_shipVisible(d), groups=_shipGroups(vis);
+    var title='Shipped - '+_shipMonthLabel(d.month)+(_ship.team!=='*' ? ' - '+(_ship.team||'No team') : '')+': '+_shipSummary(d, vis);
+    var txt=[title, ''], html=['<p><b>'+esc(title)+'</b></p>'];
+    groups.forEach(function(g){
+      var gn=(g.name||'Other work')+' ('+g.items.length+')';
+      txt.push(gn); html.push('<p><b>'+esc(gn)+'</b></p><ul>');
+      g.items.forEach(function(x){
+        txt.push('- '+(x.key ? x.key+' - ' : '')+x.name);
+        var abs=_shipUrl(x.id);   // _frzItemPageUrl is already absolute (origin + ?team=)
+        html.push('<li>'+(x.key ? '<a href="'+escA(abs)+'">'+esc(x.key)+'</a> - ' : '')+esc(x.name)+'</li>');
+      });
+      txt.push(''); html.push('</ul>');
+    });
+    var plain=txt.join('\n').trim(), rich=html.join('');
+    function ok(){ _call('showToast', 'Shipped list copied'); }
+    function plainOnly(){
+      if(navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(plain).then(ok, function(){ _call('showToast','Copy failed','error'); });
+      _call('showToast','Copy failed','error');
+    }
+    try{
+      if(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem){
+        navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([rich], {type:'text/html'}), 'text/plain': new Blob([plain], {type:'text/plain'}) })]).then(ok, plainOnly);
+        return;
+      }
+    }catch(_e){}
+    plainOnly();
+  }
+  function _shipPaint(sec){
+    var hit=_ship.month && _ship.cache[_ship.month], d=hit && hit.d;
+    if(!d){ sec.innerHTML='<div class="frz-ship-head"><div class="frz-ship-title">Shipped</div></div><div class="frz-ship-empty">Loading...</div>'; return; }
+    var counts={}; (d.items||[]).forEach(function(x){ var t=x.team||''; counts[t]=(counts[t]||0)+1; });
+    var tOrder=(d.teamOrder||[]).filter(function(t){ return counts[t]; });
+    Object.keys(counts).sort().forEach(function(t){ if(t && tOrder.indexOf(t)<0) tOrder.push(t); });
+    if(counts['']) tOrder.push('');
+    if(_ship.team!=='*' && tOrder.indexOf(_ship.team)<0) tOrder.push(_ship.team);   // keep the pick listed (0) in a month it has nothing
+    var tOpts='<option value="*">All teams</option>'+tOrder.map(function(t){ return '<option value="'+escA(t)+'"'+(t===_ship.team?' selected':'')+'>'+esc(t||'No team')+' ('+(counts[t]||0)+')</option>'; }).join('');
+    var mOpts=(d.months||[]).map(function(m){ return '<option value="'+escA(m.ym)+'"'+(m.ym===d.month?' selected':'')+'>'+esc(_shipMonthLabel(m.ym))+'</option>'; }).join('');
+    var vis=_shipVisible(d);
+    var body = vis.length ? _shipGroups(vis).map(function(g){
+        var head = !g.name ? '<span class="frz-ship-gname is-other">Other work</span>'
+          : (g.id!=null ? '<a class="frz-ship-gname" href="'+escA(_shipUrl(g.id))+'">'+esc(g.name)+'</a>' : '<span class="frz-ship-gname">'+esc(g.name)+'</span>');
+        return '<div class="frz-ship-grp"><div class="frz-ship-gh">'+head+'<span class="frz-ship-gn">'+g.items.length+'</span></div>'+g.items.map(_shipRow).join('')+'</div>';
+      }).join('')
+      : '<div class="frz-ship-empty">Nothing shipped in '+esc(_shipMonthLabel(d.month))+(_ship.team!=='*' ? ' for '+esc(_ship.team||'No team') : '')+'.</div>';
+    sec.innerHTML='<div class="frz-ship-head">'+
+        '<div class="frz-ship-title">Shipped</div>'+
+        '<select class="frz-fld frz-ship-sel" data-shipmonth aria-label="Month">'+mOpts+'</select>'+
+        '<select class="frz-fld frz-ship-sel" data-shipteam aria-label="Team">'+tOpts+'</select>'+
+        '<span class="frz-ship-sum">'+esc(_shipSummary(d, vis))+'</span>'+
+        '<button class="frz-viewopt" data-shipcopy'+(vis.length?'':' disabled')+' title="Copy the list, grouped by project, to paste into an email or report">Copy</button>'+
+      '</div>'+
+      '<div class="frz-ship-groups">'+body+'</div>'+
+      '<div class="frz-ship-note">Finished work by the date it was done in Jira (or in Flow when there is no Jira date), counted the same way as the monthly exec slides.</div>';
+    sec.querySelector('[data-shipmonth]').addEventListener('change', function(){ _shipLoad(sec, this.value); });
+    sec.querySelector('[data-shipteam]').addEventListener('change', function(){ _ship.team=this.value; _shipPaint(sec); });
+    sec.querySelector('[data-shipcopy]').addEventListener('click', function(){ _shipCopy(d); });
+  }
+  function _shipLoad(sec, month){
+    if(month) _ship.month=month;
+    var hit=_ship.month && _ship.cache[_ship.month];
+    _shipPaint(sec);                                                    // cached (possibly stale) or "Loading..."
+    if(hit && Date.now()-hit.ts < _SHIP_FRESH_MS) return;
+    var want=_ship.month;
+    API.get('/api/shipped'+(want ? '?month='+encodeURIComponent(want) : '')).then(function(d){
+      if(!d || !d.month) return;
+      _ship.cache[d.month]={ d:d, ts:Date.now() };
+      if(!want || want===d.month) _ship.month=d.month;
+      if(sec.isConnected && _ship.month===d.month) _shipPaint(sec);
+    }).catch(function(){
+      if(sec.isConnected && !hit) sec.innerHTML='<div class="frz-ship-head"><div class="frz-ship-title">Shipped</div></div><div class="frz-ship-empty">Could not load shipped work.</div>';
+    });
+  }
   function renderReleasesTab(host){
     var admin=_val('isAdmin', false);
     var rels=_releases.slice().sort(function(a,b){ return (a.targetDate||'').localeCompare(b.targetDate||''); });
@@ -31883,8 +32001,10 @@ if ('serviceWorker' in navigator) {
         '<div class="frz-tbl-detail" id="frzRelDetail_'+escA(r.id)+'" hidden></div>'+
       '</div>';
     }).join('');
-    host.innerHTML='<div class="frz-rel-wrap"><div class="frz-rel-top"><button class="frz-newitem" id="frzNewRelease">+ New release</button></div>'+
-      (rels.length? '<div class="frz-rel-list">'+rows+'</div>' : '<div class="frz-plan-stub">No releases yet.</div>')+'</div>';
+    host.innerHTML='<div class="frz-rel-wrap"><section class="frz-ship" id="frzShip"></section>'+   // SHIPPED-1
+      '<div class="frz-rel-top"><span class="frz-ship-title">Releases</span><button class="frz-newitem" id="frzNewRelease">+ New release</button></div>'+
+      (rels.length? '<div class="frz-rel-list">'+rows+'</div>' : '<div class="frz-ship-empty">No planned releases. Create one only to plan a release in Flow; shipped work above fills in on its own.</div>')+'</div>';
+    _shipLoad(document.getElementById('frzShip'));
     document.getElementById('frzNewRelease').addEventListener('click', function(){ openReleaseModal(null); });
     host.querySelectorAll('[data-reledit]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); openReleaseModal(releaseById(b.getAttribute('data-reledit'))); }); });
     host.querySelectorAll('[data-relship]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); markReleased(b.getAttribute('data-relship')); }); });
