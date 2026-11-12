@@ -6647,6 +6647,19 @@ def _read_releases(team: str):
     except Exception:
         return []
 
+@app.get("/api/shipped")
+def get_shipped(month: str = "", auth: dict = Depends(require_role("admin", "editor", "viewer"))):
+    """SHIPPED-1: finished work for a calendar month (YYYY-MM; blank = this month). Not for Contributors
+    (their reads are scoped; this is an Org-wide roll-up)."""
+    if month and not re.fullmatch(r"\d{4}-\d{2}", month):
+        raise HTTPException(422, "month must look like 2026-11")
+    team = auth["team"]
+    init_team_db(team)
+    m = _shipped_model(team, month or None)
+    m["today"] = datetime.now(_MT_ZONE).date().isoformat()
+    return m
+
+
 @app.get("/api/releases")
 def get_releases(auth: dict = Depends(require_auth)):
     return {"releases": _read_releases(auth["team"])}
@@ -15165,10 +15178,8 @@ def _exec_parse_day(s):
         return None
 
 
-def _exec_model(team: str, today: date = None) -> dict:
-    """The Team Board model for one Org, per project (not per team slice): Now / Next / Finished cards with
-    teams, priority, status, start/due, x/y done over the actual work and a health colour for Now."""
-    today = today or datetime.now(_MT_ZONE).date()
+def _exec_load(team: str):
+    """Config + every non-archived item for one Org (the input to the exec deck and the Shipped page)."""
     with db(team) as c:
         cfg = {r["key"]: json.loads(r["value"]) for r in c.execute("SELECT key, value FROM config")}
         rows = c.execute("SELECT id, data, updated_ts FROM projects").fetchall()
@@ -15177,26 +15188,18 @@ def _exec_model(team: str, today: date = None) -> dict:
         p = json.loads(r["data"]); p["id"] = r["id"]; p["updated_ts"] = r["updated_ts"]
         if not p.get("archived"):
             ps.append(p)
-    sts = cfg.get("statuses") or []
-    act, appr = cfg.get("statusIsActive") or {}, cfg.get("statusIsApproved") or {}
-    parked, deferred = cfg.get("statusIsParked") or {}, cfg.get("statusIsDeferred") or {}
+    return cfg, ps
+
+
+def _exec_ctx(cfg: dict, ps: list):
+    """SHIPPED-1: the exec deck's item rules, lifted out of _exec_model so the Releases tab's Shipped section
+    counts exactly what the monthly slides count. One definition; do not fork these."""
+    from types import SimpleNamespace
     term = cfg.get("statusIsTerminal") or {}
-    sched = cfg.get("typeScheduled") or {}
     proj_types = set(cfg.get("projectTypes") or ["Roadmap Item", "Epic", "Feature", "Project"])
 
     def is_term(s):
         return s in RESERVED_TERMINAL_STATUSES or bool(term.get(s))
-    a = next((s for s in sts if appr.get(s)), "")
-    if a and act.get(a):
-        a = ""
-    ai = sts.index(a) if a else -1
-
-    def phase(s):                                     # same rule as the Team Board's _tbStatusModel
-        if not s or is_term(s) or parked.get(s) or deferred.get(s):
-            return ""
-        if a:
-            return "next" if s == a else ("now" if (s in sts and sts.index(s) > ai) else "")
-        return "now" if act.get(s) else ""
 
     by_id = {str(p["id"]): p for p in ps}
     kids = {}
@@ -15243,6 +15246,56 @@ def _exec_model(team: str, today: date = None) -> dict:
         if rd:
             return rd
         return _exec_parse_day(x.get("completedAt")) if is_term(x.get("status")) else None
+
+    def top_project(x):
+        seen, q, top = set(), x, None
+        while q and q["id"] not in seen:
+            seen.add(q["id"])
+            if (q.get("type") or "") in proj_types:
+                top = q
+            q = parent_of(q)
+        return top
+
+    def done_work(today):
+        """Every finished piece of work: leaf items (or scheduled parents), any type, in or out of a project;
+        Duplicate/Transferred and hidden copies excluded; finish date on or before today. [(finish, item)]."""
+        out = []
+        for x in ps:
+            if x.get("hidden") or not is_term(x.get("status")) or not is_work(x):
+                continue
+            f = finish(x)
+            if f and f <= today:
+                out.append((f, x))
+        return out
+
+    return SimpleNamespace(is_term=is_term, by_id=by_id, kids=kids, parent_of=parent_of, in_proj=in_proj,
+                           eff_team=eff_team, desc=desc, is_work=is_work, finish=finish,
+                           top_project=top_project, done_work=done_work, proj_types=proj_types)
+
+
+def _exec_model(team: str, today: date = None) -> dict:
+    """The Team Board model for one Org, per project (not per team slice): Now / Next / Finished cards with
+    teams, priority, status, start/due, x/y done over the actual work and a health colour for Now."""
+    today = today or datetime.now(_MT_ZONE).date()
+    cfg, ps = _exec_load(team)
+    sts = cfg.get("statuses") or []
+    act, appr = cfg.get("statusIsActive") or {}, cfg.get("statusIsApproved") or {}
+    parked, deferred = cfg.get("statusIsParked") or {}, cfg.get("statusIsDeferred") or {}
+    sched = cfg.get("typeScheduled") or {}
+    h = _exec_ctx(cfg, ps)   # SHIPPED-1: shared with the Releases tab's Shipped section
+    is_term, parent_of, in_proj, eff_team = h.is_term, h.parent_of, h.in_proj, h.eff_team
+    desc, is_work, finish, top_project = h.desc, h.is_work, h.finish, h.top_project
+    a = next((s for s in sts if appr.get(s)), "")
+    if a and act.get(a):
+        a = ""
+    ai = sts.index(a) if a else -1
+
+    def phase(s):                                     # same rule as the Team Board's _tbStatusModel
+        if not s or is_term(s) or parked.get(s) or deferred.get(s):
+            return ""
+        if a:
+            return "next" if s == a else ("now" if (s in sts and sts.index(s) > ai) else "")
+        return "now" if act.get(s) else ""
 
     cards = []
     for p in ps:
@@ -15312,22 +15365,7 @@ def _exec_model(team: str, today: date = None) -> dict:
     # EXEC-DECK-2: the actual work delivered - every finished piece of work (leaf items, any type, in or out of a
     # project; Duplicate/Transferred and hidden copies excluded), over the last 30 days and per month for six months.
     from collections import Counter
-
-    def top_project(x):
-        seen, q, top = set(), x, None
-        while q and q["id"] not in seen:
-            seen.add(q["id"])
-            if (q.get("type") or "") in proj_types:
-                top = q
-            q = parent_of(q)
-        return top
-    done_work = []
-    for x in ps:
-        if x.get("hidden") or not is_term(x.get("status")) or not is_work(x):
-            continue
-        f = finish(x)
-        if f and f <= today:
-            done_work.append((f, x))
+    done_work = h.done_work(today)
     recent_all = sorted([(f, x) for f, x in done_work if (today - f).days <= _EXEC_DELIVERED_DAYS], key=lambda t: t[0], reverse=True)
     pts = 0.0
     for _, x in recent_all:
@@ -15357,6 +15395,50 @@ def _exec_model(team: str, today: date = None) -> dict:
     fin_c = sorted([c for c in cards if c["col"] == "finished"], key=lambda c: c["when"], reverse=True)
     return {"team": team, "label": _exec_org_label(team), "today": today, "now": now_c, "next": next_c,
             "finished": fin_c, "teamOrder": cfg.get("developers") or [], "delivered": delivered}
+
+
+_SHIPPED_MONTHS = 24   # SHIPPED-1: how far back the month picker reaches
+
+
+def _shipped_model(team: str, month: str = None, today: date = None) -> dict:
+    """SHIPPED-1: the Releases tab's Shipped section - finished work for one calendar month, grouped by the
+    project it belongs to ("Other work" when none), counted by the SAME rules as the exec deck's
+    "work delivered" (shared _exec_ctx), so the page and the monthly slides agree."""
+    today = today or datetime.now(_MT_ZONE).date()
+    cfg, ps = _exec_load(team)
+    h = _exec_ctx(cfg, ps)
+    done = h.done_work(today)
+    cur = today.strftime("%Y-%m")
+    counts = {}
+    for f, _ in done:
+        k = f.strftime("%Y-%m")
+        counts[k] = counts.get(k, 0) + 1
+    yy, mm, months = today.year, today.month, []
+    for _ in range(_SHIPPED_MONTHS):
+        k = "%04d-%02d" % (yy, mm)
+        months.append({"ym": k, "count": counts.get(k, 0)})
+        yy, mm = (yy - 1, 12) if mm == 1 else (yy, mm - 1)
+    while len(months) > 1 and months[-1]["count"] == 0:   # an Org that started later: no empty tail
+        months.pop()
+    sel = month if (month and any(m["ym"] == month for m in months)) else cur
+    items, pts = [], 0.0
+    for f, x in sorted(done, key=lambda t: (t[0], t[1]["id"]), reverse=True):
+        if f.strftime("%Y-%m") != sel:
+            continue
+        tp = h.top_project(x)
+        try:
+            sp = float(x.get("storyPoints")) if x.get("storyPoints") not in (None, "") else None
+        except (TypeError, ValueError):
+            sp = None
+        pts += sp or 0
+        items.append({"id": x["id"], "key": x.get("itemKey") or "", "name": x.get("name") or "(untitled)",
+                      "type": x.get("type") or "", "team": h.eff_team(x) or "", "status": x.get("status") or "",
+                      "points": sp, "shipped": f.isoformat(),
+                      "projectId": tp["id"] if tp else None, "project": (tp.get("name") or "(untitled)") if tp else "",
+                      "isProject": bool(tp and tp["id"] == x["id"])})
+    return {"month": sel, "months": months, "count": len(items), "points": round(pts, 1),
+            "metric": cfg.get("metricLabel") or "Story Points", "teamOrder": cfg.get("developers") or [],
+            "items": items}
 
 
 def _exec_layout(prs, name, fallback_idx):
