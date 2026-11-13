@@ -10647,10 +10647,11 @@ function openTypeTemplate(i, btn){
       +(useRte ? 'Formatting (bold, italic, lists, links) is stamped as authored. ' : 'Plain text, one label line per field. ')
       +'<b>Editing this does not change items that already exist.</b></div>'
     +'<div style="font-size:10px;color:var(--muted);margin:-2px 0 5px">If this Organization appends templates to portal tickets, this template and anything written into it is visible to the reporter on the ticket status page.</div>'
+    +'<div class="cl-tmpl-hd" style="margin-top:4px">Description</div>'
     +(useRte ? '<div class="type-tmpl-host"></div>' : '')
     +'<textarea class="type-tmpl-ta" style="width:100%;min-height:96px;box-sizing:border-box;font-family:\'Lato\',sans-serif;font-size:13px;line-height:1.5;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);resize:vertical'+(useRte?';display:none':'')+'" placeholder="Measurements:&#10;Hierarchy:&#10;OneDrive Links:&#10;Project Type:"></textarea>'
     +'<div class="cl-tmpl"><div class="cl-tmpl-hd">Checklist steps</div><div class="cl-tmpl-note">Added as an unticked checklist on <b>new</b> '+esc(t.name)+' items. Each item keeps its own copy, so editing these does not change items that already exist.</div><div class="cl-tmpl-host"></div></div>'
-    +'<div style="margin-top:6px;display:flex;gap:6px"><button type="button" class="tmpl-save" style="background:var(--accent);color:#fff;border:none;padding:5px 14px;border-radius:5px;font-family:\'Lato\',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Save</button>'
+    +'<div style="margin-top:6px;display:flex;gap:6px"><button type="button" class="tmpl-save primary" style="background:var(--accent);color:#fff;border:none;padding:5px 14px;border-radius:5px;font-family:\'Lato\',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Save</button>'
     +'<button type="button" class="tmpl-cancel" style="background:none;border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:5px;font-size:12px;cursor:pointer">Cancel</button></div>';
   row.parentNode.insertBefore(panel, row.nextSibling);
   panel.querySelector('.type-tmpl-ta').value = t.template || '';
@@ -23876,6 +23877,14 @@ if ('serviceWorker' in navigator) {
   body.frz-beta-active .cl-tmpl { margin-top:12px; }
   body.frz-beta-active .cl-tmpl-hd { font-size:11px; font-weight:900; color:var(--text); text-transform:uppercase; letter-spacing:.5px; margin-bottom:3px; }
   body.frz-beta-active .cl-tmpl-note { font-size:11px; color:var(--muted); margin-bottom:6px; }
+  /* TMPL-BOX-1: the Admin > Types template editor reuses the create editor, whose box styling is keyed to
+     #frzModalNotes - so in Admin the editable area had no border and no click target. Give it the same box. */
+  body.frz-beta-active .type-tmpl-host { --tm-acc:#0059A9; }
+  body.frz-beta-active.dark-mode .type-tmpl-host { --tm-acc:#2F86DE; }
+  body.frz-beta-active .type-tmpl-host .frz-rte-modal { border:1px solid var(--border); border-radius:6px; background:var(--surface); cursor:text; }
+  body.frz-beta-active .type-tmpl-host .frz-rte-modal:focus-within { border-color:var(--tm-acc); box-shadow:0 0 0 2px color-mix(in srgb, var(--tm-acc) 22%, transparent); }
+  body.frz-beta-active .type-tmpl-host .ProseMirror { min-height:120px; padding:10px 12px; outline:none; color:var(--text); font-size:13px; line-height:1.6; font-family:'Lato',sans-serif; }
+  body.frz-beta-active .type-tmpl-host .ProseMirror:focus { outline:none; }
 </style>
 <script>
 (function(){
