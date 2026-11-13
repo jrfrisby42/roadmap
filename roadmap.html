@@ -2059,6 +2059,14 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
           <div id="fDesc" class="rte-box" contenteditable="true" spellcheck="true" style="flex:1;min-height:120px"></div>
         </div>
 
+        <!-- CHECKLIST-1: EDIT = the item's checklist, collapsed to one progress line (tick only; steps are
+             added/removed on the item page). CREATE = the Type template's steps, also collapsed to one line
+             and editable once opened. flex:none so the Description above keeps the space. Hidden when there
+             are no steps. -->
+        <div class="form-row cl-modal-row" id="modalChecklistRow" style="display:none;flex:none;padding-top:6px">
+          <div id="modalChecklist"></div>
+        </div>
+
         <!-- Linked Assets / attachments. Create has no item id yet, so no upload control (the queued
              PRECREATE-ATTACH-1 stage adds it) - an inert "Link assets after saving" line stands in.
              EDIT reuses the item-page asset card via window._frzRenderAssetCard (one implementation). -->
@@ -7403,6 +7411,7 @@ function openProjectModal(id){
     else if(!id && (isAdmin || isEditor)){ _assetRow.style.display=''; _frzResetPendingAtts(); _frzRenderCreateAttach(_assetSec); _frzResetPendingLinks(); _frzRenderCreateLinks(_assetSec); }   // PRECREATE-ATTACH-1 Stage A: the working attachment control REPLACES the old interim note in place; the asset half survives as a line inside the control. Contributors can't create -> no control. PRECREATE-LINKS-1: the link control APPENDS below it (does not overwrite the attach control's host).
     else { _assetRow.style.display='none'; _assetSec.innerHTML=''; }   // edit but not configured / hidden item / contributor
   }
+  _clModalOpen(p, id);   // CHECKLIST-1: edit = collapsed tick-only checklist; create = the Type template's steps
   // Apply locking rules based on status flags
   applyModalLocking(p);
   // Recurrence field (admin only)
@@ -8559,6 +8568,9 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
   if(existing) data.assignee = existing.assignee || '';
   defaultSoleMemberAssignee(data);
 
+  // CHECKLIST-1: moving this item into a closed status with open checklist steps asks once (never blocks).
+  // Before the modal closes, so "Go back" leaves the person in the modal with their edits intact.
+  if(existing && data.status && !(await checklistCloseOk(existing, data.status))) return;
   document.getElementById('modalBg').classList.remove('open');
   // Reset z-index immediately so modal disappears - item page refresh happens after save
   const _modalBg = document.getElementById('modalBg');
@@ -8585,7 +8597,7 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
       const _plinks = _frzPendingLinks
         .map(l => ({ label:(l.label||'').trim(), url:(l.url||'').trim() }))
         .filter(l => l.url);
-      const created = await API.post('/api/projects', {...data, pendingAttachments: _pend, pendingLinks: _plinks, _username: getUsername()});
+      const created = await API.post('/api/projects', {...data, checklist: _clCreateSteps(), pendingAttachments: _pend, pendingLinks: _plinks, _username: getUsername()});
       _frzResetPendingAtts();   // committed - safe to clear (a failed save above never reaches here)
       _frzResetPendingLinks();
       if(created && Array.isArray(created.attachmentsDropped) && created.attachmentsDropped.length){
@@ -10610,7 +10622,7 @@ function renderTypeList(){
         <input type="checkbox" onchange="toggleTypeMaintenance(${i},this.checked)" ${t.maintenance?'checked':''} style="accent-color:var(--accent);cursor:pointer">
         Maintenance
       </label>
-      <button type="button" onclick="openTypeTemplate(${i}, this)" title="Description template pre-filled into NEW items of this type" style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:${(t.template&&t.template.trim())?'var(--accent)':'var(--muted)'};background:none;border:1px solid var(--border);border-radius:5px;padding:3px 8px;cursor:pointer;flex-shrink:0">Template${(t.template&&t.template.trim())?' •':''}</button>
+      <button type="button" onclick="openTypeTemplate(${i}, this)" title="Description template pre-filled into NEW items of this type" style="display:flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:${((t.template&&t.template.trim())||(Array.isArray(t.checklist)&&t.checklist.length))?'var(--accent)':'var(--muted)'};background:none;border:1px solid var(--border);border-radius:5px;padding:3px 8px;cursor:pointer;flex-shrink:0">Template${(t.template&&t.template.trim())?' •':''}</button>
       ${delBtn}
     </div>`;
   }).join('');
@@ -10637,12 +10649,15 @@ function openTypeTemplate(i, btn){
     +'<div style="font-size:10px;color:var(--muted);margin:-2px 0 5px">If this Organization appends templates to portal tickets, this template and anything written into it is visible to the reporter on the ticket status page.</div>'
     +(useRte ? '<div class="type-tmpl-host"></div>' : '')
     +'<textarea class="type-tmpl-ta" style="width:100%;min-height:96px;box-sizing:border-box;font-family:\'Lato\',sans-serif;font-size:13px;line-height:1.5;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);resize:vertical'+(useRte?';display:none':'')+'" placeholder="Measurements:&#10;Hierarchy:&#10;OneDrive Links:&#10;Project Type:"></textarea>'
+    +'<div class="cl-tmpl"><div class="cl-tmpl-hd">Checklist steps</div><div class="cl-tmpl-note">Added as an unticked checklist on <b>new</b> '+esc(t.name)+' items. Each item keeps its own copy, so editing these does not change items that already exist.</div><div class="cl-tmpl-host"></div></div>'
     +'<div style="margin-top:6px;display:flex;gap:6px"><button type="button" class="tmpl-save" style="background:var(--accent);color:#fff;border:none;padding:5px 14px;border-radius:5px;font-family:\'Lato\',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Save</button>'
     +'<button type="button" class="tmpl-cancel" style="background:none;border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:5px;font-size:12px;cursor:pointer">Cancel</button></div>';
   row.parentNode.insertBefore(panel, row.nextSibling);
   panel.querySelector('.type-tmpl-ta').value = t.template || '';
   var hostEl = useRte ? panel.querySelector('.type-tmpl-host') : null;
   if(useRte){ window._frzMountTemplateEditor(hostEl, _frzTemplateToHTML(t.template||'')); }
+  var clHost = panel.querySelector('.cl-tmpl-host');   // CHECKLIST-1
+  checklistDraftMount(clHost, Array.isArray(t.checklist) ? t.checklist : []);
   panel.querySelector('.tmpl-save').addEventListener('click', function(){
     var val;
     var ed = hostEl && hostEl._frzEd;
@@ -10652,15 +10667,16 @@ function openTypeTemplate(i, btn){
     } else {
       val = panel.querySelector('.type-tmpl-ta').value;         // fallback (rte off, or editor not mounted yet)
     }
-    setTypeTemplate(i, val);
+    setTypeTemplate(i, val, (clHost && typeof clHost._clTexts==='function') ? clHost._clTexts() : undefined);
   });
   panel.querySelector('.tmpl-cancel').addEventListener('click', function(){ if(hostEl&&hostEl._frzEd){ try{ hostEl._frzEd.destroy(); }catch(e){} } panel.remove(); });
   if(!useRte) panel.querySelector('.type-tmpl-ta').focus();
 }
-function setTypeTemplate(i, val){
+function setTypeTemplate(i, val, steps){
   if(!isAdmin) return;
   var v=(val||'').replace(/\r\n/g,'\n');
   if(v.trim()) types[i].template=v; else delete types[i].template;   // empty = absent (default: no template)
+  if(Array.isArray(steps)){ if(steps.length) types[i].checklist = steps.slice(0, 50); else delete types[i].checklist; }   // CHECKLIST-1
   saveConfig('types', types); renderTypeList(); populateTypeSelect();
 }
 
@@ -13264,6 +13280,7 @@ const _LIST_COL_DEF = {
                   const clip=_attachLinkIndicator(it);   // ADOPT-1: attachment/link paperclip (flex-shrink:0, rides the same slot as the AC dot)
                   return `<td data-col="name" style="padding:7px 10px;${wcss}"${ttl}><span style="display:flex;align-items:center;gap:5px">`
                     + `<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_listCell(it.name)}</span>`
+                    + (checklistCounts(it).total?`<span style="display:inline-flex;flex-shrink:0">${checklistChipHtml(it)}</span>`:'')   // CHECKLIST-1: "3/5" progress chip
                     + (clip?`<span style="display:inline-flex;flex-shrink:0">${clip}</span>`:'')
                     + (ac?`<span style="display:inline-flex;flex-shrink:0;transform:translateY(-1.2px)">${ac}</span>`:'')
                     + `</span></td>`; } },
@@ -13451,6 +13468,320 @@ function _isListPhone(){ try { return window.matchMedia('(max-width:640px)').mat
 // Mobile companion (Phase 3): on phone, render each row as a card instead of a wide table
 // row. Both List (#listBody) and My Home (#frzHomeBody) build rows via _listRowHtml, so this
 // single branch cards both. Pulls fields straight off the item → independent of column config.
+// ── CHECKLIST-1: tickable steps on an item ───────────────────────────────────────────────────
+// Steps live in p.checklist = [{id, text, done, by?, at?}]. Server-owned: written ONLY through
+// POST /api/items/{id}/checklist/{sid}/check (tick) and PUT /api/items/{id}/checklist (shape), never by
+// the item PUT, and never synced to Jira. ONE renderer, checklistMount, serves the item page ('page':
+// the full card - tick, add, rename, drag to reorder, remove, who/when) and the edit modal + List panel
+// ('compact': starts collapsed to one progress line, tick only). The New Item form and Admin > Types
+// author unticked step TEXT with checklistDraftMount. A person moving an item with open steps into a
+// closed status gets one confirm (checklistCloseOk) that never blocks; a Jira-driven close asks nobody.
+const _CL_CAP = 50;
+const _CL_CHIP_IC = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.2" y="1.2" width="9.6" height="9.6" rx="2"/><path d="M3.6 6.1l1.7 1.7 3.2-3.5"/></svg>';
+const _CL_TICK = '<svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6.3l2.4 2.4 4.6-5"/></svg>';
+const _CL_CHEV = '<svg class="cl-chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2.5L8 6l-3.5 3.5"/></svg>';
+function checklistOf(p){ return (p && Array.isArray(p.checklist)) ? p.checklist.filter(s => s && typeof s==='object' && s.text) : []; }
+function checklistCounts(p){ const l = checklistOf(p); return { done: l.filter(s => s.done).length, total: l.length }; }
+function checklistChipHtml(p){
+  const c = checklistCounts(p); if(!c.total) return '';
+  return '<span class="cl-chip'+(c.done===c.total?' full':'')+'" data-cl-chip="'+p.id+'" title="'+c.done+' of '+c.total+' checklist steps done">'+_CL_CHIP_IC+c.done+'/'+c.total+'</span>';
+}
+function _clCanTick(p){ return !!p && (isAdmin || isEditor || (isContributor && typeof itemInContributorScope==='function' && itemInContributorScope(p))); }
+function _clCanEdit(){ return isAdmin || isEditor; }
+function _clWhen(iso){ try { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('en-US', {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e){ return ''; } }
+function _clTypeSteps(typeName){ const t = (types||[]).find(x => x && x.name===typeName); return (t && Array.isArray(t.checklist)) ? t.checklist.filter(x => typeof x==='string' && x.trim()) : []; }
+// Store a checklist the server returned (or an optimistic one) and repaint every surface showing it:
+// chips (List rows, Kanban cards) in place, and every mounted checklist of this item (page + modal).
+function _clStore(id, cl, obj){
+  const p = projects.find(x => x.id===id) || obj;
+  if(p){ if(cl && cl.length) p.checklist = cl; else delete p.checklist; }
+  if(obj && obj !== p){ if(cl && cl.length) obj.checklist = cl; else delete obj.checklist; }
+  document.querySelectorAll('[data-cl-chip="'+id+'"]').forEach(el => { const h = p ? checklistChipHtml(p) : ''; if(h) el.outerHTML = h; else el.remove(); });
+  document.querySelectorAll('.cl-wrap[data-cl-item="'+id+'"]').forEach(w => { if(typeof w._clRender==='function') w._clRender(); });
+}
+function checklistMount(host, item, opts){
+  if(!host || !item) return;
+  opts = opts || {};
+  const mode = opts.mode === 'compact' ? 'compact' : 'page';
+  const id = item.id;
+  const cur = () => projects.find(x => x.id===id) || item;
+  let open = mode === 'page';     // compact starts collapsed on every open (not remembered)
+  let adding = false, editingSid = null, shapeBusy = false, dragSid = null;
+  const busy = {};
+  host.classList.add('cl-wrap');
+  host.classList.toggle('cl-page', mode==='page');
+  host.classList.toggle('cl-compact', mode==='compact');
+  host.setAttribute('data-cl-item', id);
+  function rowHtml(s, canTick, canEdit){
+    const editing = editingSid === s.id;
+    const who = (mode==='page' && s.done && s.by) ? '<span class="cl-who">'+esc(displayName(s.by))+(s.at ? ' &middot; '+esc(_clWhen(s.at)) : '')+'</span>' : '';
+    return '<div class="cl-row'+(s.done?' done':'')+'" data-sid="'+escA(esc(s.id))+'"'+(canEdit && !editing ? ' draggable="true"' : '')+'>'
+      + (canEdit ? '<span class="cl-hdl" title="Drag to reorder" aria-hidden="true">&#8942;&#8942;</span>' : '')
+      + '<button type="button" class="cl-box'+(s.done?' on':'')+'" role="checkbox" aria-checked="'+(s.done?'true':'false')+'" aria-label="'+escA(esc(s.text))+'"'+(canTick?'':' disabled')+'>'+(s.done?_CL_TICK:'')+'</button>'
+      + (editing ? '<input class="cl-editin" maxlength="200" value="'+escA(esc(s.text))+'" aria-label="Rename step">'
+                 : '<span class="cl-txt"'+(canEdit?' title="Click to rename"':'')+'>'+esc(s.text)+'</span>')
+      + who
+      + (canEdit ? '<button type="button" class="cl-x" title="Remove step" aria-label="Remove step">&#10005;</button>' : '')
+      + '</div>';
+  }
+  function render(){
+    const p = cur(); const L = checklistOf(p); const c = checklistCounts(p);
+    const canTick = _clCanTick(p), canEdit = mode==='page' && _clCanEdit();
+    host.classList.toggle('cl-empty', !L.length);
+    if(!L.length && !adding){
+      if(mode==='page' && canEdit){ host.style.display=''; host.innerHTML = '<button type="button" class="cl-start"><span class="cl-plus">+</span>Add a checklist</button>'; }
+      else { host.style.display='none'; host.innerHTML=''; }
+      return;
+    }
+    host.style.display='';
+    const pct = c.total ? Math.round(100*c.done/c.total) : 0;
+    const bar = '<span class="cl-bar" aria-hidden="true"><i style="width:'+pct+'%"></i></span>';
+    let h = '';
+    if(mode==='page'){
+      // Same inline header style as the production item cards, so the shell's shared card-header rule
+      // (accent label + header tint, keyed on these inline styles) styles this card identically.
+      h += '<div class="cl-hd" style="padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;font-weight:900;color:var(--text);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;gap:12px"><span class="frz-cardh-title cl-title">Checklist</span>'
+        + (c.total ? '<span class="cl-count">'+c.done+' of '+c.total+' done</span>'+bar : '')
+        + '<span class="cl-sp"></span>'
+        + (canEdit ? '<button type="button" class="frz-cardh-btn cl-addbtn">+ Add step</button>' : '') + '</div><div class="cl-body">';
+    } else {
+      h += '<button type="button" class="cl-toggle" aria-expanded="'+(open?'true':'false')+'">'+_CL_CHEV
+        + '<span class="cl-title">Checklist</span><span class="cl-count">'+c.done+'/'+c.total+'</span>'+bar+'</button>';
+      if(open) h += '<div class="cl-body">';
+    }
+    if(open){
+      h += L.map(s => rowHtml(s, canTick, canEdit)).join('');
+      if(canEdit) h += adding
+        ? '<div class="cl-addrow"><span class="cl-plus">+</span><input class="cl-addin" maxlength="200" placeholder="Add a step, then press Enter" aria-label="New step"></div>'
+        : '<button type="button" class="cl-addline"><span class="cl-plus">+</span>Add a step</button>';
+      h += '</div>';
+    }
+    // Keep keyboard focus on the step's checkbox across the repaint a tick causes.
+    const ae = document.activeElement, fRow = (ae && host.contains(ae) && ae.classList.contains('cl-box')) ? ae.closest('.cl-row') : null;
+    const fSid = fRow ? fRow.getAttribute('data-sid') : null;
+    host.innerHTML = h;
+    if(fSid){ const b = [...host.querySelectorAll('.cl-row')].find(r => r.getAttribute('data-sid') === fSid); const bx = b && b.querySelector('.cl-box'); if(bx) bx.focus(); }
+    const ed = host.querySelector('.cl-editin'); if(ed){ ed.focus(); ed.select(); }
+    const ad = host.querySelector('.cl-addin'); if(ad && !ed) ad.focus();
+  }
+  host._clRender = render;
+  function shapeOf(){ return checklistOf(cur()).map(s => ({ id: s.id, text: s.text })); }
+  async function saveShape(steps){
+    if(shapeBusy) return; shapeBusy = true;
+    try { const r = await API.put('/api/items/'+id+'/checklist', { steps, _username: getUsername() }); _clStore(id, (r && r.checklist) || [], cur()); }
+    catch(e){ showToast('Could not save the checklist: '+((e && e.message) || e), 'error'); render(); }
+    finally { shapeBusy = false; }
+  }
+  async function tick(sid, done){
+    const p = cur(); const st = checklistOf(p).find(x => x.id===sid);
+    if(!st || busy[sid] || !_clCanTick(p)) return;
+    busy[sid] = true;
+    const prev = { done: !!st.done, by: st.by, at: st.at };
+    st.done = done; if(done){ st.by = getUsername(); st.at = new Date().toISOString(); } else { delete st.by; delete st.at; }
+    _clStore(id, p.checklist, p);   // paint now; the server's copy replaces it below
+    try {
+      const r = await API.post('/api/items/'+id+'/checklist/'+encodeURIComponent(sid)+'/check', { done, _username: getUsername() });
+      _clStore(id, (r && r.checklist) || p.checklist, cur());
+    } catch(e){
+      st.done = prev.done; if(prev.by) st.by = prev.by; else delete st.by; if(prev.at) st.at = prev.at; else delete st.at;
+      _clStore(id, p.checklist, p);
+      showToast('Could not save the tick: '+((e && e.message) || e), 'error');
+    } finally { delete busy[sid]; }
+  }
+  function commitRename(inp){
+    const sid = editingSid; editingSid = null;
+    const t = (inp.value || '').replace(/\s+/g, ' ').trim();
+    const old = checklistOf(cur()).find(x => x.id===sid);
+    if(!old || !t || t === old.text){ render(); return; }
+    saveShape(shapeOf().map(x => x.id===sid ? { id: x.id, text: t } : x));
+  }
+  function commitAdd(inp, keepOpen){
+    const t = (inp.value || '').replace(/\s+/g, ' ').trim();
+    if(!t){ adding = false; render(); return; }
+    if(checklistOf(cur()).length >= _CL_CAP){ showToast('A checklist can have at most '+_CL_CAP+' steps.', 'error'); return; }
+    adding = !!keepOpen;
+    saveShape(shapeOf().concat([{ text: t }]));
+  }
+  host.onclick = function(e){
+    const t = e.target;
+    if(t.closest('.cl-toggle')){ open = !open; render(); return; }
+    if(t.closest('.cl-start') || t.closest('.cl-addbtn') || t.closest('.cl-addline')){ open = true; adding = true; render(); return; }
+    const row = t.closest('.cl-row'); if(!row) return;
+    const sid = row.getAttribute('data-sid');
+    if(t.closest('.cl-box')){ const st = checklistOf(cur()).find(x => x.id===sid); if(st) tick(sid, !st.done); return; }
+    if(t.closest('.cl-x')){ saveShape(shapeOf().filter(x => x.id !== sid)); return; }
+    if(t.closest('.cl-txt') && mode==='page' && _clCanEdit()){ editingSid = sid; adding = false; render(); }
+  };
+  host.onkeydown = function(e){
+    const t = e.target;
+    if(t.classList.contains('cl-editin')){
+      if(e.key==='Enter'){ e.preventDefault(); commitRename(t); }
+      else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); editingSid = null; render(); }
+    } else if(t.classList.contains('cl-addin')){
+      if(e.key==='Enter'){ e.preventDefault(); commitAdd(t, true); }
+      else if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); adding = false; render(); }
+    }
+  };
+  // One focusout listener per host: a re-mount (every item-page re-render) replaces it, so a stale mount's
+  // closure can never commit an add/rename a second time.
+  if(host._clFocusOut) host.removeEventListener('focusout', host._clFocusOut);
+  host._clFocusOut = function(e){
+    const t = e.target;
+    if(t.classList && t.classList.contains('cl-editin') && editingSid){ commitRename(t); }
+    else if(t.classList && t.classList.contains('cl-addin') && adding && !shapeBusy){ commitAdd(t, false); }
+  };
+  host.addEventListener('focusout', host._clFocusOut);
+  host.ondragstart = function(e){ const row = e.target.closest && e.target.closest('.cl-row'); if(!row) return; dragSid = row.getAttribute('data-sid'); try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', dragSid); } catch(_){} };
+  host.ondragover = function(e){ if(!dragSid) return; const row = e.target.closest('.cl-row'); if(!row) return; e.preventDefault();
+    host.querySelectorAll('.cl-drop-before,.cl-drop-after').forEach(x => x.classList.remove('cl-drop-before','cl-drop-after'));
+    const r = row.getBoundingClientRect(); row.classList.add(e.clientY < r.top + r.height/2 ? 'cl-drop-before' : 'cl-drop-after'); };
+  host.ondrop = function(e){ if(!dragSid) return; const row = e.target.closest('.cl-row'); e.preventDefault();
+    const from = dragSid; dragSid = null; if(!row) return;
+    const before = row.classList.contains('cl-drop-before'), to = row.getAttribute('data-sid');
+    const list = shapeOf(); const mv = list.find(x => x.id===from); if(!mv || from===to){ render(); return; }
+    const rest = list.filter(x => x.id !== from); let at = rest.findIndex(x => x.id===to); if(!before) at += 1;
+    rest.splice(at, 0, mv); saveShape(rest); };
+  host.ondragend = function(){ dragSid = null; host.querySelectorAll('.cl-drop-before,.cl-drop-after').forEach(x => x.classList.remove('cl-drop-before','cl-drop-after')); };
+  render();
+}
+// Authoring surface for unticked step TEXT (New Item form, Admin > Types). host._clTexts() reads it back.
+function checklistDraftMount(host, steps){
+  if(!host) return;
+  host.classList.add('cl-draft');
+  host._steps = (Array.isArray(steps) ? steps : []).map(x => typeof x==='string' ? x : ((x && x.text) || '')).filter(Boolean).slice(0, _CL_CAP);
+  host._touched = false;
+  let dragI = null;
+  function render(focusI){
+    host.innerHTML = host._steps.map((t, i) => '<div class="cl-drow" data-i="'+i+'"><span class="cl-hdl" title="Drag to reorder" aria-hidden="true">&#8942;&#8942;</span>'
+      + '<span class="cl-box" aria-hidden="true"></span><input class="cl-din" maxlength="200" value="'+escA(esc(t))+'" aria-label="Checklist step '+(i+1)+'">'
+      + '<button type="button" class="cl-x" title="Remove step" aria-label="Remove step">&#10005;</button></div>').join('')
+      + (host._steps.length < _CL_CAP ? '<button type="button" class="cl-addline"><span class="cl-plus">+</span>Add a step</button>' : '');
+    if(focusI != null){ const el = host.querySelectorAll('.cl-din')[focusI]; if(el) el.focus(); }
+  }
+  host.oninput = function(e){ const inp = e.target.closest('.cl-din'); if(!inp) return; host._steps[+inp.closest('.cl-drow').dataset.i] = inp.value; host._touched = true; };
+  host.onclick = function(e){
+    if(e.target.closest('.cl-x')){ host._steps.splice(+e.target.closest('.cl-drow').dataset.i, 1); host._touched = true; render(); return; }
+    if(e.target.closest('.cl-addline')){ host._steps.push(''); host._touched = true; render(host._steps.length - 1); }
+  };
+  host.onkeydown = function(e){
+    const inp = e.target.closest('.cl-din'); if(!inp || e.key !== 'Enter') return;
+    e.preventDefault(); if(host._steps.length >= _CL_CAP) return;
+    const i = +inp.closest('.cl-drow').dataset.i; host._steps.splice(i+1, 0, ''); host._touched = true; render(i+1);
+  };
+  host.onmousedown = function(e){ const h = e.target.closest('.cl-hdl'); if(h) h.closest('.cl-drow').setAttribute('draggable','true'); };
+  host.ondragstart = function(e){ const row = e.target.closest && e.target.closest('.cl-drow'); if(!row) return; dragI = +row.dataset.i; try { e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', String(dragI)); } catch(_){} };
+  host.ondragover = function(e){ if(dragI == null) return; const row = e.target.closest('.cl-drow'); if(row) e.preventDefault(); };
+  host.ondrop = function(e){ if(dragI == null) return; const row = e.target.closest('.cl-drow'); e.preventDefault(); const from = dragI; dragI = null; if(!row) return;
+    const to = +row.dataset.i; if(to === from){ render(); return; } const [mv] = host._steps.splice(from, 1); host._steps.splice(to, 0, mv); host._touched = true; render(); };
+  host.ondragend = function(){ dragI = null; host.querySelectorAll('.cl-drow[draggable]').forEach(r => r.removeAttribute('draggable')); };
+  host._clTexts = () => host._steps.map(t => String(t || '').replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, _CL_CAP);
+  host._clSet = (arr) => { host._steps = (arr || []).slice(0, _CL_CAP); host._touched = false; render(); };
+  render();
+}
+// Edit modal: EDIT shows the item's checklist collapsed (tick only); CREATE shows the Type template's steps.
+function _clModalOpen(p, id){
+  const row = document.getElementById('modalChecklistRow'), host = document.getElementById('modalChecklist');
+  if(!row || !host) return;
+  host.innerHTML = ''; host.className = ''; host.removeAttribute('data-cl-item'); host._clRender = null; host._clCreate = false; host._clBody = null;
+  ['onclick','onkeydown','oninput','onmousedown','ondragstart','ondragover','ondrop','ondragend'].forEach(k => { host[k] = null; });
+  if(id && p){
+    if(checklistOf(p).length){ row.style.display = ''; checklistMount(host, p, { mode: 'compact' }); }
+    else row.style.display = 'none';
+  } else {
+    host._clCreate = true; _clCreateFromType(true);
+  }
+}
+function _clCreateFromType(reset){
+  if(editingId != null) return;
+  const row = document.getElementById('modalChecklistRow'), host = document.getElementById('modalChecklist');
+  if(!row || !host || !host._clCreate) return;
+  if(reset !== true && host._touched) return;   // the user edited the steps - never overwrite them
+  const tname = (document.getElementById('fType') || {}).value || '';
+  const steps = _clTypeSteps(tname);
+  if(!steps.length){ row.style.display = 'none'; host.innerHTML = ''; host._touched = false; host._clBody = null; return; }
+  row.style.display = '';
+  // Collapsed to one line like the edit modal, so the Description keeps priority; open it to edit the steps.
+  host.className = 'cl-wrap cl-compact';
+  host.innerHTML = '<button type="button" class="cl-toggle" aria-expanded="false">'+_CL_CHEV+'<span class="cl-title">Checklist</span>'
+    + '<span class="cl-count"></span></button><div class="cl-body cl-create-body" style="display:none"></div>';
+  const body = host.querySelector('.cl-create-body'), tog = host.querySelector('.cl-toggle'), cnt = host.querySelector('.cl-count');
+  const paint = () => { const n = body._clTexts ? body._clTexts().length : steps.length; cnt.textContent = n+' step'+(n!==1?'s':'')+' from the '+tname+' template'; };
+  host._clBody = body; host._touched = false;
+  checklistDraftMount(body, steps);
+  paint();
+  tog.onclick = () => { const o = tog.getAttribute('aria-expanded') !== 'true'; tog.setAttribute('aria-expanded', o ? 'true' : 'false'); body.style.display = o ? '' : 'none'; };
+  body.addEventListener('input', () => { host._touched = true; paint(); });
+  ['click','drop'].forEach(ev => body.addEventListener(ev, () => setTimeout(() => { if(body._touched) host._touched = true; paint(); }, 0)));
+}
+document.getElementById('fType')?.addEventListener('change', _clCreateFromType);
+function _clCreateSteps(){
+  const row = document.getElementById('modalChecklistRow'), host = document.getElementById('modalChecklist');
+  const body = host && host._clBody;
+  if(!row || !body || !host._clCreate || row.style.display === 'none' || typeof body._clTexts !== 'function') return [];
+  return body._clTexts();
+}
+// Closing with open steps: a person moving a not-yet-closed item into a closed status gets ONE confirm.
+// It never blocks ("...anyway" proceeds). Jira-driven closes never come through here.
+function checklistOpenSteps(p, newStatus){
+  if(!p || !newStatus || newStatus === p.status) return [];
+  if(!isTerminalStatus(newStatus) || isTerminalStatus(p.status)) return [];
+  return checklistOf(p).filter(s => !s.done);
+}
+function checklistCloseOk(p, newStatus, opts){
+  const open = checklistOpenSteps(p, newStatus);
+  return open.length ? _clCloseDialog([{ p, open }], newStatus, opts) : Promise.resolve(true);
+}
+function checklistBulkCloseOk(ids, newStatus){
+  const rows = (ids || []).map(id => projects.find(x => x.id===id)).filter(Boolean)
+    .map(p => ({ p, open: checklistOpenSteps(p, newStatus) })).filter(r => r.open.length);
+  return rows.length ? _clCloseDialog(rows, newStatus, {}) : Promise.resolve(true);
+}
+function _clCloseDialog(rows, newStatus, opts){
+  opts = opts || {};
+  return new Promise(resolve => {
+    const bg = document.createElement('div');
+    bg.style.cssText = 'position:fixed;inset:0;background:rgba(15,25,40,0.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:16px';
+    const box = document.createElement('div');
+    box.setAttribute('role', 'dialog'); box.setAttribute('aria-modal', 'true');
+    box.style.cssText = 'background:var(--surface,#fff);color:var(--text,#111);width:440px;max-width:100%;border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,0.3);font-size:13px;overflow:hidden';
+    const label = p => (p.itemKey ? p.itemKey+' ' : '') + (p.name || '');
+    const tickBox = '<span style="width:14px;height:14px;box-sizing:border-box;border:1.5px solid var(--muted,#888);border-radius:4px;flex:none"></span>';
+    const li = inner => '<li style="display:flex;align-items:center;gap:9px;padding:4px 0">'+inner+'</li>';
+    let title, body;
+    if(rows.length === 1){
+      const r0 = rows[0], n = r0.open.length;
+      title = n+' checklist step'+(n!==1?'s are':' is')+' still open';
+      body = '<div style="color:var(--muted,#666);line-height:1.5">'+esc(label(r0.p))+' is moving to <b style="color:var(--text,#111)">'+esc(newStatus)+'</b>. '+(n!==1?'These steps are':'This step is')+' not ticked:</div>'
+        + '<ul style="margin:10px 0 0;padding:0;list-style:none">'+r0.open.slice(0, 8).map(s => li(tickBox+'<span>'+esc(s.text)+'</span>')).join('')+'</ul>'
+        + (n > 8 ? '<div style="color:var(--muted,#666);margin-top:2px">and '+(n-8)+' more</div>' : '');
+    } else {
+      title = rows.length+' items still have open checklist steps';
+      body = '<div style="color:var(--muted,#666);line-height:1.5">These items are moving to <b style="color:var(--text,#111)">'+esc(newStatus)+'</b> with steps not ticked:</div>'
+        + '<ul style="margin:10px 0 0;padding:0;list-style:none">'+rows.slice(0, 8).map(r => li('<span style="flex:1;min-width:0">'+esc(label(r.p))+'</span><span style="color:var(--muted,#666);white-space:nowrap">'+r.open.length+' of '+checklistOf(r.p).length+' open</span>')).join('')+'</ul>'
+        + (rows.length > 8 ? '<div style="color:var(--muted,#666);margin-top:2px">and '+(rows.length-8)+' more</div>' : '');
+    }
+    if(opts.completionNote){
+      let ah = false; try { ah = !!assethubConfigured; } catch(e){}
+      body += '<div style="color:var(--muted,#666);line-height:1.5;margin-top:10px">This marks it complete and stamps a completion date that is not cleared if you move the card back out.'+(ah?' Linked AssetHub assets get a service record.':'')+'</div>';
+    }
+    box.innerHTML = '<div style="padding:18px 20px 4px;font-size:15px;font-weight:800">'+esc(title)+'</div><div style="padding:6px 20px 2px">'+body+'</div>';
+    const btns = document.createElement('div'); btns.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;padding:14px 20px 18px;flex-wrap:wrap';
+    const mk = (txt, primary) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = txt;
+      b.style.cssText = 'padding:7px 14px;border-radius:7px;font:700 12px Lato,sans-serif;cursor:pointer;'
+        + (primary ? 'background:var(--frz-accent,#0059A9);color:#fff;border:1px solid transparent' : 'background:var(--surface,#fff);color:var(--text,#111);border:1px solid var(--border,#ccc)'); return b; };
+    const back = mk('Go back', false), go = mk('Move to '+newStatus+' anyway', true);
+    btns.appendChild(back); btns.appendChild(go); box.appendChild(btns); bg.appendChild(box);
+    function done(v){ try { document.body.removeChild(bg); } catch(_){} document.removeEventListener('keydown', esc_, true); resolve(v); }
+    function esc_(e){ if(e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); done(false); } }
+    back.addEventListener('click', () => done(false)); go.addEventListener('click', () => done(true));
+    bg.addEventListener('click', e => { if(e.target === bg) done(false); });
+    document.addEventListener('keydown', esc_, true);
+    document.body.appendChild(bg); back.focus();
+  });
+}
+window.checklistMount = checklistMount; window.checklistChipHtml = checklistChipHtml;
+window.checklistCloseOk = checklistCloseOk; window.checklistOpenSteps = checklistOpenSteps;
+
 function _listCardHtml(it, depth){
   const statusBadge = it.status ? `<span class="${statusCls(it.status)}" style="padding:1px 8px;border-radius:10px;font-size:11px;font-weight:700;white-space:nowrap">${esc(it.status)}</span>` : '';
   const prio = (it.priority && PRIO_LABELS[it.priority]) ? `<span style="background:${PRIO_COLORS[it.priority]}22;color:${PRIO_COLORS[it.priority]};padding:1px 7px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap">${esc(PRIO_LABELS[it.priority])}</span>` : '';
@@ -13464,7 +13795,7 @@ function _listCardHtml(it, depth){
   return `<tr class="list-row" data-id="${it.id}" data-depth="${depth||0}" style="cursor:pointer">`
     + `<td class="list-card-cell" colspan="99">`
     + `<div class="list-card">`
-    +   `<div class="lc-top"><span class="lc-key">${_listCell(it.itemKey)}</span>${statusBadge}${slaBadgeHtml(it, true)}</div>`
+    +   `<div class="lc-top"><span class="lc-key">${_listCell(it.itemKey)}</span>${statusBadge}${slaBadgeHtml(it, true)}${checklistChipHtml(it)}</div>`
     +   `<div class="lc-name">${_listCell(it.name)}</div>`
     +   ((metaLeft||prio) ? `<div class="lc-meta"><span class="lc-meta-left">${metaLeft}</span>${prio}</div>` : '')
     + `</div></td></tr>`;
@@ -13978,6 +14309,7 @@ document.getElementById('listBulkApply')?.addEventListener('click', async ()=>{
   if(field==='archived') value = (value==='1');
   const ids = [..._listSelected];
   if(!ids.length) return;
+  if(field==='status' && !(await checklistBulkCloseOk(ids, value))) return;   // CHECKLIST-1
   const btn = document.getElementById('listBulkApply');
   btn.disabled = true; btn.textContent = 'Applying…';
   try {
@@ -18429,6 +18761,7 @@ async function saveItemPageField(field, value, opts={}){
   // ITEM-PAGE-PARITY-1: the shared editor status rules (also enforced server-side).
   if(field==='status'){
     const _blk = editorStatusBlock(p, value);
+    if(!_blk && !(await checklistCloseOk(p, value))){ refresh(p); return; }   // CHECKLIST-1: open steps ask once
     if(_blk){ if(typeof showToast==='function') showToast(_blk,'error'); refresh(p); return; }
   }
   // BLOCK-REASON-2: capture the reason on an interactive block. BOTH the item-page status control
@@ -23484,6 +23817,65 @@ if ('serviceWorker' in navigator) {
     .frz-beta .frz-cal-ag-chips { display:flex; flex-wrap:wrap; gap:5px; }
     .frz-beta .frz-cal-ag-none { font-size:12px; color:var(--frz-text-muted); }
   }
+  /* CHECKLIST-1: item checklists (item page card, collapsed modal/panel line, chips, draft editors). */
+  body.frz-beta-active .cl-wrap, body.frz-beta-active .cl-chip, body.frz-beta-active .cl-draft { --cl-acc:#0059A9; }
+  body.frz-beta-active.dark-mode .cl-wrap, body.frz-beta-active.dark-mode .cl-chip, body.frz-beta-active.dark-mode .cl-draft { --cl-acc:#2F86DE; }
+  body.frz-beta-active .cl-chip { display:inline-flex; align-items:center; gap:3px; flex:none; font-size:11px; font-weight:700; line-height:16px; color:var(--muted); border:1px solid var(--border); border-radius:10px; padding:0 6px 0 4px; white-space:nowrap; background:var(--surface); vertical-align:middle; font-family:'Lato',sans-serif; }
+  body.frz-beta-active .cl-chip svg { width:11px; height:11px; }
+  body.frz-beta-active .cl-chip.full { color:#1f7a3f; border-color:#a8d8b8; background:#ebf7ef; }
+  body.frz-beta-active.dark-mode .cl-chip.full { color:#7fd39b; border-color:#2f6b45; background:#173324; }
+  body.frz-beta-active .cl-wrap { font-family:'Lato',sans-serif; }
+  body.frz-beta-active .cl-wrap.cl-page { border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  body.frz-beta-active .cl-wrap.cl-page.cl-empty { border:0; border-radius:0; overflow:visible; }
+  body.frz-beta-active .cl-page .cl-hd { min-height:24px; }
+  body.frz-beta-active .cl-page .cl-body { padding:8px 10px 10px; }
+  body.frz-beta-active .cl-compact .cl-title { font-size:11px; font-weight:900; text-transform:uppercase; letter-spacing:.5px; color:var(--text); }
+  body.frz-beta-active .cl-wrap .cl-count { font-size:11px; font-weight:700; color:var(--muted); text-transform:none; letter-spacing:0; white-space:nowrap; }
+  body.frz-beta-active .cl-wrap .cl-bar { flex:1; max-width:220px; height:4px; border-radius:2px; background:var(--border); overflow:hidden; display:block; }
+  body.frz-beta-active .cl-wrap .cl-bar > i { display:block; height:100%; background:var(--cl-acc); border-radius:2px; }
+  body.frz-beta-active .cl-wrap .cl-sp { flex:1; }
+  body.frz-beta-active .cl-wrap .cl-row { display:flex; align-items:center; gap:10px; padding:5px 6px; border-radius:6px; }
+  body.frz-beta-active .cl-wrap .cl-row:hover { background:var(--surface2); }
+  body.frz-beta-active .cl-wrap .cl-row.cl-drop-before { box-shadow:inset 0 2px 0 var(--cl-acc); }
+  body.frz-beta-active .cl-wrap .cl-row.cl-drop-after { box-shadow:inset 0 -2px 0 var(--cl-acc); }
+  body.frz-beta-active .cl-wrap .cl-hdl, body.frz-beta-active .cl-draft .cl-hdl { width:8px; flex:none; color:var(--muted); font-size:12px; line-height:1; letter-spacing:-2px; cursor:grab; user-select:none; }
+  body.frz-beta-active .cl-wrap .cl-hdl { opacity:0; }
+  body.frz-beta-active .cl-wrap .cl-row:hover .cl-hdl { opacity:.7; }
+  body.frz-beta-active .cl-wrap .cl-box, body.frz-beta-active .cl-draft .cl-box { width:16px; height:16px; box-sizing:border-box; border:1.5px solid var(--muted); border-radius:4px; flex:none; display:inline-flex; align-items:center; justify-content:center; background:var(--surface); padding:0; margin:0; cursor:pointer; }
+  body.frz-beta-active .cl-draft .cl-box { cursor:default; opacity:.7; }
+  body.frz-beta-active .cl-wrap .cl-box.on { background:var(--cl-acc); border-color:var(--cl-acc); }
+  body.frz-beta-active .cl-wrap .cl-box:disabled { cursor:default; opacity:.75; }
+  body.frz-beta-active .cl-wrap .cl-box:focus-visible { outline:2px solid var(--cl-acc); outline-offset:2px; }
+  body.frz-beta-active .cl-wrap .cl-txt { flex:1; min-width:0; font-size:13px; color:var(--text); line-height:1.4; overflow-wrap:anywhere; }
+  body.frz-beta-active .cl-page .cl-txt[title] { cursor:text; }
+  body.frz-beta-active .cl-wrap .cl-row.done .cl-txt { color:var(--muted); text-decoration:line-through; }
+  body.frz-beta-active .cl-wrap .cl-who { font-size:11px; color:var(--muted); white-space:nowrap; }
+  body.frz-beta-active .cl-wrap .cl-x, body.frz-beta-active .cl-draft .cl-x { background:none; border:0; color:var(--muted); font-size:12px; cursor:pointer; padding:2px 4px; flex:none; line-height:1; }
+  body.frz-beta-active .cl-wrap .cl-x { opacity:0; }
+  body.frz-beta-active .cl-wrap .cl-row:hover .cl-x, body.frz-beta-active .cl-wrap .cl-x:focus-visible { opacity:.75; }
+  body.frz-beta-active .cl-draft .cl-x { opacity:.7; }
+  body.frz-beta-active .cl-wrap .cl-addline, body.frz-beta-active .cl-draft .cl-addline, body.frz-beta-active .cl-wrap .cl-start { display:flex; align-items:center; gap:10px; background:none; border:0; padding:6px; font:400 13px 'Lato',sans-serif; color:var(--muted); cursor:pointer; text-align:left; }
+  body.frz-beta-active .cl-wrap .cl-plus, body.frz-beta-active .cl-draft .cl-plus { width:16px; text-align:center; font-weight:700; color:var(--cl-acc); }
+  body.frz-beta-active .cl-wrap .cl-start { border:1px dashed var(--border); border-radius:8px; padding:7px 12px; font-weight:700; font-size:12px; color:var(--cl-acc); gap:6px; }
+  body.frz-beta-active .cl-wrap .cl-start .cl-plus { width:auto; }
+  body.frz-beta-active .cl-wrap .cl-addrow { display:flex; align-items:center; gap:10px; padding:4px 6px; }
+  body.frz-beta-active .cl-wrap .cl-addin, body.frz-beta-active .cl-wrap .cl-editin { flex:1; min-width:0; padding:5px 8px; font:13px 'Lato',sans-serif; border:1px solid var(--cl-acc); border-radius:6px; background:var(--surface); color:var(--text); outline:none; }
+  body.frz-beta-active .cl-compact .cl-toggle { width:100%; display:flex; align-items:center; gap:10px; background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:8px 10px; cursor:pointer; font:inherit; color:var(--text); text-align:left; }
+  body.frz-beta-active .cl-compact .cl-toggle[aria-expanded="true"] { border-bottom-left-radius:0; border-bottom-right-radius:0; }
+  body.frz-beta-active .cl-compact .cl-chev { width:12px; height:12px; flex:none; color:var(--muted); }
+  body.frz-beta-active .cl-compact .cl-toggle[aria-expanded="true"] .cl-chev { transform:rotate(90deg); }
+  body.frz-beta-active .cl-compact .cl-body { border:1px solid var(--border); border-top:0; border-radius:0 0 6px 6px; background:var(--surface); padding:4px 6px; }
+  body.frz-beta-active .frz-lp-sec .cl-compact .cl-toggle { border:0; background:none; padding:2px 0; }
+  body.frz-beta-active .frz-lp-sec .cl-compact .cl-body { border:0; background:none; padding:4px 0 0; }
+  body.frz-beta-active .cl-draft .cl-drow { display:flex; align-items:center; gap:8px; padding:3px 0; }
+  body.frz-beta-active .cl-draft .cl-drow[draggable] { opacity:.6; }
+  body.frz-beta-active .cl-draft .cl-hdl { opacity:.7; }
+  body.frz-beta-active .cl-draft .cl-din { flex:1; min-width:0; padding:6px 9px; font:13px 'Lato',sans-serif; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); }
+  body.frz-beta-active .cl-draft .cl-addline { padding-left:18px; }
+  body.frz-beta-active .cl-create-body .cl-addline { padding-left:18px; }
+  body.frz-beta-active .cl-tmpl { margin-top:12px; }
+  body.frz-beta-active .cl-tmpl-hd { font-size:11px; font-weight:900; color:var(--text); text-transform:uppercase; letter-spacing:.5px; margin-bottom:3px; }
+  body.frz-beta-active .cl-tmpl-note { font-size:11px; color:var(--muted); margin-bottom:6px; }
 </style>
 <script>
 (function(){
@@ -28396,7 +28788,7 @@ if ('serviceWorker' in navigator) {
     // Assets + Linked Records sit with the other cross-system reference cards (Attachments), above
     // the item's own Activity, since they are authoritative-elsewhere context, not item state.
     // Linked Records (requests/service events) sits just below Linked Assets as its related actions.
-    [ cardOf('ipNotes'), document.getElementById('frzAttachCard'), document.getElementById('frzAssetCard'),
+    [ cardOf('ipNotes'), document.getElementById('frzChecklistCard'), document.getElementById('frzAttachCard'), document.getElementById('frzAssetCard'),
       document.getElementById('frzExtRefsCard'),
       document.getElementById('frzActivityCard'),
       document.getElementById('ipFeatureFlagsCard'), document.getElementById('ipSubtasksCard'),
@@ -28406,7 +28798,16 @@ if ('serviceWorker' in navigator) {
     _debrandItem();
   }
   // Full pass - only from the renderItemPage wrapper (source is fresh there).
-  function _frzItemLayout(p){ _frzConsolidateRail(p); _frzOrderMain(); _frzItemHeader(p); }
+  function _frzItemLayout(p){ _frzConsolidateRail(p); _frzChecklistCard(p); _frzOrderMain(); _frzItemHeader(p); }
+  // CHECKLIST-1: the item page's Checklist card. _frzOrderMain places it right under the Description card,
+  // which keeps its full size (the checklist is its own smaller card, never inside the description).
+  // Rendered by the shared checklistMount (classic block) - the same renderer as the modal and panel.
+  function _frzChecklistCard(p){
+    var deps=document.getElementById('ipDepsCard'); if(!deps || !deps.parentElement || !p) return;
+    var card=document.getElementById('frzChecklistCard');
+    if(!card){ card=document.createElement('div'); card.id='frzChecklistCard'; deps.parentElement.appendChild(card); }
+    _call('checklistMount', card, p, {mode:'page'});
+  }
   // Item-page header: the standalone item key and the chip row are BOTH gone now.
   //  - The key (frz-ip-key) duplicated the breadcrumb string 62px above it, so it was removed
   //    (the breadcrumb keeps the key).
@@ -30482,7 +30883,7 @@ if ('serviceWorker' in navigator) {
                   + (_clip?'<span style="flex:0 0 auto;margin-left:4px;display:inline-flex;align-items:center">'+_clip+'</span>':'')
                   + (_ind?'<span style="flex:0 0 auto;margin-left:4px;display:inline-flex;align-items:center">'+_ind+'</span>':'')
                   + '</div>'; })()
-            + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+(function(){ var s=_call('slaBadgeHtml',p,true); return s?' '+s:''; })()+_frzAgeChip(p)
+            + '<div class="frz-bcard-meta">'+esc(p.dev||'Unassigned')+(pts?' '+pts:'')+(wkChip?' '+wkChip:'')+(badge?' '+badge:'')+(function(){ var s=_call('slaBadgeHtml',p,true); return s?' '+s:''; })()+_frzAgeChip(p)+(function(){ var h=_call('checklistChipHtml',p); return h?' '+h:''; })()
               // ADOPT-2: relative due date, ONLY when one exists (no dash/placeholder on a dense card, so
               // cards without a due date get no new node and are height-identical). Overdue = past AND
               // positively non-terminal (Released/duplicated never reads overdue); same red token as the List.
@@ -30594,11 +30995,15 @@ if ('serviceWorker' in navigator) {
     // Start date defaults to today (if blank); owner is prompted (if blank).
     var setStart = null;
     var _brCaptured = null;   // BLOCK-REASON-2: {reason,note} captured before an interactive block via drag
-    function commit(setOwner){
+    function commit(setOwner, _clOk){
       // KAN-VIS-1 Stage 2: terminal-drop confirm. Placed here so it runs AFTER the terminal
       // admin gate above and AFTER promptKanbanOwner resolves, and BEFORE any mutation of p,
       // so a cancel leaves the in-memory item untouched; re-render restores the card's column.
-      if(isTermStatus(newStatus) && !_call('kanbanTerminalDropConfirm', p, newStatus)){ renderBetaKanban(); return; }
+      if(isTermStatus(newStatus) && !_clOk && (_call('checklistOpenSteps', p, newStatus)||[]).length){   // CHECKLIST-1
+        Promise.resolve(_call('checklistCloseOk', p, newStatus, {completionNote:true})).then(function(ok){ if(ok) commit(setOwner, true); else renderBetaKanban(); });
+        return;
+      }
+      if(isTermStatus(newStatus) && !_clOk && !_call('kanbanTerminalDropConfirm', p, newStatus)){ renderBetaKanban(); return; }
       var oldStatus=p.status, oldStart=p.start, oldDev=p.dev, oldRel=p.releaseDate;
       p.status=newStatus;
       if(setStart) p.start=setStart;
@@ -34403,6 +34808,7 @@ if ('serviceWorker' in navigator) {
       + '<div class="frz-lp-name">'+esc(p.name||'')+'</div></div>'
       + (details?'<div class="frz-lp-details">'+details+'</div>':'')
       + '<div class="frz-lp-sec"><div class="frz-lp-sec-hd">Description</div><div id="frzLpDesc"></div></div>'
+      + '<div class="frz-lp-sec" id="frzLpChecklist" style="display:none"></div>'   // CHECKLIST-1: collapsed, tick only
       + '<div class="frz-lp-sec"><div class="frz-lp-sec-hd">Comments</div><div id="frzLpComposer"></div><div id="frzLpThread"></div></div>';
   }
   // Open/refresh the panel for an item (from in-memory projects[] - no fetch). fromURL:
@@ -34448,6 +34854,7 @@ if ('serviceWorker' in navigator) {
     // the CURRENTLY open item, and the flag modal (z-index 900) opens above the panel (z-index 80).
     var _fb=_frzPanelEl.querySelector('#frzLpFlagBtn');
     if(_fb) _fb.addEventListener('click', function(){ _call('openFlagIssue', state.panelId); });
+    var _clh=_frzPanelEl.querySelector('#frzLpChecklist'); if(_clh) _call('checklistMount', _clh, p, {mode:'compact'});   // CHECKLIST-1
     _frzRenderPanelThread(id);                          // read-only thread (sanitizer-ensured, state.panelId-guarded)
     _frzWirePanelComposer(p, canEdit);                  // lazy composer (viewer/flag-off → none)
     _frzPaintPanelFlag(id);                             // REM-1: flag banner (all roles; state.panelId-guarded)

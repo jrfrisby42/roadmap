@@ -4829,9 +4829,11 @@ SERVER_OWNED_FIELDS = ("reporter", "reporterEmail", "source", "createdAt", "spri
                        "extLinks",                    # LINKS-1: user-supplied reference URLs - endpoint-mediated
                                                       # (POST/PATCH/DELETE /api/items/{pid}/links) so the generic
                                                       # item PUT cannot bypass the save-time scheme whitelist
-                       "ccList")                      # CC-1: external notify/CC list - endpoint-mediated
+                       "ccList",                      # CC-1: external notify/CC list - endpoint-mediated
                                                       # (POST/DELETE /api/items/{pid}/cc) so the generic item PUT
                                                       # cannot direct item content to addresses of a client's choosing
+                       "checklist")                   # CHECKLIST-1: tickable steps - endpoint-mediated (POST .../checklist/{sid}/check,
+                                                      # PUT .../checklist) so a stale full-item save can never undo a tick
 
 RECURRENCE_SKIP_KEYS = {
     # instance-specific / per-cycle fields a new occurrence starts fresh (incl. itemKey, which
@@ -4895,6 +4897,10 @@ RECURRENCE_INHERITED = {
     # the next occurrence of a recurring item, so it is inherited (in SERVER_OWNED_FIELDS -> the
     # invariant requires it here or in SKIP).
     "ccList",
+    # CHECKLIST-1: a recurring item's steps describe the repeating work, so the next occurrence
+    # keeps them - but spawn_recurrence RESETS them (every box unticked, who/when cleared, fresh
+    # step ids) via _checklist_reset. Inherited, not stripped.
+    "checklist",
 }
 
 def _save_project(c, pid: int, data: dict, ts: str = None):
@@ -5491,6 +5497,11 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     body.pop("assetServiceSync", None)   # WRITE-1b: server-owned send-outcome record; never client-seeded
     body.pop("extLinks", None)           # LINKS-1: endpoint-mediated only; a create can't seed reference URLs
     body.pop("ccList", None)             # CC-1: endpoint-mediated only; a create can't seed the external notify list
+    # CHECKLIST-1: a create MAY seed steps (the New Item form, pre-filled from the Type template), but
+    # only as text - normalized to fresh unticked steps, so a client can't forge ticks or who/when.
+    _cl_seed = _checklist_fresh(body.pop("checklist", None))
+    if _cl_seed:
+        body["checklist"] = _cl_seed
     # PRECREATE-ATTACH-1 Stage A: close the create forge hole. create_project inserts the client body
     # wholesale and does NOT apply SERVER_OWNED_FIELDS (that is update_project's force-restore list), so a
     # forged `attachments` array would otherwise persist unvalidated. Strip it here (like the fields above);
@@ -5667,8 +5678,12 @@ def update_project(pid: int, body: dict, background: BackgroundTasks = None,
             # Field subset: reject any content key the Contributor actually changed that
             # is not allowed. Compare by value against the stored blob (the client may
             # resend the whole item); ignore the updated_ts echo and transport keys.
+            # Server-owned fields are force-restored from the stored blob further down, so a stale copy
+            # in the body (e.g. a checklist someone ticked since this page loaded) changes nothing and
+            # must not read as an illegal edit (CHECKLIST-1).
             changed = {k for k, v in body.items()
-                       if old.get(k) != v and k != "updated_ts" and not k.startswith("_")}
+                       if old.get(k) != v and k != "updated_ts" and not k.startswith("_")
+                       and k not in SERVER_OWNED_FIELDS}
             illegal = changed - CONTRIBUTOR_EDITABLE_FIELDS
             if illegal:
                 raise HTTPException(403, f"Contributors may not edit these fields: {', '.join(sorted(illegal))}")
@@ -7351,6 +7366,118 @@ def delete_item_link(pid: int, link_id: str, username: str = "",
     write_audit(team, "link:remove", username, pid, p.get("name", ""),
                 changes={"label": removed.get("label"), "url": removed.get("url")})
     return {"ok": True, "extLinks": p["extLinks"]}
+
+# ── CHECKLIST-1: tickable steps on an item ───────────────────────────────────────────────────
+# `checklist` is a list of {id, text, done, by?, at?} on the item blob, NOT in the description:
+# a separate field is what makes per-step ticking, the "3/5" counts, who/when, recurrence resets
+# and staying out of Jira's description sync possible. It is in SERVER_OWNED_FIELDS, so the generic
+# item PUT restores it and these two routes are the ONLY write paths (create may seed unticked text).
+# Writes deliberately do NOT bump updated_ts: a tick is not an edit of the item, so it must not make
+# someone else's open edit modal 409 on save (their save restores the checklist anyway).
+# Never synced to Jira. Ticks write an audit row only - no activity, no notification.
+_CHECKLIST_CAP = 50        # max steps per item
+_CHECKLIST_TEXT_MAX = 200  # max chars per step
+
+def _checklist_text(v) -> str:
+    return re.sub(r"\s+", " ", str(v or "")).strip()[:_CHECKLIST_TEXT_MAX]
+
+def _checklist_fresh(steps) -> list:
+    """Client-supplied steps (strings or {text}) -> fresh UNTICKED steps, blanks dropped, capped.
+    The sole create-time normalizer (create_project) - who/when/done are never taken from a client."""
+    out = []
+    for st in (steps if isinstance(steps, list) else []):
+        t = _checklist_text(st.get("text") if isinstance(st, dict) else st)
+        if t:
+            out.append({"id": secrets.token_hex(5), "text": t, "done": False})
+        if len(out) >= _CHECKLIST_CAP:
+            break
+    return out
+
+def _checklist_reset(steps) -> list:
+    """Recurrence: the same step texts, every box unticked, who/when cleared, fresh ids."""
+    return _checklist_fresh([st for st in (steps if isinstance(steps, list) else []) if isinstance(st, dict)])
+
+def _checklist_write(c, pid: int, p: dict):
+    """Blob-only write (no _reindex_project, so updated_ts is NOT bumped - see the section note).
+    The checklist feeds no indexed column, FTS or reverse index, so nothing drifts."""
+    c.execute("UPDATE projects SET data=? WHERE id=?", (json.dumps(p), pid))
+
+@app.post("/api/items/{pid}/checklist/{sid}/check")
+def check_checklist_step(pid: int, sid: str, body: dict = Body({}),
+                         auth: dict = Depends(require_role("admin", "editor", "contributor"))):
+    """Tick or untick one step. Idempotent; records who/when on a tick, clears them on an untick.
+    Contributors may tick within their item scope (it is doing the work, not shaping it)."""
+    team = auth["team"]
+    username = _audit_actor(body.get("_username"), auth)
+    done = bool(body.get("done"))
+    with db(team) as c:
+        p = _get_item_blob(c, pid)
+        require_item_scope(c, auth, p)
+        steps = p.get("checklist") if isinstance(p.get("checklist"), list) else []
+        st = next((x for x in steps if isinstance(x, dict) and x.get("id") == sid), None)
+        if not st:
+            raise HTTPException(404, "Checklist step not found")
+        changed = bool(st.get("done")) != done
+        if changed:
+            st["done"] = done
+            if done:
+                st["by"] = username; st["at"] = datetime.now(timezone.utc).isoformat()
+            else:
+                st.pop("by", None); st.pop("at", None)
+            p["checklist"] = steps
+            _checklist_write(c, pid, p)
+    if changed:
+        write_audit(team, "checklist:" + ("check" if done else "uncheck"), username, pid, p.get("name", ""),
+                    changes={"step": st.get("text")})
+    return {"ok": True, "checklist": steps}
+
+@app.put("/api/items/{pid}/checklist")
+def put_checklist(pid: int, body: dict = Body(...),
+                  auth: dict = Depends(require_role("admin", "editor"))):
+    """Replace the step list's SHAPE (add / rename / reorder / remove) from the item page.
+    body.steps = [{id?, text}] in display order. An existing id keeps its tick + who/when (renaming a
+    step does not untick it); a step without a known id is new and unticked. [] removes the checklist."""
+    team = auth["team"]
+    username = _audit_actor(body.get("_username"), auth)
+    raw = body.get("steps")
+    if not isinstance(raw, list):
+        raise HTTPException(422, "steps must be a list")
+    with db(team) as c:
+        p = _get_item_blob(c, pid)
+        old = [x for x in (p.get("checklist") or []) if isinstance(x, dict)]
+        by_id = {x.get("id"): x for x in old}
+        new, seen = [], set()
+        for st in raw:
+            if not isinstance(st, dict):
+                continue
+            t = _checklist_text(st.get("text"))
+            if not t:
+                continue
+            prev = by_id.get(st.get("id")) if st.get("id") not in seen else None
+            if prev:
+                seen.add(prev["id"])
+                new.append({**prev, "text": t})
+            else:
+                new.append({"id": secrets.token_hex(5), "text": t, "done": False})
+            if len(new) > _CHECKLIST_CAP:
+                raise HTTPException(422, f"A checklist can have at most {_CHECKLIST_CAP} steps.")
+        if new:
+            p["checklist"] = new
+        else:
+            p.pop("checklist", None)
+        _checklist_write(c, pid, p)
+    ch = {}
+    added = [x["text"] for x in new if x["id"] not in by_id]
+    removed = [x.get("text") for x in old if x.get("id") not in seen]
+    renamed = [x["text"] for x in new if x["id"] in by_id and by_id[x["id"]].get("text") != x["text"]]
+    if added: ch["added"] = added
+    if removed: ch["removed"] = removed
+    if renamed: ch["renamed"] = renamed
+    if not ch and [x.get("id") for x in old] != [x["id"] for x in new]:
+        ch["reordered"] = True
+    if ch:
+        write_audit(team, "checklist:edit", username, pid, p.get("name", ""), changes=ch)
+    return {"ok": True, "checklist": p.get("checklist", [])}
 
 # ── CC-1: external notify / CC list (reporter-equivalent access for a non-account address) ────
 # An external party (vendor, a requester's manager, a colleague without an account) follows an
@@ -14332,6 +14459,10 @@ def spawn_recurrence(pid: int, body: dict = Body({}), auth: dict = Depends(requi
     new_item["recurrence"]         = recurrence
     new_item["syncChildren"]       = p.get("syncChildren", False)
     new_item["recurrence_parent"]  = pid   # stripped in RECURRENCE_SKIP_KEYS, so this is the sole source - order-independent
+    if "checklist" in new_item:            # CHECKLIST-1: same steps, every box unticked (RECURRENCE_INHERITED)
+        _cl = _checklist_reset(new_item["checklist"])
+        if _cl: new_item["checklist"] = _cl
+        else: new_item.pop("checklist", None)
 
     with db(team) as c:
         _assign_item_key(c, new_item)   # fresh per-product key - never inherit the parent's (unique index)
