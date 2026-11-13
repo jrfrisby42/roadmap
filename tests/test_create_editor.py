@@ -78,10 +78,14 @@ def test_stamp_is_editor_aware():
 
 
 def test_edit_mount_unchanged_invariant():
-    """INVARIANT: edit mode keeps the comment toolbar (with image) and still rehydrates images."""
+    """INVARIANT: edit mode keeps every comment-toolbar button (with image) and still rehydrates images.
+    DESC-CHECKBOX-1: edit mode now uses _FRZ_TB_MODAL = the comment set + the checkbox list."""
     src = _html()
     em = src.split("function frzMountModalNotes(", 1)[1].split("function frzMountCreateNotes(", 1)[0]
-    assert "buttons:_FRZ_TB_COMMENT" in em, "edit mode keeps the comment set (image included)"
+    assert "buttons:_FRZ_TB_MODAL" in em, "edit mode uses the modal set"
+    tb = lambda n: re.findall(r"'([a-z]+)'", re.search(r"var " + n + r"=(\[[^\]]*\]);", src).group(1))
+    assert set(tb("_FRZ_TB_COMMENT")) <= set(tb("_FRZ_TB_MODAL")), "the modal set keeps every comment-set button (image included)"
+    assert "task" in tb("_FRZ_TB_MODAL")
     assert "_frzRehydrateEditorImages(ed, id)" in em, "edit mode still rehydrates stored images"
     assert "'image'" in re.search(r"var _FRZ_TB_COMMENT=(\[[^\]]*\]);", src).group(1), \
         "the comment set (edit + comments) still has image - unchanged"

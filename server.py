@@ -2788,11 +2788,22 @@ class _HTMLSanitizer(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.out = []
         self._skip = 0            # depth inside a drop-content tag
+        self._glyph = None        # DESC-CHECKBOX-1: box glyph waiting for the task item's first text
     def handle_starttag(self, tag, attrs):
         if tag in _DROP_HTML_CONTENT:
             self._skip += 1; return
         if self._skip or tag not in _SAFE_HTML_TAGS:
             return
+        # DESC-CHECKBOX-1: a description checkbox list (<ul data-type="taskList"><li data-type="taskItem"
+        # data-checked>) renders on the portal page + in emails as un-bulleted lines prefixed with a box glyph,
+        # since the data-* attributes are not on this allow-list and emails cannot draw a CSS box.
+        # The style strings are server constants, never stored input.
+        a = {(k or "").lower(): (v or "") for k, v in attrs}
+        if tag == "ul" and a.get("data-type") == "taskList":
+            self.out.append('<ul style="list-style:none;padding-left:4px">'); return
+        if tag == "li" and a.get("data-type") == "taskItem":
+            self._glyph = "☑ " if a.get("data-checked") == "true" else "☐ "
+            self.out.append("<li>"); return
         safe = []
         for k, v in attrs:
             k = (k or "").lower()
@@ -2811,10 +2822,14 @@ class _HTMLSanitizer(HTMLParser):
         if tag in _DROP_HTML_CONTENT:
             self._skip = max(0, self._skip - 1); return
         if not self._skip and tag in _SAFE_HTML_TAGS and tag not in _VOID_HTML_TAGS:
+            if tag == "li" and self._glyph:             # empty task item: still show its box
+                self.out.append(self._glyph); self._glyph = None
             self.out.append(f"</{tag}>")
     def handle_data(self, data):
         if self._skip:
             return
+        if self._glyph and data.strip():
+            self.out.append(self._glyph); self._glyph = None
         self.out.append(html.escape(data, quote=False))   # convert_charrefs already decoded entities
 
 def _sanitize_html(s: str) -> str:
