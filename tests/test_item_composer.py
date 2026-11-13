@@ -43,7 +43,8 @@ def test_composer_shell_css():
     # background scroll lock targets the shell scroller (.frz-content), not just body
     assert "html.composer-lock .frz-beta .frz-content { overflow: hidden; }" in src, "the shell scroller must be locked while open"
     # the shared .modal mobile rule is carved out so other modals are untouched
-    assert ".modal:not(.frz-composer) { width: 98vw !important;" in src, "the shared 768px .modal rule must exclude the composer"
+    # (ADMIN-PAGE-1 also carves out the Flow Admin page card: `.modal:not(.frz-composer):not(.frz-adminpage .admin-modal)`)
+    assert re.search(r"\.modal:not\(\.frz-composer\)[^{]*\{ width: 98vw !important;", src), "the shared 768px .modal rule must exclude the composer"
 
 
 def test_composer_a11y_observer():
