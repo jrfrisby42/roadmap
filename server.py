@@ -1966,12 +1966,17 @@ _allowed_origins = os.environ.get("CORS_ORIGINS", "").split(",")
 _allowed_origins = [o.strip() for o in _allowed_origins if o.strip()]
 _configure_cors(app, _allowed_origins)
 
-@app.get("/", response_class=HTMLResponse)
-def root():
+def _app_shell_response() -> HTMLResponse:
+    """roadmap.html, marked X-Flow-Shell so the service worker keeps ONLY the app page as its offline copy
+    (never /audit, /report, /ticket... which are server-rendered pages on the same origin). BOOT-STUCK-1."""
     if not os.path.exists(HTML):
         raise HTTPException(404, "roadmap.html not found next to server.py")
     with open(HTML, encoding="utf-8") as f:
-        return f.read()
+        return HTMLResponse(content=f.read(), headers={"X-Flow-Shell": "1"})
+
+@app.get("/", response_class=HTMLResponse)
+def root():
+    return _app_shell_response()
 
 # ── Beta shell (/beta) ────────────────────────────────────────────────────────
 # Additive: serves the SAME roadmap.html so the /beta left-rail shell can run
@@ -2024,7 +2029,7 @@ _PWA_MANIFEST = {
 # Cache name is tied to APP_VERSION so a release busts the old shell on activate.
 _PWA_SW_TEMPLATE = r"""
 const CACHE = 'frazil-shell-__APP_VERSION__';
-const SHELL = ['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];
+const SHELL = ['/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];   // '/' is stored by the navigation handler, checked complete (BOOT-STUCK-1)
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
@@ -2047,16 +2052,35 @@ self.addEventListener('fetch', (e) => {
   if (url.pathname.startsWith('/api/')) return;     // data is network-only
 
   // Navigations / app shell: network-first, fall back to cached shell offline.
+  // BOOT-STUCK-1: a navigation can fail with net::ERR_CACHE_MISS (seen on an Organization switch), so
+  // retry ONCE with a fresh request before falling back. Only a COMPLETE app page is kept as the
+  // offline shell: the server marks it (X-Flow-Shell) so /audit, /report etc. never replace it, and
+  // a body that does not end in </html> (cut off mid-download) is never stored - a cut-off copy
+  // shows "Loading data..." forever because the script that clears it never arrives.
   if (req.mode === 'navigate' || url.pathname === '/') {
-    e.respondWith(
-      fetch(req)
-        .then((res) => {
+    e.respondWith((async () => {
+      let res = null;
+      try { res = await fetch(req); } catch (err) {}
+      if (!res) {
+        try { res = await fetch(new Request(req.url, { credentials: 'same-origin', cache: 'reload', redirect: 'manual' })); } catch (err) {}
+      }
+      if (res) {
+        if (res.ok && res.type === 'basic' && res.headers.get('X-Flow-Shell') === '1') {
           const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put('/', copy)).catch(() => {});
-          return res;
-        })
-        .catch(() => caches.match('/'))
-    );
+          e.waitUntil((async () => {
+            try {
+              const txt = await copy.text();
+              if (txt.trimEnd().endsWith('</html>')) {
+                const c = await caches.open(CACHE);
+                await c.put('/', new Response(txt, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Flow-Shell': '1' } }));
+              }
+            } catch (err) {}
+          })());
+        }
+        return res;
+      }
+      return (await caches.match('/')) || Response.error();
+    })());
     return;
   }
 
@@ -15187,10 +15211,7 @@ def get_exec_deck(auth: dict = Depends(require_role("admin"))):
 def spa_catch_all(full_path: str):
     if full_path.startswith("api/") or full_path.startswith("audit"):
         raise HTTPException(404)
-    if not os.path.exists(HTML):
-        raise HTTPException(404, "roadmap.html not found next to server.py")
-    with open(HTML, encoding="utf-8") as f:
-        return f.read()
+    return _app_shell_response()
 
 
 # ── JIRA-SERVER-SYNC-1: the background Jira sync runs on the server ──────────────────────────────────

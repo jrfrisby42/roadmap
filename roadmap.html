@@ -1208,7 +1208,41 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 <div id="loadingOverlay" style="display:flex;position:fixed;inset:0;z-index:9999;background:#fff;align-items:center;justify-content:center;flex-direction:column;gap:12px">
   <div style="width:40px;height:40px;border:3px solid #eee;border-top-color:#0059A9;border-radius:50%;animation:spin 0.8s linear infinite"></div>
   <div style="font-size:13px;color:#7070a0;font-family:Lato,sans-serif">Loading data…</div>
+  <div id="loadingStuck" style="display:none;flex-direction:column;align-items:center;gap:10px;font-family:Lato,sans-serif;font-size:13px;color:#4a5a6a">
+    <span>This is taking longer than usual.</span>
+    <button type="button" id="loadingReload" style="font:inherit;font-weight:700;padding:7px 18px;border-radius:6px;border:0;background:#0059A9;color:#fff;cursor:pointer">Reload</button>
+  </div>
 </div>
+<script>
+// BOOT-STUCK-1: the loading screen is in the page from the start and only boot() (or a later fetch) clears it.
+// If it is still up after 15s, offer a Reload instead of spinning forever. Inline right after the overlay so it
+// runs even when the rest of the page never arrived (a cut-off copy served by the service worker). Reload drops
+// the service worker first so the next load goes straight to the network; the page re-registers it on load.
+(function(){
+  var timer = null;
+  function stuck(on){ var el = document.getElementById('loadingStuck'); if(el) el.style.display = on ? 'flex' : 'none'; }
+  window._frzLoadWatch = function(on){
+    clearTimeout(timer); stuck(false);
+    if(on) timer = setTimeout(function(){
+      var o = document.getElementById('loadingOverlay');
+      if(o && o.style.display !== 'none') stuck(true);
+    }, 15000);
+  };
+  window._frzLoadWatch(true);
+  document.getElementById('loadingReload').addEventListener('click', function(){
+    var go = function(){ location.reload(); };
+    try {
+      if(navigator.serviceWorker && navigator.serviceWorker.getRegistrations){
+        navigator.serviceWorker.getRegistrations().then(function(rs){
+          return Promise.all(rs.map(function(r){ return r.unregister(); }));
+        }).then(go, go);
+        return;
+      }
+    } catch(e){}
+    go();
+  });
+})();
+</script>
 <style>@keyframes spin{to{transform:rotate(360deg)}}
   #loginWall .btn-save, #pwResetWall .btn-save { background:#0059A9; }
   #loginWall .btn-save:hover, #pwResetWall .btn-save:hover { background:#004A8F; filter:none; }
@@ -3739,7 +3773,7 @@ function updatePrioritySelectColor(sel){
 document.getElementById('fPriority')?.addEventListener('change', function(){ updatePrioritySelectColor(this); });
 
 // Show/hide the loading overlay
-function showLoading(on){ document.getElementById('loadingOverlay').style.display = on ? 'flex' : 'none'; }
+function showLoading(on){ document.getElementById('loadingOverlay').style.display = on ? 'flex' : 'none'; try { if(window._frzLoadWatch) window._frzLoadWatch(on); } catch(e){} }   // BOOT-STUCK-1: re-arm / clear the 15s Reload offer
 
 // _writeToDisk is intentionally a no-op - all saves go directly to the API per operation
 function _writeToDisk(){ /* no-op: API saves are done per-operation */ }
