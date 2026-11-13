@@ -175,6 +175,8 @@ The app is an installable PWA. To preserve the two-file deploy, **all PWA assets
 
 **Caching strategy (deliberate):** network-first for the app shell / navigations so a `roadmap.html` deploy goes live immediately (consistent with "HTML changes need no restart"); cache-first only for our own icons/manifest; **`/api/*` is network-only** — there is no offline data layer (it would conflict with the server-validated planning/snapshot conflict model). Don't make the service worker cache API responses without a deliberate redesign.
 
+**Offline copy of the page (BOOT-STUCK-1):** a navigation that fails (seen as `net::ERR_CACHE_MISS` on an Organization switch) is retried once with a fresh request before the worker falls back to its saved copy. Only the app page is saved: `root()` / `spa_catch_all` send `X-Flow-Shell: 1` (via `_app_shell_response`), so server-rendered pages (`/audit`, `/report`, `/ticket`, `/my-tickets`) never replace it, and a body that doesn't end in `</html>` (cut off mid-download) is never stored. The "Loading data..." overlay is in the page markup from the start, so a bad copy used to spin forever; an inline watchdog right after the overlay (`_frzLoadWatch`, re-armed by `showLoading`) now shows "This is taking longer than usual" + Reload after 15s, and Reload unregisters the worker before reloading.
+
 **Regenerating icons:** `python tools/gen_pwa_icons.py` (needs `pip install pillow` — Pillow is **dev-only**, NOT a runtime dependency). It redraws the brand map-pin and rewrites the three `_PWA_ICON_*_B64` constants in `server.py` in place. Run the JS/Python syntax checks after. Deploy is still just `scp server.py roadmap.html`.
 
 ---
