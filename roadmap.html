@@ -4251,7 +4251,7 @@ var _SRH_SAFE_TAGS = {P:1,BR:1,STRONG:1,B:1,EM:1,I:1,U:1,S:1,STRIKE:1,CODE:1,PRE
   TABLE:1,THEAD:1,TBODY:1,TR:1,TH:1,TD:1,COLGROUP:1,COL:1,DETAILS:1,SUMMARY:1,IFRAME:1};
 var _SRH_SAFE_ATTRS = {href:1,target:1,rel:1,title:1,alt:1,colspan:1,rowspan:1,colwidth:1,
   'class':1,'data-att-key':1,'data-u':1,'data-title':1,'data-variant':1,'data-type':1,
-  'data-id':1,'data-label':1,width:1,height:1,
+  'data-id':1,'data-label':1,'data-checked':1,width:1,height:1,   /* data-checked: DESC-CHECKBOX-1 (the modal loads #fDesc through here - dropping it would untick every box on a modal save) */
   allow:1,allowfullscreen:1,frameborder:1,src:1};   // src is gated below: kept only on a host-allowlisted iframe (imgs stay src-less, rehydrated at render)
 var _SRH_DROP_ALL = {SCRIPT:1,STYLE:1,OBJECT:1,EMBED:1,LINK:1,META:1,BASE:1,
   FORM:1,INPUT:1,BUTTON:1,TEXTAREA:1,SELECT:1,SVG:1,MATH:1,TEMPLATE:1};
@@ -10644,7 +10644,7 @@ function openTypeTemplate(i, btn){
   panel.style.cssText='padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;margin:2px 0 8px';
   panel.innerHTML=
     '<div style="font-size:11px;color:var(--muted);margin-bottom:5px">Description template for <b>'+esc(t.name)+'</b> - pre-fills the description of <b>new</b> items of this type. '
-      +(useRte ? 'Formatting (bold, italic, lists, links) is stamped as authored. ' : 'Plain text, one label line per field. ')
+      +(useRte ? 'Formatting (bold, italic, lists, checkbox lists, links) is stamped as authored. ' : 'Plain text, one label line per field. ')
       +'<b>Editing this does not change items that already exist.</b></div>'
     +'<div style="font-size:10px;color:var(--muted);margin:-2px 0 5px">If this Organization appends templates to portal tickets, this template and anything written into it is visible to the reporter on the ticket status page.</div>'
     +'<div class="cl-tmpl-hd" style="margin-top:4px">Description</div>'
@@ -20899,7 +20899,22 @@ function htmlToADF(html){
   function pushBlock(arr, el, tag){
     if(tag==='P'){ var ic=collectInline(el,[]); var n={ type:'paragraph' }; if(!blankInline(ic)) n.content=ic; arr.push(n); return; }
     if(/^H[1-6]$/.test(tag)){ var lvl=Math.min(6,Math.max(1, parseInt(tag.slice(1),10)||1)); var hc=collectInline(el,[]); var hn={ type:'heading', attrs:{ level:lvl } }; if(!blankInline(hc)) hn.content=hc; arr.push(hn); return; }
-    if(tag==='UL'){ arr.push(listBlock(el,'bulletList')); return; }
+    if(tag==='UL'){
+      var ul=listBlock(el,'bulletList');
+      // DESC-CHECKBOX-1: a checkbox list reaches Jira as a bullet list whose lines start with the box
+      // glyph ("☑ Windows" / "☐ Mac"), so the answer is readable in Jira. Flow never pulls a description
+      // back over an existing item, so the glyph text cannot round-trip into Flow.
+      if(el.getAttribute && el.getAttribute('data-type')==='taskList'){
+        var lis=[].slice.call(el.children).filter(function(c){ return c.tagName.toUpperCase()==='LI'; });
+        ul.content.forEach(function(item, i){
+          var glyph=(lis[i] && lis[i].getAttribute('data-checked')==='true') ? '☑ ' : '☐ ';
+          var para=item.content[0];
+          if(!para || para.type!=='paragraph'){ para={ type:'paragraph' }; item.content.unshift(para); }
+          para.content=[textNode(glyph,[])].concat(para.content||[]);
+        });
+      }
+      arr.push(ul); return;
+    }
     if(tag==='OL'){ arr.push(listBlock(el,'orderedList')); return; }
     if(tag==='BLOCKQUOTE'){ var bc=blocks(el); if(!bc.length) bc=[{ type:'paragraph' }]; arr.push({ type:'blockquote', content:bc }); return; }
     if(tag==='PRE'){ var txt=clean(el.textContent||''); var cb={ type:'codeBlock' }; if(txt) cb.content=[{ type:'text', text:txt }]; arr.push(cb); return; }  // plain text, NO marks
@@ -23885,6 +23900,22 @@ if ('serviceWorker' in navigator) {
   body.frz-beta-active .type-tmpl-host .frz-rte-modal:focus-within { border-color:var(--tm-acc); box-shadow:0 0 0 2px color-mix(in srgb, var(--tm-acc) 22%, transparent); }
   body.frz-beta-active .type-tmpl-host .ProseMirror { min-height:120px; padding:10px 12px; outline:none; color:var(--text); font-size:13px; line-height:1.6; font-family:'Lato',sans-serif; }
   body.frz-beta-active .type-tmpl-host .ProseMirror:focus { outline:none; }
+  /* DESC-CHECKBOX-1: checkbox lists in descriptions. In an editor TaskItem renders li > label > input + div
+     (a real, clickable checkbox). Stored/read HTML has no input (both sanitizers strip form controls), so the
+     read view draws the box from data-checked. Keyed on the stored attributes, so it reaches every read
+     surface (item page, List panel, modal) without a wrapper class. */
+  body.frz-beta-active ul[data-type="taskList"] { --dc-acc:#0059A9; list-style:none; padding-left:2px; margin:.4em 0; }
+  body.frz-beta-active.dark-mode ul[data-type="taskList"] { --dc-acc:#2F86DE; }
+  body.frz-beta-active ul[data-type="taskList"] > li { display:flex; align-items:flex-start; gap:8px; margin:3px 0; }
+  body.frz-beta-active ul[data-type="taskList"] > li > div { flex:1; min-width:0; }
+  body.frz-beta-active ul[data-type="taskList"] > li > div > p { margin:0; }
+  body.frz-beta-active ul[data-type="taskList"] > li > label { flex:none; display:inline-flex; margin-top:3px; cursor:pointer; }
+  body.frz-beta-active ul[data-type="taskList"] > li > label > input { width:15px; height:15px; margin:0; accent-color:var(--dc-acc); cursor:pointer; }
+  body.frz-beta-active ul[data-type="taskList"] > li > label > span,
+  body.frz-beta-active ul[data-type="taskList"] > li > span:empty { display:none; }   /* stored HTML keeps the editor's empty <span> once the <label> is stripped - it would add a second gap */
+  body.frz-beta-active ul[data-type="taskList"] > li:not(:has(> label))::before { content:''; flex:none; width:15px; height:15px; margin-top:3px; box-sizing:border-box; border:1.5px solid var(--muted); border-radius:4px; background:var(--surface) center/11px 11px no-repeat; }
+  body.frz-beta-active ul[data-type="taskList"] > li[data-checked="true"]:not(:has(> label))::before { border-color:var(--dc-acc); background-color:var(--dc-acc); background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E"); }
+  body.frz-beta-active #ipNotes.ip-desc-editable ul[data-type="taskList"] > li:not(:has(> label))::before { cursor:pointer; }
 </style>
 <script>
 (function(){
@@ -33855,7 +33886,7 @@ if ('serviceWorker' in navigator) {
       'h1','h2','h3','ul','ol','li','hr','a','img','span','mark','div',
       'table','thead','tbody','tr','th','td','colgroup','col','details','summary','iframe'],
     ALLOWED_ATTR:['href','target','rel','title','alt','src','colspan','rowspan','colwidth',
-      'class','data-att-key','data-u','data-title','data-variant','data-type','data-id','data-label',
+      'class','data-att-key','data-u','data-title','data-variant','data-type','data-id','data-label','data-checked',
       'allow','allowfullscreen','frameborder','width','height'],
     ALLOWED_URI_REGEXP:/^(?:https?:|mailto:|tel:|#)/i,    // blocks data:/blob:/javascript:
     FORBID_ATTR:['style','onerror','onload','onclick','onmouseover'],
@@ -33876,10 +33907,12 @@ if ('serviceWorker' in navigator) {
       import(b+'extension-link@'+V), import(b+'extension-image@'+V),
       import(b+'extension-highlight@'+V),
       import(b+'extension-table@'+V), import(b+'extension-table-row@'+V),
-      import(b+'extension-table-cell@'+V), import(b+'extension-table-header@'+V)
+      import(b+'extension-table-cell@'+V), import(b+'extension-table-header@'+V),
+      import(b+'extension-task-list@'+V), import(b+'extension-task-item@'+V)   // DESC-CHECKBOX-1
     ]).then(function(m){
       return { core:m[0], StarterKit:m[1].default, Link:m[2].default, Image:m[3].default, Highlight:m[4].default,
-               Table:m[5].default, TableRow:m[6].default, TableCell:m[7].default, TableHeader:m[8].default };
+               Table:m[5].default, TableRow:m[6].default, TableCell:m[7].default, TableHeader:m[8].default,
+               TaskList:m[9].default, TaskItem:m[10].default };
     });
     return _frzTiptapP;
   }
@@ -33934,8 +33967,13 @@ if ('serviceWorker' in navigator) {
     var tmp=document.createElement('div'); tmp.innerHTML=ed.getHTML();
     [].slice.call(tmp.querySelectorAll('img[data-att-key]')).forEach(function(im){ im.removeAttribute('src'); });
     var clean=frzSanitize(tmp.innerHTML);
+    return _frzPersistDescription(p, clean).then(function(ok){ if(ok) _frzFlashSaved(); });
+  }
+  // Shared persist (editor Save + DESC-CHECKBOX-1 read-view tick): conflict-checked PUT, then the Jira
+  // replace-push when the ADF changed. Resolves true when a save was made.
+  function _frzPersistDescription(p, clean){
     var oldDesc=p.description||'';
-    if(clean===oldDesc) return Promise.resolve();   // dirty check - no redundant writes
+    if(clean===oldDesc) return Promise.resolve(false);   // dirty check - no redundant writes
     p.description=clean;
     // ITEM-PAGE-PARITY-1 Stage 3: conflict-checked (null = the user chose Reload; nothing to push to Jira).
     return _call('putItemGuarded', p.id, Object.assign({}, p, {_username:_call('getUsername')})).then(function(saved){
@@ -33967,9 +34005,36 @@ if ('serviceWorker' in navigator) {
           item_id:p.id, item_name:p.name, owner:p.dev||'', project:p.product||'',
           created_by:_call('getUsername'), message:'Description synced to Jira (primary ticket)', status:'Auto-Cleared' }).catch(function(){});
       }
-      _frzFlashSaved();
-    }).catch(function(){ _call('showToast','Failed to save description'); });
+      return true;
+    }).catch(function(){ _call('showToast','Failed to save description'); return false; });
   }
+  // DESC-CHECKBOX-1: tick a description checkbox straight from the item page READ view (no edit session),
+  // for anyone who can edit the item. Toggles the Nth stored taskItem (both sanitizers keep every taskItem,
+  // so rendered order == stored order), then saves through the shared persist above (Jira push included).
+  // Capture phase so the read view's click-to-edit handler never sees the click. Only a click on the
+  // box itself (the li's left gutter) ticks; a click on the text still enters edit as before.
+  var _frzDescTickBusy=false;
+  document.addEventListener('click', function(e){
+    var li=e.target && e.target.closest && e.target.closest('#ipNotes.ip-desc-editable li[data-type="taskItem"]');
+    if(!li || li.querySelector(':scope > label')) return;          // editor mounted (real input) -> not ours
+    if(e.clientX - li.getBoundingClientRect().left > 24) return;   // the text: leave click-to-edit alone
+    e.preventDefault(); e.stopPropagation();
+    if(_frzDescTickBusy) return;
+    var p=_frzCurItem(); if(!p || !_call('_ipCanWrite', p)) return;
+    var all=[].slice.call(document.querySelectorAll('#ipNotes li[data-type="taskItem"]')), idx=all.indexOf(li);
+    var d=document.createElement('div'); d.innerHTML=p.description||'';
+    var target=d.querySelectorAll('li[data-type="taskItem"]')[idx]; if(!target) return;
+    var now=target.getAttribute('data-checked')==='true';
+    target.setAttribute('data-checked', now?'false':'true');
+    li.setAttribute('data-checked', now?'false':'true');           // optimistic paint
+    _frzDescTickBusy=true;
+    var before=p.description||'';
+    _frzLoadDOMPurify().catch(function(){}).then(function(){
+      return _frzPersistDescription(p, frzSanitize(d.innerHTML));
+    }).then(function(ok){
+      if(ok===false){ p.description=before; li.setAttribute('data-checked', now?'true':'false'); }   // failed -> revert
+    }).then(function(){ _frzDescTickBusy=false; }, function(){ _frzDescTickBusy=false; });
+  }, true);
   function _frzFlashSaved(){
     var btn=document.getElementById('ipNotesSaveBtn'); if(!btn) return;
     btn.textContent='Saved'; btn.style.background='#22b96e';
@@ -34039,7 +34104,12 @@ if ('serviceWorker' in navigator) {
       // widths use inline style, which the allowlist strips on save, so resizing would
       // mislead (look applied, reset on reload). TableHeader/Row/Cell complete the set.
       T.Table.configure({ resizable:false }), T.TableRow, T.TableHeader, T.TableCell,
-      Img, HL, Mention, InfoPanel, Expand
+      Img, HL, Mention, InfoPanel, Expand,
+      // DESC-CHECKBOX-1: checkbox lists in the description (answers like "Laptop: [ ] Windows [ ] Mac").
+      // Stored as <ul data-type="taskList"><li data-type="taskItem" data-checked="true|false"><div><p>..</p></div></li>.
+      // The <label><input> the node renders is stripped by both sanitizers (no form controls stored); TaskItem's
+      // parseHTML only needs li[data-type="taskItem"] + data-checked, so it still round-trips. nested:false = one level.
+      T.TaskList, T.TaskItem.configure({ nested:false })
     ];
   }
 
@@ -34247,7 +34317,7 @@ if ('serviceWorker' in navigator) {
         }
       });
       host._frzEd=ed;
-      _frzBuildToolbar(ed, { buttons:_FRZ_TB_COMMENT, cls:'frz-rte-tb-modal', place:function(tb){ fd.parentNode.insertBefore(tb, host); } });
+      _frzBuildToolbar(ed, { buttons:_FRZ_TB_MODAL, cls:'frz-rte-tb-modal', place:function(tb){ fd.parentNode.insertBefore(tb, host); } });   // DESC-CHECKBOX-1: comment set + checkbox list
       _frzWireMentions(ed);
       // Mirror sanitized rich HTML back into the hidden #fDesc so the classic modal save reads it.
       function _sync(){ var d=document.createElement('div'); d.innerHTML=ed.getHTML();
@@ -34357,11 +34427,14 @@ if ('serviceWorker' in navigator) {
   // levels collapse into a [Heading ▾] menu (trigger reflects current level); the lowest-
   // frequency flat actions move into a [⋯ More] menu. Nothing removed - every action is a
   // visible button OR a menu item, all from the same _FRZ_TB_DEFS. Comment set unchanged.
-  var _FRZ_TB_FULL=['bold','italic','strike','sep',{menu:'heading'},'sep',{split:'list'},'code','sep','table','panel','expand','sep',{menu:'more'}];
+  var _FRZ_TB_FULL=['bold','italic','strike','sep',{menu:'heading'},'sep',{split:'list'},'task','code','sep','table','panel','expand','sep',{menu:'more'}];
   var _FRZ_TB_COMMENT=['bold','italic','strike','sep','bullet','ordered','sep','link','image'];   // trimmed: discussion, not documents (no blocks)
   // CREATE-EDITOR-1: the create-mode description set = the comment set MINUS the image button (inline
   // image upload needs an item id, which a not-yet-created item lacks; Stage C is parked). No new buttons.
-  var _FRZ_TB_CREATE=['bold','italic','strike','sep','bullet','ordered','sep','link'];
+  var _FRZ_TB_CREATE=['bold','italic','strike','sep','bullet','ordered','task','sep','link'];   // DESC-CHECKBOX-1: +task (also the Admin type-template set)
+  // DESC-CHECKBOX-1: the EDIT-modal description set = the comment set + the checkbox list. Comments keep
+  // _FRZ_TB_COMMENT unchanged (a checkbox list is a description answer, not discussion).
+  var _FRZ_TB_MODAL=['bold','italic','strike','sep','bullet','ordered','task','sep','link','image'];
   // Menu groups: key → trigger label/title + the def keys it contains (resolved at open time).
   var _FRZ_TB_MENUS={
     heading:{ key:'heading', title:'Heading', label:'Heading ▾', items:['paragraph','h1','h2','h3'] },
@@ -34389,6 +34462,7 @@ if ('serviceWorker' in navigator) {
     paragraph:{ label:'Normal', title:'Normal', run:function(C){ C().setParagraph().run(); }, isActive:function(ed){ return ed.isActive('paragraph'); } },
     bullet:   { label:'&bull; List', title:'Bullet list', run:function(C){ C().toggleBulletList().run(); }, isActive:function(ed){ return ed.isActive('bulletList'); } },
     ordered:  { label:'1. List', title:'Numbered list', run:function(C){ C().toggleOrderedList().run(); }, isActive:function(ed){ return ed.isActive('orderedList'); } },
+    task:     { label:'&#9745; List', title:'Checkbox list', run:function(C){ C().toggleTaskList().run(); }, isActive:function(ed){ return ed.isActive('taskList'); } },   // DESC-CHECKBOX-1
     quote:    { label:'&#10078; Quote', title:'Quote', run:function(C){ C().toggleBlockquote().run(); }, isActive:function(ed){ return ed.isActive('blockquote'); } },
     code:     { label:'&lt;/&gt;', title:'Code block', run:function(C){ C().toggleCodeBlock().run(); }, isActive:function(ed){ return ed.isActive('codeBlock'); } },
     divider:  { label:'-', title:'Divider', run:function(C){ C().setHorizontalRule().run(); } },
