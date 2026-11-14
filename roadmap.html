@@ -10684,7 +10684,7 @@ function openTypeTemplate(i, btn){
     +'<div class="cl-tmpl-hd" style="margin-top:4px">Description</div>'
     +(useRte ? '<div class="type-tmpl-host"></div>' : '')
     +'<textarea class="type-tmpl-ta" style="width:100%;min-height:96px;box-sizing:border-box;font-family:\'Lato\',sans-serif;font-size:13px;line-height:1.5;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);resize:vertical'+(useRte?';display:none':'')+'" placeholder="Measurements:&#10;Hierarchy:&#10;OneDrive Links:&#10;Project Type:"></textarea>'
-    +'<div class="cl-tmpl"><div class="cl-tmpl-hd">Checklist steps</div><div class="cl-tmpl-note">Added as an unticked checklist on <b>new</b> '+esc(t.name)+' items. Each item keeps its own copy, so editing these does not change items that already exist.</div><div class="cl-tmpl-host"></div></div>'
+    +'<div class="cl-tmpl"><div class="cl-tmpl-hd">Checklist steps</div><div class="cl-tmpl-note">Added as an unticked checklist on <b>new</b> '+esc(t.name)+' items. Each item keeps its own copy, so editing these does not change items that already exist. Mark a step <b>Optional</b> when it does not always apply (a temp, for example): it still comes in, is not counted, and can be removed on the new item.</div><div class="cl-tmpl-host"></div></div>'
     +'<div style="margin-top:6px;display:flex;gap:6px"><button type="button" class="tmpl-save primary" style="background:var(--accent);color:#fff;border:none;padding:5px 14px;border-radius:5px;font-family:\'Lato\',sans-serif;font-weight:700;font-size:12px;cursor:pointer">Save</button>'
     +'<button type="button" class="tmpl-cancel" style="background:none;border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:5px;font-size:12px;cursor:pointer">Cancel</button></div>';
   row.parentNode.insertBefore(panel, row.nextSibling);
@@ -10692,7 +10692,7 @@ function openTypeTemplate(i, btn){
   var hostEl = useRte ? panel.querySelector('.type-tmpl-host') : null;
   if(useRte){ window._frzMountTemplateEditor(hostEl, _frzTemplateToHTML(t.template||'')); }
   var clHost = panel.querySelector('.cl-tmpl-host');   // CHECKLIST-1
-  checklistDraftMount(clHost, Array.isArray(t.checklist) ? t.checklist : []);
+  checklistDraftMount(clHost, Array.isArray(t.checklist) ? t.checklist : [], { optionToggle: true });
   panel.querySelector('.tmpl-save').addEventListener('click', function(){
     var val;
     var ed = hostEl && hostEl._frzEd;
@@ -10702,7 +10702,7 @@ function openTypeTemplate(i, btn){
     } else {
       val = panel.querySelector('.type-tmpl-ta').value;         // fallback (rte off, or editor not mounted yet)
     }
-    setTypeTemplate(i, val, (clHost && typeof clHost._clTexts==='function') ? clHost._clTexts() : undefined);
+    setTypeTemplate(i, val, (clHost && typeof clHost._clSteps==='function') ? clHost._clSteps() : undefined);
   });
   panel.querySelector('.tmpl-cancel').addEventListener('click', function(){ if(hostEl&&hostEl._frzEd){ try{ hostEl._frzEd.destroy(); }catch(e){} } panel.remove(); });
   if(!useRte) panel.querySelector('.type-tmpl-ta').focus();
@@ -10711,7 +10711,8 @@ function setTypeTemplate(i, val, steps){
   if(!isAdmin) return;
   var v=(val||'').replace(/\r\n/g,'\n');
   if(v.trim()) types[i].template=v; else delete types[i].template;   // empty = absent (default: no template)
-  if(Array.isArray(steps)){ if(steps.length) types[i].checklist = steps.slice(0, 50); else delete types[i].checklist; }   // CHECKLIST-1
+  // CHECKLIST-1; CHECKLIST-OPTIONAL-1: a required step stays a plain string, an optional one is {text, optional:true}
+  if(Array.isArray(steps)){ if(steps.length) types[i].checklist = steps.slice(0, 50).map(x => (x && typeof x==='object') ? (x.optional ? { text: x.text, optional: true } : x.text) : x); else delete types[i].checklist; }
   saveConfig('types', types); renderTypeList(); populateTypeSelect();
 }
 
@@ -13516,7 +13517,9 @@ const _CL_CHIP_IC = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" 
 const _CL_TICK = '<svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6.3l2.4 2.4 4.6-5"/></svg>';
 const _CL_CHEV = '<svg class="cl-chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2.5L8 6l-3.5 3.5"/></svg>';
 function checklistOf(p){ return (p && Array.isArray(p.checklist)) ? p.checklist.filter(s => s && typeof s==='object' && s.text) : []; }
-function checklistCounts(p){ const l = checklistOf(p); return { done: l.filter(s => s.done).length, total: l.length }; }
+// CHECKLIST-OPTIONAL-1: optional steps (s.optional) stay out of the counts and the close prompt. When EVERY
+// step is optional the counts use them all, so the list still shows progress.
+function checklistCounts(p){ const l = checklistOf(p), req = l.filter(s => !s.optional), base = req.length ? req : l; return { done: base.filter(s => s.done).length, total: base.length, optional: l.length - req.length }; }
 function checklistChipHtml(p){
   const c = checklistCounts(p); if(!c.total) return '';
   return '<span class="cl-chip'+(c.done===c.total?' full':'')+'" data-cl-chip="'+p.id+'" title="'+c.done+' of '+c.total+' checklist steps done">'+_CL_CHIP_IC+c.done+'/'+c.total+'</span>';
@@ -13524,7 +13527,9 @@ function checklistChipHtml(p){
 function _clCanTick(p){ return !!p && (isAdmin || isEditor || (isContributor && typeof itemInContributorScope==='function' && itemInContributorScope(p))); }
 function _clCanEdit(){ return isAdmin || isEditor; }
 function _clWhen(iso){ try { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('en-US', {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}); } catch(e){ return ''; } }
-function _clTypeSteps(typeName){ const t = (types||[]).find(x => x && x.name===typeName); return (t && Array.isArray(t.checklist)) ? t.checklist.filter(x => typeof x==='string' && x.trim()) : []; }
+// A template step is a plain string (required) or {text, optional:true}. Returns [{text, optional}].
+function _clStepObj(x){ if(typeof x==='string') return { text: x, optional: false }; return (x && typeof x==='object') ? { text: String(x.text || ''), optional: x.optional === true } : { text: '', optional: false }; }
+function _clTypeSteps(typeName){ const t = (types||[]).find(x => x && x.name===typeName); return (t && Array.isArray(t.checklist)) ? t.checklist.map(_clStepObj).filter(x => x.text.trim()) : []; }
 // Store a checklist the server returned (or an optimistic one) and repaint every surface showing it:
 // chips (List rows, Kanban cards) in place, and every mounted checklist of this item (page + modal).
 function _clStore(id, cl, obj){
@@ -13554,7 +13559,8 @@ function checklistMount(host, item, opts){
       + (canEdit ? '<span class="cl-hdl" title="Drag to reorder" aria-hidden="true">&#8942;&#8942;</span>' : '')
       + '<button type="button" class="cl-box'+(s.done?' on':'')+'" role="checkbox" aria-checked="'+(s.done?'true':'false')+'" aria-label="'+escA(esc(s.text))+'"'+(canTick?'':' disabled')+'>'+(s.done?_CL_TICK:'')+'</button>'
       + (editing ? '<input class="cl-editin" maxlength="200" value="'+escA(esc(s.text))+'" aria-label="Rename step">'
-                 : '<span class="cl-txt"'+(canEdit?' title="Click to rename"':'')+'>'+esc(s.text)+'</span>')
+                 : '<span class="cl-txt"'+(canEdit?' title="Click to rename"':'')+'>'+esc(s.text)
+                   + (s.optional ? '<span class="cl-opt" title="Optional step: not counted, and closing the item does not ask about it">optional</span>' : '') + '</span>')
       + who
       + (canEdit ? '<button type="button" class="cl-x" title="Remove step" aria-label="Remove step">&#10005;</button>' : '')
       + '</div>';
@@ -13680,28 +13686,37 @@ function checklistMount(host, item, opts){
   render();
 }
 // Authoring surface for unticked step TEXT (New Item form, Admin > Types). host._clTexts() reads it back.
-function checklistDraftMount(host, steps){
+// steps: strings or {text, optional}. opts.optionToggle (Admin > Types) gives each step an Optional switch;
+// elsewhere (New Item) an optional step just shows the tag. host._clSteps() -> [{text, optional}].
+function checklistDraftMount(host, steps, opts){
   if(!host) return;
+  opts = opts || {};
   host.classList.add('cl-draft');
-  host._steps = (Array.isArray(steps) ? steps : []).map(x => typeof x==='string' ? x : ((x && x.text) || '')).filter(Boolean).slice(0, _CL_CAP);
+  host._steps = (Array.isArray(steps) ? steps : []).map(_clStepObj).filter(x => x.text).slice(0, _CL_CAP);
   host._touched = false;
   let dragI = null;
+  function optHtml(st){
+    if(opts.optionToggle) return '<button type="button" class="cl-optbtn'+(st.optional?' on':'')+'" aria-pressed="'+(st.optional?'true':'false')+'" title="Optional steps are not counted, and closing the item does not ask about them">Optional</button>';
+    return st.optional ? '<span class="cl-opt" title="Optional step: remove it if it does not apply">optional</span>' : '';
+  }
   function render(focusI){
-    host.innerHTML = host._steps.map((t, i) => '<div class="cl-drow" data-i="'+i+'"><span class="cl-hdl" title="Drag to reorder" aria-hidden="true">&#8942;&#8942;</span>'
-      + '<span class="cl-box" aria-hidden="true"></span><input class="cl-din" maxlength="200" value="'+escA(esc(t))+'" aria-label="Checklist step '+(i+1)+'">'
+    host.innerHTML = host._steps.map((st, i) => '<div class="cl-drow" data-i="'+i+'"><span class="cl-hdl" title="Drag to reorder" aria-hidden="true">&#8942;&#8942;</span>'
+      + '<span class="cl-box" aria-hidden="true"></span><input class="cl-din" maxlength="200" value="'+escA(esc(st.text))+'" aria-label="Checklist step '+(i+1)+'">'
+      + optHtml(st)
       + '<button type="button" class="cl-x" title="Remove step" aria-label="Remove step">&#10005;</button></div>').join('')
       + (host._steps.length < _CL_CAP ? '<button type="button" class="cl-addline"><span class="cl-plus">+</span>Add a step</button>' : '');
     if(focusI != null){ const el = host.querySelectorAll('.cl-din')[focusI]; if(el) el.focus(); }
   }
-  host.oninput = function(e){ const inp = e.target.closest('.cl-din'); if(!inp) return; host._steps[+inp.closest('.cl-drow').dataset.i] = inp.value; host._touched = true; };
+  host.oninput = function(e){ const inp = e.target.closest('.cl-din'); if(!inp) return; host._steps[+inp.closest('.cl-drow').dataset.i].text = inp.value; host._touched = true; };
   host.onclick = function(e){
+    if(e.target.closest('.cl-optbtn')){ const st = host._steps[+e.target.closest('.cl-drow').dataset.i]; st.optional = !st.optional; host._touched = true; render(); return; }
     if(e.target.closest('.cl-x')){ host._steps.splice(+e.target.closest('.cl-drow').dataset.i, 1); host._touched = true; render(); return; }
-    if(e.target.closest('.cl-addline')){ host._steps.push(''); host._touched = true; render(host._steps.length - 1); }
+    if(e.target.closest('.cl-addline')){ host._steps.push({ text: '', optional: false }); host._touched = true; render(host._steps.length - 1); }
   };
   host.onkeydown = function(e){
     const inp = e.target.closest('.cl-din'); if(!inp || e.key !== 'Enter') return;
     e.preventDefault(); if(host._steps.length >= _CL_CAP) return;
-    const i = +inp.closest('.cl-drow').dataset.i; host._steps.splice(i+1, 0, ''); host._touched = true; render(i+1);
+    const i = +inp.closest('.cl-drow').dataset.i; host._steps.splice(i+1, 0, { text: '', optional: false }); host._touched = true; render(i+1);
   };
   host.onmousedown = function(e){ const h = e.target.closest('.cl-hdl'); if(h) h.closest('.cl-drow').setAttribute('draggable','true'); };
   host.ondragstart = function(e){ const row = e.target.closest && e.target.closest('.cl-drow'); if(!row) return; dragI = +row.dataset.i; try { e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', String(dragI)); } catch(_){} };
@@ -13709,8 +13724,8 @@ function checklistDraftMount(host, steps){
   host.ondrop = function(e){ if(dragI == null) return; const row = e.target.closest('.cl-drow'); e.preventDefault(); const from = dragI; dragI = null; if(!row) return;
     const to = +row.dataset.i; if(to === from){ render(); return; } const [mv] = host._steps.splice(from, 1); host._steps.splice(to, 0, mv); host._touched = true; render(); };
   host.ondragend = function(){ dragI = null; host.querySelectorAll('.cl-drow[draggable]').forEach(r => r.removeAttribute('draggable')); };
-  host._clTexts = () => host._steps.map(t => String(t || '').replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, _CL_CAP);
-  host._clSet = (arr) => { host._steps = (arr || []).slice(0, _CL_CAP); host._touched = false; render(); };
+  host._clSteps = () => host._steps.map(st => ({ text: String(st.text || '').replace(/\s+/g, ' ').trim(), optional: !!st.optional })).filter(x => x.text).slice(0, _CL_CAP);
+  host._clTexts = () => host._clSteps().map(x => x.text);
   render();
 }
 // Edit modal: EDIT shows the item's checklist collapsed (tick only); CREATE shows the Type template's steps.
@@ -13752,15 +13767,15 @@ document.getElementById('fType')?.addEventListener('change', _clCreateFromType);
 function _clCreateSteps(){
   const row = document.getElementById('modalChecklistRow'), host = document.getElementById('modalChecklist');
   const body = host && host._clBody;
-  if(!row || !body || !host._clCreate || row.style.display === 'none' || typeof body._clTexts !== 'function') return [];
-  return body._clTexts();
+  if(!row || !body || !host._clCreate || row.style.display === 'none' || typeof body._clSteps !== 'function') return [];
+  return body._clSteps();
 }
 // Closing with open steps: a person moving a not-yet-closed item into a closed status gets ONE confirm.
 // It never blocks ("...anyway" proceeds). Jira-driven closes never come through here.
 function checklistOpenSteps(p, newStatus){
   if(!p || !newStatus || newStatus === p.status) return [];
   if(!isTerminalStatus(newStatus) || isTerminalStatus(p.status)) return [];
-  return checklistOf(p).filter(s => !s.done);
+  return checklistOf(p).filter(s => !s.done && !s.optional);
 }
 function checklistCloseOk(p, newStatus, opts){
   const open = checklistOpenSteps(p, newStatus);
@@ -23934,6 +23949,11 @@ if ('serviceWorker' in navigator) {
   body.frz-beta-active .cl-page .cl-txt[title] { cursor:text; }
   body.frz-beta-active .cl-wrap .cl-row.done .cl-txt { color:var(--muted); text-decoration:line-through; }
   body.frz-beta-active .cl-wrap .cl-who { font-size:11px; color:var(--muted); white-space:nowrap; }
+  body.frz-beta-active .cl-wrap .cl-opt { display:inline-block; margin-left:8px; vertical-align:1px; text-decoration:none; }
+  body.frz-beta-active .cl-wrap .cl-opt, body.frz-beta-active .cl-draft .cl-opt { flex:none; font-size:10.5px; font-weight:700; color:var(--muted); border:1px solid var(--border); border-radius:999px; padding:1px 7px; line-height:1.4; white-space:nowrap; }
+  body.frz-beta-active .cl-draft .cl-optbtn { flex:none; font:700 11px 'Lato',sans-serif; color:var(--muted); background:var(--surface); border:1px solid var(--border); border-radius:999px; padding:3px 9px; cursor:pointer; white-space:nowrap; }
+  body.frz-beta-active .cl-draft .cl-optbtn.on { color:var(--cl-acc); border-color:var(--cl-acc); background:color-mix(in srgb, var(--cl-acc) 10%, var(--surface)); }
+  body.frz-beta-active .cl-draft .cl-optbtn:focus-visible { outline:2px solid var(--cl-acc); outline-offset:2px; }
   body.frz-beta-active .cl-wrap .cl-x, body.frz-beta-active .cl-draft .cl-x { background:none; border:0; color:var(--muted); font-size:12px; cursor:pointer; padding:2px 4px; flex:none; line-height:1; }
   body.frz-beta-active .cl-wrap .cl-x { opacity:0; }
   body.frz-beta-active .cl-wrap .cl-row:hover .cl-x, body.frz-beta-active .cl-wrap .cl-x:focus-visible { opacity:.75; }
