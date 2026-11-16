@@ -31703,22 +31703,35 @@ if ('serviceWorker' in navigator) {
     return '<span class="frz-bl-parent" title="'+escA('Parent: '+nm)+'">↳ '+esc(nm)+'</span>';
   }
   function _blCanEdit(){ return !!(_val('isAdmin',false) || _val('isEditor',false)); }
+  // RELEASES-FILTER-1: the Planning filter bar (Team, Status, Type, Assignee, Priority, Department) + the
+  // rail Space, read once per render. One check for every Planning tab so Plan and Releases agree.
+  function _planFilters(){
+    return { dev:getSelectedDevs(), type:getSelectedTypes(), st:getSelectedStatuses(), asg:getSelectedAssignees(),
+             prio:getSelectedPriorities(), dept:getSelectedDepartments() };
+  }
+  function _planFiltersOn(f){
+    return !!(f.dev || f.type || f.st || f.asg || (f.prio && f.prio.length) || (f.dept && f.dept.length) || state.project!=='__all__');
+  }
+  // team: the Team to test (Shipped passes the server's effective team; items default to p.dev).
+  function _planFilterPass(p, f, team){
+    if(!inScope(p)) return false;
+    if(f.dev && f.dev.indexOf(team!=null ? team : (p.dev||''))<0) return false;
+    if(f.type && f.type.indexOf(p.type||'')<0) return false;
+    if(f.st && f.st.indexOf(p.status)<0) return false;
+    if(f.asg && f.asg.indexOf(p.assignee||'')<0) return false;
+    if(!priorityMatches(p, f.prio)) return false;
+    if(!departmentMatches(p, f.dept)) return false;
+    return true;
+  }
   function backlogItems(){
-    var fDev=getSelectedDevs(), fType=getSelectedTypes(), fSt=getSelectedStatuses();
-    var fPrio=getSelectedPriorities(), fDept=getSelectedDepartments();   // opt-in Priority/Department chips
+    var f=_planFilters();
     return (_val('projects',[])||[]).filter(function(p){
       if(p.archived) return false;
       if(p.hidden) return false;   // M1 1c: sub-issue noise (hidden Jira-spawned children) stays excluded here now that the parent gate is gone
-      if(!inScope(p)) return false;
       if(!isPlannable(p)) return false;
       if(isTerm(p.status)) return false;
       if(inNonCompletedSprint(p)) return false;
-      if(fDev && fDev.indexOf(p.dev||'')<0) return false;
-      if(fType && fType.indexOf(p.type||'')<0) return false;
-      if(fSt && fSt.indexOf(p.status)<0) return false;
-      if(!priorityMatches(p, fPrio)) return false;
-      if(!departmentMatches(p, fDept)) return false;
-      return true;
+      return _planFilterPass(p, f);
     }).sort(function(a,b){
       var pa=_call('priorityRank',a.priority), pb=_call('priorityRank',b.priority);   // shared order: Urgent first, blank last
       if(pa!==pb) return pa-pb;
@@ -32644,11 +32657,15 @@ if ('serviceWorker' in navigator) {
     var rel=releaseById(id);
     var locked=!!(rel && rel.state==='Released');   // post-release: membership frozen
     var items=releaseItems(id);
+    // RELEASES-FILTER-1: the list follows the filter bar; flags + notes below still cover the whole release.
+    var rf=_planFilters(), shownItems=_planFiltersOn(rf) ? items.filter(function(p){ return _planFilterPass(p, rf); }) : items;
+    var fNote = shownItems.length<items.length
+      ? '<span style="color:var(--frz-text-muted);font-size:12px;margin-right:auto">Showing '+shownItems.length+' of '+items.length+' items (filters on)</span>' : '';
     var head = locked
-      ? '<div style="padding:2px 0 8px;color:var(--frz-text-muted);font-size:12px;font-style:italic">Released - membership locked</div>'
-      : '<div style="display:flex;justify-content:flex-end;padding:2px 0 8px"><button class="frz-viewopt" data-reladd="'+escA(id)+'">+ Add items</button></div>';
-    var body = items.length
-      ? items.map(function(p){
+      ? '<div style="display:flex;align-items:center;padding:2px 0 8px;color:var(--frz-text-muted);font-size:12px">'+fNote+'<span style="font-style:italic">Released - membership locked</span></div>'
+      : '<div style="display:flex;align-items:center;justify-content:flex-end;padding:2px 0 8px">'+fNote+'<button class="frz-viewopt" data-reladd="'+escA(id)+'">+ Add items</button></div>';
+    var body = shownItems.length
+      ? shownItems.map(function(p){
           var rm = locked ? '' : '<button class="frz-iconbtn" data-relremove="'+escA(p.id)+'" title="Remove from release"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg></button>';
           return '<div style="display:flex;align-items:center;gap:6px">'+miniItemRow(p,true)+rm+'</div>';
         }).join('')
@@ -32746,7 +32763,18 @@ if ('serviceWorker' in navigator) {
   var _SHIP_FRESH_MS = 60000;
   function _shipMonthLabel(ym){ var a=String(ym||'').split('-'); var d=new Date(+a[0], (+a[1]||1)-1, 1); return isNaN(d) ? String(ym) : d.toLocaleDateString('en-US',{month:'long',year:'numeric'}); }
   function _shipDay(iso){ var a=String(iso||'').split('-'); var d=new Date(+a[0], (+a[1]||1)-1, +a[2]||1); return isNaN(d) ? String(iso) : d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
-  function _shipVisible(d){ return (d.items||[]).filter(function(x){ return _ship.team==='*' || (x.team||'')===_ship.team; }); }
+  // RELEASES-FILTER-1: the filter bar narrows Shipped first (Team tests the effective team Shipped shows);
+  // the section's own Team pick then narrows within that.
+  function _shipPool(d){
+    var f=_planFilters(), all=d.items||[];
+    if(!_planFiltersOn(f)) return all;
+    var byId={}; (_val('projects',[])||[]).forEach(function(p){ byId[p.id]=p; });
+    return all.filter(function(x){
+      var p=byId[x.id] || { type:x.type, status:x.status };
+      return _planFilterPass(p, f, x.team||'');
+    });
+  }
+  function _shipVisible(d){ return _shipPool(d).filter(function(x){ return _ship.team==='*' || (x.team||'')===_ship.team; }); }
   function _shipGroups(items){
     var g={}, order=[];
     items.forEach(function(x){ var k=x.project||''; if(!g[k]){ g[k]={ name:k, id:x.projectId, items:[] }; order.push(k); } g[k].items.push(x); });
@@ -32796,7 +32824,7 @@ if ('serviceWorker' in navigator) {
   function _shipPaint(sec){
     var hit=_ship.month && _ship.cache[_ship.month], d=hit && hit.d;
     if(!d){ sec.innerHTML='<div class="frz-ship-head"><div class="frz-ship-title">Shipped</div></div><div class="frz-ship-empty">Loading...</div>'; return; }
-    var counts={}; (d.items||[]).forEach(function(x){ var t=x.team||''; counts[t]=(counts[t]||0)+1; });
+    var counts={}; _shipPool(d).forEach(function(x){ var t=x.team||''; counts[t]=(counts[t]||0)+1; });
     var tOrder=(d.teamOrder||[]).filter(function(t){ return counts[t]; });
     Object.keys(counts).sort().forEach(function(t){ if(t && tOrder.indexOf(t)<0) tOrder.push(t); });
     if(counts['']) tOrder.push('');
@@ -32809,7 +32837,7 @@ if ('serviceWorker' in navigator) {
           : (g.id!=null ? '<a class="frz-ship-gname" href="'+escA(_shipUrl(g.id))+'">'+esc(g.name)+'</a>' : '<span class="frz-ship-gname">'+esc(g.name)+'</span>');
         return '<div class="frz-ship-grp"><div class="frz-ship-gh">'+head+'<span class="frz-ship-gn">'+g.items.length+'</span></div>'+g.items.map(_shipRow).join('')+'</div>';
       }).join('')
-      : '<div class="frz-ship-empty">Nothing shipped in '+esc(_shipMonthLabel(d.month))+(_ship.team!=='*' ? ' for '+esc(_ship.team||'No team') : '')+'.</div>';
+      : '<div class="frz-ship-empty">Nothing shipped in '+esc(_shipMonthLabel(d.month))+(_ship.team!=='*' ? ' for '+esc(_ship.team||'No team') : '')+(_planFiltersOn(_planFilters()) ? ' that matches the filters' : '')+'.</div>';
     sec.innerHTML='<div class="frz-ship-head">'+
         '<div class="frz-ship-title">Shipped</div>'+
         '<select class="frz-fld frz-ship-sel" data-shipmonth aria-label="Month">'+mOpts+'</select>'+
@@ -32841,8 +32869,19 @@ if ('serviceWorker' in navigator) {
   function renderReleasesTab(host){
     var admin=_val('isAdmin', false);
     var rels=_releases.slice().sort(function(a,b){ return (a.targetDate||'').localeCompare(b.targetDate||''); });
+    // RELEASES-FILTER-1: with filters on, a release shows only its matching items (counts too) and a release
+    // with none is hidden. Display only: Mark released, release notes and feature flags still use every item.
+    var rf=_planFilters(), rfOn=_planFiltersOn(rf), relTotal=rels.length, prBy={};
+    rels.forEach(function(r){
+      if(!rfOn){ prBy[r.id]=releaseProgress(r); return; }
+      var its=releaseItems(r.id).filter(function(p){ return _planFilterPass(p, rf); });
+      var dn=its.filter(function(p){ return isTerm(p.status); }).length;
+      prBy[r.id]={ total:its.length, done:dn, pct:(its.length?Math.round(dn/its.length*100):0), items:its };
+    });
+    if(rfOn) rels=rels.filter(function(r){ return prBy[r.id].total>0; });
+    var relHidden=relTotal-rels.length;
     var rows=rels.map(function(r){
-      var pr=releaseProgress(r);
+      var pr=prBy[r.id];
       var badge='<span class="frz-sprint-badge" style="'+(RELEASE_BADGE[r.state]||'')+'">'+esc(r.state)+'</span>';
       var bar='<div class="frz-prog"><div class="frz-prog-bar" style="width:'+pr.pct+'%"></div></div><span class="frz-prog-txt">'+pr.done+'/'+pr.total+' done</span>';
       return '<div class="frz-rel-row" data-relrow="'+escA(r.id)+'">'+
@@ -32859,7 +32898,11 @@ if ('serviceWorker' in navigator) {
     }).join('');
     host.innerHTML='<div class="frz-rel-wrap"><section class="frz-ship" id="frzShip"></section>'+   // SHIPPED-1
       '<div class="frz-rel-top"><span class="frz-ship-title">Releases</span><button class="frz-newitem" id="frzNewRelease">+ New release</button></div>'+
-      (rels.length? '<div class="frz-rel-list">'+rows+'</div>' : '<div class="frz-ship-empty">No planned releases. Create one only to plan a release in Flow; shipped work above fills in on its own.</div>')+'</div>';
+      (rels.length? '<div class="frz-rel-list">'+rows+'</div>'
+        : (relHidden ? '<div class="frz-ship-empty">No releases have items that match the filters.</div>'
+                     : '<div class="frz-ship-empty">No planned releases. Create one only to plan a release in Flow; shipped work above fills in on its own.</div>'))+
+      ((rels.length && relHidden) ? '<div class="frz-ship-note">'+relHidden+' release'+(relHidden!==1?'s':'')+' with no matching items hidden by the filters.</div>' : '')+
+      '</div>';
     _shipLoad(document.getElementById('frzShip'));
     document.getElementById('frzNewRelease').addEventListener('click', function(){ openReleaseModal(null); });
     host.querySelectorAll('[data-reledit]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); openReleaseModal(releaseById(b.getAttribute('data-reledit'))); }); });
