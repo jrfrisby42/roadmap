@@ -70,8 +70,10 @@ def test_release_pane_search_matches_jira_key():
 # ── invariants ───────────────────────────────────────────────────────────────────
 def test_backlog_structural_filters_untouched():   # INVARIANT
     b = _fn_body("backlogItems")
-    for f in ("archived", "hidden", "inScope", "isPlannable", "inNonCompletedSprint"):
+    for f in ("archived", "hidden", "isPlannable", "inNonCompletedSprint"):
         assert f in b, f
+    # RELEASES-FILTER-1: the Space scope moved into the shared Planning filter check the backlog calls
+    assert "_planFilterPass(p, f)" in b and "inScope(p)" in _fn_body("_planFilterPass")
 
 
 def test_top_bar_jump_unchanged():   # INVARIANT (this prompt must not touch it)
