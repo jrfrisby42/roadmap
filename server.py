@@ -3416,7 +3416,7 @@ def ticket_reply(body: dict = Body(...), request: FRequest = None):
         if not row:
             raise HTTPException(404, "Ticket not found.")
         item = json.loads(row["data"])
-        if item.get("source") != "portal":
+        if not _is_reporter_ticket(item):   # REPORTER-EDIT-1: portal or emailed-in tickets
             raise HTTPException(404, "Ticket not found.")
         who = f"{item.get('reporter') or item.get('reporterEmail') or 'Reporter'} (reporter)"
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -3571,7 +3571,7 @@ def my_tickets_page(email: str = "", t: str = "", team: str = "", dept: str = ""
                     p = json.loads(r["data"])
                 except Exception:
                     continue
-                if p.get("source") != "portal":
+                if not _is_reporter_ticket(p):   # REPORTER-EDIT-1: portal or emailed-in tickets
                     continue
                 p["id"] = r["id"]; p["_team"] = d
                 if (p.get("reporterEmail") or "").strip().lower() == email_n:
@@ -5502,6 +5502,15 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     team = auth["team"]
     username = _audit_actor(body.pop("_username", None), auth)
     body.pop("id", None)
+    # REPORTER-EDIT-1: the New Item form may name the reporter (someone who emailed the team). Validated
+    # like the change endpoint; an outside reporter makes the item a ticket and (notify, default on) gets
+    # the "we've received your ticket" email after the insert. Without a pick the creator is the reporter.
+    _rep_pick = body.pop("reporterPick", None)
+    _rep_notify = False
+    if _rep_pick:
+        _rep = _resolve_reporter(team, _rep_pick)
+        _apply_reporter(body, _rep)
+        _rep_notify = bool(_rep["reporterEmail"]) and _rep_pick.get("notify", True) is not False
     body.setdefault("reporter", username)   # who created the item (immutable-ish)
     # Validate test period < time estimate (parity with update_project - create used
     # to skip this, letting an item be born invalid). Numeric guard → 422 not 500.
@@ -5634,7 +5643,15 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     if _links_dropped:
         _create_changes["linksDropped"] = _links_dropped       # same fold: staff-discoverable in the audit
         body["linksDropped"] = _links_dropped                  # response-only; the client tells the user
+    if _rep_pick:
+        _create_changes["reporter"] = {"reporter": body.get("reporter") or "", "email": body.get("reporterEmail") or ""}
     write_audit(team, "create", username, body["id"], body.get("name",""), changes=(_create_changes or None))
+    if _rep_notify:
+        try:
+            _send_reporter_confirmation(team, body, body["id"])
+            body["reporterEmailed"] = body.get("reporterEmail") if mail_configured() else ""   # response-only
+        except Exception as e:
+            log.warning(f"[Reporter] create confirmation failed for {body.get('id')}: {e}")
     # DEPT-PICKER-1: the config-growth union is retired - departments were validated against the
     # configured vocabulary above (unknown values 422'd before the insert), so there is nothing to grow.
     # Stage 3b: notifications (post-commit, best-effort - never fail the create)
@@ -7549,6 +7566,117 @@ def _cc_unsub_token(team: str, pid, email: str) -> str:
     """Stateless per-(item,address) unsubscribe token - no storage, mirrors _ticket_token."""
     return _sign(f"ccunsub:{team}:{pid}:{(email or '').strip().lower()}")
 
+# ── REPORTER-EDIT-1: set / change who an item is for ─────────────────────────────────────────
+# Someone emails the team, and staff create the item by hand: the reporter is that person, not the
+# staff member. A reporter is either a Flow user (reporter = username, no reporterEmail) or someone
+# outside Flow (reporter = their name, reporterEmail = their address). An outside reporter makes the
+# item a TICKET, exactly like a portal one: /ticket status page + reply, /my-tickets, the complete /
+# deferred / @reporter emails. Those were all gated on source == "portal"; an emailed-in item is
+# source "email" instead (provenance stays honest) and _is_reporter_ticket accepts both. reporter /
+# reporterEmail / source stay SERVER_OWNED_FIELDS: only create (`reporterPick`) and the endpoint below
+# write them. The /ticket token is per item, not per address, so a replaced reporter's old link still
+# opens the page - acceptable for internal tickets (J.R. 2026-11-16).
+_TICKET_SOURCES = ("portal", "email")
+
+def _is_reporter_ticket(item: dict) -> bool:
+    return (item or {}).get("source") in _TICKET_SOURCES
+
+def _resolve_reporter(team: str, pick: dict) -> dict:
+    """{reporter, email} from the client -> {reporter, reporterEmail} (reporterEmail '' for a Flow
+    user). A Flow user is named by username with no email; anyone else needs a valid email on an
+    allowed domain (the same intakeDomains rule the portal and CC list use). 422 on anything else."""
+    if not isinstance(pick, dict):
+        raise HTTPException(422, "Choose a reporter.")
+    rep = re.sub(r"\s+", " ", str(pick.get("reporter") or "")).strip()[:120]
+    email = str(pick.get("email") or "").strip()
+    if not email:
+        users = _cfg_val(team, "users", []) or []
+        if rep and any(isinstance(u, dict) and u.get("username") == rep for u in users):
+            return {"reporter": rep, "reporterEmail": ""}
+        raise HTTPException(422, "Pick a Flow user, or enter the email of someone outside Flow.")
+    if not _valid_email(email):
+        raise HTTPException(422, "Enter a valid email address for the reporter.")
+    if not _intake_domain_ok(team, email):
+        raise HTTPException(422, "That email domain is not allowed for this team.")
+    return {"reporter": rep or email, "reporterEmail": email}
+
+def _apply_reporter(p: dict, r: dict):
+    """Write a resolved reporter onto an item blob. An outside reporter turns the item into a ticket
+    (source "email", unless it already came from the portal); a Flow user clears the email and undoes
+    an "email" source (a portal item keeps its provenance)."""
+    p["reporter"] = r["reporter"]
+    if r["reporterEmail"]:
+        p["reporterEmail"] = r["reporterEmail"]
+        if not _is_reporter_ticket(p):
+            p["source"] = "email"
+    else:
+        p.pop("reporterEmail", None)
+        if p.get("source") == "email":
+            p.pop("source", None)
+
+def _send_reporter_confirmation(team: str, item: dict, pid: int):
+    """The "we've received your ticket" email, for an item staff created (or re-pointed) for someone
+    outside Flow. Only the reporter - the team inbox / department copies are the portal's job."""
+    _reporter_email(team, item, pid, "We've received your ticket",
+        "Thanks for reaching out - your ticket has been logged and the team will take a look. "
+        "You can check its status any time with the button below.")
+
+def _jira_set_reporter(team: str, item: dict) -> str:
+    """Point the primary linked Jira issue's reporter at the item's reporter. Best-effort: returns
+    '' on success or a short reason; never raises (the Flow change already saved)."""
+    tickets = item.get("jiraTickets") or []
+    if not tickets or not jira_configured():
+        return ""
+    ticket = tickets[0]
+    email = (item.get("reporterEmail") or "").strip() or _user_email(team, item.get("reporter") or "")
+    acct = _jira_account_id(email) if email else ""
+    if not acct:
+        return "no Jira account for that person"
+    try:
+        _jira_req("PUT", f"/rest/api/3/issue/{_urlq(ticket, safe='')}", {"fields": {"reporter": {"id": acct}}})
+        return ""
+    except HTTPException as e:
+        log.warning(f"[Jira] reporter update on {ticket} failed: {e.detail}")
+        return "Jira did not accept the change"
+    except Exception as e:
+        log.warning(f"[Jira] reporter update on {ticket} failed: {e}")
+        return "Jira did not accept the change"
+
+@app.put("/api/items/{pid}/reporter")
+def set_item_reporter(pid: int, body: dict = Body(...),
+                      auth: dict = Depends(require_role("admin", "editor"))):
+    """Change the item's reporter. body: {reporter, email?, notify?}. notify (default True) emails a
+    NEW outside reporter the confirmation with their status link. Blob-only write: updated_ts is not
+    bumped (an open modal must not 409; update_project restores these fields from the stored row)."""
+    team = auth["team"]
+    username = _audit_actor(body.get("_username"), auth)
+    r = _resolve_reporter(team, body)
+    with db(team) as c:
+        p = _get_item_blob(c, pid)
+        before = {"reporter": p.get("reporter") or "", "email": p.get("reporterEmail") or ""}
+        _apply_reporter(p, r)
+        after = {"reporter": p.get("reporter") or "", "email": p.get("reporterEmail") or ""}
+        if before == after:
+            return {"ok": True, "unchanged": True, "reporter": p.get("reporter"),
+                    "reporterEmail": p.get("reporterEmail") or "", "source": p.get("source") or ""}
+        c.execute("UPDATE projects SET data=?, reporter=? WHERE id=?", (json.dumps(p), p["reporter"], pid))
+    write_audit(team, "reporter:change", username, pid, p.get("name", ""), changes={"from": before, "to": after})
+    out = {"ok": True, "reporter": p.get("reporter"), "reporterEmail": p.get("reporterEmail") or "",
+           "source": p.get("source") or ""}
+    new_email = after["email"] and after["email"].lower() != before["email"].lower()
+    if new_email and body.get("notify", True) is not False:
+        try:
+            _send_reporter_confirmation(team, p, pid)
+            out["emailed"] = after["email"] if mail_configured() else ""
+        except Exception as e:
+            log.warning(f"[Reporter] confirmation failed for {pid}: {e}")
+    jira_err = _jira_set_reporter(team, p)
+    if jira_err:
+        out["jiraWarning"] = jira_err
+    elif p.get("jiraTickets") and jira_configured():
+        out["jiraUpdated"] = (p.get("jiraTickets") or [""])[0]
+    return out
+
 @app.post("/api/items/{pid}/cc")
 def add_item_cc(pid: int, body: dict = Body(...),
                 auth: dict = Depends(require_role("admin", "editor"))):
@@ -8429,7 +8557,7 @@ def _reporter_email(team, item, pid, heading, intro, note=None):
     if not mail_configured():
         return
     email = (item.get("reporterEmail") or "").strip()
-    if item.get("source") != "portal" or not email:
+    if not _is_reporter_ticket(item) or not email:   # REPORTER-EDIT-1: portal or emailed-in tickets
         return
     key  = item.get("itemKey") or f"#{pid}"
     prio = _PRIO_LABEL.get(str(item.get("priority") or ""), "")
@@ -8483,7 +8611,7 @@ def _notify_reporter_status(team, old, new, pid):
     # CC-1: fire when it is a portal ticket with a reporter OR when the item carries a CC list.
     # _reporter_email keeps its own portal+reporterEmail gate (reporter behaviour is UNCHANGED);
     # _cc_notify handles the external followers. Reuses the EXISTING mailer - no new mailer.
-    is_portal_rep = new.get("source") == "portal" and (new.get("reporterEmail") or "").strip()
+    is_portal_rep = _is_reporter_ticket(new) and (new.get("reporterEmail") or "").strip()
     if not is_portal_rep and not new.get("ccList"):
         return
     os_, ns_ = old.get("status", ""), new.get("status", "")

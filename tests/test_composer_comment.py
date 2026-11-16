@@ -52,7 +52,8 @@ def test_comment1_mentionusers_uses_passed_item_with_fallback():
     # resolve from the passed item first, else fall back to the item-page _itemPageId (item-page path unchanged)
     assert "var p = item || (function(){ var id=_val('_itemPageId')" in body, \
         "_mentionUsers must use the passed item first, then fall back to _itemPageId (keeps the item page byte-identical)"
-    assert "p.source==='portal' && p.reporterEmail" in body, "the reporter gate (portal + email) is unchanged"
+    # REPORTER-EDIT-1 widened the gate to emailed-in tickets (source "email") on purpose.
+    assert "(p.source==='portal' || p.source==='email') && p.reporterEmail" in body, "the reporter gate (ticket + email)"
 
 
 # ── Part B symptom 1: the modal comment editor gets a real box + reserved height (it is outside .frz-beta) ─
