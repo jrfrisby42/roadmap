@@ -13686,7 +13686,9 @@ function checklistMount(host, item, opts){
       + (canEdit ? '<span class="cl-hdl" title="Drag to reorder" aria-hidden="true">&#8942;&#8942;</span>' : '')
       + '<button type="button" class="cl-box'+(s.done?' on':'')+'" role="checkbox" aria-checked="'+(s.done?'true':'false')+'" aria-label="'+escA(esc(s.text))+'"'+(canTick?'':' disabled')+'>'+(s.done?_CL_TICK:'')+'</button>'
       + (editing ? '<input class="cl-editin" maxlength="200" value="'+escA(esc(s.text))+'" aria-label="Rename step">'
-                 : '<span class="cl-txt"'+(canEdit?' title="Click to rename"':'')+'>'+esc(s.text)
+                 // CHECKLIST-LOCK-TICKED-1: a ticked step's text is locked (untick it to rename), so a "done by Sam,
+                 // Nov 12" record can't be reworded afterwards. The server refuses it too.
+                 : '<span class="cl-txt'+(canEdit && s.done ? ' cl-locked' : '')+'"'+(canEdit ? (s.done ? ' title="Untick this step to rename it"' : ' title="Click to rename"') : '')+'>'+esc(s.text)
                    + (s.optional ? '<span class="cl-opt" title="Optional step: not counted, and closing the item does not ask about it">optional</span>' : '') + '</span>')
       + who
       + (canEdit ? '<button type="button" class="cl-x" title="Remove step" aria-label="Remove step">&#10005;</button>' : '')
@@ -13780,7 +13782,11 @@ function checklistMount(host, item, opts){
     const sid = row.getAttribute('data-sid');
     if(t.closest('.cl-box')){ const st = checklistOf(cur()).find(x => x.id===sid); if(st) tick(sid, !st.done); return; }
     if(t.closest('.cl-x')){ saveShape(shapeOf().filter(x => x.id !== sid)); return; }
-    if(t.closest('.cl-txt') && mode==='page' && _clCanEdit()){ editingSid = sid; adding = false; render(); }
+    if(t.closest('.cl-txt') && mode==='page' && _clCanEdit()){
+      const st = checklistOf(cur()).find(x => x.id===sid);
+      if(st && st.done) return;   // CHECKLIST-LOCK-TICKED-1: untick to rename
+      editingSid = sid; adding = false; render();
+    }
   };
   host.onkeydown = function(e){
     const t = e.target;
@@ -24076,6 +24082,7 @@ if ('serviceWorker' in navigator) {
   body.frz-beta-active .cl-wrap .cl-box:focus-visible { outline:2px solid var(--cl-acc); outline-offset:2px; }
   body.frz-beta-active .cl-wrap .cl-txt { flex:1; min-width:0; font-size:13px; color:var(--text); line-height:1.4; overflow-wrap:anywhere; }
   body.frz-beta-active .cl-page .cl-txt[title] { cursor:text; }
+  body.frz-beta-active .cl-page .cl-txt.cl-locked { cursor:default; }
   body.frz-beta-active .cl-wrap .cl-row.done .cl-txt { color:var(--muted); text-decoration:line-through; }
   body.frz-beta-active .cl-wrap .cl-who { font-size:11px; color:var(--muted); white-space:nowrap; }
   body.frz-beta-active .cl-wrap .cl-opt { display:inline-block; margin-left:8px; vertical-align:1px; text-decoration:none; }

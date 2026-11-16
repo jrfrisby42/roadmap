@@ -7497,8 +7497,8 @@ def check_checklist_step(pid: int, sid: str, body: dict = Body({}),
 def put_checklist(pid: int, body: dict = Body(...),
                   auth: dict = Depends(require_role("admin", "editor"))):
     """Replace the step list's SHAPE (add / rename / reorder / remove) from the item page.
-    body.steps = [{id?, text, optional?}] in display order. An existing id keeps its tick + who/when (renaming a
-    step does not untick it); a step without a known id is new and unticked. [] removes the checklist.
+    body.steps = [{id?, text, optional?}] in display order. An existing id keeps its tick + who/when; a ticked
+    step's text is locked (422 - untick it first); a step without a known id is new and unticked. [] removes it.
     `optional` is applied only when sent; an existing step sent without it keeps the flag it had."""
     team = auth["team"]
     username = _audit_actor(body.get("_username"), auth)
@@ -7518,6 +7518,10 @@ def put_checklist(pid: int, body: dict = Body(...),
                 continue
             prev = by_id.get(st.get("id")) if st.get("id") not in seen else None
             if prev:
+                # CHECKLIST-LOCK-TICKED-1: a ticked step keeps its who/when, so its text is locked - otherwise a
+                # finished step could be reworded and still read as done by that person on that day.
+                if prev.get("done") and t != prev.get("text"):
+                    raise HTTPException(422, f'"{prev.get("text")}" is ticked. Untick it before renaming it.')
                 seen.add(prev["id"])
                 step = {**prev, "text": t}
             else:

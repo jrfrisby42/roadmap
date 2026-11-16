@@ -152,14 +152,14 @@ def test_put_reorders_renames_adds_removes_and_keeps_ticks(client, team, admin_h
     a, b, c = _stored(team, pid)["checklist"]
     client.post(f"/api/items/{pid}/checklist/{b['id']}/check", json={"done": True}, headers=admin_headers)
     r = client.put(f"/api/items/{pid}/checklist", json={"steps": [
-        {"id": b["id"], "text": "Back up the prod database"},   # renamed + moved first: keeps its tick
+        {"id": b["id"], "text": b["text"]},                       # ticked, moved first: keeps its tick (text locked)
         {"text": "Restart the service"},                         # new
-        {"id": a["id"], "text": a["text"]},                       # c removed
+        {"id": a["id"], "text": "Merge the branch to main"},      # unticked: renamed; c removed
         {"id": "made-up", "text": "Smoke test", "done": True},   # unknown id -> new, unticked
     ]}, headers=admin_headers)
     assert r.status_code == 200
     cl = _stored(team, pid)["checklist"]
-    assert [s["text"] for s in cl] == ["Back up the prod database", "Restart the service", "Merge to main", "Smoke test"]
+    assert [s["text"] for s in cl] == [b["text"], "Restart the service", "Merge the branch to main", "Smoke test"]
     assert cl[0]["id"] == b["id"] and cl[0]["done"] is True and cl[0]["by"] == "admin"
     assert cl[1]["done"] is False and cl[3]["done"] is False and cl[3]["id"] != "made-up"
     assert c["id"] not in {s["id"] for s in cl}
@@ -170,7 +170,7 @@ def test_put_duplicate_ids_do_not_clone_a_tick(client, team, admin_headers):
     pid = _create(client, admin_headers, checklist=STEPS).json()["id"]
     a = _stored(team, pid)["checklist"][0]
     client.post(f"/api/items/{pid}/checklist/{a['id']}/check", json={"done": True}, headers=admin_headers)
-    client.put(f"/api/items/{pid}/checklist", json={"steps": [{"id": a["id"], "text": "x"}, {"id": a["id"], "text": "y"}]},
+    client.put(f"/api/items/{pid}/checklist", json={"steps": [{"id": a["id"], "text": a["text"]}, {"id": a["id"], "text": "y"}]},
                headers=admin_headers)
     cl = _stored(team, pid)["checklist"]
     assert [s["done"] for s in cl] == [True, False] and cl[0]["id"] != cl[1]["id"]
@@ -250,3 +250,16 @@ def test_create_sends_template_steps_and_admin_authors_them():
     assert "checklist: _clCreateSteps()" in _HTML
     assert "types[i].checklist = steps.slice(0, 50)" in _HTML
     assert "_clTypeSteps(tname)" in _HTML
+
+
+def test_a_ticked_step_cannot_be_renamed(client, team, admin_headers):
+    # CHECKLIST-LOCK-TICKED-1: a ticked step keeps its who/when, so its text is locked until it is unticked.
+    pid = _create(client, admin_headers, checklist=STEPS).json()["id"]
+    a = _stored(team, pid)["checklist"][0]
+    client.post(f"/api/items/{pid}/checklist/{a['id']}/check", json={"done": True}, headers=admin_headers)
+    r = client.put(f"/api/items/{pid}/checklist", json={"steps": [{"id": a["id"], "text": "Something else"}]}, headers=admin_headers)
+    assert r.status_code == 422 and "Untick it" in r.json()["detail"]
+    assert _stored(team, pid)["checklist"][0]["text"] == a["text"] and len(_stored(team, pid)["checklist"]) == 3
+    client.post(f"/api/items/{pid}/checklist/{a['id']}/check", json={"done": False}, headers=admin_headers)
+    r = client.put(f"/api/items/{pid}/checklist", json={"steps": [{"id": a["id"], "text": "Something else"}]}, headers=admin_headers)
+    assert r.status_code == 200 and _stored(team, pid)["checklist"][0]["text"] == "Something else"
