@@ -12300,7 +12300,7 @@ def _jira_points(f):
         return int(n) if n == int(n) else n
     return None
 
-_PULL_FETCH_FIELDS = ("summary,status,issuetype,parent,created,labels,assignee,description,duedate,customfield_10025,project,customfield_10010,resolution,resolutiondate,"
+_PULL_FETCH_FIELDS = ("summary,status,issuetype,parent,created,labels,assignee,reporter,description,duedate,customfield_10025,project,customfield_10010,resolution,resolutiondate,"
                       + ",".join(_JIRA_POINTS_FIELDS))  # customfield_10010 = Sprint (list, JIRA-SPRINT-1 Stage 3); resolution+resolutiondate = RELEASE-DATE-1 (Done-only releaseDate); + story points (JIRA-POINTS-1). All ride the call the pull already makes.
 
 def _filter_pull_candidates(issues: list, flow_keys: set):
@@ -12526,6 +12526,9 @@ def _pull_context(team):
         tmap = g("jiraTypeMapping", {}); smap = g("jiraStatusMapping", {})
         overlay = g("jiraPullStatusMap", {}); pmap = g("jiraProjectMapping", {})
         pods = g("developers", []); amap = g("jiraAssigneeMap", {})
+        users_list = [u for u in (g("users", []) or []) if isinstance(u, dict)]               # JIRA-REPORTER-PULL-1
+        users_by_email = {(u.get("email") or "").strip().lower(): u.get("username")
+                          for u in users_list if isinstance(u, dict) and (u.get("email") or "").strip() and u.get("username")}
         released_map = g("statusIsReleased", {})          # CLEANUP-1 Item 1: keyed on Released, NOT Terminal
         points_cfg = g("pointsEstimate", None)            # POINTS-ESTIMATE-1
         active_cfg = g("statusIsActive", {})              # START-ON-ACTIVE-1
@@ -12542,7 +12545,8 @@ def _pull_context(team):
     proj_rev = {str(v).strip(): k for k, v in pmap.items() if v}       # FRAZ -> Fraznet
     released = {s for s, v in (released_map or {}).items() if v}       # released Flow status names
     return {"type_rev": type_rev, "status_eff": status_eff, "overlay": overlay,
-            "proj_rev": proj_rev, "pods": pods, "assignee_map": amap, "released": released,
+            "proj_rev": proj_rev, "pods": pods, "assignee_map": amap, "users_by_email": users_by_email,
+            "users": users_list, "released": released,
             "terminal": {s: True for s, v in (terminal_map or {}).items() if v},
             "pointsEstimate": points_cfg,
             "active": {s: True for s, v in (active_cfg or {}).items() if v}, "parentIds": parent_ids}
@@ -12556,6 +12560,23 @@ def _release_date_from_fields(f):
     if ((f.get("resolution") or {}).get("name") or "") != "Done":
         return None
     return _mt_day_from_iso(f.get("resolutiondate"))
+
+# JIRA-REPORTER-PULL-1: a pulled item's reporter is the Jira issue's reporter, not whoever ran the pull
+# (on development that left "jira-sync" / the clicking admin on every pulled item). Matched to a Flow user
+# the same way the assignee is - the Org's jiraAssigneeMap (accountId -> username) - then by email, then by an
+# unambiguous display name; anyone else keeps their Jira display name as plain text (never a reporter ticket).
+def _jira_reporter_to_flow(person, amap, users_by_email, users=None) -> str:
+    if not isinstance(person, dict):
+        return ""
+    acct = person.get("accountId") or ""
+    if acct and (amap or {}).get(acct):
+        return amap[acct]
+    em = (person.get("emailAddress") or "").strip().lower()
+    if em and (users_by_email or {}).get(em):
+        return users_by_email[em]
+    name = re.sub(r"\s+", " ", str(person.get("displayName") or "")).strip()[:120]
+    # last, an UNAMBIGUOUS display-name match (the assignee chokepoint's rule; Jira often hides the email)
+    return _resolve_assignee(None, name, users or []) if name else ""
 
 def _construct_pull_item(issue, ctx, actor):
     """Build a Flow item dict from a Jira issue. Returns (item, meta) or (None, {skip:...}) when the Jira
@@ -12596,7 +12617,7 @@ def _construct_pull_item(issue, ctx, actor):
         "storyPoints": _jira_points(f),                    # JIRA-POINTS-1 (None when Jira has none)
         "jiraTickets": [jkey],
         "jiraSource": _PULL_JIRA_SOURCE,
-        "reporter": actor,
+        "reporter": _jira_reporter_to_flow(f.get("reporter"), ctx["assignee_map"], ctx.get("users_by_email"), ctx.get("users")) or actor,   # JIRA-REPORTER-PULL-1
     }
     if item.get("storyPoints") is not None and not item.get("due"):   # POINTS-ESTIMATE-1: no Jira due -> the table's estimate
         _apply_points_estimate(item, ctx.get("pointsEstimate"), ctx.get("terminal") or {})
@@ -13131,6 +13152,70 @@ def jira_backfill_release_dates(body: dict = Body({}), auth: dict = Depends(requ
     terminal items with a ticket and no releaseDate (pulled + pushed - pushed is a stated exception,
     counted + audited). {dryRun?: bool} reports the write plan without writing. Admin only. No notifications."""
     return _jira_backfill_release_dates(auth["team"], auth["username"], dry=bool((body or {}).get("dryRun")))
+
+# ── JIRA-REPORTER-PULL-1: one-time reporter backfill for pulled items ────────────────────────────────
+def _jira_backfill_pull_reporters(team, actor, dry=False):
+    """Set the reporter of every PULLED item (jiraSource "pull") to its Jira issue's reporter, mapped like
+    the pull does. Only the reporter changes; a Jira issue with no reporter leaves Flow's alone. Idempotent;
+    updated_ts preserved; no notifications; a search failure aborts with zero writes. One summary audit row."""
+    if not jira_configured():
+        raise HTTPException(503, "Jira not configured")
+    ctx = _pull_context(team)
+    with db(team) as c:
+        rows = c.execute("SELECT id, data FROM projects ORDER BY id").fetchall()
+    cand = {}
+    for r in rows:
+        p = json.loads(r["data"])
+        t = (p.get("jiraTickets") or [None])[0]
+        if p.get("jiraSource") == _PULL_JIRA_SOURCE and t:
+            cand[r["id"]] = t
+    keys = sorted(set(cand.values()))
+    rep_of = {}
+    for i in range(0, len(keys), 90):
+        try:
+            for iss in _jira_search_all("key in (" + ", ".join(keys[i:i + 90]) + ")", "reporter"):
+                rep_of[iss.get("key")] = _jira_reporter_to_flow((iss.get("fields") or {}).get("reporter"),
+                                                                ctx["assignee_map"], ctx.get("users_by_email"), ctx.get("users"))
+        except Exception as e:
+            log.warning(f"[ReporterBackfill] search failed, aborting with zero writes: {e}")
+            return {"aborted": True, "reason": f"Jira search failed: {e}", "written": 0}
+    users = {u.get("username") for u in ctx.get("users") or [] if u.get("username")}
+    out = {"candidates": len(cand), "jiraHasReporter": 0, "toWrite": 0, "written": 0, "toFlowUser": 0,
+           "toNameOnly": 0, "dryRun": dry, "from": {}, "to": {}}
+    changes = {}
+    with db(team) as c:
+        if not dry:
+            c.execute("BEGIN IMMEDIATE")
+        for pid, key in cand.items():
+            new = rep_of.get(key) or ""
+            if not new:
+                continue
+            out["jiraHasReporter"] += 1
+            cur = c.execute("SELECT data, updated_ts FROM projects WHERE id=?", (pid,)).fetchone()
+            if not cur:
+                continue
+            p = json.loads(cur["data"])
+            old = p.get("reporter") or ""
+            if old == new:
+                continue
+            out["toWrite"] += 1
+            out["toFlowUser" if new in users else "toNameOnly"] += 1
+            out["from"][old] = out["from"].get(old, 0) + 1
+            out["to"][new] = out["to"].get(new, 0) + 1
+            if dry:
+                continue
+            changes[str(pid)] = {"jiraKey": key, "from": old, "to": new}
+            p["reporter"] = new
+            _save_project(c, pid, p, cur["updated_ts"])
+            out["written"] += 1
+        if changes:
+            _write_audit_c(c, "jira:reporter-backfill", actor, None, "", changes={"items": changes})
+    return out
+
+@app.post("/api/jira/backfill-pull-reporters")
+def jira_backfill_pull_reporters(body: dict = Body({}), auth: dict = Depends(require_role("admin"))):
+    """JIRA-REPORTER-PULL-1: one-time backfill of pulled items' reporter from Jira. {dryRun?: bool}. Admin only."""
+    return _jira_backfill_pull_reporters(auth["team"], auth["username"], dry=bool((body or {}).get("dryRun")))
 
 # ── JIRA-POINTS-1: one-time story-points backfill ────────────────────────────────────────────────────
 def _jira_backfill_story_points(team, actor, dry=False):

@@ -13697,7 +13697,9 @@ function checklistMount(host, item, opts){
     const canTick = _clCanTick(p), canEdit = mode==='page' && _clCanEdit();
     host.classList.toggle('cl-empty', !L.length);
     if(!L.length && !adding){
-      if(mode==='page' && canEdit){ host.style.display=''; host.innerHTML = '<button type="button" class="cl-start"><span class="cl-plus">+</span>Add a checklist</button>'; }
+      // CHECKLIST-TMPL-ONLY-1: offer "+ Add a checklist" only on Types that have a template (process work like
+      // onboarding). Elsewhere a quick to-do list belongs in the description's checkbox list (DESC-CHECKBOX-1).
+      if(mode==='page' && canEdit && _clTypeSteps(p && p.type).length){ host.style.display=''; host.innerHTML = '<button type="button" class="cl-start"><span class="cl-plus">+</span>Add a checklist</button>'; }
       else { host.style.display='none'; host.innerHTML=''; }
       return;
     }
