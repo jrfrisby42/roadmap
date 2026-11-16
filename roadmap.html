@@ -93,7 +93,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
      excluded from one by one" - it has cost debugging twice now; it should eventually be SCOPED to non-Flow
      surfaces (e.g. :not(.frz-beta ...)) rather than growing an ever-longer :not() chain. */
   body.dark-mode select,
-  body.dark-mode button:not(.primary):not(.btn-save):not(.btn-cancel):not(.btn-danger):not(.btn-ic):not(.rte-btn):not(.frz-newitem):not(.frz-lp-openbtn):not(.frz-bcard-open):not(.frz-avatar):not(.frz-ava-sw):not(.frz-tab):not(.frz-chip):not(.frz-item):not(.frz-set-tab):not(.frz-pop-opt):not(.frz-cal-daytoggle button):not(.btn-add-dev):not(.frz-adm-pill) {
+  body.dark-mode button:not(.primary):not(.btn-save):not(.btn-cancel):not(.btn-danger):not(.btn-ic):not(.rte-btn):not(.frz-newitem):not(.frz-lp-openbtn):not(.frz-bcard-open):not(.frz-avatar):not(.frz-ava-sw):not(.frz-tab):not(.frz-chip):not(.frz-item):not(.frz-set-tab):not(.frz-pop-opt):not(.frz-cal-daytoggle button):not(.btn-add-dev):not(.frz-adm-pill):not(.rep-btn) {
     background: var(--surface2) !important;
     color: var(--text) !important;
     border-color: var(--border) !important;
@@ -2186,6 +2186,11 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
             <div class="form-row" style="margin-bottom:0">
               <label>Team</label>
               <select id="fDev"></select>
+            </div>
+            <!-- REPORTER-EDIT-1: who the item is for (create only; an existing item uses Item Info > Change) -->
+            <div class="form-row" id="fReporterRow" style="margin:10px 0 0;display:none">
+              <label for="fRepWho">Reporter</label>
+              <div id="fReporterHost"></div>
             </div>
           </div>
         </details>
@@ -6968,9 +6973,121 @@ function _frzComposerMetaStrip(p){
   const deps = Array.isArray(p.departments) ? p.departments : [];
   if(deps.length) chips.push(chip(deps.length>1?'Depts':'Dept', deps.map(d=>esc(d)).join(', ')));
   if(p.dev) chips.push(chip('Team', esc(p.dev)));                 // the pod (dev field); editable in Ownership
-  if(p.reporter) chips.push(chip('Reporter', esc(p.reporter)));   // display name only - the email moves to Item Info (1.3)
+  if(p.reporter) chips.push(chip('Reporter', esc(reporterLabel(p))));   // REPORTER-EDIT-1: display name for a Flow user   // display name only - the email moves to Item Info (1.3)
   el.innerHTML = chips.join('');
   el.style.display = '';
+}
+
+// ── REPORTER-EDIT-1: who the item is for ───────────────────────────────────────────────────────────
+// A Flow user (reporter = username) or someone outside Flow (name + email). An outside reporter makes the
+// item a ticket like a portal one (status page, My Tickets, complete/deferred/@reporter emails); the server
+// owns the fields and validates (PUT /api/items/{id}/reporter, or reporterPick on create).
+function reporterLabel(p){
+  const r = (p && p.reporter) || '';
+  if(!r) return '';
+  return (users || []).some(u => u && u.username === r) ? displayName(r) : r;
+}
+function _repUsersSorted(){
+  return (users || []).filter(u => u && u.username).slice()
+    .sort((a, b) => displayName(a.username).localeCompare(displayName(b.username)));
+}
+// The picker markup. cur = {who: '' | username | '__ext__', name, email}; meOption adds "Me" as the default.
+function reporterPickerHtml(pre, cur, meOption){
+  cur = cur || { who: '' };
+  const opts = (meOption ? ['<option value="">Me ('+esc(displayName(getUsername()))+')</option>'] : [])
+    .concat(_repUsersSorted().filter(u => !meOption || u.username !== getUsername())
+      .map(u => '<option value="'+escA(u.username)+'"'+(cur.who===u.username?' selected':'')+'>'+esc(displayName(u.username))+'</option>'))
+    .concat(['<option value="__ext__"'+(cur.who==='__ext__'?' selected':'')+'>Someone outside Flow...</option>']);
+  return '<select id="'+pre+'Who" class="rep-who">'+opts.join('')+'</select>'
+    + '<div id="'+pre+'Ext" class="rep-ext" style="display:'+(cur.who==='__ext__'?'':'none')+'">'
+    +   '<div class="rep-ext-grid"><input id="'+pre+'Name" type="text" maxlength="120" placeholder="Name" autocomplete="off" aria-label="Reporter name" value="'+escA(esc(cur.name||''))+'">'
+    +   '<input id="'+pre+'Email" type="email" maxlength="200" placeholder="Email" autocomplete="off" aria-label="Reporter email" value="'+escA(esc(cur.email||''))+'"></div>'
+    +   '<label class="rep-notify"><input type="checkbox" id="'+pre+'Notify" checked><span>Email them a confirmation with a link to follow it</span></label>'
+    +   '<div class="rep-hint">They get the same status page and updates as a portal ticket.</div>'
+    + '</div>'
+    + '<div id="'+pre+'Msg" class="rep-msg" role="alert" style="display:none"></div>';
+}
+function reporterPickerWire(pre){
+  const who = document.getElementById(pre+'Who'), ext = document.getElementById(pre+'Ext');
+  if(!who || !ext) return;
+  who.onchange = () => {
+    ext.style.display = who.value === '__ext__' ? '' : 'none';
+    const m = document.getElementById(pre+'Msg'); if(m) m.style.display = 'none';
+    if(who.value === '__ext__'){ const n = document.getElementById(pre+'Name'); if(n) n.focus(); }
+  };
+}
+// -> null (Me / nothing chosen), false (invalid; message shown), or {reporter, email, notify}.
+function reporterPickerRead(pre){
+  const who = document.getElementById(pre+'Who');
+  if(!who || !who.value) return null;
+  const msg = document.getElementById(pre+'Msg');
+  const fail = t => { if(msg){ msg.textContent = t; msg.style.display = ''; } return false; };
+  if(who.value !== '__ext__') return { reporter: who.value, email: '', notify: false };
+  const name = (document.getElementById(pre+'Name').value || '').trim();
+  const email = (document.getElementById(pre+'Email').value || '').trim();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ document.getElementById(pre+'Email').focus(); return fail('Enter their email address.'); }
+  if(msg) msg.style.display = 'none';
+  return { reporter: name || email, email, notify: !!(document.getElementById(pre+'Notify') || {}).checked };
+}
+// New Item: the Reporter row in Ownership (create only; editing goes through the Change dialog).
+function _reporterCreateMount(id){
+  const row = document.getElementById('fReporterRow'), host = document.getElementById('fReporterHost');
+  if(!row || !host) return;
+  if(id || !(isAdmin || isEditor)){ row.style.display = 'none'; host.innerHTML = ''; return; }
+  row.style.display = '';
+  host.innerHTML = reporterPickerHtml('fRep', { who: '' }, true);
+  reporterPickerWire('fRep');
+}
+function _repApply(p, r){
+  p.reporter = r.reporter;
+  if(r.reporterEmail) p.reporterEmail = r.reporterEmail; else delete p.reporterEmail;
+  if(r.source) p.source = r.source; else delete p.source;
+}
+function closeReporterDialog(){ const ov = document.getElementById('repOverlay'); if(ov) ov.remove(); }
+function openReporterDialog(id){
+  const p = projects.find(x => x.id === id);
+  if(!p || !(isAdmin || isEditor)) return;
+  closeReporterDialog();
+  const isUser = (users || []).some(u => u && u.username === p.reporter) && !p.reporterEmail;
+  const cur = isUser ? { who: p.reporter } : { who: '__ext__', name: p.reporter || '', email: p.reporterEmail || '' };
+  const ov = document.createElement('div'); ov.id = 'repOverlay'; ov.className = 'rep-overlay';
+  ov.innerHTML = '<div class="rep-dialog" role="dialog" aria-modal="true" aria-labelledby="repTitle">'
+    + '<div class="rep-hd" id="repTitle">Change reporter</div>'
+    + '<div class="rep-bd"><div class="rep-sub">Who is '+esc(p.itemKey || ('#'+p.id))+' for? Pick a Flow user, or someone outside Flow who emailed the team.</div>'
+    +   reporterPickerHtml('dRep', cur, false)
+    +   (p.jiraTickets && p.jiraTickets.length ? '<div class="rep-hint" style="margin-top:8px">The reporter on '+esc(p.jiraTickets[0])+' in Jira changes too.</div>' : '')
+    + '</div>'
+    + '<div class="rep-ft"><button type="button" class="rep-btn rep-cancel">Cancel</button><button type="button" class="rep-btn rep-save">Save</button></div></div>';
+  document.body.appendChild(ov);
+  reporterPickerWire('dRep');
+  // The confirmation only goes when the email changes, so say so when the item already has one.
+  const nt = ov.querySelector('.rep-notify span'); if(nt && p.reporterEmail) nt.textContent = 'Email them a confirmation with a link to follow it (only if the email changes)';
+  ov.addEventListener('mousedown', e => { if(e.target === ov) closeReporterDialog(); });
+  ov.addEventListener('keydown', e => { if(e.key === 'Escape'){ e.stopPropagation(); closeReporterDialog(); } });
+  ov.querySelector('.rep-cancel').onclick = closeReporterDialog;
+  const save = ov.querySelector('.rep-save');
+  save.onclick = async () => {
+    const pick = reporterPickerRead('dRep');
+    if(pick === false) return;
+    if(pick === null){ closeReporterDialog(); return; }
+    save.disabled = true; save.textContent = 'Saving...';
+    try {
+      const r = await API.put('/api/items/'+id+'/reporter', { ...pick, _username: getUsername() });
+      _repApply(p, r);
+      closeReporterDialog();
+      if(_itemPageId === id) renderItemPage(p);
+      if(editingId === id){ _frzComposerMetaStrip(p); _frzComposerItemInfo(p); }
+      let t = r.unchanged ? 'Reporter unchanged.' : 'Reporter changed to ' + reporterLabel(p) + '.';
+      if(r.emailed) t += ' Confirmation sent to ' + r.emailed + '.';
+      if(r.jiraUpdated) t += ' Jira updated.';
+      showToast(t);
+      if(r.jiraWarning) showToast('Jira reporter not changed: ' + r.jiraWarning + '.', 'error', 6000);
+    } catch(e){
+      save.disabled = false; save.textContent = 'Save';
+      const m = document.getElementById('dRepMsg'); if(m){ m.textContent = (e && e.message) || 'Could not change the reporter.'; m.style.display = ''; }
+    }
+  };
+  setTimeout(() => { try { document.getElementById('dRepWho').focus(); } catch(e){} }, 30);
 }
 
 // COMPOSER-REFINE-1 Stage 1.3: ITEM INFO rail group - edit-only read-only metadata. Carries Reporter
@@ -6983,7 +7100,9 @@ function _frzComposerItemInfo(p){
   if(!p){ wrap.style.display='none'; wrap.open=false; body.innerHTML=''; return; }
   const row = (k, v) => v ? '<div class="composer-info-row"><span class="ci-k">'+esc(k)+'</span><span class="ci-v">'+v+'</span></div>' : '';
   let html = '';
-  html += row('Reporter', p.reporter ? esc(p.reporter) : '');
+  // REPORTER-EDIT-1: display name for a Flow user + a Change button for admins/editors.
+  const _repChg = (isAdmin || isEditor) ? ' <button type="button" class="rep-btn rep-change" onclick="openReporterDialog('+p.id+')">Change</button>' : '';
+  html += (p.reporter || _repChg) ? row('Reporter', (p.reporter ? esc(reporterLabel(p)) : '<span class="cm-muted">None</span>') + _repChg) : '';
   html += row('Email', p.reporterEmail ? '<a href="mailto:'+escA(p.reporterEmail)+'" class="ci-link">'+esc(p.reporterEmail)+'</a>' : '');
   html += row('Created', p.createdAt ? esc(fmtTS(p.createdAt)) : '');
   html += row('Modified', p.updated_ts ? esc(fmtTS(p.updated_ts)) : '');
@@ -7458,6 +7577,7 @@ function openProjectModal(id){
   // default open-states (reset every open since the modal is reused).
   _frzComposerMetaStrip(id ? p : null);
   _frzComposerItemInfo(id ? p : null);   // COMPOSER-REFINE-1 Stage 1.3: edit-only Item Info group
+  _reporterCreateMount(id);              // REPORTER-EDIT-1: New Item Reporter (create only)
   _frzComposerActivity(id || null);
   _frzComposerGroupDefaults(p, id);
   _frzWireComposerA11yLabels();   // Stage 8: name every field for screen readers (fields are rebuilt per open)
@@ -8602,6 +8722,11 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
   if(existing) data.assignee = existing.assignee || '';
   defaultSoleMemberAssignee(data);
 
+  // REPORTER-EDIT-1: the New Item Reporter. Read (and validated) before the modal closes, so a bad email
+  // leaves the person in the form. null = the creator is the reporter (the server default).
+  const _repPick = editingId ? null : reporterPickerRead('fRep');
+  if(_repPick === false){ const g = document.getElementById('grpOwnership'); if(g) g.open = true; return; }
+
   // CHECKLIST-1: moving this item into a closed status with open checklist steps asks once (never blocks).
   // Before the modal closes, so "Go back" leaves the person in the modal with their edits intact.
   if(existing && data.status && !(await checklistCloseOk(existing, data.status))) return;
@@ -8631,7 +8756,9 @@ document.getElementById('saveBtn')?.addEventListener('click', async ()=>{
       const _plinks = _frzPendingLinks
         .map(l => ({ label:(l.label||'').trim(), url:(l.url||'').trim() }))
         .filter(l => l.url);
-      const created = await API.post('/api/projects', {...data, checklist: _clCreateSteps(), pendingAttachments: _pend, pendingLinks: _plinks, _username: getUsername()});
+      const created = await API.post('/api/projects', {...data, checklist: _clCreateSteps(), pendingAttachments: _pend, pendingLinks: _plinks, ...(_repPick ? { reporterPick: _repPick } : {}), _username: getUsername()});
+      if(created && created.reporterEmailed) setTimeout(() => showToast('Confirmation sent to ' + created.reporterEmailed + '.'), 1200);   // REPORTER-EDIT-1
+      if(created) delete created.reporterEmailed;
       _frzResetPendingAtts();   // committed - safe to clear (a failed save above never reaches here)
       _frzResetPendingLinks();
       if(created && Array.isArray(created.attachmentsDropped) && created.attachmentsDropped.length){
@@ -19497,7 +19624,7 @@ function renderItemPage(p){
     _sprintFieldOn() ? ipField('Sprint', p.sprintId ? esc(p.sprintId) : '', {always:true}) : '',   // FIELDS-2: gated on team-has-sprints + Planning enabled
     ipField('Key', p.itemKey ? `<span style="font-family:monospace">${esc(p.itemKey)}</span>` : '-', {bold:true}),
     ipEditField('product',    'Space',         p.product ? esc(p.product)+jiraLockIc : '', 'select', {readonly:termRO || jiraLocked}),
-    ipField('Reporter',      esc(p.reporter||'-')),
+    ipField('Reporter',      esc(reporterLabel(p)||'-') + (_ipCanWrite(p) ? ' <button type="button" class="rep-btn rep-change" onclick="openReporterDialog('+p.id+')">Change</button>' : ''), {always:true}),   // REPORTER-EDIT-1
     ipField('Reporter Email', p.reporterEmail ? `<a href="mailto:${escA(p.reporterEmail)}" style="color:var(--accent);text-decoration:none">${esc(p.reporterEmail)}</a>` : ''),
     // FIELDS-1: coded Location / Resolution Type selects, GATED on the team having configured the list.
     // Empty list -> '' -> the row is never rendered (and so never moved into the rail) -> the field is
@@ -23954,6 +24081,30 @@ if ('serviceWorker' in navigator) {
   body.frz-beta-active .cl-draft .cl-optbtn { flex:none; font:700 11px 'Lato',sans-serif; color:var(--muted); background:var(--surface); border:1px solid var(--border); border-radius:999px; padding:3px 9px; cursor:pointer; white-space:nowrap; }
   body.frz-beta-active .cl-draft .cl-optbtn.on { color:var(--cl-acc); border-color:var(--cl-acc); background:color-mix(in srgb, var(--cl-acc) 10%, var(--surface)); }
   body.frz-beta-active .cl-draft .cl-optbtn:focus-visible { outline:2px solid var(--cl-acc); outline-offset:2px; }
+  /* REPORTER-EDIT-1: Reporter picker (New Item + Change dialog) and the Change link */
+  body.frz-beta-active .rep-change { background:none; border:0; padding:0 0 0 6px; font:700 11px 'Lato',sans-serif; color:var(--frz-accent); cursor:pointer; }
+  body.frz-beta-active .rep-change:hover { text-decoration:underline; }
+  body.frz-beta-active .rep-change:focus-visible { outline:2px solid var(--frz-accent); outline-offset:2px; border-radius:3px; }
+  body.frz-beta-active .rep-who { width:100%; }
+  body.frz-beta-active .rep-ext { margin-top:8px; }
+  body.frz-beta-active .rep-ext-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  body.frz-beta-active .rep-ext-grid input { width:100%; box-sizing:border-box; min-width:0; }
+  body.frz-beta-active .rep-notify, body.frz-beta-active .modal .form-row label.rep-notify { display:flex; align-items:flex-start; gap:8px; margin-top:8px; font-size:12px; font-weight:400; color:var(--text); cursor:pointer; text-transform:none; letter-spacing:0; }
+  body.frz-beta-active .rep-notify input { accent-color:var(--frz-accent); width:15px; height:15px; margin:1px 0 0; flex:none; }
+  body.frz-beta-active .rep-hint { font-size:11px; color:var(--muted); margin-top:4px; }
+  body.frz-beta-active .rep-msg { font-size:12px; color:#c0362c; margin-top:6px; }
+  body.frz-beta-active .rep-overlay { position:fixed; inset:0; background:rgba(20,40,63,.45); z-index:10000; display:flex; align-items:center; justify-content:center; padding:16px; font-family:'Lato',system-ui,sans-serif; }
+  body.frz-beta-active .rep-dialog { background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:12px; max-width:440px; width:100%; box-shadow:0 20px 50px rgba(0,0,0,.3); overflow:hidden; }
+  body.frz-beta-active .rep-hd { padding:14px 18px; border-bottom:1px solid var(--border); font-weight:800; font-size:15px; }
+  body.frz-beta-active .rep-bd { padding:16px 18px; }
+  body.frz-beta-active .rep-sub { font-size:12px; color:var(--muted); margin-bottom:10px; }
+  body.frz-beta-active .rep-bd select, body.frz-beta-active .rep-bd input[type=text], body.frz-beta-active .rep-bd input[type=email] { height:34px; padding:0 10px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); font:13px 'Lato',sans-serif; }
+  body.frz-beta-active .rep-ft { padding:12px 18px; border-top:1px solid var(--border); display:flex; justify-content:flex-end; gap:8px; }
+  body.frz-beta-active .rep-ft button { height:34px; padding:0 14px; border-radius:7px; font:700 12px 'Lato',sans-serif; cursor:pointer; }
+  body.frz-beta-active .rep-cancel { border:1px solid var(--border); background:var(--surface); color:var(--text); }
+  body.frz-beta-active .rep-save { border:0; background:#0059A9; color:#fff; }   /* deep Frazil blue in both themes, like the dark-mode primary buttons */
+  body.frz-beta-active .rep-save:disabled { opacity:.6; cursor:default; }
+  @media (max-width:640px){ body.frz-beta-active .rep-ext-grid { grid-template-columns:1fr; } }
   body.frz-beta-active .cl-wrap .cl-x, body.frz-beta-active .cl-draft .cl-x { background:none; border:0; color:var(--muted); font-size:12px; cursor:pointer; padding:2px 4px; flex:none; line-height:1; }
   body.frz-beta-active .cl-wrap .cl-x { opacity:0; }
   body.frz-beta-active .cl-wrap .cl-row:hover .cl-x, body.frz-beta-active .cl-wrap .cl-x:focus-visible { opacity:.75; }
@@ -36518,7 +36669,7 @@ if ('serviceWorker' in navigator) {
     // the item page's _itemPageId - so the item-page path is byte-identical and the modal/panel now work too.
     try {
       var p = item || (function(){ var id=_val('_itemPageId'); return (_val('projects',[])||[]).filter(function(x){return x.id===id;})[0]; })();
-      if(p && p.source==='portal' && p.reporterEmail && 'reporter'.indexOf(prefix)===0 && out.indexOf('reporter')<0){
+      if(p && (p.source==='portal' || p.source==='email') && p.reporterEmail && 'reporter'.indexOf(prefix)===0 && out.indexOf('reporter')<0){   // REPORTER-EDIT-1: emailed-in tickets too
         out.unshift('reporter'); out=out.slice(0,8);
       }
     } catch(e){}
