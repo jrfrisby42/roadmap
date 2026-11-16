@@ -7407,13 +7407,16 @@ def delete_item_link(pid: int, link_id: str, username: str = "",
     return {"ok": True, "extLinks": p["extLinks"]}
 
 # ── CHECKLIST-1: tickable steps on an item ───────────────────────────────────────────────────
-# `checklist` is a list of {id, text, done, by?, at?} on the item blob, NOT in the description:
+# `checklist` is a list of {id, text, done, by?, at?, optional?} on the item blob, NOT in the description:
 # a separate field is what makes per-step ticking, the "3/5" counts, who/when, recurrence resets
 # and staying out of Jira's description sync possible. It is in SERVER_OWNED_FIELDS, so the generic
 # item PUT restores it and these two routes are the ONLY write paths (create may seed unticked text).
 # Writes deliberately do NOT bump updated_ts: a tick is not an edit of the item, so it must not make
 # someone else's open edit modal 409 on save (their save restores the checklist anyway).
 # Never synced to Jira. Ticks write an audit row only - no activity, no notification.
+# CHECKLIST-OPTIONAL-1: a step may carry optional:true (set on the Type template's step, copied at create,
+# kept by recurrence). The server only stores it; the client leaves optional steps out of the counts and
+# the close prompt. A template step is a plain string (required) or {text, optional:true}.
 _CHECKLIST_CAP = 50        # max steps per item
 _CHECKLIST_TEXT_MAX = 200  # max chars per step
 
@@ -7421,19 +7424,22 @@ def _checklist_text(v) -> str:
     return re.sub(r"\s+", " ", str(v or "")).strip()[:_CHECKLIST_TEXT_MAX]
 
 def _checklist_fresh(steps) -> list:
-    """Client-supplied steps (strings or {text}) -> fresh UNTICKED steps, blanks dropped, capped.
+    """Client-supplied steps (strings or {text, optional?}) -> fresh UNTICKED steps, blanks dropped, capped.
     The sole create-time normalizer (create_project) - who/when/done are never taken from a client."""
     out = []
     for st in (steps if isinstance(steps, list) else []):
         t = _checklist_text(st.get("text") if isinstance(st, dict) else st)
         if t:
-            out.append({"id": secrets.token_hex(5), "text": t, "done": False})
+            step = {"id": secrets.token_hex(5), "text": t, "done": False}
+            if isinstance(st, dict) and st.get("optional") is True:
+                step["optional"] = True
+            out.append(step)
         if len(out) >= _CHECKLIST_CAP:
             break
     return out
 
 def _checklist_reset(steps) -> list:
-    """Recurrence: the same step texts, every box unticked, who/when cleared, fresh ids."""
+    """Recurrence: the same step texts (and optional flags), every box unticked, who/when cleared, fresh ids."""
     return _checklist_fresh([st for st in (steps if isinstance(steps, list) else []) if isinstance(st, dict)])
 
 def _checklist_write(c, pid: int, p: dict):
@@ -7474,8 +7480,9 @@ def check_checklist_step(pid: int, sid: str, body: dict = Body({}),
 def put_checklist(pid: int, body: dict = Body(...),
                   auth: dict = Depends(require_role("admin", "editor"))):
     """Replace the step list's SHAPE (add / rename / reorder / remove) from the item page.
-    body.steps = [{id?, text}] in display order. An existing id keeps its tick + who/when (renaming a
-    step does not untick it); a step without a known id is new and unticked. [] removes the checklist."""
+    body.steps = [{id?, text, optional?}] in display order. An existing id keeps its tick + who/when (renaming a
+    step does not untick it); a step without a known id is new and unticked. [] removes the checklist.
+    `optional` is applied only when sent; an existing step sent without it keeps the flag it had."""
     team = auth["team"]
     username = _audit_actor(body.get("_username"), auth)
     raw = body.get("steps")
@@ -7495,9 +7502,13 @@ def put_checklist(pid: int, body: dict = Body(...),
             prev = by_id.get(st.get("id")) if st.get("id") not in seen else None
             if prev:
                 seen.add(prev["id"])
-                new.append({**prev, "text": t})
+                step = {**prev, "text": t}
             else:
-                new.append({"id": secrets.token_hex(5), "text": t, "done": False})
+                step = {"id": secrets.token_hex(5), "text": t, "done": False}
+            if "optional" in st:
+                if st.get("optional") is True: step["optional"] = True
+                else: step.pop("optional", None)
+            new.append(step)
             if len(new) > _CHECKLIST_CAP:
                 raise HTTPException(422, f"A checklist can have at most {_CHECKLIST_CAP} steps.")
         if new:
@@ -7509,9 +7520,11 @@ def put_checklist(pid: int, body: dict = Body(...),
     added = [x["text"] for x in new if x["id"] not in by_id]
     removed = [x.get("text") for x in old if x.get("id") not in seen]
     renamed = [x["text"] for x in new if x["id"] in by_id and by_id[x["id"]].get("text") != x["text"]]
+    flagged = [x["text"] for x in new if x["id"] in by_id and bool(by_id[x["id"]].get("optional")) != bool(x.get("optional"))]
     if added: ch["added"] = added
     if removed: ch["removed"] = removed
     if renamed: ch["renamed"] = renamed
+    if flagged: ch["optional_changed"] = flagged
     if not ch and [x.get("id") for x in old] != [x["id"] for x in new]:
         ch["reordered"] = True
     if ch:
