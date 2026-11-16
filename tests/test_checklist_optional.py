@@ -84,3 +84,8 @@ def test_template_steps_round_trip_and_admin_gets_the_toggle():
     assert "(x.optional ? { text: x.text, optional: true } : x.text)" in _HTML     # required stays a plain string
     assert "return body._clSteps();" in _HTML                                        # New Item sends the flag
     assert "class=\"cl-opt\"" in _HTML and "cl-optbtn" in _HTML
+
+
+def test_add_a_checklist_only_on_types_with_a_template():
+    # CHECKLIST-TMPL-ONLY-1: the item page's "+ Add a checklist" shows only when the item's Type has a template.
+    assert "if(mode==='page' && canEdit && _clTypeSteps(p && p.type).length){" in _HTML
