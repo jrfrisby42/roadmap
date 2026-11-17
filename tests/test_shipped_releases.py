@@ -58,7 +58,7 @@ def test_releases_list_is_history_only():
 def test_gantt_credits_dev_teams_and_backstops_with_sprints():
     assert "const rb = p.resolvedBy, ct = (rb && rb.by === 'dev' && rb.team) || '';" in HTML
     assert '<i class="ow-sup" style="height:${sPct}%"></i>' in HTML
-    assert "const _sb = c => (c.start || c.due || c.revised) ? null : _sprintSpanOf(c);" in HTML
+    assert "const _sb = c => (c.revised || ((c.start || c.due) && !c.startAuto)) ? null : _sprintSpanOf(c);" in HTML   # + GANTT-SPRINT-GUESS-1
     assert "function _sprintSpanOf(c){" in HTML
 
 

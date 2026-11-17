@@ -4743,6 +4743,7 @@ def _stamp_start_on_activate(p: dict, active_map: dict, is_parent: bool) -> bool
     if is_parent and not p.get("due"):
         return False                                     # a roll-up parent: its bar comes from its children
     p["start"] = _flow_today_iso()
+    p["startAuto"] = True                                # GANTT-SPRINT-GUESS-1: Flow chose this start, nobody typed it
     if not p.get("due") and p.get("dueWeeks") not in (None, "", 0):
         p["due"] = _compute_item_due(p) or ""
     return True
@@ -4931,6 +4932,8 @@ RECURRENCE_SKIP_KEYS = {
     "assetServiceSync",
     # RESOLVED-BY-1: who resolved THIS occurrence - a new one is not resolved yet.
     "resolvedBy",
+    # GANTT-SPRINT-GUESS-1: a new occurrence's start is its own (start + period), not Flow's earlier guess.
+    "startAuto",
 }
 
 # Server-owned fields a recurrence occurrence deliberately KEEPS. Kept intentionally small - a
@@ -5570,6 +5573,7 @@ def create_project(body: dict, auth: dict = Depends(require_role("admin", "edito
     body.pop("ccList", None)             # CC-1: endpoint-mediated only; a create can't seed the external notify list
     # CHECKLIST-1: a create MAY seed steps (the New Item form, pre-filled from the Type template), but
     # only as text - normalized to fresh unticked steps, so a client can't forge ticks or who/when.
+    body.pop("startAuto", None)   # GANTT-SPRINT-GUESS-1: only Flow sets it, never a client
     _cl_seed = _checklist_fresh(body.pop("checklist", None))
     if _cl_seed:
         body["checklist"] = _cl_seed
@@ -5860,6 +5864,12 @@ def update_project(pid: int, body: dict, background: BackgroundTasks = None,
                 merged[_srv] = old[_srv]
             else:
                 merged.pop(_srv, None)
+        # GANTT-SPRINT-GUESS-1: `startAuto` marks a start Flow set itself (an item went active with no start). It
+        # survives only while that start is unchanged; a client cannot set it, and any edit of the start clears it.
+        if old.get("startAuto") and (merged.get("start") or "") == (old.get("start") or ""):
+            merged["startAuto"] = True
+        else:
+            merged.pop("startAuto", None)
         # CHECKLIST-RETYPE-1: changing an item to a Type with a checklist template adds that template's steps
         # (unticked, optional flags kept) when the item has none yet. This is how a portal ticket that comes
         # in as a generic Type (IT's portal offers only Task) gets its Onboarding/Offboarding steps once staff
@@ -12935,6 +12945,8 @@ def _refresh_one_pulled(current, issue, ctx, all_statuses, today=None, pid=None)
         if jv and jv != cv:
             current[fld] = jv
             changed[fld] = (cv, jv)
+            if fld == "start":
+                current.pop("startAuto", None)           # GANTT-SPRINT-GUESS-1: Jira's own Start date replaces Flow's guess
     sp = _jira_points(f)                    # JIRA-POINTS-1: empty in Jira keeps Flow's value
     if sp is not None and current.get("storyPoints") != sp:
         changed["storyPoints"] = (current.get("storyPoints"), sp)
