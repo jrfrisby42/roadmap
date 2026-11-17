@@ -6380,7 +6380,8 @@ def list_items(
 
 # Fields safe to set in bulk. Deliberately excludes scheduling/capacity fields
 # (dueWeeks/testWeeks/parallelResources/start/due) - those have per-item rules.
-_BULK_FIELDS = {"status", "dev", "assignee", "sprintId", "priority", "archived"}
+_BULK_FIELDS = {"status", "dev", "assignee", "sprintId", "priority", "archived",
+                "release"}   # RELEASE-FROM-SHIPPED-1: link a month of shipped items to a release in one write
 
 @app.post("/api/items/bulk")
 def bulk_update_items(body: dict = Body(...),
@@ -6399,8 +6400,15 @@ def bulk_update_items(body: dict = Body(...),
         raise HTTPException(400, f"Fields not allowed in bulk edit: {', '.join(sorted(bad))}")
     if "archived" in patch:
         patch["archived"] = bool(patch["archived"])
+    if "release" in patch:   # RELEASE-FROM-SHIPPED-1: an existing release id, or "" to unlink
+        rid = patch["release"] if isinstance(patch["release"], str) else None
+        if rid is None:
+            raise HTTPException(422, "release must be a release id or empty")
+        if rid and rid not in {r.get("id") for r in (_cfg_val(team, "releases", []) or []) if isinstance(r, dict)}:
+            raise HTTPException(422, "Unknown release")
 
     updated = 0
+    stamps = {}    # RELEASE-FROM-SHIPPED-1: {id: new updated_ts} so a caller can refresh its copies (no false 409 later)
     skipped = []   # POLISH-2: reserved-status items whose status change was refused
     _changing_status = "status" in patch
     _assigned = {}   # ASSIGN-NOTIFY-1: {new_assignee: [(pid, name, key)]} for items whose assignee changed
@@ -6425,6 +6433,8 @@ def bulk_update_items(body: dict = Body(...),
             data.update(patch)
             _save_project(c, pid, data)
             updated += 1
+            _ts = c.execute("SELECT updated_ts FROM projects WHERE id=?", (pid,)).fetchone()
+            stamps[str(pid)] = _ts["updated_ts"] if _ts else None
             _na = (data.get("assignee") or "") if "assignee" in patch else ""
             if _na and _na != _old_assignee:
                 _assigned.setdefault(_na, []).append((pid, data.get("name", ""), data.get("itemKey") or f"#{pid}"))
@@ -6435,7 +6445,7 @@ def bulk_update_items(body: dict = Body(...),
         _notify_bulk_assigned(team, _assigned, auth["username"])
     except Exception as e:
         log.warning(f"[Notify] bulk assign hook failed for team {team}: {e}")
-    return {"updated": updated, "patch": patch, "skipped": skipped}
+    return {"updated": updated, "patch": patch, "skipped": skipped, "updatedTs": stamps}
 
 _BULK_ASSIGN_INDIVIDUAL_MAX = 3   # up to this many items -> one notification each; more -> one summary
 

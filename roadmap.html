@@ -477,7 +477,8 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .ow-layer { position: absolute; inset: 0; pointer-events: none; }
   .ow-col { position: absolute; bottom: 4px; background: var(--accent); opacity: .35; border-radius: 2px 2px 0 0; pointer-events: auto; cursor: default; }
   .ow-col:hover, .ow-col.is-now { opacity: .6; }
-  .ow-col.is-cap { border-top: 2px solid var(--accent); }   /* GANTT-OW-SCALE-1: taller than the scale, drawn at full height */
+  .ow-col.is-cap { border-top: 2px solid var(--accent); }
+  .ow-col .ow-sup { position: absolute; left: 0; right: 0; top: 0; border-radius: 2px 2px 0 0; background: repeating-linear-gradient(135deg, rgba(255,255,255,.75) 0 2px, transparent 2px 4px); }   /* GANTT-OW-CREDIT-1: Support tickets this Team resolved */   /* GANTT-OW-SCALE-1: taller than the scale, drawn at full height */
   .ow-n { position: absolute; font-size: 9px; font-weight: 700; line-height: 1; text-align: center; color: var(--muted); }
   .left-row.span-foot .proj-name { flex: 1; }
   .span-foot-btn { background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--accent); font: inherit; font-weight: 600; padding: 2px 8px; cursor: pointer; white-space: nowrap; }
@@ -5164,8 +5165,12 @@ function render(){
     if(!kids.length) return null;
     // Defect A (real cause was the render gate, not this math): undated descendants are skipped, never
     // poisoning the min/max - filter(Boolean) drops them, so a mix of dated + undated still derives a span.
-    const starts = kids.map(c=>c.start).filter(Boolean).sort();
-    const dues   = kids.map(c=>c.revised||c.due).filter(Boolean).sort();   // revised wins over due
+    // GANTT-SPRINT-DATES-1: a descendant with no dates of its own lends its sprint's dates (current sprint, else the
+    // last one it was in) so a story in a sprint still shapes its project's bar. Display only, like the roll-up.
+    const _sb = c => (c.start || c.due || c.revised) ? null : _sprintSpanOf(c);
+    const starts = kids.map(c=>c.start || (_sb(c) || {}).start).filter(Boolean).sort();
+    const dues   = kids.map(c=>c.revised||c.due||(_sb(c) || {}).due).filter(Boolean).sort();   // revised wins over due
+    const _fromSprint = kids.filter(c => _sb(c)).length;
     // ROLLUP-SYNC-1: status follows rule A (the Jira convention) - the SAME rule the server now writes onto
     // the parent (_rollup_plan), so the Gantt and the item never disagree. Over the leaf work (descendants
     // that are not themselves roll-up parents): every countable leaf finished -> the least-progressed
@@ -5199,7 +5204,17 @@ function render(){
       dev:(pods[0]||''), teamLabel:(pods.length>1?(pods[0]+' +'+(pods.length-1)):(pods[0]||'')),
       multiPod:pods.length>1, assignee:(ak.length===1?ak[0]:(ak.length>1?'Multiple':'')),
       empty:!(starts.length || dues.length), progress, done:_done, total:_cnt.length,
-      active:_act.length, people:Object.keys(_pc).sort((a,b) => (_pc[b]-_pc[a]) || a.localeCompare(b)), lastTs:_last };
+      active:_act.length, people:Object.keys(_pc).sort((a,b) => (_pc[b]-_pc[a]) || a.localeCompare(b)), lastTs:_last,
+      fromSprint:_fromSprint };
+  }
+  // GANTT-SPRINT-DATES-1: {start, due} of the sprint an item is in (sprintId), else of the last sprint in its history.
+  let _sprintById = null;
+  function _sprintSpanOf(c){
+    if(!_sprintById){ _sprintById = {}; ((typeof window._frzGetSprints === 'function' ? window._frzGetSprints() : null) || []).forEach(s => { if(s && s.id) _sprintById[s.id] = s; }); }
+    let sid = c.sprintId;
+    if(!sid || !_sprintById[sid]){ const h = Array.isArray(c.sprintHistory) ? c.sprintHistory : []; for(let i = h.length - 1; i >= 0; i--){ if(h[i] && _sprintById[h[i].sprintId]){ sid = h[i].sprintId; break; } } }
+    const s = sid && _sprintById[sid];
+    return (s && s.startDate && s.endDate && s.state !== 'Discarded') ? { start: s.startDate, due: s.endDate } : null;
   }
   function _rollupAll(p){ if(!(p.id in _rollupCache)) _rollupCache[p.id]=_computeRollup(p); return _rollupCache[p.id]; }
   // GANTT-TEAM-SLICES-1: inside a team group (Projects only, grouped by Team) a parent's bar is that team's
@@ -5473,17 +5488,29 @@ function render(){
       if(p.archived || p.hidden || RESERVED_TERMINAL_STATUSES.has(p.status) || _inProject(p)) return;
       if((_kidsByParent[p.id] || []).some(c => !c.hidden && !c.archived)) return;
       const t = _effTeam(p);
-      if((fDev && !fDev.includes(t)) || (ownerScope && t !== ownerScope)) return;
       if((fSt && !fSt.includes(p.status)) || (fAsg && !fAsg.includes(p.assignee || '')) || (fProd && !fProd.includes(p.product || '')) ||
          (fType && !fType.includes(p.type || '')) || !priorityMatches(p, fPrio) || !departmentMatches(p, fDept) || !itemMatchesSearch(p, searchQ)) return;
       const isAct = statusIsActive[p.status] && !statusIsTerminal[p.status], fd = itemFinishDate(p);
       const wi = fd ? Math.floor(px(fd) / wkPx) : -1, inChart = wi >= 0 && wi < weeks.length, recent = !!fd && fd >= _d30 && fd <= TODAY;
       if(!isAct && !inChart && !recent) return;   // nothing to show for it (and it must not create an empty team group)
-      const k = _teamSplitOn ? t : '*';
-      const o = _owBy[k] = _owBy[k] || { active:[], weeks:{}, done30:0 };
-      if(isAct) o.active.push(p);
-      if(recent) o.done30++;
-      if(inChart) o.weeks[wi] = (o.weeks[wi] || 0) + 1;
+      if(!((fDev && !fDev.includes(t)) || (ownerScope && t !== ownerScope))){
+        const k = _teamSplitOn ? t : '*';
+        const o = _owBy[k] = _owBy[k] || { active:[], weeks:{}, done30:0 };
+        if(isAct) o.active.push(p);
+        if(recent) o.done30++;
+        if(inChart) o.weeks[wi] = (o.weeks[wi] || 0) + 1;
+      }
+      // GANTT-OW-CREDIT-1: a finished Support item Resolved by a dev Team (RESOLVED-BY-1) also counts in THAT
+      // Team's Other work columns, as a hatched part of the column - credit for the work, while the item stays in
+      // its own Team's row too. Per-Team rows only (one combined row would count it twice).
+      const rb = p.resolvedBy, ct = (rb && rb.by === 'dev' && rb.team) || '';
+      if(_teamSplitOn && ct && ct !== t && (inChart || recent) && Array.isArray(resolvedByTeams) && resolvedByTeams.includes(p.dev)
+         && developers.includes(ct) && !(fDev && !fDev.includes(ct)) && !(ownerScope && ct !== ownerScope)){
+        const o = _owBy[ct] = _owBy[ct] || { active:[], weeks:{}, done30:0 };
+        o.supWeeks = o.supWeeks || {};
+        if(recent){ o.done30++; o.sup30 = (o.sup30 || 0) + 1; }
+        if(inChart){ o.weeks[wi] = (o.weeks[wi] || 0) + 1; o.supWeeks[wi] = (o.supWeeks[wi] || 0) + 1; }
+      }
     });
     if(_teamSplitOn){
       // A team with only non-project work (a support team) still gets its group, so its row is not lost.
@@ -5507,13 +5534,15 @@ function render(){
   function _owRowHtml(key){
     const o = key == null ? null : _owBy[key]; if(!o) return;
     const open = !!otherWorkOpen[key];
-    const sub = `${o.active.length} in progress · ${o.done30} done in 30 days`;
+    const sub = `${o.active.length} in progress · ${o.done30} done in 30 days` + (o.sup30 ? ` (${o.sup30} for ${(resolvedByTeams || []).join(' + ') || 'Support'})` : '');   // GANTT-OW-CREDIT-1
     lRows += `<div class="left-row ow-row" data-ow="${escA(key)}" title="Work that is not under a project. Each column is the items finished that week. Click to ${open ? 'hide' : 'list'} what is in progress."><span class="proj-name pn-2"><span class="pn-main">Other work</span><span class="pn-sub">${esc(sub)}</span></span><span class="grp-tog">${_caretSvg(!open)}</span></div>`;
     let cols = '';
     Object.keys(o.weeks).forEach(wi => {
       const c = o.weeks[wi], wk = weeks[+wi], capped = c > _owScale, h = Math.max(3, Math.round(Math.min(c, _owScale) / _owScale * 22)), x = px(wk);
       const w = Math.max(2, Math.min(24, wkPx - 4)), l = x + (wkPx - w) / 2, cur = TODAY >= wk && TODAY < addDays(wk, 7);   // a column, centred in its week, never a bar-wide block
-      cols += `<div class="ow-col${cur ? ' is-now' : ''}${capped ? ' is-cap' : ''}" title="${escA('Week of ' + fmtD(wk) + ': ' + c + ' finished')}" style="left:${l.toFixed(1)}px;width:${w}px;height:${h}px"></div>`;
+      const sc = (o.supWeeks && o.supWeeks[wi]) || 0, sPct = sc ? Math.round(sc / c * 100) : 0;   // GANTT-OW-CREDIT-1: the Support share, hatched
+      const tip = 'Week of ' + fmtD(wk) + ': ' + c + ' finished' + (sc ? ', ' + sc + ' of them ' + ((resolvedByTeams || []).join(' + ') || 'Support') + ' ticket' + (sc === 1 ? '' : 's') : '');
+      cols += `<div class="ow-col${cur ? ' is-now' : ''}${capped ? ' is-cap' : ''}" title="${escA(tip)}" style="left:${l.toFixed(1)}px;width:${w}px;height:${h}px">${sc ? `<i class="ow-sup" style="height:${sPct}%"></i>` : ''}</div>`;
       if(wkPx >= 16) cols += `<span class="ow-n" style="left:${l.toFixed(1)}px;width:${w}px;bottom:${h + 5}px">${c}</span>`;
     });
     cH += `<div class="chart-row ow-row" style="width:${totalPx}px">${wCells}<div class="ow-layer">${cols}</div></div>`;
@@ -5676,7 +5705,7 @@ function render(){
             // ROLLUP-PROGRESS-1: the outline is the track; the fill is the share of child work finished
             // (100% = solid once the parent is finished). Still display only - never counted in capacity.
             const _pct = Math.round((_ru.progress || 0) * 100);
-            const _ptip = _ru.total ? `${_ru.done} of ${_ru.total} finished (${_pct}%)` : 'no child work yet';
+            const _ptip = (_ru.total ? `${_ru.done} of ${_ru.total} finished (${_pct}%)` : 'no child work yet') + (_ru.fromSprint ? ` · dates for ${_ru.fromSprint} item${_ru.fromSprint===1?'':'s'} come from their sprint` : '');   // GANTT-SPRINT-DATES-1
             const _rlJoin = parseD(_ru.release || p.releaseDate);   // GANTT-BAR-JOINS-1: square the end a release segment joins
             const _sq = (_rlJoin && px(_dd) < px(_rlJoin)) ? ';border-top-right-radius:0;border-bottom-right-radius:0' : '';
             _bar = `<div class="bar derived${_pct>0?' derived-prog':''}${_pct>=100?' derived-done':''}" data-id="${p.id}" title="Summary of children: ${_ptip}" style="left:${px(_ds).toFixed(1)}px;width:${pxW(_ds,_dd).toFixed(1)}px${_sq}">${_pct>0?`<div class="derived-fill" style="width:${_pct}%"></div>`:''}</div>`;
@@ -23247,6 +23276,15 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-rb-check { font:600 11.5px 'Lato',sans-serif; color:var(--frz-text-muted); background:none; border:1px dashed var(--frz-border); border-radius:999px; padding:0 8px; cursor:pointer; }
   .frz-beta .frz-rb-check.on { color:var(--frz-accent); border-color:var(--frz-accent); }
   .frz-beta .frz-rb-also-sub { font-size:11.5px; font-weight:600; color:var(--frz-text-muted); }
+  /* RELEASE-FROM-SHIPPED-1: picking a month's items for a release */
+  .frz-beta .frz-relpick { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px; padding:8px 10px; border:1px solid var(--frz-accent); border-radius:8px; background:var(--frz-accent-soft); font-size:12.5px; color:var(--frz-text); }
+  .frz-beta .frz-relpick-name { display:inline-flex; align-items:center; gap:6px; font-weight:700; color:var(--frz-text-secondary); }
+  .frz-beta .frz-relpick-name input { width:110px; padding:4px 8px; font-size:12.5px; }
+  .frz-beta .frz-relpick-row { cursor:pointer; gap:8px; }
+  .frz-beta .frz-relpick-row .frz-bl-name { flex:1; }
+  .frz-beta .frz-relpick-cb { margin:0; flex-shrink:0; accent-color:var(--frz-accent); }
+  .frz-beta .frz-relpick-row.is-in { cursor:default; opacity:.6; }
+  .frz-beta .frz-relpick-in { flex-shrink:0; font-size:10.5px; font-weight:700; color:var(--frz-text-muted); border:1px solid var(--frz-border); border-radius:999px; padding:0 6px; }
   .frz-beta .frz-rel-list { border:1px solid var(--frz-border); border-radius:10px; overflow:hidden; background:var(--frz-bg-surface); }
   .frz-beta .frz-rel-row { display:grid; grid-template-columns:2fr .9fr 1.8fr auto; gap:12px; align-items:center; padding:11px 14px; border-top:1px solid var(--frz-border); }
   .frz-beta .frz-rel-row:first-child { border-top:0; }
@@ -32779,12 +32817,12 @@ if ('serviceWorker' in navigator) {
     var rf=_planFilters(), shownItems=_planFiltersOn(rf) ? items.filter(function(p){ return _planFilterPass(p, rf); }) : items;
     var fNote = shownItems.length<items.length
       ? '<span style="color:var(--frz-text-muted);font-size:12px;margin-right:auto">Showing '+shownItems.length+' of '+items.length+' items (filters on)</span>' : '';
-    var head = locked
-      ? '<div style="display:flex;align-items:center;padding:2px 0 8px;color:var(--frz-text-muted);font-size:12px">'+fNote+'<span style="font-style:italic">Released - membership locked</span></div>'
-      : '<div style="display:flex;align-items:center;justify-content:flex-end;padding:2px 0 8px">'+fNote+'<button class="frz-viewopt" data-reladd="'+escA(id)+'">+ Add items</button></div>';
+    // RELEASE-FROM-SHIPPED-1: no "+ Add items" / remove here - items are added from Shipped (an item's own
+    // Release field can still move it).
+    var head = fNote ? '<div style="display:flex;align-items:center;padding:2px 0 8px">'+fNote+'</div>' : '';
     var body = shownItems.length
       ? shownItems.map(function(p){
-          var rm = locked ? '' : '<button class="frz-iconbtn" data-relremove="'+escA(p.id)+'" title="Remove from release"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg></button>';
+          var rm = '';
           return '<div style="display:flex;align-items:center;gap:6px">'+miniItemRow(p,true)+rm+'</div>';
         }).join('')
       : '<div class="frz-plan-empty">No items linked yet.</div>';
@@ -32877,7 +32915,7 @@ if ('serviceWorker' in navigator) {
   // Finished work for one calendar month, grouped by the project it belongs to, from GET /api/shipped. The
   // server counts with the exec deck's own rules (_exec_ctx), so this page and the monthly slides agree.
   // Nothing to create or link: each item's ship date is its Jira Done date, else the day Flow saw it finish.
-  var _ship = { month:'', rb:'*', cache:{} };   // cache[YYYY-MM] = {d, ts}; rb: RESOLVED-BY-1 filter (* | support | dev | check)
+  var _ship = { month:'', rb:'*', cache:{}, pick:null };   // pick: RELEASE-FROM-SHIPPED-1 selection {name, sel:{id:1}} while choosing items   // cache[YYYY-MM] = {d, ts}; rb: RESOLVED-BY-1 filter (* | support | dev | check)
   var _SHIP_FRESH_MS = 60000;
   function _shipMonthLabel(ym){ var a=String(ym||'').split('-'); var d=new Date(+a[0], (+a[1]||1)-1, 1); return isNaN(d) ? String(ym) : d.toLocaleDateString('en-US',{month:'long',year:'numeric'}); }
   function _shipDay(iso){ var a=String(iso||'').split('-'); var d=new Date(+a[0], (+a[1]||1)-1, +a[2]||1); return isNaN(d) ? String(iso) : d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
@@ -32936,9 +32974,21 @@ if ('serviceWorker' in navigator) {
     });
   }
   function _shipUrl(id){ return _call('_frzItemPageUrl', id) || (location.origin+'/item/'+id); }
+  // RELEASE-FROM-SHIPPED-1: the release an item is already in (an item belongs to one release at most).
+  function _shipRelOf(id){
+    var p=(_ship.byId||{})[id]; var r=p && p.release ? releaseById(p.release) : null;
+    return r || null;
+  }
   function _shipRow(x){
     var key = x.key ? '<span class="frz-bcard-key" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle">'+(_call('typeIconHTML', x.type, {size:13})||'')+'<span>'+esc(x.key)+'</span></span> ' : '';
     var meta=[x.team, _shipDay(x.shipped)].filter(Boolean).join(' · ');
+    var inRel=_shipRelOf(x.id);
+    if(_ship.pick){
+      var lead = inRel ? '<span class="frz-relpick-in" title="Already in release '+escA(inRel.name)+'">'+esc(inRel.name)+'</span>'
+                       : '<input type="checkbox" class="frz-relpick-cb" data-relpick="'+x.id+'"'+(_ship.pick.sel[x.id]?' checked':'')+' aria-label="Include in the release">';
+      return '<label class="frz-mini-row frz-ship-row frz-relpick-row'+(inRel?' is-in':'')+'">'+lead+'<span class="frz-bl-name">'+key+esc(x.name)+'</span><span class="frz-rb-right"><span class="frz-bl-meta">'+esc(meta)+'</span>'+_rbPill(x)+'</span></label>';
+    }
+    if(inRel) meta += ' · '+inRel.name;
     return '<a class="frz-mini-row frz-ship-row" href="'+escA(_shipUrl(x.id))+'"><span class="frz-bl-name">'+key+esc(x.name)+'</span><span class="frz-rb-right"><span class="frz-bl-meta">'+esc(meta)+'</span>'+_rbPill(x)+'</span></a>';
   }
   function _shipSummary(d, vis){
@@ -32973,9 +33023,24 @@ if ('serviceWorker' in navigator) {
     }catch(_e){}
     plainOnly();
   }
+  // RELEASE-FROM-SHIPPED-1: a month's release is named for its last day, YY.MM.DD (26.11.30).
+  function _shipMonthEnd(ym){ var a=String(ym||'').split('-'), y=+a[0], m=+a[1]; var last=new Date(y, m, 0).getDate(); return y+'-'+String(m).padStart(2,'0')+'-'+String(last).padStart(2,'0'); }
+  function _shipRelName(ym){ var e=_shipMonthEnd(ym); return e.slice(2,4)+'.'+e.slice(5,7)+'.'+e.slice(8,10); }
+  function _shipRelByName(n){ n=String(n||'').trim().toLowerCase(); return n ? (_releases.filter(function(r){ return String(r.name||'').trim().toLowerCase()===n; })[0] || null) : null; }
+  function _relPickLabel(){
+    var n=Object.keys(_ship.pick.sel).length, ex=_shipRelByName(_ship.pick.name);
+    return ex ? 'Add '+n+' to '+ex.name : 'Create release with '+n+' item'+(n===1?'':'s');
+  }
+  function _relPickSync(sec){
+    if(!_ship.pick) return;
+    var n=Object.keys(_ship.pick.sel).length;
+    var c=sec.querySelector('[data-relcount]'); if(c) c.textContent=n;
+    var go=sec.querySelector('[data-relgo]'); if(go){ go.textContent=_relPickLabel(); go.disabled=!n || !String(_ship.pick.name||'').trim(); }
+  }
   function _shipPaint(sec){
     var hit=_ship.month && _ship.cache[_ship.month], d=hit && hit.d;
     if(!d){ sec.innerHTML='<div class="frz-ship-head"><div class="frz-ship-title">Shipped</div></div><div class="frz-ship-empty">Loading...</div>'; return; }
+    _ship.byId={}; (_val('projects',[])||[]).forEach(function(p){ _ship.byId[p.id]=p; });
     var mOpts=(d.months||[]).map(function(m){ return '<option value="'+escA(m.ym)+'"'+(m.ym===d.month?' selected':'')+'>'+esc(_shipMonthLabel(m.ym))+'</option>'; }).join('');
     var vis=_shipVisible(d);
     // RESOLVED-BY-1: counts over the filtered pool (before the Resolved by filter); the select + summary line
@@ -33011,16 +33076,75 @@ if ('serviceWorker' in navigator) {
         '<select class="frz-fld frz-ship-sel" data-shipmonth aria-label="Month">'+mOpts+'</select>'+
         rbSel+
         '<span class="frz-ship-sum">'+esc(_shipSummary(d, vis)+(also.items.length ? ' · also fixed '+also.items.length+' '+rbName+' item'+(also.items.length===1?'':'s') : ''))+'</span>'+
+        (_blCanEdit() && vis.length && !_ship.pick ? '<button class="frz-viewopt" data-shiprel title="Pick this month\'s items to make a release (with release notes)">'+(_shipRelByName(_shipRelName(d.month)) ? 'Add to '+esc(_shipRelName(d.month)) : 'Create release')+'</button>' : '')+
         '<button class="frz-viewopt" data-shipcopy'+(vis.length?'':' disabled')+' title="Copy the list, grouped by project, to paste into an email or report">Copy</button>'+
-      '</div>'+rbLine+
+      '</div>'+
+      (_ship.pick ? '<div class="frz-relpick">'+
+          '<span><b data-relcount>'+Object.keys(_ship.pick.sel).length+'</b> selected</span>'+
+          '<label class="frz-relpick-name">Release <input class="frz-fld" data-relname value="'+escA(_ship.pick.name)+'" maxlength="40"></label>'+
+          '<button type="button" class="frz-viewopt" data-relall>Select all</button><button type="button" class="frz-viewopt" data-relnone>Clear</button>'+
+          '<span class="frz-spacer"></span>'+
+          '<button type="button" class="frz-viewopt" data-relcancel>Cancel</button>'+
+          '<button type="button" class="frz-newitem" data-relgo>'+esc(_relPickLabel())+'</button>'+
+        '</div>' : '')+rbLine+
       '<div class="frz-ship-groups">'+body+'</div>'+
       '<div class="frz-ship-note">Finished work by the date it was done in Jira (or in Flow when there is no Jira date), counted the same way as the monthly exec slides.'+
         (rbAny ? '<br>Resolved by: set from Jira (linked code or Code Review means Dev; no developer means Support). A faded tag with a ? means Jira was not clear.'+(_blCanEdit() ? ' Click a ? tag to confirm it, click again to switch; Jira never overrides a person.' : '') : '')+'</div>';
-    sec.querySelector('[data-shipmonth]').addEventListener('change', function(){ _shipLoad(sec, this.value); });
+    sec.querySelector('[data-shipmonth]').addEventListener('change', function(){ _ship.pick=null; _shipLoad(sec, this.value); });
+    _relPickWire(sec, d, vis);
     var rbs=sec.querySelector('[data-shiprb]'); if(rbs) rbs.addEventListener('change', function(){ _ship.rb=this.value; _shipPaint(sec); });
     var rbc=sec.querySelector('[data-rbcheck]'); if(rbc) rbc.addEventListener('click', function(){ _ship.rb = _ship.rb==='check' ? '*' : 'check'; _shipPaint(sec); });
     _rbWirePills(sec);
     sec.querySelector('[data-shipcopy]').addEventListener('click', function(){ _shipCopy(d); });
+  }
+  // RELEASE-FROM-SHIPPED-1: "Create release" ticks every shown item not already in a release; untick what should
+  // not go, then create. A new release is born Released (dated the month's last day) with notes generated from
+  // its items; a release that already has the name gets the items added.
+  function _relPickWire(sec, d, vis){
+    var start=sec.querySelector('[data-shiprel]');
+    if(start) start.addEventListener('click', function(){
+      _ship.pick={ name:_shipRelName(d.month), sel:{} };
+      vis.forEach(function(x){ if(!_shipRelOf(x.id)) _ship.pick.sel[x.id]=1; });
+      _shipPaint(sec);
+    });
+    if(!_ship.pick) return;
+    sec.querySelectorAll('[data-relpick]').forEach(function(cb){ cb.addEventListener('change', function(){
+      var id=+cb.getAttribute('data-relpick'); if(cb.checked) _ship.pick.sel[id]=1; else delete _ship.pick.sel[id]; _relPickSync(sec);
+    }); });
+    var nm=sec.querySelector('[data-relname]'); if(nm) nm.addEventListener('input', function(){ _ship.pick.name=nm.value; _relPickSync(sec); });
+    var all=sec.querySelector('[data-relall]'); if(all) all.addEventListener('click', function(){ vis.forEach(function(x){ if(!_shipRelOf(x.id)) _ship.pick.sel[x.id]=1; }); _shipPaint(sec); });
+    var none=sec.querySelector('[data-relnone]'); if(none) none.addEventListener('click', function(){ _ship.pick.sel={}; _shipPaint(sec); });
+    var cancel=sec.querySelector('[data-relcancel]'); if(cancel) cancel.addEventListener('click', function(){ _ship.pick=null; _shipPaint(sec); });
+    var go=sec.querySelector('[data-relgo]'); if(go){ _relPickSync(sec); go.addEventListener('click', function(){ _relPickGo(sec, d, go); }); }
+  }
+  function _relPickGo(sec, d, btn){
+    var name=String(_ship.pick.name||'').trim(), ids=Object.keys(_ship.pick.sel).map(Number);
+    if(!name || !ids.length) return;
+    var rel=_shipRelByName(name), isNew=!rel, end=_shipMonthEnd(d.month);
+    btn.disabled=true; btn.textContent='Saving...';
+    var first = Promise.resolve();
+    if(isNew){
+      rel={ id:'rel'+Date.now(), name:name, targetDate:end, releasedDate:end, state:'Released' };
+      _releases.push(rel);
+      first = saveReleases();
+    }
+    first.then(function(){
+      return API.post('/api/items/bulk', { ids:ids, patch:{ release:rel.id } });
+    }).then(function(res){
+      var ts=(res && res.updatedTs) || {};
+      (_val('projects',[])||[]).forEach(function(p){ if(ids.indexOf(p.id)>=0){ p.release=rel.id; if(ts[p.id]) p.updated_ts=ts[p.id]; } });
+      var r=releaseById(rel.id);
+      if(r && !String(r.notes||'').trim()){ r.notes=_frzGenReleaseNotes(rel.id); return saveReleases().then(function(){ return res; }); }
+      return res;
+    }).then(function(res){
+      _ship.pick=null; state.releaseId=rel.id;
+      var body=document.getElementById('frzPlanBody'); if(body && state.planTab==='releases') renderReleasesTab(body);
+      syncURL(true);
+      _call('showToast', (isNew ? 'Release '+name+' created with ' : 'Added to '+name+': ')+((res && res.updated) || ids.length)+' item'+(ids.length===1?'':'s'));
+    }).catch(function(e){
+      btn.disabled=false; btn.textContent=_relPickLabel();
+      _call('showToast', 'Could not save the release: '+((e && e.message) || e), 'error');
+    });
   }
   // RESOLVED-BY-1: clicking a tag flips it (Dev <-> Support) for anyone who can edit; it never opens the item.
   function _rbWirePills(sec){
@@ -33061,7 +33185,8 @@ if ('serviceWorker' in navigator) {
   }
   function renderReleasesTab(host){
     var admin=_val('isAdmin', false);
-    var rels=_releases.slice().sort(function(a,b){ return (a.targetDate||'').localeCompare(b.targetDate||''); });
+    // RELEASE-FROM-SHIPPED-1: releases are made from Shipped; this list is the history, newest first.
+    var rels=_releases.slice().sort(function(a,b){ return (b.releasedDate||b.targetDate||'').localeCompare(a.releasedDate||a.targetDate||''); });
     // RELEASES-FILTER-1: with filters on, a release shows only its matching items (counts too) and a release
     // with none is hidden. Display only: Mark released, release notes and feature flags still use every item.
     var rf=_planFilters(), rfOn=_planFiltersOn(rf), relTotal=rels.length, prBy={};
@@ -33078,33 +33203,28 @@ if ('serviceWorker' in navigator) {
       var badge='<span class="frz-sprint-badge" style="'+(RELEASE_BADGE[r.state]||'')+'">'+esc(r.state)+'</span>';
       var bar='<div class="frz-prog"><div class="frz-prog-bar" style="width:'+pr.pct+'%"></div></div><span class="frz-prog-txt">'+pr.done+'/'+pr.total+' done</span>';
       return '<div class="frz-rel-row" data-relrow="'+escA(r.id)+'">'+
-        '<div class="frz-rel-main"><div class="frz-tbl-title">'+esc(r.name)+'</div><div class="frz-tbl-sub">Target '+(r.targetDate?fmtD(r.targetDate):'-')+((r.state==='Released'&&r.releasedDate)?(' · released '+fmtD(r.releasedDate)):'')+'</div></div>'+
+        '<div class="frz-rel-main"><div class="frz-tbl-title">'+esc(r.name)+'</div><div class="frz-tbl-sub">'+((r.state==='Released'&&r.releasedDate) ? 'Released '+fmtD(r.releasedDate) : (r.targetDate ? 'Target '+fmtD(r.targetDate) : ''))+' · '+pr.total+' item'+(pr.total===1?'':'s')+'</div></div>'+
         '<div class="frz-rel-state">'+badge+'</div>'+
         '<div class="frz-rel-prog">'+bar+'</div>'+
         '<div class="frz-rel-actions"><button class="frz-iconbtn" data-reledit="'+escA(r.id)+'" title="Edit"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'+
-          (r.state!=='Released' ? '<button class="frz-viewopt" data-relship="'+escA(r.id)+'">Mark released</button>'
-                                : (admin ? '<button class="frz-viewopt" data-relreopen="'+escA(r.id)+'">Reopen</button>' : ''))+
           (admin ? '<button class="frz-iconbtn" data-reldelete="'+escA(r.id)+'" title="Delete release"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>' : '')+
         '</div>'+
         '<div class="frz-tbl-detail" id="frzRelDetail_'+escA(r.id)+'" hidden></div>'+
       '</div>';
     }).join('');
     host.innerHTML='<div class="frz-rel-wrap"><section class="frz-ship" id="frzShip"></section>'+   // SHIPPED-1
-      '<div class="frz-rel-top"><span class="frz-ship-title">Releases</span><button class="frz-newitem" id="frzNewRelease">+ New release</button></div>'+
+      '<div class="frz-rel-top"><span class="frz-ship-title">Releases</span></div>'+
       (rels.length? '<div class="frz-rel-list">'+rows+'</div>'
         : (relHidden ? '<div class="frz-ship-empty">No releases have items that match the filters.</div>'
-                     : '<div class="frz-ship-empty">No planned releases. Create one only to plan a release in Flow; shipped work above fills in on its own.</div>'))+
+                     : '<div class="frz-ship-empty">No releases yet. Pick a month in Shipped above and use Create release.</div>'))+
       ((rels.length && relHidden) ? '<div class="frz-ship-note">'+relHidden+' release'+(relHidden!==1?'s':'')+' with no matching items hidden by the filters.</div>' : '')+
       '</div>';
     _shipLoad(document.getElementById('frzShip'));
-    document.getElementById('frzNewRelease').addEventListener('click', function(){ openReleaseModal(null); });
     host.querySelectorAll('[data-reledit]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); openReleaseModal(releaseById(b.getAttribute('data-reledit'))); }); });
-    host.querySelectorAll('[data-relship]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); markReleased(b.getAttribute('data-relship')); }); });
-    host.querySelectorAll('[data-relreopen]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); reopenRelease(b.getAttribute('data-relreopen')); }); });
     host.querySelectorAll('[data-reldelete]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); deleteRelease(b.getAttribute('data-reldelete')); }); });
     host.querySelectorAll('[data-relrow]').forEach(function(row){
       row.addEventListener('click', function(e){
-        if(e.target.closest('[data-reledit],[data-relship],[data-relreopen],[data-reldelete]')) return;
+        if(e.target.closest('[data-reledit],[data-reldelete]')) return;
         if(e.target.closest('.frz-tbl-detail')) return;   // clicks inside the open detail never collapse the row
         var id=row.getAttribute('data-relrow'); var det=document.getElementById('frzRelDetail_'+id); if(!det) return;
         if(!det.hidden){ det.hidden=true; det.innerHTML=''; state.releaseId=null; syncURL(true); return; }   // Stage 1b: drop ?release=
