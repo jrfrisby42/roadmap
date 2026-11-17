@@ -36,3 +36,11 @@ def test_sprints_tab_filters_rows_and_detail():
 
 def test_completing_a_sprint_still_uses_every_item():
     assert "var allItems=sprintItems(sp.id);" in _fn("doCompleteSprint")
+
+
+def test_plan_tab_sprint_pane_follows_the_filters():
+    # SPRINT-PANE-FILTER-1: the Plan tab's sprint pane narrows its cards + counts like the backlog beside it.
+    b = _fn("sprintPaneHTML")
+    assert "allItems = sprintItems(sprint.id)" in b
+    assert "_planFilterPass(p, pf)" in b and "(filters on)" in b
+    assert "No items in this sprint match the filters." in b

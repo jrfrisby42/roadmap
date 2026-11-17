@@ -31842,7 +31842,11 @@ if ('serviceWorker' in navigator) {
     if(!sprint){
       return '<div class="frz-plan-pane-hd">Sprint</div><div class="frz-sprint-empty"><p>No sprint planned yet.</p><button class="frz-newitem" id="frzPlanSprint">+ Plan a sprint</button></div>';
     }
-    var items = sprintItems(sprint.id);
+    // SPRINT-PANE-FILTER-1: the pane follows the filter bar like the backlog beside it (display only;
+    // capacity, maintenance duty, Start/Complete still cover every item in the sprint).
+    var allItems = sprintItems(sprint.id), pf = _planFilters();
+    var items = _planFiltersOn(pf) ? allItems.filter(function(p){ return _planFilterPass(p, pf); }) : allItems;
+    var fNote = items.length<allItems.length ? '<div class="frz-sprint-fnote" style="color:var(--frz-text-muted);font-size:12px">Showing '+items.length+' of '+allItems.length+' items (filters on)</div>' : '';
     var pts = items.reduce(function(s,p){ return s + (+p.storyPoints||0); },0);
     var est = items.reduce(function(s,p){ return s + (+p.dueWeeks||0); },0);
     var done = items.filter(function(p){ return isTerm(p.status); }).length;
@@ -31867,11 +31871,12 @@ if ('serviceWorker' in navigator) {
           '<span class="frz-nudge-acts"><button type="button" id="frzNudgeComplete">Complete sprint</button></span></div>';
       }
     }
-    var cards = items.length ? items.map(sprintCard).join('') : '<div class="frz-plan-empty">Drag items here, or use “Add →” in the backlog.</div>';
+    var cards = items.length ? items.map(sprintCard).join('')
+      : '<div class="frz-plan-empty">'+(allItems.length ? 'No items in this sprint match the filters.' : 'Drag items here, or use “Add →” in the backlog.')+'</div>';
     return '<div class="frz-plan-pane-hd">'+esc(sprint.name)+' '+badge+'<span class="frz-spacer"></span>'+boardBtn+editBtn+actions+'</div>'+
       '<div class="frz-sprint-meta">'+(sprint.startDate?fmtD(sprint.startDate):'-')+' → '+(sprint.endDate?fmtD(sprint.endDate):'-')+
         (sprint.goal?'<div class="frz-sprint-goal" title="'+escA(sprint.goal)+'">'+esc(sprint.goal)+'</div>':'')+
-        '<div class="frz-sprint-cap">'+items.length+' items · '+pts+' pts · '+est+'w · '+done+'/'+items.length+' done</div>'+
+        '<div class="frz-sprint-cap">'+items.length+' items · '+pts+' pts · '+est+'w · '+done+'/'+items.length+' done</div>'+fNote+
         (sprint.maintenanceDutyPod?(function(){ var di=_dutyItems(sprint), dn=di.length, dd=di.filter(function(p){return isTerm(p.status);}).length; var sum=dn?(dn+' bug'+(dn===1?'':'s')+' · '+dd+'/'+dn+' done'):'no bugs yet'; return '<div class="frz-sprint-duty frz-sprint-duty-sum" data-dutyboard="'+escA(sprint.id)+'" title="View maintenance bugs on the board">Maintenance duty: '+esc(sprint.maintenanceDutyPod)+' · '+sum+'</div>'; })():'')+
         _sprintCapHTML(sprint)+   /* Stage 4: per-pod commitment vs capacity + overcommit warning */
         '</div>'+
