@@ -35,7 +35,8 @@ def test_plan_backlog_uses_the_shared_check():
 def test_shipped_follows_the_filters_on_the_effective_team():
     src = _src()
     assert "_planFilterPass(p, f, x.team||'')" in _fn(src, "_shipPool")
-    assert "_shipPool(d).filter" in _fn(src, "_shipVisible")
+    assert "_shipPool(d).filter" in _fn(src, "_shipInTeam")          # RESOLVED-BY-1: _shipVisible = _shipInTeam + the Resolved by filter
+    assert "_shipInTeam(d).filter(_rbMatch)" in src
     assert "_shipPool(d).forEach" in _fn(src, "_shipPaint")
 
 
