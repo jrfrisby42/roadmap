@@ -33212,7 +33212,8 @@ if ('serviceWorker' in navigator) {
   function renderReleasesTab(host){
     var admin=_val('isAdmin', false);
     // RELEASE-FROM-SHIPPED-1: releases are made from Shipped; this list is the history, newest first.
-    var rels=_releases.slice().sort(function(a,b){ return (b.releasedDate||b.targetDate||'').localeCompare(a.releasedDate||a.targetDate||''); });
+    // REL-TARGET-DATE-1: a release is dated by its target (the month it covers), not the day someone marked it.
+    var rels=_releases.slice().sort(function(a,b){ return (b.targetDate||b.releasedDate||'').localeCompare(a.targetDate||a.releasedDate||''); });
     // RELEASES-FILTER-1: with filters on, a release shows only its matching items (counts too) and a release
     // with none is hidden. Display only: Mark released, release notes and feature flags still use every item.
     var rf=_planFilters(), rfOn=_planFiltersOn(rf), relTotal=rels.length, prBy={};
@@ -33229,7 +33230,7 @@ if ('serviceWorker' in navigator) {
       var badge='<span class="frz-sprint-badge" style="'+(RELEASE_BADGE[r.state]||'')+'">'+esc(r.state)+'</span>';
       var bar='<div class="frz-prog"><div class="frz-prog-bar" style="width:'+pr.pct+'%"></div></div><span class="frz-prog-txt">'+pr.done+'/'+pr.total+' done</span>';
       return '<div class="frz-rel-row" data-relrow="'+escA(r.id)+'">'+
-        '<div class="frz-rel-main"><div class="frz-tbl-title">'+esc(r.name)+'</div><div class="frz-tbl-sub">'+((r.state==='Released'&&r.releasedDate) ? 'Released '+fmtD(r.releasedDate) : (r.targetDate ? 'Target '+fmtD(r.targetDate) : ''))+' · '+pr.total+' item'+(pr.total===1?'':'s')+'</div></div>'+
+        '<div class="frz-rel-main"><div class="frz-tbl-title">'+esc(r.name)+'</div><div class="frz-tbl-sub">'+((r.targetDate||r.releasedDate) ? (r.state==='Released' ? 'Released ' : 'Target ')+fmtD(r.targetDate||r.releasedDate) : '')+' · '+pr.total+' item'+(pr.total===1?'':'s')+'</div></div>'+
         '<div class="frz-rel-state">'+badge+'</div>'+
         '<div class="frz-rel-prog">'+bar+'</div>'+
         '<div class="frz-rel-actions"><button class="frz-iconbtn" data-reledit="'+escA(r.id)+'" title="Edit"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'+

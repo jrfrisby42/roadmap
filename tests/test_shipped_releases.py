@@ -66,3 +66,10 @@ def test_shipped_collapses_and_remembers_per_browser():
     # SHIP-COLLAPSE-1: expanded by default; folding it leaves one line so the Releases list is in reach.
     assert "function _shipCollapsed(){ try { return localStorage.getItem(_SHIP_COL_KEY)==='1'; } catch(e){ return false; } }" in HTML
     assert "if(_shipCollapsed()){" in HTML and "_shipTog(false)+" in HTML
+
+
+def test_release_list_dates_by_target():
+    # REL-TARGET-DATE-1: "Released <date>" is the target (month end), not the day "Mark released" was clicked.
+    body = HTML.split("function renderReleasesTab(host){", 1)[1].split("\n  }\n", 1)[0]
+    assert "(r.state==='Released' ? 'Released ' : 'Target ')+fmtD(r.targetDate||r.releasedDate)" in body
+    assert "(b.targetDate||b.releasedDate||'').localeCompare(a.targetDate||a.releasedDate||'')" in body
