@@ -16,7 +16,7 @@ Jira integration:
     JIRA_API_TOKEN=your_api_token_here
 """
 
-import json, os, re, sqlite3, base64, time, hashlib, hmac, sys, html, logging, secrets
+import json, os, re, sqlite3, base64, time, hashlib, hmac, sys, html, logging, secrets, collections
 import threading
 from html.parser import HTMLParser
 from contextlib import contextmanager
@@ -1315,6 +1315,7 @@ def init_team_db(team: str):
             # field beside the free-text `resolution`, which is unchanged).
             "locations": [],
             "resolutionTypes": [],
+            "resolvedByTeams": [],   # RESOLVED-BY-1: Teams whose finished items get a Support / Development tag (empty = off)
             "departments":  list(_DEFAULT_DEPARTMENTS),        # DEPT-DEFAULTS-1: seed the standard set on creation
             "products":     [{"name":"Fraznet","builtin":True},
                              {"name":"HubSpot","builtin":True}],
@@ -4155,6 +4156,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "blockedReasons": cfg("blockedReasons") or [],   # BLOCK-REASON-1: empty = free-text Blocked (feature off)
             "locations": cfg("locations") or [],             # FIELDS-1: empty = field hidden everywhere
             "resolutionTypes": cfg("resolutionTypes") or [], # FIELDS-1: empty = field hidden everywhere
+            "resolvedByTeams": cfg("resolvedByTeams") or [], # RESOLVED-BY-1: empty = off
             "departments": cfg("departments") or [],
             "jiraProjectMapping": cfg("jiraProjectMapping") or {},
             "jiraStatusMapping": cfg("jiraStatusMapping") or {},
@@ -4889,6 +4891,7 @@ SERVER_OWNED_FIELDS = ("reporter", "reporterEmail", "source", "createdAt", "spri
                        "ccList",                      # CC-1: external notify/CC list - endpoint-mediated
                                                       # (POST/DELETE /api/items/{pid}/cc) so the generic item PUT
                                                       # cannot direct item content to addresses of a client's choosing
+                       "resolvedBy",                  # RESOLVED-BY-1: set by the Jira sync or PUT .../resolved-by only
                        "checklist")                   # CHECKLIST-1: tickable steps - endpoint-mediated (POST .../checklist/{sid}/check,
                                                       # PUT .../checklist) so a stale full-item save can never undo a tick
 
@@ -4926,6 +4929,8 @@ RECURRENCE_SKIP_KEYS = {
     # WRITE-1b: per-asset service-event send outcomes. A new occurrence has sent nothing and starts
     # with a clean slate (it inherits no asset links either), so it is dropped, not inherited.
     "assetServiceSync",
+    # RESOLVED-BY-1: who resolved THIS occurrence - a new one is not resolved yet.
+    "resolvedBy",
 }
 
 # Server-owned fields a recurrence occurrence deliberately KEEPS. Kept intentionally small - a
@@ -6446,7 +6451,7 @@ VALID_KEYS = {"developers","statuses","delayReasons","products","users","types",
               "statusIsActive","statusIsTerminal",
               "statusIsDefault","statusIsDeferred",
               "changeReasons","deferReasons","blockedReasons","departments",
-              "locations","resolutionTypes",
+              "locations","resolutionTypes","resolvedByTeams",
               "metricLabel","handoffLabel","dueLabel","pointsEstimate","projectTypes",
               "jiraProjectMapping","jiraStatusMapping","jiraTypeMapping",
               "jiraSyncConfig","jiraEnabled","statusIsReleased","statusIsApproved","statusIsTesting","statusIsBlocked",
@@ -7569,6 +7574,30 @@ def put_checklist(pid: int, body: dict = Body(...),
     if ch:
         write_audit(team, "checklist:edit", username, pid, p.get("name", ""), changes=ch)
     return {"ok": True, "checklist": p.get("checklist", [])}
+
+# RESOLVED-BY-1: a person's pick (the rest of the feature lives with the Jira sync, see _resolved_by_fill).
+@app.put("/api/items/{pid}/resolved-by")
+def put_resolved_by(pid: int, body: dict = Body(...), auth: dict = Depends(require_role("admin", "editor"))):
+    """RESOLVED-BY-1: a person sets who resolved it ({by: "dev"|"support"}). Keeps the Jira-found developer
+    and Team (shown again if it flips back to dev). Blob-only (no updated_ts bump), audited."""
+    team = auth["team"]
+    username = _audit_actor((body or {}).get("_username"), auth)
+    by = (body or {}).get("by")
+    if by not in ("dev", "support"):
+        raise HTTPException(422, 'by must be "dev" or "support"')
+    with db(team) as c:
+        p = _get_item_blob(c, pid)
+        tagged = (_cfg_val(team, "resolvedByTeams", []) or [])
+        if p.get("dev") not in tagged:
+            raise HTTPException(422, "This item's Team does not track Resolved by.")
+        old = p.get("resolvedBy") if isinstance(p.get("resolvedBy"), dict) else {}
+        val = {"by": by, "team": old.get("team") or "", "who": old.get("who") or "", "sure": True, "src": "person",
+               "why": "", "at": datetime.now(timezone.utc).isoformat(), "setBy": username}
+        c.execute("UPDATE projects SET data=json_set(data, '$.resolvedBy', json(?)) WHERE id=?", (json.dumps(val), pid))
+        _write_audit_c(c, "resolved-by:set", username, pid, p.get("name", ""),
+                       changes={"from": old.get("by") or "", "to": by})
+    return {"ok": True, "resolvedBy": val}
+
 
 # ── CC-1: external notify / CC list (reporter-equivalent access for a non-account address) ────
 # An external party (vendor, a requester's manager, a colleague without an account) follows an
@@ -15462,6 +15491,232 @@ def spa_catch_all(full_path: str):
     return _app_shell_response()
 
 
+# ── RESOLVED-BY-1: did Support resolve it, or did a developer? ───────────────────────────────────────
+# Finished items on the Teams in config `resolvedByTeams` (Admin > Teams, e.g. Support) carry
+# `resolvedBy` = {by: "dev"|"support", team, who, sure, src: "jira"|"person", why, at, setBy?}. It is
+# filled from the item's primary Jira ticket by the server sync (and a one-time backfill tool):
+#   - code linked to the ticket (commit / branch / pull request) or it went through Code Review -> dev, sure
+#   - no developer assigned or commenting and never In Dev / In QA / Code Review               -> support, sure
+#   - otherwise (a developer assigned or commented, or it reached In Dev, but no code)           -> lean, NOT sure
+#   - no Jira ticket at all                                                                      -> support, sure
+# A "developer" is a Flow user whose Team is any Team NOT in resolvedByTeams, or a Jira assignee who is
+# not a Flow user. The developer's Team is their Flow Team, else the Team most of their other Jira work
+# sits on. A person's pick (PUT /api/items/{pid}/resolved-by) always wins: the sync never touches src
+# "person". Server-owned, blob-only writes (json_set, no updated_ts bump), never synced to Jira, no
+# notifications. Display: Planning > Releases > Shipped (tag + filter + "also fixed") and the item page.
+_RB_REVIEW_STATUSES = {"code review"}                       # Jira status names (lower-case)
+_RB_DEVFLOW_STATUSES = {"in dev", "in qa", "code review"}
+_RB_RECHECK_DAYS = 14          # a Jira-set tag is re-checked for this long after the item finished
+_RB_RECHECK_HOURS = 20         # ... at most about once a day
+_RB_SYNC_LIMIT = 40            # Jira-checked items per sync run (each costs two Jira calls)
+_RB_SYNC_DAYS = 30             # the sync only tags items finished this recently; history = tools/backfill_resolved_by.py
+
+
+def _rb_norm(s) -> str:
+    return re.sub(r"\s+", " ", str(s or "")).strip()
+
+
+def _rb_context(team: str, tagged_override: list = None) -> dict:
+    """Config + the people/Team lookups the classifier needs, read once per run. `tagged_override` lets a
+    backfill dry-run preview a Team before it is switched on."""
+    with db(team) as c:
+        cfg = {r["key"]: json.loads(r["value"]) for r in c.execute(
+            "SELECT key, value FROM config WHERE key IN ('resolvedByTeams','developers','users','jiraAssigneeMap',"
+            "'statusIsTerminal')")}
+        rows = c.execute("SELECT data FROM projects").fetchall()
+    tagged = [t for t in ((tagged_override if tagged_override is not None else cfg.get("resolvedByTeams")) or [])
+              if isinstance(t, str) and t]
+    users = [u for u in (cfg.get("users") or []) if isinstance(u, dict) and u.get("username")]
+    dev_teams = {t for t in (cfg.get("developers") or []) if t and t not in tagged}
+    # A non-Flow developer's Team = the Team most of their Jira tickets sit on (outside the tagged Teams).
+    seen = {}
+    for r in rows:
+        p = json.loads(r["data"])
+        if p.get("dev") not in dev_teams:
+            continue
+        t0 = (p.get("jiraTickets") or [None])[0]
+        a = _rb_norm((((p.get("jiraCache") or {}).get(t0) or {}) if t0 else {}).get("assignee"))
+        if a:
+            seen.setdefault(a.lower(), collections.Counter())[p["dev"]] += 1
+    inferred = {}
+    for name, cnt in seen.items():
+        team_, n = cnt.most_common(1)[0]
+        if n >= 3 and n >= 0.6 * sum(cnt.values()):
+            inferred[name] = team_
+    return {"tagged": tagged, "dev_teams": dev_teams, "users": users,
+            "by_user": {u["username"]: u for u in users},
+            "users_by_email": {(u.get("email") or "").strip().lower(): u["username"] for u in users if u.get("email")},
+            "amap": cfg.get("jiraAssigneeMap") or {}, "inferred": inferred,
+            "terminal": cfg.get("statusIsTerminal") or {}}
+
+
+def _rb_person(ctx, person) -> dict:
+    """A Jira person -> {name, flow: bool, team, dev: bool|None}. dev None = not a Flow user (the caller
+    decides: a non-Flow Jira assignee counts as a developer, a non-Flow commenter does not)."""
+    name = _rb_norm((person or {}).get("displayName"))
+    u = _jira_reporter_to_flow(person, ctx["amap"], ctx["users_by_email"], ctx["users"]) if person else ""
+    if u and u in ctx["by_user"]:
+        t = ctx["by_user"][u].get("ownerFilter") or ""
+        return {"name": name, "flow": True, "team": t if t in ctx["dev_teams"] else "", "dev": t in ctx["dev_teams"]}
+    return {"name": name, "flow": False, "team": ctx["inferred"].get(name.lower(), ""), "dev": None}
+
+
+def _rb_classify(issue: dict, dev_summary: dict, ctx: dict) -> dict:
+    """Pure: one Jira issue (expand=changelog, fields assignee/status/comment) + its dev-status summary ->
+    {by, team, who, sure, why}. No I/O, so it is unit-tested directly."""
+    f = (issue or {}).get("fields") or {}
+    hist = sorted(((issue or {}).get("changelog") or {}).get("histories") or [], key=lambda h: h.get("created") or "")
+    path, devs = [], []                                     # devs: developers who were assigned, in order
+    for h in hist:
+        for it in h.get("items") or []:
+            if it.get("field") == "status":
+                path.append(_rb_norm(it.get("toString")).lower())
+            elif it.get("field") == "assignee" and it.get("toString"):
+                pp = _rb_person(ctx, {"accountId": it.get("to"), "displayName": it.get("toString")})
+                if pp["dev"] is not False:
+                    devs.append(pp)
+    cur = f.get("assignee")
+    if cur:
+        pp = _rb_person(ctx, cur)
+        if pp["dev"] is not False:
+            devs.append(pp)
+    comm = []
+    for cm in ((f.get("comment") or {}).get("comments") or []):
+        pp = _rb_person(ctx, cm.get("author"))
+        if pp["dev"]:                                       # commenters count only when they are Flow developers
+            comm.append(pp)
+    counts = {k: int(((dev_summary or {}).get(k) or {}).get("overall", {}).get("count") or 0)
+              for k in ("commit", "pullrequest", "branch")}
+    code = any(counts.values())
+    review = bool(_RB_REVIEW_STATUSES & set(path))
+    devflow = bool(_RB_DEVFLOW_STATUSES & set(path))
+    lead = (devs or comm)[-1] if (devs or comm) else None
+    team_, who = (lead["team"], lead["name"]) if lead else ("", "")
+    if code or review:
+        if code:
+            bits = [f"{n} {w}{'' if n == 1 else 's'}" for n, w in ((counts["commit"], "commit"),
+                    (counts["pullrequest"], "pull request"), (counts["branch"], "branch")) if n]
+            why = "Code linked in Jira: " + ", ".join(bits) + "."
+        else:
+            why = "Went through Code Review in Jira."
+        return {"by": "dev", "team": team_, "who": who, "sure": True, "why": why}
+    if not devs and not comm and not devflow:
+        return {"by": "support", "team": "", "who": "", "sure": True, "why": "No developer worked it in Jira."}
+    if devs or comm or "in dev" in path:
+        why = (f"Not sure: {who} was involved in Jira, but no code is linked." if who
+               else "Not sure: it reached In Dev in Jira, but no code is linked.")
+        return {"by": "dev", "team": team_, "who": who, "sure": False, "why": why}
+    return {"by": "support", "team": "", "who": "", "sure": False,
+            "why": "Not sure: it reached In QA in Jira, but no developer was assigned."}
+
+
+def _rb_finished_on(p: dict):
+    d = (p.get("releaseDate") or "")[:10] or (p.get("completedAt") or "")[:10]
+    try:
+        return date.fromisoformat(d) if d else None
+    except ValueError:
+        return None
+
+
+def _rb_due(p: dict, ctx: dict, today: date, now: datetime, since: date = None) -> bool:
+    """Does this item need (re)classifying? Finished, on a tagged Team, not set by a person."""
+    if p.get("archived") or p.get("dev") not in ctx["tagged"]:
+        return False
+    st = p.get("status")
+    if not (st in RESERVED_TERMINAL_STATUSES or ctx["terminal"].get(st)):
+        return False
+    fin = _rb_finished_on(p)
+    if not fin or (since and fin < since):
+        return False
+    rb = p.get("resolvedBy") if isinstance(p.get("resolvedBy"), dict) else None
+    if not rb:
+        return True
+    if rb.get("src") != "jira" or (today - fin).days > _RB_RECHECK_DAYS:
+        return False
+    try:
+        return (now - datetime.fromisoformat(rb.get("at"))).total_seconds() > _RB_RECHECK_HOURS * 3600
+    except (TypeError, ValueError):
+        return True
+
+
+def _resolved_by_fill(team: str, actor: str, days: int = None, dry: bool = False, limit: int = None,
+                      tagged_override: list = None) -> dict:
+    """Classify finished items on the tagged Teams from Jira. Idempotent: a person's pick is never
+    touched, a value that comes out the same is not rewritten. `days` limits a backfill to items finished
+    in that window; `limit` caps Jira-checked items (newest first). Jira errors skip that item for the next
+    run; five in a row stop the run. One summary audit row when anything was written."""
+    ctx = _rb_context(team, tagged_override)
+    out = {"tagged": ctx["tagged"], "candidates": 0, "checked": 0, "written": 0, "unchanged": 0, "jiraErrors": 0,
+           "dryRun": dry, "dev": 0, "support": 0, "unsure": 0, "noJira": 0, "devTeams": {}}
+    if not ctx["tagged"]:
+        return out
+    today = datetime.now(_MT_ZONE).date()
+    now = datetime.now(timezone.utc)
+    since = today - timedelta(days=days) if days else None
+    with db(team) as c:
+        rows = c.execute("SELECT id, data FROM projects").fetchall()
+    cand = []
+    for r in rows:
+        p = json.loads(r["data"])
+        if _rb_due(p, ctx, today, now, since):
+            cand.append((_rb_finished_on(p), r["id"], p))
+    cand.sort(key=lambda t: (t[0], t[1]), reverse=True)
+    out["candidates"] = len(cand)
+    jira_on = jira_configured()
+    writes, streak, jira_used = {}, 0, 0
+    for _, pid, p in cand:
+        key = (p.get("jiraTickets") or [None])[0]
+        if not key:
+            res = {"by": "support", "team": "", "who": "", "sure": True, "why": "No Jira ticket."}
+            out["noJira"] += 1
+        else:
+            if not jira_on or (limit is not None and jira_used >= limit):
+                continue
+            jira_used += 1
+            try:
+                iss = _jira_req("GET", f"/rest/api/3/issue/{key}?expand=changelog&fields=assignee,status,comment", timeout=20)
+                ds = _jira_req("GET", f"/rest/dev-status/latest/issue/summary?issueId={iss.get('id')}", timeout=20).get("summary") or {}
+                streak = 0
+            except Exception as e:
+                out["jiraErrors"] += 1
+                streak += 1
+                log.warning(f"[ResolvedBy] {team} {key}: {e}")
+                if streak >= 5:
+                    out["stopped"] = "five Jira errors in a row"
+                    break
+                continue
+            res = _rb_classify(iss, ds, ctx)
+        out["checked"] += 1
+        out[res["by"]] += 1
+        if not res["sure"]:
+            out["unsure"] += 1
+        if res["by"] == "dev":
+            k = res["team"] or "(no Team)"
+            out["devTeams"][k] = out["devTeams"].get(k, 0) + 1
+        old = p.get("resolvedBy") if isinstance(p.get("resolvedBy"), dict) else {}
+        same = bool(old) and all(old.get(k) == res[k] for k in ("by", "team", "who", "sure", "why"))
+        if same:
+            out["unchanged"] += 1                           # a re-check that agrees: only its time is refreshed
+        writes[pid] = ({**res, "src": "jira", "at": now.isoformat()}, same)
+    if dry or not writes:
+        return out
+    changed = {}
+    with db(team) as c:
+        c.execute("BEGIN IMMEDIATE")
+        for pid, (val, same) in writes.items():
+            row = c.execute("SELECT json_extract(data, '$.resolvedBy.src') AS src FROM projects WHERE id=?", (pid,)).fetchone()
+            if not row or row["src"] == "person":          # a person set it since we read it: theirs wins
+                continue
+            c.execute("UPDATE projects SET data=json_set(data, '$.resolvedBy', json(?)) WHERE id=?", (json.dumps(val), pid))
+            if same:
+                continue
+            changed[str(pid)] = {k: val[k] for k in ("by", "team", "sure")}
+            out["written"] += 1
+        if changed:
+            _write_audit_c(c, "resolved-by:jira", actor, None, "", changes={"items": changed})
+    return out
+
+
 # ── JIRA-SERVER-SYNC-1: the background Jira sync runs on the server ──────────────────────────────────
 # It used to be a setInterval in every ADMIN's open browser tab, so nothing synced when no admin had Flow
 # open (nights, weekends) and several open tabs each ran it. Now `python server.py --sync-jira` runs from a
@@ -15543,6 +15798,13 @@ def run_jira_sync(verbose: bool = False, only_team: str = None, force: bool = Fa
         except Exception as e:
             res["releaseDatesError"] = str(e)[:300]
             log.warning(f"[jira-sync] {team}: release-date fill failed: {e}")
+        try:   # RESOLVED-BY-1: tag newly finished items on the tagged Teams (capped Jira calls per run)
+            rb = _resolved_by_fill(team, _JIRA_SYNC_ACTOR, days=_RB_SYNC_DAYS, limit=_RB_SYNC_LIMIT)
+            if rb.get("tagged"):
+                res["resolvedBy"] = rb.get("written", 0)
+        except Exception as e:
+            res["resolvedByError"] = str(e)[:300]
+            log.warning(f"[jira-sync] {team}: resolved-by fill failed: {e}")
         _write_jira_sync_state(team, {"lastRunAt": now.isoformat(), "intervalMinutes": interval, "result": res})
         out[team] = res
         if verbose:
@@ -15815,6 +16077,14 @@ def _exec_model(team: str, today: date = None) -> dict:
 _SHIPPED_MONTHS = 24   # SHIPPED-1: how far back the month picker reaches
 
 
+def _rb_public(x: dict, tagged: list):
+    """RESOLVED-BY-1: the Shipped row's tag, only for items on a tagged Team (None otherwise / not set yet)."""
+    rb = x.get("resolvedBy")
+    if x.get("dev") not in (tagged or []) or not isinstance(rb, dict) or rb.get("by") not in ("dev", "support"):
+        return None
+    return {k: rb.get(k) for k in ("by", "team", "who", "sure", "src", "why", "at", "setBy")}
+
+
 def _shipped_model(team: str, month: str = None, today: date = None) -> dict:
     """SHIPPED-1: the Releases tab's Shipped section - finished work for one calendar month, grouped by the
     project it belongs to ("Other work" when none), counted by the SAME rules as the exec deck's
@@ -15836,6 +16106,7 @@ def _shipped_model(team: str, month: str = None, today: date = None) -> dict:
     while len(months) > 1 and months[-1]["count"] == 0:   # an Org that started later: no empty tail
         months.pop()
     sel = month if (month and any(m["ym"] == month for m in months)) else cur
+    rb_tagged = cfg.get("resolvedByTeams") or []
     items, pts = [], 0.0
     for f, x in sorted(done, key=lambda t: (t[0], t[1]["id"]), reverse=True):
         if f.strftime("%Y-%m") != sel:
@@ -15850,8 +16121,9 @@ def _shipped_model(team: str, month: str = None, today: date = None) -> dict:
                       "type": x.get("type") or "", "team": h.eff_team(x) or "", "status": x.get("status") or "",
                       "points": sp, "shipped": f.isoformat(),
                       "projectId": tp["id"] if tp else None, "project": (tp.get("name") or "(untitled)") if tp else "",
-                      "isProject": bool(tp and tp["id"] == x["id"])})
-    return {"month": sel, "months": months, "count": len(items), "points": round(pts, 1),
+                      "isProject": bool(tp and tp["id"] == x["id"]),
+                      "rb": _rb_public(x, rb_tagged)})
+    return {"month": sel, "months": months, "count": len(items), "points": round(pts, 1), "rbTeams": rb_tagged,
             "metric": cfg.get("metricLabel") or "Story Points", "teamOrder": cfg.get("developers") or [],
             "items": items}
 

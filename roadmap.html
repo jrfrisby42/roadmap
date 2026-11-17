@@ -93,7 +93,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
      excluded from one by one" - it has cost debugging twice now; it should eventually be SCOPED to non-Flow
      surfaces (e.g. :not(.frz-beta ...)) rather than growing an ever-longer :not() chain. */
   body.dark-mode select,
-  body.dark-mode button:not(.primary):not(.btn-save):not(.btn-cancel):not(.btn-danger):not(.btn-ic):not(.rte-btn):not(.frz-newitem):not(.frz-lp-openbtn):not(.frz-bcard-open):not(.frz-avatar):not(.frz-ava-sw):not(.frz-tab):not(.frz-chip):not(.frz-item):not(.frz-set-tab):not(.frz-pop-opt):not(.frz-cal-daytoggle button):not(.btn-add-dev):not(.frz-adm-pill):not(.rep-btn) {
+  body.dark-mode button:not(.primary):not(.btn-save):not(.btn-cancel):not(.btn-danger):not(.btn-ic):not(.rte-btn):not(.frz-newitem):not(.frz-lp-openbtn):not(.frz-bcard-open):not(.frz-avatar):not(.frz-ava-sw):not(.frz-tab):not(.frz-chip):not(.frz-item):not(.frz-set-tab):not(.frz-pop-opt):not(.frz-cal-daytoggle button):not(.btn-add-dev):not(.frz-adm-pill):not(.rep-btn):not(.rb-opt) {
     background: var(--surface2) !important;
     color: var(--text) !important;
     border-color: var(--border) !important;
@@ -2502,6 +2502,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         <input type="number" min="1" max="20" id="newDevCap" placeholder="Capacity" style="width:80px;padding:7px 8px;font-size:13px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:'Lato',sans-serif;outline:none" title="Max concurrent items">
         <button class="btn-add-dev" id="addDevBtn">+ Add</button>
       </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.4">Resolved by: finished items on a ticked Team get a Support or Development tag, filled in from Jira (linked code or Code Review means Development). It shows on Planning &gt; Releases and in the item's Notes &amp; Resolution, and anyone who can edit can change it.</div>
     </div>
 
     <!-- PRODUCTS TAB -->
@@ -3597,6 +3598,7 @@ let deferReasons  = []; // admin-managed defer reasons
 let blockedReasons = []; // BLOCK-REASON-1: admin-managed coded Blocked reasons (empty = free-text Blocked, feature off)
 let locations = [];       // FIELDS-1: per-team Location value list. EMPTY = the Location field is hidden EVERYWHERE.
 let resolutionTypes = []; // FIELDS-1: per-team Resolution Type value list. EMPTY = the field is hidden EVERYWHERE.
+let resolvedByTeams = []; // RESOLVED-BY-1: Teams whose finished items get a Support / Development tag (Admin > Teams). EMPTY = off.
 let metricLabel = 'Story Points'; // METRIC-LABEL-1: team-defined display label for the storyPoints metric (field key unchanged; only the label is configurable)
 let statusSince = {};   // KANBAN-AGE-1: {pid: [status, sinceISO]} from /api/all (server keeps it via triggers on every item write)
 // KANBAN-AGE-1: whole days the item has held its current status, or null when unknown. An item whose
@@ -9391,6 +9393,7 @@ function renderDevList(){
       <span class="drag-handle" title="Drag to reorder">⠿</span>
       <span class="dev-nm">${esc(d)}</span>
       <span class="dev-cnt">${n} item${n!==1?'s':''}</span>
+      <label class="rb-tog" title="Resolved by: finished items on this Team get a Support or Development tag, set from Jira" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);margin-right:8px;cursor:pointer;white-space:nowrap" onclick="event.stopPropagation()"><input type="checkbox" style="margin:0" ${resolvedByTeams.includes(d)?'checked':''} onchange="toggleResolvedByTeam(${i}, this.checked)"> Resolved by</label>
       <span style="font-size:11px;color:var(--muted);margin-right:4px" title="${_derived?'Capacity derived from assigned members':'Capacity (max concurrent items)'}">Cap: <strong>${cap}</strong>${_capNote}</span>
       <button class="btn-ic" onclick="toggleCapCal('${esc(d)}');event.stopPropagation();" title="Capacity calendar"
         id="capCalBtn_${i}">
@@ -9429,6 +9432,14 @@ function renderDevList(){
       saveConfig('developers', developers); renderDevList(); populateDevSelects(); render();
     });
   });
+}
+
+// RESOLVED-BY-1: which Teams get the Resolved by tag. Kept in step with Team renames/deletes below.
+function toggleResolvedByTeam(i, on){
+  const d = developers[i]; if(!d) return;
+  resolvedByTeams = resolvedByTeams.filter(x => x!==d && developers.includes(x));
+  if(on) resolvedByTeams.push(d);
+  saveConfig('resolvedByTeams', resolvedByTeams);
 }
 
 function startEditDev(i){
@@ -9511,6 +9522,7 @@ function saveEditDev(i){
   }
   developers[i]=n;
   projects.forEach(p=>{ if(p.dev===old) p.dev=n; });
+  if(n !== old && resolvedByTeams.includes(old)){ resolvedByTeams = resolvedByTeams.map(x => x===old ? n : x); saveConfig('resolvedByTeams', resolvedByTeams); }   // RESOLVED-BY-1
   saveConfig('ownerCapacity', ownerCapacity);
   saveConfig('capacityMode', capacityMode);
   saveConfig('developers', developers); renderDevList(); populateDevSelects(); render();
@@ -9523,6 +9535,7 @@ function deleteDev(i){
   developers.splice(i,1);
   projects.forEach(p=>{ if(p.dev===name) p.dev=''; });
   if(capacityMode[name]!==undefined){ delete capacityMode[name]; saveConfig('capacityMode', capacityMode); }
+  if(resolvedByTeams.includes(name)){ resolvedByTeams = resolvedByTeams.filter(x => x!==name); saveConfig('resolvedByTeams', resolvedByTeams); }   // RESOLVED-BY-1
   saveConfig('developers', developers); renderDevList(); populateDevSelects(); render();
 }
 
@@ -9827,6 +9840,7 @@ document.getElementById('importFileInput')?.addEventListener('change', e=>{
     blockedReasons = Array.isArray(data.blockedReasons) ? data.blockedReasons : [];   // BLOCK-REASON-1
     locations = Array.isArray(data.locations) ? data.locations : [];                   // FIELDS-1 (secondary data-apply path)
     resolutionTypes = Array.isArray(data.resolutionTypes) ? data.resolutionTypes : [];  // FIELDS-1
+    resolvedByTeams = Array.isArray(data.resolvedByTeams) ? data.resolvedByTeams : [];  // RESOLVED-BY-1
     hasSprints = !!data.hasSprints; hasReleases = !!data.hasReleases;   // FIELDS-2 (secondary data-apply)
     metricLabel   = data.metricLabel   || metricLabel;   // METRIC-LABEL-1 (secondary data-apply path)
     pointsEstimate = data.pointsEstimate || pointsEstimate;   // POINTS-ESTIMATE-1
@@ -18799,6 +18813,45 @@ function ipField(label, value, opts={}){
 // (new tickets) and of other Teams' items assigned to them, including setting the Team itself.
 function _ipCanWrite(p){ return isAdmin || isEditor; }
 
+// ── RESOLVED-BY-1: who resolved it (Support or Development), first row of Notes & Resolution ──
+// Only on items whose Team is ticked in Admin > Teams. Filled in from Jira by the server; a person's pick
+// (PUT /api/items/{id}/resolved-by) always wins. The Shipped list on Planning > Releases shows the same tag.
+function _rbOn(p){ return !!(p && p.dev && Array.isArray(resolvedByTeams) && resolvedByTeams.includes(p.dev)); }
+function _rbRowHtml(p){
+  if(!_rbOn(p)) return '';
+  const rb = (p.resolvedBy && typeof p.resolvedBy === 'object') ? p.resolvedBy : null;
+  const can = _ipCanWrite(p), by = rb ? rb.by : '';
+  const unsure = !!(rb && !rb.sure && rb.src !== 'person');
+  const seg = [['support','Support'],['dev','Development']].map(([v,l]) =>
+    '<button type="button" class="rb-opt'+(by===v?' on':'')+'" data-rbset="'+v+'"'+(can?'':' disabled')+' aria-pressed="'+(by===v)+'">'+l+'</button>').join('');
+  const who = (by === 'dev' && rb && (rb.team || rb.who)) ? '<div class="rb-who">'+esc([rb.team || 'No Team', rb.who].filter(Boolean).join(' · '))+'</div>' : '';
+  let hint;
+  if(!rb) hint = (statusIsTerminal && statusIsTerminal[p.status]) ? 'Filled in from Jira shortly.' : 'Filled in from Jira when the item is finished.';
+  else if(rb.src === 'person') hint = 'Set by '+displayName(rb.setBy || '')+(rb.at ? ' on '+fmtTSDate(rb.at) : '')+'.';
+  else hint = (rb.why || '') + (unsure && can ? ' Pick one to settle it.' : '');
+  return '<div class="rb-row" data-rb="'+p.id+'"><div style="font-size:var(--fs-label);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:5px">Resolved by</div>'
+    + '<div class="rb-seg'+(unsure?' unsure':'')+'" role="group" aria-label="Resolved by">'+seg+'</div>'+who
+    + '<div class="rb-hint'+(unsure?' unsure':'')+'">'+esc(hint)+'</div></div>';
+}
+function _rbWire(host, p){
+  const row = host && host.querySelector('[data-rb]'); if(!row) return;
+  row.addEventListener('click', async e => {
+    const b = e.target.closest('[data-rbset]'); if(!b || b.disabled) return;
+    const by = b.getAttribute('data-rbset');
+    const cur = p.resolvedBy || {};
+    if(cur.by === by && cur.src === 'person') return;
+    row.querySelectorAll('[data-rbset]').forEach(x => x.disabled = true);
+    try {
+      const r = await API.put('/api/items/'+p.id+'/resolved-by', { by, _username: getUsername() });
+      p.resolvedBy = r.resolvedBy;
+      const live = projects.find(x => x.id === p.id); if(live && live !== p) live.resolvedBy = r.resolvedBy;
+      showToast('Resolved by '+(by === 'dev' ? 'development' : 'support')+'.');
+    } catch(err){ showToast('Could not save: '+((err && err.message) || err), 'error'); }
+    row.outerHTML = _rbRowHtml(p);
+    _rbWire(host, p);
+  });
+}
+
 // ── Inline-editable Item Page fields (inline-edit overhaul, Stage 1) ──
 function ipEditField(field, label, displayHtml, kind, opts={}){
   const _cur = projects.find(x=>x.id===_itemPageId);
@@ -19677,9 +19730,11 @@ function renderItemPage(p){
     : (_ipCanWrite(p) ? `<span style="color:var(--muted)">${placeholder}</span>` : '');
   const txtEl = document.getElementById('ipTextFields');
   if(txtEl) txtEl.innerHTML = [
+    _rbRowHtml(p),   // RESOLVED-BY-1
     ipEditField('notes',      'Notes',              _ipTxtVal(p.notes, 'Add notes'), 'textarea'),
     ipEditField('resolution', 'Resolution details', _ipTxtVal(p.resolution, 'Add resolution details'), 'textarea'),
   ].join('');
+  _rbWire(txtEl, p);
 
   // Notes
   const notesEl   = document.getElementById('ipNotes');
@@ -21592,6 +21647,7 @@ async function boot(){
     blockedReasons = Array.isArray(data.blockedReasons) ? data.blockedReasons : [];   // BLOCK-REASON-1 fix: this is the boot loader; the earlier load site was a non-boot path
     locations = Array.isArray(data.locations) ? data.locations : [];                   // FIELDS-1 (boot loader)
     resolutionTypes = Array.isArray(data.resolutionTypes) ? data.resolutionTypes : [];  // FIELDS-1 (boot loader)
+    resolvedByTeams = Array.isArray(data.resolvedByTeams) ? data.resolvedByTeams : [];  // RESOLVED-BY-1 (boot loader)
     hasSprints = !!data.hasSprints; hasReleases = !!data.hasReleases;   // FIELDS-2 (boot loader)
     metricLabel   = data.metricLabel   || 'Story Points';   // METRIC-LABEL-1: boot loader (the RIGHT block - see the 6.15.2 fix)
     pointsEstimate = data.pointsEstimate || {enabled:false, rows:[]};   // POINTS-ESTIMATE-1
@@ -23171,6 +23227,26 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-ship-row .frz-bl-meta { margin-top:0; white-space:nowrap; flex-shrink:0; }
   .frz-beta .frz-ship-empty { color:var(--frz-text-muted); font-size:13px; padding:10px 0 4px; }
   .frz-beta .frz-ship-note { margin-top:8px; font-size:11px; color:var(--frz-text-muted); }
+  /* RESOLVED-BY-1: Shipped tags, summary line, "also fixed" group */
+  .frz-beta .frz-ship-row .frz-rb-right { display:inline-flex; align-items:center; flex-shrink:0; }
+  .frz-beta .frz-rb-pill { display:inline-flex; align-items:center; gap:3px; margin-left:8px; padding:1px 8px; border-radius:999px; font:700 10.5px 'Lato',sans-serif; line-height:16px; white-space:nowrap; flex-shrink:0; }
+  .frz-beta .frz-rb-pill.can { cursor:pointer; }
+  .frz-beta .frz-rb-pill.dev { background:rgba(0,89,169,.12); color:var(--frz-accent); border:1px solid rgba(0,89,169,.55); }
+  .frz-beta .frz-rb-pill.sup { background:transparent; color:var(--frz-text-secondary); border:1px solid var(--frz-border); }
+  .frz-beta .frz-rb-pill.unsure { border-style:dashed; opacity:.72; }
+  .frz-beta .frz-rb-pill.unsure.dev { background:transparent; }
+  .frz-beta .frz-rb-pill b { font-weight:900; }
+  .frz-beta .frz-rb-pill.busy { opacity:.4; }
+  body.dark-mode .frz-beta .frz-rb-pill.dev { background:rgba(47,134,222,.18); color:#8cc2f5; border-color:rgba(47,134,222,.65); }
+  body.dark-mode .frz-beta .frz-rb-pill.unsure.dev { background:transparent; }
+  .frz-beta .frz-rb-split { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px; font-size:12.5px; color:var(--frz-text-secondary); }
+  .frz-beta .frz-rb-split b { color:var(--frz-text); font-weight:800; }
+  .frz-beta .frz-rb-teams { color:var(--frz-text-muted); }
+  .frz-beta .frz-rb-bar { display:inline-flex; width:110px; height:6px; border-radius:3px; overflow:hidden; background:rgba(128,128,128,.18); }
+  .frz-beta .frz-rb-bar i { display:block; height:100%; background:var(--frz-accent); }
+  .frz-beta .frz-rb-check { font:600 11.5px 'Lato',sans-serif; color:var(--frz-text-muted); background:none; border:1px dashed var(--frz-border); border-radius:999px; padding:0 8px; cursor:pointer; }
+  .frz-beta .frz-rb-check.on { color:var(--frz-accent); border-color:var(--frz-accent); }
+  .frz-beta .frz-rb-also-sub { font-size:11.5px; font-weight:600; color:var(--frz-text-muted); }
   .frz-beta .frz-rel-list { border:1px solid var(--frz-border); border-radius:10px; overflow:hidden; background:var(--frz-bg-surface); }
   .frz-beta .frz-rel-row { display:grid; grid-template-columns:2fr .9fr 1.8fr auto; gap:12px; align-items:center; padding:11px 14px; border-top:1px solid var(--frz-border); }
   .frz-beta .frz-rel-row:first-child { border-top:0; }
@@ -24129,6 +24205,19 @@ if ('serviceWorker' in navigator) {
   body.frz-beta-active .cl-wrap .cl-plus, body.frz-beta-active .cl-draft .cl-plus { width:16px; text-align:center; font-weight:700; color:var(--cl-acc); }
   body.frz-beta-active .cl-wrap .cl-start { border:1px dashed var(--border); border-radius:8px; padding:7px 12px; font-weight:700; font-size:12px; color:var(--cl-acc); gap:6px; }
   body.frz-beta-active .cl-wrap .cl-start .cl-plus { width:auto; }
+  /* RESOLVED-BY-1: item page row (Notes & Resolution) */
+  body.frz-beta-active .rb-seg { display:inline-flex; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  body.frz-beta-active .rb-seg.unsure { border-style:dashed; }
+  body.frz-beta-active .rb-opt { font:700 12px 'Lato',sans-serif; padding:4px 12px; background:none; border:0; color:var(--muted); cursor:pointer; }
+  body.frz-beta-active .rb-opt + .rb-opt { border-left:1px solid var(--border); }
+  body.frz-beta-active .rb-opt.on { background:rgba(0,89,169,.12); color:var(--frz-accent,#0059A9); }
+  body.frz-beta-active .rb-seg.unsure .rb-opt.on { background:none; box-shadow:inset 0 -2px 0 var(--frz-accent,#0059A9); }
+  body.frz-beta-active .rb-opt:disabled { cursor:default; }
+  body.frz-beta-active.dark-mode .rb-opt.on { background:rgba(47,134,222,.18); color:#8cc2f5; }
+  body.frz-beta-active .rb-who { font-size:12.5px; font-weight:600; color:var(--text); margin-top:6px; }
+  body.frz-beta-active .rb-hint { font-size:11.5px; color:var(--muted); margin-top:3px; line-height:1.35; }
+  body.frz-beta-active .rb-hint.unsure { color:#9a6a00; }
+  body.frz-beta-active.dark-mode .rb-hint.unsure { color:#e0b44c; }
   body.frz-beta-active .cl-wrap .cl-addrow { display:flex; align-items:center; gap:10px; padding:4px 6px; }
   body.frz-beta-active .cl-wrap .cl-addin, body.frz-beta-active .cl-wrap .cl-editin { flex:1; min-width:0; padding:5px 8px; font:13px 'Lato',sans-serif; border:1px solid var(--cl-acc); border-radius:6px; background:var(--surface); color:var(--text); outline:none; }
   body.frz-beta-active .cl-compact .cl-toggle { width:100%; display:flex; align-items:center; gap:10px; background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:8px 10px; cursor:pointer; font:inherit; color:var(--text); text-align:left; }
@@ -30887,6 +30976,7 @@ if ('serviceWorker' in navigator) {
     // Evaluated per click (matchMedia is cheap) so a mid-session mode change is always honoured.
     document.addEventListener('click', function(e){
       if (!root) return;
+      if (e.target.closest && e.target.closest('[data-rbx].can')) return;   // RESOLVED-BY-1: an editable Shipped tag flips, it doesn't open the item
       var a = e.target.closest && e.target.closest('a[href]');
       if (!a) return;
       if (a.getAttribute('target') === '_blank'
@@ -32787,7 +32877,7 @@ if ('serviceWorker' in navigator) {
   // Finished work for one calendar month, grouped by the project it belongs to, from GET /api/shipped. The
   // server counts with the exec deck's own rules (_exec_ctx), so this page and the monthly slides agree.
   // Nothing to create or link: each item's ship date is its Jira Done date, else the day Flow saw it finish.
-  var _ship = { month:'', team:'*', cache:{} };   // cache[YYYY-MM] = {d, ts}
+  var _ship = { month:'', team:'*', rb:'*', cache:{} };   // cache[YYYY-MM] = {d, ts}; rb: RESOLVED-BY-1 filter (* | support | dev | check)
   var _SHIP_FRESH_MS = 60000;
   function _shipMonthLabel(ym){ var a=String(ym||'').split('-'); var d=new Date(+a[0], (+a[1]||1)-1, 1); return isNaN(d) ? String(ym) : d.toLocaleDateString('en-US',{month:'long',year:'numeric'}); }
   function _shipDay(iso){ var a=String(iso||'').split('-'); var d=new Date(+a[0], (+a[1]||1)-1, +a[2]||1); return isNaN(d) ? String(iso) : d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
@@ -32802,7 +32892,37 @@ if ('serviceWorker' in navigator) {
       return _planFilterPass(p, f, x.team||'');
     });
   }
-  function _shipVisible(d){ return _shipPool(d).filter(function(x){ return _ship.team==='*' || (x.team||'')===_ship.team; }); }
+  function _shipInTeam(d){ return _shipPool(d).filter(function(x){ return _ship.team==='*' || (x.team||'')===_ship.team; }); }
+  // RESOLVED-BY-1: the Resolved by filter narrows within the Team pick. "check" = Jira was not clear.
+  function _rbUnsure(r){ return !!(r && !r.sure && r.src!=='person'); }
+  function _rbMatch(x){
+    if(_ship.rb==='*') return true;
+    var r=x.rb; if(!r) return false;
+    return _ship.rb==='check' ? _rbUnsure(r) : r.by===_ship.rb;
+  }
+  function _shipVisible(d){ return _shipInTeam(d).filter(_rbMatch); }
+  // Items a developer on the focus Team (the Shipped Team pick, or a single Team in the filter bar) fixed
+  // for a tracked Team like Support. They stay counted under Support; this only credits the dev Team.
+  function _rbAlsoFixed(d){
+    var f=_planFilters(), focus=_ship.team!=='*' ? _ship.team : (f.dev && f.dev.length===1 ? f.dev[0] : null);
+    if(!focus || _ship.rb!=='*' || (d.rbTeams||[]).indexOf(focus)>=0) return { team:null, items:[] };
+    var g={}; Object.keys(f).forEach(function(k){ g[k]=f[k]; }); g.dev=null;
+    var byId={}; (_val('projects',[])||[]).forEach(function(p){ byId[p.id]=p; });
+    return { team:focus, items:(d.items||[]).filter(function(x){
+      return x.rb && x.rb.by==='dev' && x.rb.team===focus && _planFilterPass(byId[x.id] || { type:x.type, status:x.status }, g, x.team||'');
+    }) };
+  }
+  function _rbTip(r){
+    var t = r.src==='person' ? 'Set by '+(_call('displayName', r.setBy||'')||r.setBy||'someone')+(r.at ? ' on '+_shipDay(String(r.at).slice(0,10)) : '')+'.' : (r.why||'');
+    if(r.by==='dev' && r.who && r.src!=='person' && t.indexOf(r.who)<0) t += ' ('+r.who+')';
+    return t + (_blCanEdit() ? ' Click to change.' : '');
+  }
+  function _rbPill(x){
+    var r=x.rb; if(!r) return '';
+    var dev=r.by==='dev', q=_rbUnsure(r);
+    var lbl = dev ? 'Dev'+(r.team ? ' · '+r.team : '') : 'Support';
+    return '<span class="frz-rb-pill '+(dev?'dev':'sup')+(q?' unsure':'')+(_blCanEdit()?' can':'')+'" data-rbx="'+x.id+'" title="'+escA(_rbTip(r))+'">'+(q?'<b>?</b>':'')+esc(lbl)+'</span>';
+  }
   function _shipGroups(items){
     var g={}, order=[];
     items.forEach(function(x){ var k=x.project||''; if(!g[k]){ g[k]={ name:k, id:x.projectId, items:[] }; order.push(k); } g[k].items.push(x); });
@@ -32815,7 +32935,7 @@ if ('serviceWorker' in navigator) {
   function _shipRow(x){
     var key = x.key ? '<span class="frz-bcard-key" style="display:inline-flex;align-items:center;gap:4px;vertical-align:middle">'+(_call('typeIconHTML', x.type, {size:13})||'')+'<span>'+esc(x.key)+'</span></span> ' : '';
     var meta=[x.team, _shipDay(x.shipped)].filter(Boolean).join(' · ');
-    return '<a class="frz-mini-row frz-ship-row" href="'+escA(_shipUrl(x.id))+'"><span class="frz-bl-name">'+key+esc(x.name)+'</span><span class="frz-bl-meta">'+esc(meta)+'</span></a>';
+    return '<a class="frz-mini-row frz-ship-row" href="'+escA(_shipUrl(x.id))+'"><span class="frz-bl-name">'+key+esc(x.name)+'</span><span class="frz-rb-right"><span class="frz-bl-meta">'+esc(meta)+'</span>'+_rbPill(x)+'</span></a>';
   }
   function _shipSummary(d, vis){
     var pts=0, any=false; vis.forEach(function(x){ if(x.points!=null){ pts+=x.points; any=true; } });
@@ -32860,24 +32980,71 @@ if ('serviceWorker' in navigator) {
     var tOpts='<option value="*">All teams</option>'+tOrder.map(function(t){ return '<option value="'+escA(t)+'"'+(t===_ship.team?' selected':'')+'>'+esc(t||'No team')+' ('+(counts[t]||0)+')</option>'; }).join('');
     var mOpts=(d.months||[]).map(function(m){ return '<option value="'+escA(m.ym)+'"'+(m.ym===d.month?' selected':'')+'>'+esc(_shipMonthLabel(m.ym))+'</option>'; }).join('');
     var vis=_shipVisible(d);
-    var body = vis.length ? _shipGroups(vis).map(function(g){
+    // RESOLVED-BY-1: counts over the Team pick (before the Resolved by filter); the select + summary line
+    // appear only when the month has tagged items.
+    var inTeam=_shipInTeam(d), rbN={support:0, dev:0, check:0}, rbTeams={};
+    inTeam.forEach(function(x){ var r=x.rb; if(!r) return; rbN[r.by]++; if(_rbUnsure(r)) rbN.check++; if(r.by==='dev'){ var k=r.team||'no Team'; rbTeams[k]=(rbTeams[k]||0)+1; } });
+    var rbAny=rbN.support+rbN.dev>0;
+    if(!rbAny && _ship.rb!=='*'){ _ship.rb='*'; vis=_shipVisible(d); }
+    if(_ship.rb==='check' && !rbN.check){ _ship.rb='*'; vis=_shipVisible(d); }
+    var rbName=(d.rbTeams||[]).join(' + ') || 'Support';
+    var also=_rbAlsoFixed(d);
+    var rbSel = rbAny ? '<select class="frz-fld frz-ship-sel" data-shiprb aria-label="Resolved by">'+
+        [['*','All work'],['support','Resolved by support ('+rbN.support+')'],['dev','Resolved by development ('+rbN.dev+')']].concat(rbN.check ? [['check','Not sure yet ('+rbN.check+')']] : [])
+          .map(function(o){ return '<option value="'+o[0]+'"'+(o[0]===_ship.rb?' selected':'')+'>'+esc(o[1])+'</option>'; }).join('')+'</select>' : '';
+    var rbLine='';
+    if(rbAny){
+      var tl=Object.keys(rbTeams).sort(function(a,b){ return (rbTeams[b]-rbTeams[a]) || ((a==='no Team')-(b==='no Team')) || a.localeCompare(b); }).map(function(k){ return k+' '+rbTeams[k]; }).join(', ');
+      var pct=Math.round(100*rbN.dev/(rbN.support+rbN.dev));
+      rbLine='<div class="frz-rb-split"><span>'+esc(rbName)+' work:</span><b>'+rbN.support+' resolved by support</b><span>·</span><b>'+rbN.dev+' by development</b>'+(tl ? '<span class="frz-rb-teams">('+esc(tl)+')</span>' : '')+
+        '<span class="frz-rb-bar" title="'+pct+'% resolved by development"><i style="width:'+pct+'%"></i></span>'+
+        (rbN.check ? '<button type="button" class="frz-rb-check'+(_ship.rb==='check'?' on':'')+'" data-rbcheck title="Jira was not clear on these. Click to see them.">'+rbN.check+' to check</button>' : '')+'</div>';
+    }
+    var groupsHtml = vis.length ? _shipGroups(vis).map(function(g){
         var head = !g.name ? '<span class="frz-ship-gname is-other">Other work</span>'
           : (g.id!=null ? '<a class="frz-ship-gname" href="'+escA(_shipUrl(g.id))+'">'+esc(g.name)+'</a>' : '<span class="frz-ship-gname">'+esc(g.name)+'</span>');
         return '<div class="frz-ship-grp"><div class="frz-ship-gh">'+head+'<span class="frz-ship-gn">'+g.items.length+'</span></div>'+g.items.map(_shipRow).join('')+'</div>';
-      }).join('')
+      }).join('') : '';
+    var alsoHtml = also.items.length ? '<div class="frz-ship-grp frz-rb-also"><div class="frz-ship-gh"><span class="frz-ship-gname">Also fixed for '+esc(rbName)+'</span><span class="frz-ship-gn">'+also.items.length+'</span><span class="frz-rb-also-sub">counted under '+esc(rbName)+'</span></div>'+also.items.map(_shipRow).join('')+'</div>' : '';
+    var body = (groupsHtml || alsoHtml) ? groupsHtml+alsoHtml
       : '<div class="frz-ship-empty">Nothing shipped in '+esc(_shipMonthLabel(d.month))+(_ship.team!=='*' ? ' for '+esc(_ship.team||'No team') : '')+(_planFiltersOn(_planFilters()) ? ' that matches the filters' : '')+'.</div>';
     sec.innerHTML='<div class="frz-ship-head">'+
         '<div class="frz-ship-title">Shipped</div>'+
         '<select class="frz-fld frz-ship-sel" data-shipmonth aria-label="Month">'+mOpts+'</select>'+
-        '<select class="frz-fld frz-ship-sel" data-shipteam aria-label="Team">'+tOpts+'</select>'+
-        '<span class="frz-ship-sum">'+esc(_shipSummary(d, vis))+'</span>'+
+        '<select class="frz-fld frz-ship-sel" data-shipteam aria-label="Team">'+tOpts+'</select>'+rbSel+
+        '<span class="frz-ship-sum">'+esc(_shipSummary(d, vis)+(also.items.length ? ' · also fixed '+also.items.length+' '+rbName+' item'+(also.items.length===1?'':'s') : ''))+'</span>'+
         '<button class="frz-viewopt" data-shipcopy'+(vis.length?'':' disabled')+' title="Copy the list, grouped by project, to paste into an email or report">Copy</button>'+
-      '</div>'+
+      '</div>'+rbLine+
       '<div class="frz-ship-groups">'+body+'</div>'+
-      '<div class="frz-ship-note">Finished work by the date it was done in Jira (or in Flow when there is no Jira date), counted the same way as the monthly exec slides.</div>';
+      '<div class="frz-ship-note">Finished work by the date it was done in Jira (or in Flow when there is no Jira date), counted the same way as the monthly exec slides.'+
+        (rbAny ? '<br>Resolved by: set from Jira (linked code or Code Review means Dev; no developer means Support). A faded tag with a ? means Jira was not clear.'+(_blCanEdit() ? ' Click a tag to switch it; Jira never overrides a person.' : '') : '')+'</div>';
     sec.querySelector('[data-shipmonth]').addEventListener('change', function(){ _shipLoad(sec, this.value); });
     sec.querySelector('[data-shipteam]').addEventListener('change', function(){ _ship.team=this.value; _shipPaint(sec); });
+    var rbs=sec.querySelector('[data-shiprb]'); if(rbs) rbs.addEventListener('change', function(){ _ship.rb=this.value; _shipPaint(sec); });
+    var rbc=sec.querySelector('[data-rbcheck]'); if(rbc) rbc.addEventListener('click', function(){ _ship.rb = _ship.rb==='check' ? '*' : 'check'; _shipPaint(sec); });
+    _rbWirePills(sec);
     sec.querySelector('[data-shipcopy]').addEventListener('click', function(){ _shipCopy(d); });
+  }
+  // RESOLVED-BY-1: clicking a tag flips it (Dev <-> Support) for anyone who can edit; it never opens the item.
+  function _rbWirePills(sec){
+    if(sec._rbWired) return; sec._rbWired=true;
+    sec.addEventListener('click', function(e){
+      var pill=e.target.closest('[data-rbx]'); if(!pill || !_blCanEdit()) return;
+      e.preventDefault(); e.stopPropagation();
+      if(pill.classList.contains('busy')) return;
+      var id=+pill.getAttribute('data-rbx'), x=null;
+      Object.keys(_ship.cache).forEach(function(k){ (_ship.cache[k].d.items||[]).forEach(function(y){ if(y.id===id) x=y; }); });
+      if(!x || !x.rb) return;
+      var by = x.rb.by==='dev' ? 'support' : 'dev';
+      pill.classList.add('busy');
+      API.put('/api/items/'+id+'/resolved-by', { by:by, _username:_call('getUsername') }).then(function(r){
+        var v=r && r.resolvedBy; if(!v) return;
+        Object.keys(_ship.cache).forEach(function(k){ (_ship.cache[k].d.items||[]).forEach(function(y){ if(y.id===id) y.rb=v; }); });
+        var p=(_val('projects',[])||[]).filter(function(q){ return q.id===id; })[0]; if(p) p.resolvedBy=v;
+        _call('showToast', (x.key ? x.key+': ' : '')+'resolved by '+(by==='dev' ? 'development' : 'support'));
+        if(sec.isConnected) _shipPaint(sec);
+      }).catch(function(err){ pill.classList.remove('busy'); _call('showToast', 'Could not save: '+((err && err.message) || err), 'error'); });
+    }, true);
   }
   function _shipLoad(sec, month){
     if(month) _ship.month=month;
