@@ -71,5 +71,12 @@ def test_shipped_collapses_and_remembers_per_browser():
 def test_release_list_dates_by_target():
     # REL-TARGET-DATE-1: "Released <date>" is the target (month end), not the day "Mark released" was clicked.
     body = HTML.split("function renderReleasesTab(host){", 1)[1].split("\n  }\n", 1)[0]
-    assert "(r.state==='Released' ? 'Released ' : 'Target ')+fmtD(r.targetDate||r.releasedDate)" in body
+    assert "(shownState==='Released' ? 'Released ' : 'Target ')+fmtD(r.targetDate||r.releasedDate)" in body
     assert "(b.targetDate||b.releasedDate||'').localeCompare(a.targetDate||a.releasedDate||'')" in body
+
+
+def test_release_state_follows_its_items():
+    # REL-STATE-1: all items finished -> shows Released; adding Shipped work to an existing release releases it.
+    body = HTML.split("function renderReleasesTab(host){", 1)[1].split("\n  }\n", 1)[0]
+    assert "var shownState=(r.state!=='Released' && full.total>0 && full.done===full.total) ? 'Released' : r.state;" in body
+    assert "if(r && r.state!=='Released'){ r.state='Released'; r.releasedDate=r.targetDate||end; dirty=true; }" in HTML
