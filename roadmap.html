@@ -32915,7 +32915,8 @@ if ('serviceWorker' in navigator) {
   function _rbTip(r){
     var t = r.src==='person' ? 'Set by '+(_call('displayName', r.setBy||'')||r.setBy||'someone')+(r.at ? ' on '+_shipDay(String(r.at).slice(0,10)) : '')+'.' : (r.why||'');
     if(r.by==='dev' && r.who && r.src!=='person' && t.indexOf(r.who)<0) t += ' ('+r.who+')';
-    return t + (_blCanEdit() ? ' Click to change.' : '');
+    if(!_blCanEdit()) return t;
+    return t + (_rbUnsure(r) ? ' Click to confirm '+(r.by==='dev' ? 'Dev' : 'Support')+'; click again to switch.' : ' Click to switch to '+(r.by==='dev' ? 'Support' : 'Dev')+'.');
   }
   function _rbPill(x){
     var r=x.rb; if(!r) return '';
@@ -33017,7 +33018,7 @@ if ('serviceWorker' in navigator) {
       '</div>'+rbLine+
       '<div class="frz-ship-groups">'+body+'</div>'+
       '<div class="frz-ship-note">Finished work by the date it was done in Jira (or in Flow when there is no Jira date), counted the same way as the monthly exec slides.'+
-        (rbAny ? '<br>Resolved by: set from Jira (linked code or Code Review means Dev; no developer means Support). A faded tag with a ? means Jira was not clear.'+(_blCanEdit() ? ' Click a tag to switch it; Jira never overrides a person.' : '') : '')+'</div>';
+        (rbAny ? '<br>Resolved by: set from Jira (linked code or Code Review means Dev; no developer means Support). A faded tag with a ? means Jira was not clear.'+(_blCanEdit() ? ' Click a ? tag to confirm it, click again to switch; Jira never overrides a person.' : '') : '')+'</div>';
     sec.querySelector('[data-shipmonth]').addEventListener('change', function(){ _shipLoad(sec, this.value); });
     sec.querySelector('[data-shipteam]').addEventListener('change', function(){ _ship.team=this.value; _shipPaint(sec); });
     var rbs=sec.querySelector('[data-shiprb]'); if(rbs) rbs.addEventListener('change', function(){ _ship.rb=this.value; _shipPaint(sec); });
@@ -33035,13 +33036,14 @@ if ('serviceWorker' in navigator) {
       var id=+pill.getAttribute('data-rbx'), x=null;
       Object.keys(_ship.cache).forEach(function(k){ (_ship.cache[k].d.items||[]).forEach(function(y){ if(y.id===id) x=y; }); });
       if(!x || !x.rb) return;
-      var by = x.rb.by==='dev' ? 'support' : 'dev';
+      // RB-CONFIRM-1: a dashed (not sure) tag's first click confirms Jira's lean; after that each click switches.
+      var confirm=_rbUnsure(x.rb), by = confirm ? x.rb.by : (x.rb.by==='dev' ? 'support' : 'dev');
       pill.classList.add('busy');
       API.put('/api/items/'+id+'/resolved-by', { by:by, _username:_call('getUsername') }).then(function(r){
         var v=r && r.resolvedBy; if(!v) return;
         Object.keys(_ship.cache).forEach(function(k){ (_ship.cache[k].d.items||[]).forEach(function(y){ if(y.id===id) y.rb=v; }); });
         var p=(_val('projects',[])||[]).filter(function(q){ return q.id===id; })[0]; if(p) p.resolvedBy=v;
-        _call('showToast', (x.key ? x.key+': ' : '')+'resolved by '+(by==='dev' ? 'development' : 'support'));
+        _call('showToast', (x.key ? x.key+': ' : '')+(confirm ? 'confirmed, ' : '')+'resolved by '+(by==='dev' ? 'development' : 'support'));
         if(sec.isConnected) _shipPaint(sec);
       }).catch(function(err){ pill.classList.remove('busy'); _call('showToast', 'Could not save: '+((err && err.message) || err), 'error'); });
     }, true);

@@ -223,3 +223,8 @@ def test_sync_only_tags_recent_work():
     src = inspect.getsource(server.run_jira_sync)
     assert "_resolved_by_fill(team, _JIRA_SYNC_ACTOR, days=_RB_SYNC_DAYS, limit=_RB_SYNC_LIMIT)" in src
     assert server._RB_SYNC_DAYS <= 30
+
+
+def test_shipped_tag_click_confirms_a_dashed_tag_first():
+    # RB-CONFIRM-1: dashed Dev -> solid Dev -> solid Support -> solid Dev ...
+    assert "var confirm=_rbUnsure(x.rb), by = confirm ? x.rb.by : (x.rb.by==='dev' ? 'support' : 'dev');" in HTML
