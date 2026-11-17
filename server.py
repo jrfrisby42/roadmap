@@ -2207,6 +2207,16 @@ def _intake_type_template(team: str, type_name: str) -> str:
             return tv if isinstance(tv, str) and tv.strip() else ""
     return ""
 
+def _intake_type_checklist(team: str, type_name: str) -> list:
+    """CHECKLIST-STAGE2-1: the checklist template on a Type (strings or {text, optional}), or [] if none."""
+    if not type_name:
+        return []
+    for t in (_cfg_val(team, "types", []) or []):
+        if isinstance(t, dict) and t.get("name") == type_name:
+            cl = t.get("checklist")
+            return cl if isinstance(cl, list) else []
+    return []
+
 def _intake_type_assignee(team: str, type_name: str) -> str:
     """INTAKE-ASSIGNEE-1: the default assignee configured for a Type (intakeTypeAssignees {type: username}),
     or '' if none. Honoured only while that username is still a user on the team - a removed user silently
@@ -2555,6 +2565,14 @@ def intake_submit(team: str, body: dict = Body(...), request: FRequest = None):
             item["assignee"] = _def_assignee
     except Exception as e:
         log.warning(f"[Intake] default assignee lookup failed for a {team} submission: {e}")
+    # CHECKLIST-STAGE2-1: a portal ticket gets its Type's checklist steps (unticked, optional flags kept),
+    # the same steps the New Item form pre-fills. Only Types with a template; best-effort.
+    try:
+        _cl = _checklist_fresh(_intake_type_checklist(team, ttype))
+        if _cl:
+            item["checklist"] = _cl
+    except Exception as e:
+        log.warning(f"[Intake] checklist template failed for a {team} submission: {e}")
     with db(team) as c:
         _assign_item_key(c, item)
         item["id"] = _insert_project(c, item)
