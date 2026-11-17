@@ -13701,7 +13701,9 @@ function checklistMount(host, item, opts){
     if(!L.length && !adding){
       // CHECKLIST-TMPL-ONLY-1: offer "+ Add a checklist" only on Types that have a template (process work like
       // onboarding). Elsewhere a quick to-do list belongs in the description's checkbox list (DESC-CHECKBOX-1).
-      if(mode==='page' && canEdit && _clTypeSteps(p && p.type).length){ host.style.display=''; host.innerHTML = '<button type="button" class="cl-start"><span class="cl-plus">+</span>Add a checklist</button>'; }
+      // CHECKLIST-STAGE2-1: the button fills in that template's steps (then add/remove as usual).
+      const tn = _clTypeSteps(p && p.type).length;
+      if(mode==='page' && canEdit && tn){ host.style.display=''; host.innerHTML = '<button type="button" class="cl-start" title="Adds the '+escA(esc(p.type))+' template steps; you can add or remove steps after"><span class="cl-plus">+</span>Add the '+esc(p.type)+' checklist ('+tn+' step'+(tn!==1?'s':'')+')</button>'; }
       else { host.style.display='none'; host.innerHTML=''; }
       return;
     }
@@ -13777,7 +13779,12 @@ function checklistMount(host, item, opts){
   host.onclick = function(e){
     const t = e.target;
     if(t.closest('.cl-toggle')){ open = !open; render(); return; }
-    if(t.closest('.cl-start') || t.closest('.cl-addbtn') || t.closest('.cl-addline')){ open = true; adding = true; render(); return; }
+    if(t.closest('.cl-start')){   // CHECKLIST-STAGE2-1: copy the Type template (unticked, optional flags kept)
+      const tpl = _clTypeSteps(cur().type);
+      if(tpl.length){ open = true; saveShape(tpl.map(s => ({ text: s.text, optional: !!s.optional }))); }
+      return;
+    }
+    if(t.closest('.cl-addbtn') || t.closest('.cl-addline')){ open = true; adding = true; render(); return; }
     const row = t.closest('.cl-row'); if(!row) return;
     const sid = row.getAttribute('data-sid');
     if(t.closest('.cl-box')){ const st = checklistOf(cur()).find(x => x.id===sid); if(st) tick(sid, !st.done); return; }

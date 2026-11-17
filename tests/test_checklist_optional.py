@@ -88,4 +88,4 @@ def test_template_steps_round_trip_and_admin_gets_the_toggle():
 
 def test_add_a_checklist_only_on_types_with_a_template():
     # CHECKLIST-TMPL-ONLY-1: the item page's "+ Add a checklist" shows only when the item's Type has a template.
-    assert "if(mode==='page' && canEdit && _clTypeSteps(p && p.type).length){" in _HTML
+    assert "const tn = _clTypeSteps(p && p.type).length;" in _HTML and "if(mode==='page' && canEdit && tn){" in _HTML
