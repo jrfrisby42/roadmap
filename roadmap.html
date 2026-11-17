@@ -93,7 +93,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
      excluded from one by one" - it has cost debugging twice now; it should eventually be SCOPED to non-Flow
      surfaces (e.g. :not(.frz-beta ...)) rather than growing an ever-longer :not() chain. */
   body.dark-mode select,
-  body.dark-mode button:not(.primary):not(.btn-save):not(.btn-cancel):not(.btn-danger):not(.btn-ic):not(.rte-btn):not(.frz-newitem):not(.frz-lp-openbtn):not(.frz-bcard-open):not(.frz-avatar):not(.frz-ava-sw):not(.frz-tab):not(.frz-chip):not(.frz-item):not(.frz-set-tab):not(.frz-pop-opt):not(.frz-cal-daytoggle button):not(.btn-add-dev):not(.frz-adm-pill):not(.rep-btn):not(.rb-opt) {
+  body.dark-mode button:not(.primary):not(.btn-save):not(.btn-cancel):not(.btn-danger):not(.btn-ic):not(.rte-btn):not(.frz-newitem):not(.frz-lp-openbtn):not(.frz-bcard-open):not(.frz-avatar):not(.frz-ava-sw):not(.frz-tab):not(.frz-chip):not(.frz-item):not(.frz-set-tab):not(.frz-pop-opt):not(.frz-cal-daytoggle button):not(.btn-add-dev):not(.frz-adm-pill):not(.rep-btn):not(.rb-opt):not(.frz-ship-tog) {
     background: var(--surface2) !important;
     color: var(--text) !important;
     border-color: var(--border) !important;
@@ -23242,6 +23242,12 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-ship { border:1px solid var(--frz-border); border-radius:10px; background:var(--frz-bg-surface); padding:12px 14px; min-width:0; }   /* min-width:0: the 2-column list's min-content is its 420px column width, which would push the card past a phone screen */
   .frz-beta .frz-ship-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .frz-beta .frz-ship-title { font-size:15px; font-weight:800; color:var(--frz-text); margin-right:4px; }
+  /* SHIP-COLLAPSE-1 */
+  .frz-beta .frz-ship-tog { display:inline-flex; align-items:center; gap:6px; margin-right:4px; padding:2px 4px 2px 0; background:none; border:0; font:800 15px 'Lato',sans-serif; color:var(--frz-text); cursor:pointer; }
+  .frz-beta .frz-ship-tog svg { color:var(--frz-text-muted); transition:transform .15s; }
+  .frz-beta .frz-ship-tog.is-col svg { transform:rotate(-90deg); }
+  .frz-beta .frz-ship-tog:hover svg { color:var(--frz-accent); }
+  .frz-beta .frz-ship-head--col .frz-ship-sum { flex:0 1 auto; }
   .frz-beta .frz-ship-sel { display:inline-block; width:auto; padding:5px 8px; font-size:12.5px; }
   .frz-beta .frz-ship-sum { flex:1; font-size:12.5px; font-weight:600; color:var(--frz-text-secondary); white-space:nowrap; }
   .frz-beta .frz-ship-groups { margin-top:10px; columns:2 420px; column-gap:28px; }
@@ -33037,10 +33043,29 @@ if ('serviceWorker' in navigator) {
     var c=sec.querySelector('[data-relcount]'); if(c) c.textContent=n;
     var go=sec.querySelector('[data-relgo]'); if(go){ go.textContent=_relPickLabel(); go.disabled=!n || !String(_ship.pick.name||'').trim(); }
   }
+  // SHIP-COLLAPSE-1: Shipped folds to one line so the Releases list below is in reach. Expanded by default;
+  // the choice is a per-browser convenience (localStorage, guarded - private windows just start expanded).
+  var _SHIP_COL_KEY='frazil_ship_collapsed';
+  function _shipCollapsed(){ try { return localStorage.getItem(_SHIP_COL_KEY)==='1'; } catch(e){ return false; } }
+  function _shipSetCollapsed(v){ try { localStorage.setItem(_SHIP_COL_KEY, v ? '1' : '0'); } catch(e){} }
+  function _shipTog(col){
+    return '<button type="button" class="frz-ship-tog'+(col?' is-col':'')+'" data-shiptog aria-expanded="'+(!col)+'" title="'+(col?'Show':'Hide')+' shipped work">'+
+      '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 6 8 10 12 6"/></svg>Shipped</button>';
+  }
+  function _shipWireTog(sec){
+    var t=sec.querySelector('[data-shiptog]'); if(!t) return;
+    t.addEventListener('click', function(){ var c=!_shipCollapsed(); _shipSetCollapsed(c); if(c) _ship.pick=null; _shipPaint(sec); });
+  }
   function _shipPaint(sec){
     var hit=_ship.month && _ship.cache[_ship.month], d=hit && hit.d;
     if(!d){ sec.innerHTML='<div class="frz-ship-head"><div class="frz-ship-title">Shipped</div></div><div class="frz-ship-empty">Loading...</div>'; return; }
     _ship.byId={}; (_val('projects',[])||[]).forEach(function(p){ _ship.byId[p.id]=p; });
+    if(_shipCollapsed()){
+      _ship.pick=null;
+      sec.innerHTML='<div class="frz-ship-head frz-ship-head--col">'+_shipTog(true)+'<span class="frz-ship-sum">'+esc(_shipMonthLabel(d.month)+' \u00b7 '+_shipSummary(d, _shipVisible(d)))+'</span></div>';
+      _shipWireTog(sec);
+      return;
+    }
     var mOpts=(d.months||[]).map(function(m){ return '<option value="'+escA(m.ym)+'"'+(m.ym===d.month?' selected':'')+'>'+esc(_shipMonthLabel(m.ym))+'</option>'; }).join('');
     var vis=_shipVisible(d);
     // RESOLVED-BY-1: counts over the filtered pool (before the Resolved by filter); the select + summary line
@@ -33072,7 +33097,7 @@ if ('serviceWorker' in navigator) {
     var body = (groupsHtml || alsoHtml) ? groupsHtml+alsoHtml
       : '<div class="frz-ship-empty">Nothing shipped in '+esc(_shipMonthLabel(d.month))+(_planFiltersOn(_planFilters()) ? ' that matches the filters' : '')+'.</div>';
     sec.innerHTML='<div class="frz-ship-head">'+
-        '<div class="frz-ship-title">Shipped</div>'+
+        _shipTog(false)+
         '<select class="frz-fld frz-ship-sel" data-shipmonth aria-label="Month">'+mOpts+'</select>'+
         rbSel+
         '<span class="frz-ship-sum">'+esc(_shipSummary(d, vis)+(also.items.length ? ' · also fixed '+also.items.length+' '+rbName+' item'+(also.items.length===1?'':'s') : ''))+'</span>'+
@@ -33091,6 +33116,7 @@ if ('serviceWorker' in navigator) {
       '<div class="frz-ship-note">Finished work by the date it was done in Jira (or in Flow when there is no Jira date), counted the same way as the monthly exec slides.'+
         (rbAny ? '<br>Resolved by: set from Jira (linked code or Code Review means Dev; no developer means Support). A faded tag with a ? means Jira was not clear.'+(_blCanEdit() ? ' Click a ? tag to confirm it, click again to switch; Jira never overrides a person.' : '') : '')+'</div>';
     sec.querySelector('[data-shipmonth]').addEventListener('change', function(){ _ship.pick=null; _shipLoad(sec, this.value); });
+    _shipWireTog(sec);
     _relPickWire(sec, d, vis);
     var rbs=sec.querySelector('[data-shiprb]'); if(rbs) rbs.addEventListener('change', function(){ _ship.rb=this.value; _shipPaint(sec); });
     var rbc=sec.querySelector('[data-rbcheck]'); if(rbc) rbc.addEventListener('click', function(){ _ship.rb = _ship.rb==='check' ? '*' : 'check'; _shipPaint(sec); });

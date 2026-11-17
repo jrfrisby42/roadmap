@@ -215,7 +215,7 @@ def test_client_surfaces():
     assert "_rbRowHtml(p),   // RESOLVED-BY-1" in HTML and "_rbWire(txtEl, p);" in HTML           # item page, Notes & Resolution
     assert "toggleResolvedByTeam(${i}, this.checked)" in HTML                                     # Admin > Teams
     assert "API.put('/api/items/'+id+'/resolved-by'" in HTML and "data-shiprb" in HTML and "_rbAlsoFixed(d)" in HTML
-    assert ":not(.rep-btn):not(.rb-opt) {" in HTML                                               # dark-mode button rule skips it
+    assert ":not(.rep-btn):not(.rb-opt)" in HTML                                              # dark-mode button rule skips it
 
 
 def test_sync_only_tags_recent_work():

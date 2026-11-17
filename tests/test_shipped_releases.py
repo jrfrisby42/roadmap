@@ -60,3 +60,9 @@ def test_gantt_credits_dev_teams_and_backstops_with_sprints():
     assert '<i class="ow-sup" style="height:${sPct}%"></i>' in HTML
     assert "const _sb = c => (c.start || c.due || c.revised) ? null : _sprintSpanOf(c);" in HTML
     assert "function _sprintSpanOf(c){" in HTML
+
+
+def test_shipped_collapses_and_remembers_per_browser():
+    # SHIP-COLLAPSE-1: expanded by default; folding it leaves one line so the Releases list is in reach.
+    assert "function _shipCollapsed(){ try { return localStorage.getItem(_SHIP_COL_KEY)==='1'; } catch(e){ return false; } }" in HTML
+    assert "if(_shipCollapsed()){" in HTML and "_shipTog(false)+" in HTML
