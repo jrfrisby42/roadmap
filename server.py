@@ -5860,6 +5860,21 @@ def update_project(pid: int, body: dict, background: BackgroundTasks = None,
                 merged[_srv] = old[_srv]
             else:
                 merged.pop(_srv, None)
+        # CHECKLIST-RETYPE-1: changing an item to a Type with a checklist template adds that template's steps
+        # (unticked, optional flags kept) when the item has none yet. This is how a portal ticket that comes
+        # in as a generic Type (IT's portal offers only Task) gets its Onboarding/Offboarding steps once staff
+        # set the real Type. An item that already has steps keeps them; the portal never shows steps.
+        if (merged.get("type") or "") != (old.get("type") or "") and not merged.get("checklist"):
+            try:
+                _trow = c.execute("SELECT value FROM config WHERE key='types'").fetchone()
+                _tdef = next((t for t in (json.loads(_trow["value"]) if _trow else [])
+                              if isinstance(t, dict) and t.get("name") == merged.get("type")), None)
+                _cl = _checklist_fresh((_tdef or {}).get("checklist"))
+                if _cl:
+                    merged["checklist"] = _cl
+                    changes["checklist"] = {"from": None, "to": f"{len(_cl)} steps from the {merged.get('type')} template"}
+            except Exception as e:
+                log.warning(f"[Checklist] template on retype failed for {team} #{pid}: {e}")
         if "departments" in body:
             # DEPT-PICKER-1: close the vocabulary on update. Grandfather set = the departments in the
             # STORED blob (`old`, loaded from the DB above), NOT the incoming payload: update_project
@@ -6365,7 +6380,8 @@ def list_items(
 
 # Fields safe to set in bulk. Deliberately excludes scheduling/capacity fields
 # (dueWeeks/testWeeks/parallelResources/start/due) - those have per-item rules.
-_BULK_FIELDS = {"status", "dev", "assignee", "sprintId", "priority", "archived"}
+_BULK_FIELDS = {"status", "dev", "assignee", "sprintId", "priority", "archived",
+                "release"}   # RELEASE-FROM-SHIPPED-1: link a month of shipped items to a release in one write
 
 @app.post("/api/items/bulk")
 def bulk_update_items(body: dict = Body(...),
@@ -6384,8 +6400,15 @@ def bulk_update_items(body: dict = Body(...),
         raise HTTPException(400, f"Fields not allowed in bulk edit: {', '.join(sorted(bad))}")
     if "archived" in patch:
         patch["archived"] = bool(patch["archived"])
+    if "release" in patch:   # RELEASE-FROM-SHIPPED-1: an existing release id, or "" to unlink
+        rid = patch["release"] if isinstance(patch["release"], str) else None
+        if rid is None:
+            raise HTTPException(422, "release must be a release id or empty")
+        if rid and rid not in {r.get("id") for r in (_cfg_val(team, "releases", []) or []) if isinstance(r, dict)}:
+            raise HTTPException(422, "Unknown release")
 
     updated = 0
+    stamps = {}    # RELEASE-FROM-SHIPPED-1: {id: new updated_ts} so a caller can refresh its copies (no false 409 later)
     skipped = []   # POLISH-2: reserved-status items whose status change was refused
     _changing_status = "status" in patch
     _assigned = {}   # ASSIGN-NOTIFY-1: {new_assignee: [(pid, name, key)]} for items whose assignee changed
@@ -6410,6 +6433,8 @@ def bulk_update_items(body: dict = Body(...),
             data.update(patch)
             _save_project(c, pid, data)
             updated += 1
+            _ts = c.execute("SELECT updated_ts FROM projects WHERE id=?", (pid,)).fetchone()
+            stamps[str(pid)] = _ts["updated_ts"] if _ts else None
             _na = (data.get("assignee") or "") if "assignee" in patch else ""
             if _na and _na != _old_assignee:
                 _assigned.setdefault(_na, []).append((pid, data.get("name", ""), data.get("itemKey") or f"#{pid}"))
@@ -6420,7 +6445,7 @@ def bulk_update_items(body: dict = Body(...),
         _notify_bulk_assigned(team, _assigned, auth["username"])
     except Exception as e:
         log.warning(f"[Notify] bulk assign hook failed for team {team}: {e}")
-    return {"updated": updated, "patch": patch, "skipped": skipped}
+    return {"updated": updated, "patch": patch, "skipped": skipped, "updatedTs": stamps}
 
 _BULK_ASSIGN_INDIVIDUAL_MAX = 3   # up to this many items -> one notification each; more -> one summary
 

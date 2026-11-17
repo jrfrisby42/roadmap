@@ -74,5 +74,6 @@ _HTML = (pathlib.Path(__file__).resolve().parent.parent / "roadmap.html").read_t
 def test_releases_tab_leads_with_shipped():
     body = _HTML.split("function renderReleasesTab(host){", 1)[1].split("\n  }\n", 1)[0]
     assert 'id="frzShip"' in body and "_shipLoad(document.getElementById('frzShip'));" in body
-    assert body.index('id="frzShip"') < body.index('id="frzNewRelease"')
+    assert body.index('id="frzShip"') < body.index('<span class="frz-ship-title">Releases</span>')
+    assert 'id="frzNewRelease"' not in body          # RELEASE-FROM-SHIPPED-1: releases are made from Shipped
     assert "API.get('/api/shipped'" in _HTML

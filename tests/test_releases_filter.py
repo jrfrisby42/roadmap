@@ -35,9 +35,9 @@ def test_plan_backlog_uses_the_shared_check():
 def test_shipped_follows_the_filters_on_the_effective_team():
     src = _src()
     assert "_planFilterPass(p, f, x.team||'')" in _fn(src, "_shipPool")
-    assert "_shipPool(d).filter" in _fn(src, "_shipInTeam")          # RESOLVED-BY-1: _shipVisible = _shipInTeam + the Resolved by filter
-    assert "_shipInTeam(d).filter(_rbMatch)" in src
-    assert "_shipPool(d).forEach" in _fn(src, "_shipPaint")
+    assert "function _shipInTeam(d){ return _shipPool(d); }" in src     # SHIP-TEAM-OFF-1: no Team picker; the filter bar narrows Shipped
+    assert "_shipInTeam(d).filter(_rbMatch)" in src                      # RESOLVED-BY-1: _shipVisible = pool + the Resolved by filter
+    assert "var vis=_shipVisible(d);" in _fn(src, "_shipPaint")
 
 
 def test_release_list_and_detail_follow_the_filters():
