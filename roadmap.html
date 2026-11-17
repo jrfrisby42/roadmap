@@ -24698,7 +24698,7 @@ if ('serviceWorker' in navigator) {
   var root, _origOpenItemPage = null, _origRenderKanban = null;
   var _boards = [], _betaHideEmpty = false, _sprints = [], _releases = [], _origRenderPlanning = null;
   var state = {
-    view:'gantt', collapsed:false, project:'__all__', board:'__all__', planTab:'plan',
+    view:'gantt', collapsed:false, project:'__all__', board:'__all__', planTab:'releases',   /* PLAN-TABS-1: Releases is the first + default tab */
     defaultApplied:false, userChanged:false,   // RAIL-COLLAPSED-2 Part 3: default-apply-once + first-interaction guards
     sprintFilter:'',   // Stage 3: Kanban sprint scope (URL ?sprint=), rides the shared filter machinery
     saved:[], onItem:false, itemId:null, pop:null, itemFromApp:false,
@@ -25901,7 +25901,7 @@ if ('serviceWorker' in navigator) {
     if (view==='gantt' && _ganttItems==='all') params.set('items','all');   // GANTT-FOCUS-1: absent = Projects only (the default)
     var qs = params.toString();
     var base = '/'+view;
-    if (view==='planning' && state.planTab && state.planTab!=='plan') base = '/planning/'+state.planTab;  // planning sub-tab is URL state
+    if (view==='planning' && state.planTab && state.planTab!=='releases') base = '/planning/'+state.planTab;  // planning sub-tab is URL state (PLAN-TABS-1: /planning = Releases, /planning/plan = Plan)
     if (view==='my-home' && state.homeTab && state.homeTab!=='assigned') base = '/my-home/'+state.homeTab;  // home sub-tab is URL state
     if (view==='admin') base = _adminPathFromState();  // ADMIN-URL-1: admin tab is URL state (Owners default -> bare /admin)
     if (view==='team-calendar' && state.calTab && state.calTab!=='month') base = '/team-calendar/'+state.calTab;  // Stage 2c: tab is path state
@@ -29597,7 +29597,7 @@ if ('serviceWorker' in navigator) {
     // acceptable for internal use and MUST be closed before view visibility is relied upon as a
     // commercial entitlement boundary.
     if (!_viewEnabled(view)){ navigate('/'+_firstEnabledView(), replace); return; }
-    if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan'; }
+    if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases|plan)/); state.planTab = pm ? pm[1] : 'releases'; }
     if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching|todos)/); state.homeTab = hm ? hm[1] : 'assigned'; }
     if (view==='admin'){ var _adt=_adminTargetFromPath(path); state.adminTab=_adt.top; state.adminSubTab=_adt.sub; }   // ADMIN-URL-1: sub-path -> tab (regex above unchanged)
     if (view==='team-calendar'){ state.calTab = _calTabFromURL(path, u.searchParams); _calSeedDateFromURL(u.searchParams); _calSeedFiltersFromURL(u.searchParams); }   // Stage 2c/5a: tab + period + filters before render/syncURL
@@ -29656,7 +29656,7 @@ if ('serviceWorker' in navigator) {
     if (initial && !_frzHasFilterParams(location.search) && !_frzBootSpecifiesDest() && CFG[vm[1]] && (CFG[vm[1]].chips||[]).length){
       if(_frzApplyDefaultFilter(vm[1])) return;   // applied the default onto the REQUESTED view (qs-only); false = no default (or cache empty on a first load -> the post-hydration path applies it) -> continue
     }
-    if (vm[1]==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
+    if (vm[1]==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases|plan)/); state.planTab = pm ? pm[1] : 'releases';
       // Stage 1b fix: seed state.releaseId from ?release= HERE, before rerender + the first syncURL
       // emit - otherwise syncURL writes a release-less URL (stripping the param) before the restore
       // reads it. With it set, syncURL preserves ?release= and renderReleasesTab auto-expands the row.
@@ -29684,7 +29684,7 @@ if ('serviceWorker' in navigator) {
       var path = location.pathname.replace(/\/+$/,'');
       var vm = path.match(/^\/(gantt|kanban|list|planning|dashboard|reports|my-home|admin|team-calendar|team-board)/);
       var view = vm? vm[1] : (st.frzView || state.view);
-      if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases)/); state.planTab = pm ? pm[1] : 'plan';
+      if (view==='planning'){ var pm=path.match(/^\/planning\/(sprints|releases|plan)/); state.planTab = pm ? pm[1] : 'releases';
         state.releaseId = (state.planTab==='releases') ? (new URLSearchParams(location.search).get('release')||null) : null; }   // Stage 1b: seed before rerender (popstate doesn't syncURL, but keep symmetric + avoids a stale-expand flash)
       if (view==='my-home'){ var hm=path.match(/^\/my-home\/(recent|watching|todos)/); state.homeTab = hm ? hm[1] : 'assigned'; }
       if (view==='admin'){ var _adt3=_adminTargetFromPath(path); state.adminTab=_adt3.top; state.adminSubTab=_adt3.sub; }   // ADMIN-URL-1: back/forward sub-path -> tab (regex above unchanged)
@@ -31734,7 +31734,7 @@ if ('serviceWorker' in navigator) {
     if(state.onItem) return;   // never re-show/repaint planning while an item page is open
     var host = document.getElementById('planningView'); if(!host) return;
     host.style.display='flex'; host.style.flexDirection='column'; host.style.height='100%'; host.style.minHeight='0';
-    var tab = state.planTab||'plan';
+    var tab = state.planTab||'releases';
     // UI polish (item 5): a compact, non-interactive scenario chip sits by the view tabs (where
     // attention already is) whenever scenario mode is active - unmissable without being alarming.
     // The bottom banner still owns Discard/Commit; this only signals the mode.
@@ -31742,14 +31742,14 @@ if ('serviceWorker' in navigator) {
       ? '<span class="frz-scn-chip"><span class="sb-dot"></span>Scenario · nothing saved</span>' : '';
     host.innerHTML =
       '<div class="frz-plan-tabs">'+
-        '<button class="frz-plan-tab '+(tab==='plan'?'is-active':'')+'" data-plantab="plan">Plan</button>'+
+        '<button class="frz-plan-tab '+(tab==='releases'?'is-active':'')+'" data-plantab="releases">Releases</button>'+   /* PLAN-TABS-1: Releases, Sprints, Plan */
         '<button class="frz-plan-tab '+(tab==='sprints'?'is-active':'')+'" data-plantab="sprints">Sprints</button>'+
-        '<button class="frz-plan-tab '+(tab==='releases'?'is-active':'')+'" data-plantab="releases">Releases</button>'+
+        '<button class="frz-plan-tab '+(tab==='plan'?'is-active':'')+'" data-plantab="plan">Plan</button>'+
         scnChip+
       '</div>'+
       '<div class="frz-plan-body" id="frzPlanBody"></div>';
     host.querySelectorAll('[data-plantab]').forEach(function(b){
-      b.addEventListener('click', function(){ var t=b.getAttribute('data-plantab'); navigate('/planning'+(t==='plan'?'':'/'+t), false); });
+      b.addEventListener('click', function(){ var t=b.getAttribute('data-plantab'); navigate('/planning'+(t==='releases'?'':'/'+t), false); });
     });
     var body = document.getElementById('frzPlanBody');
     if(tab!=='plan') body.classList.add('frz-plan-body--single');   // single scrollable column for Sprints/Releases
@@ -32877,7 +32877,7 @@ if ('serviceWorker' in navigator) {
   // Finished work for one calendar month, grouped by the project it belongs to, from GET /api/shipped. The
   // server counts with the exec deck's own rules (_exec_ctx), so this page and the monthly slides agree.
   // Nothing to create or link: each item's ship date is its Jira Done date, else the day Flow saw it finish.
-  var _ship = { month:'', team:'*', rb:'*', cache:{} };   // cache[YYYY-MM] = {d, ts}; rb: RESOLVED-BY-1 filter (* | support | dev | check)
+  var _ship = { month:'', rb:'*', cache:{} };   // cache[YYYY-MM] = {d, ts}; rb: RESOLVED-BY-1 filter (* | support | dev | check)
   var _SHIP_FRESH_MS = 60000;
   function _shipMonthLabel(ym){ var a=String(ym||'').split('-'); var d=new Date(+a[0], (+a[1]||1)-1, 1); return isNaN(d) ? String(ym) : d.toLocaleDateString('en-US',{month:'long',year:'numeric'}); }
   function _shipDay(iso){ var a=String(iso||'').split('-'); var d=new Date(+a[0], (+a[1]||1)-1, +a[2]||1); return isNaN(d) ? String(iso) : d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
@@ -32892,7 +32892,10 @@ if ('serviceWorker' in navigator) {
       return _planFilterPass(p, f, x.team||'');
     });
   }
-  function _shipInTeam(d){ return _shipPool(d).filter(function(x){ return _ship.team==='*' || (x.team||'')===_ship.team; }); }
+  // SHIP-TEAM-OFF-1: Shipped has no Team picker of its own any more - the filter bar's Team chip narrows it
+  // (_shipPool). _shipFocusTeam = that chip when exactly one Team is picked (names the Copy text, "also fixed").
+  function _shipInTeam(d){ return _shipPool(d); }
+  function _shipFocusTeam(){ var f=_planFilters(); return (f.dev && f.dev.length===1) ? f.dev[0] : null; }
   // RESOLVED-BY-1: the Resolved by filter narrows within the Team pick. "check" = Jira was not clear.
   function _rbUnsure(r){ return !!(r && !r.sure && r.src!=='person'); }
   function _rbMatch(x){
@@ -32904,7 +32907,7 @@ if ('serviceWorker' in navigator) {
   // Items a developer on the focus Team (the Shipped Team pick, or a single Team in the filter bar) fixed
   // for a tracked Team like Support. They stay counted under Support; this only credits the dev Team.
   function _rbAlsoFixed(d){
-    var f=_planFilters(), focus=_ship.team!=='*' ? _ship.team : (f.dev && f.dev.length===1 ? f.dev[0] : null);
+    var f=_planFilters(), focus=_shipFocusTeam();
     if(!focus || _ship.rb!=='*' || (d.rbTeams||[]).indexOf(focus)>=0) return { team:null, items:[] };
     var g={}; Object.keys(f).forEach(function(k){ g[k]=f[k]; }); g.dev=null;
     var byId={}; (_val('projects',[])||[]).forEach(function(p){ byId[p.id]=p; });
@@ -32944,7 +32947,7 @@ if ('serviceWorker' in navigator) {
   }
   function _shipCopy(d){
     var vis=_shipVisible(d), groups=_shipGroups(vis);
-    var title='Shipped - '+_shipMonthLabel(d.month)+(_ship.team!=='*' ? ' - '+(_ship.team||'No team') : '')+': '+_shipSummary(d, vis);
+    var ft=_shipFocusTeam(), title='Shipped - '+_shipMonthLabel(d.month)+(ft ? ' - '+ft : '')+': '+_shipSummary(d, vis);
     var txt=[title, ''], html=['<p><b>'+esc(title)+'</b></p>'];
     groups.forEach(function(g){
       var gn=(g.name||'Other work')+' ('+g.items.length+')';
@@ -32973,15 +32976,9 @@ if ('serviceWorker' in navigator) {
   function _shipPaint(sec){
     var hit=_ship.month && _ship.cache[_ship.month], d=hit && hit.d;
     if(!d){ sec.innerHTML='<div class="frz-ship-head"><div class="frz-ship-title">Shipped</div></div><div class="frz-ship-empty">Loading...</div>'; return; }
-    var counts={}; _shipPool(d).forEach(function(x){ var t=x.team||''; counts[t]=(counts[t]||0)+1; });
-    var tOrder=(d.teamOrder||[]).filter(function(t){ return counts[t]; });
-    Object.keys(counts).sort().forEach(function(t){ if(t && tOrder.indexOf(t)<0) tOrder.push(t); });
-    if(counts['']) tOrder.push('');
-    if(_ship.team!=='*' && tOrder.indexOf(_ship.team)<0) tOrder.push(_ship.team);   // keep the pick listed (0) in a month it has nothing
-    var tOpts='<option value="*">All teams</option>'+tOrder.map(function(t){ return '<option value="'+escA(t)+'"'+(t===_ship.team?' selected':'')+'>'+esc(t||'No team')+' ('+(counts[t]||0)+')</option>'; }).join('');
     var mOpts=(d.months||[]).map(function(m){ return '<option value="'+escA(m.ym)+'"'+(m.ym===d.month?' selected':'')+'>'+esc(_shipMonthLabel(m.ym))+'</option>'; }).join('');
     var vis=_shipVisible(d);
-    // RESOLVED-BY-1: counts over the Team pick (before the Resolved by filter); the select + summary line
+    // RESOLVED-BY-1: counts over the filtered pool (before the Resolved by filter); the select + summary line
     // appear only when the month has tagged items.
     var inTeam=_shipInTeam(d), rbN={support:0, dev:0, check:0}, rbTeams={};
     inTeam.forEach(function(x){ var r=x.rb; if(!r) return; rbN[r.by]++; if(_rbUnsure(r)) rbN.check++; if(r.by==='dev'){ var k=r.team||'no Team'; rbTeams[k]=(rbTeams[k]||0)+1; } });
@@ -33008,11 +33005,11 @@ if ('serviceWorker' in navigator) {
       }).join('') : '';
     var alsoHtml = also.items.length ? '<div class="frz-ship-grp frz-rb-also"><div class="frz-ship-gh"><span class="frz-ship-gname">Also fixed for '+esc(rbName)+'</span><span class="frz-ship-gn">'+also.items.length+'</span><span class="frz-rb-also-sub">counted under '+esc(rbName)+'</span></div>'+also.items.map(_shipRow).join('')+'</div>' : '';
     var body = (groupsHtml || alsoHtml) ? groupsHtml+alsoHtml
-      : '<div class="frz-ship-empty">Nothing shipped in '+esc(_shipMonthLabel(d.month))+(_ship.team!=='*' ? ' for '+esc(_ship.team||'No team') : '')+(_planFiltersOn(_planFilters()) ? ' that matches the filters' : '')+'.</div>';
+      : '<div class="frz-ship-empty">Nothing shipped in '+esc(_shipMonthLabel(d.month))+(_planFiltersOn(_planFilters()) ? ' that matches the filters' : '')+'.</div>';
     sec.innerHTML='<div class="frz-ship-head">'+
         '<div class="frz-ship-title">Shipped</div>'+
         '<select class="frz-fld frz-ship-sel" data-shipmonth aria-label="Month">'+mOpts+'</select>'+
-        '<select class="frz-fld frz-ship-sel" data-shipteam aria-label="Team">'+tOpts+'</select>'+rbSel+
+        rbSel+
         '<span class="frz-ship-sum">'+esc(_shipSummary(d, vis)+(also.items.length ? ' · also fixed '+also.items.length+' '+rbName+' item'+(also.items.length===1?'':'s') : ''))+'</span>'+
         '<button class="frz-viewopt" data-shipcopy'+(vis.length?'':' disabled')+' title="Copy the list, grouped by project, to paste into an email or report">Copy</button>'+
       '</div>'+rbLine+
@@ -33020,7 +33017,6 @@ if ('serviceWorker' in navigator) {
       '<div class="frz-ship-note">Finished work by the date it was done in Jira (or in Flow when there is no Jira date), counted the same way as the monthly exec slides.'+
         (rbAny ? '<br>Resolved by: set from Jira (linked code or Code Review means Dev; no developer means Support). A faded tag with a ? means Jira was not clear.'+(_blCanEdit() ? ' Click a ? tag to confirm it, click again to switch; Jira never overrides a person.' : '') : '')+'</div>';
     sec.querySelector('[data-shipmonth]').addEventListener('change', function(){ _shipLoad(sec, this.value); });
-    sec.querySelector('[data-shipteam]').addEventListener('change', function(){ _ship.team=this.value; _shipPaint(sec); });
     var rbs=sec.querySelector('[data-shiprb]'); if(rbs) rbs.addEventListener('change', function(){ _ship.rb=this.value; _shipPaint(sec); });
     var rbc=sec.querySelector('[data-rbcheck]'); if(rbc) rbc.addEventListener('click', function(){ _ship.rb = _ship.rb==='check' ? '*' : 'check'; _shipPaint(sec); });
     _rbWirePills(sec);

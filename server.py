@@ -5860,6 +5860,21 @@ def update_project(pid: int, body: dict, background: BackgroundTasks = None,
                 merged[_srv] = old[_srv]
             else:
                 merged.pop(_srv, None)
+        # CHECKLIST-RETYPE-1: changing an item to a Type with a checklist template adds that template's steps
+        # (unticked, optional flags kept) when the item has none yet. This is how a portal ticket that comes
+        # in as a generic Type (IT's portal offers only Task) gets its Onboarding/Offboarding steps once staff
+        # set the real Type. An item that already has steps keeps them; the portal never shows steps.
+        if (merged.get("type") or "") != (old.get("type") or "") and not merged.get("checklist"):
+            try:
+                _trow = c.execute("SELECT value FROM config WHERE key='types'").fetchone()
+                _tdef = next((t for t in (json.loads(_trow["value"]) if _trow else [])
+                              if isinstance(t, dict) and t.get("name") == merged.get("type")), None)
+                _cl = _checklist_fresh((_tdef or {}).get("checklist"))
+                if _cl:
+                    merged["checklist"] = _cl
+                    changes["checklist"] = {"from": None, "to": f"{len(_cl)} steps from the {merged.get('type')} template"}
+            except Exception as e:
+                log.warning(f"[Checklist] template on retype failed for {team} #{pid}: {e}")
         if "departments" in body:
             # DEPT-PICKER-1: close the vocabulary on update. Grandfather set = the departments in the
             # STORED blob (`old`, loaded from the DB above), NOT the incoming payload: update_project
