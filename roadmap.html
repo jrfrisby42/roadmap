@@ -32531,23 +32531,31 @@ if ('serviceWorker' in navigator) {
   }
 
   // ════════ Sprints tab (Feature C) ════════
-  function sprintStats(sp){
+  // SPRINTS-FILTER-1: f (optional, from _planFilters) narrows the sprint to matching items, for DISPLAY only.
+  // A snapshot row is tested against the item as it is now (a deleted item never matches). `all` = unfiltered
+  // count; `carry` = filtered carry-over (snapshot rows that were not completed).
+  function sprintStats(sp, f){
+    var on=!!(f && _planFiltersOn(f));
     // Stage 1: a completed/discarded sprint reads its DURABLE snapshot (captured at
     // completion), never live membership - carried-over items have moved off, so live
     // membership would under-report (the 0/0 bug). Planned/Active sprints have no
     // snapshot yet and fall back to the live computation.
     if(sp && sp.snapshot && Array.isArray(sp.snapshot.items)){
-      var it=sp.snapshot.items;
+      var it=sp.snapshot.items, allS=it.length;
+      if(on){ var byId={}; (_val('projects',[])||[]).forEach(function(p){ byId[p.id]=p; });
+              it=it.filter(function(x){ var p=byId[x.id]; return !!p && _planFilterPass(p, f); }); }
       var doneS=it.filter(function(x){ return x.outcome==='completed'; });
       var committedS=it.reduce(function(s,x){ return s+(+x.points||0); },0);
       var completedS=doneS.reduce(function(s,x){ return s+(+x.points||0); },0);
-      return { items:it, total:it.length, done:doneS.length, committed:committedS, completed:completedS, snapshot:true, reconstructed:!!sp.snapshot.reconstructed };
+      return { items:it, total:it.length, all:allS, done:doneS.length, committed:committedS, completed:completedS,
+               carry:(on ? it.length-doneS.length : (sp.carryOver||0)), snapshot:true, reconstructed:!!sp.snapshot.reconstructed };
     }
-    var items=sprintItems(sp.id);
+    var items=sprintItems(sp.id), all=items.length;
+    if(on) items=items.filter(function(p){ return _planFilterPass(p, f); });
     var done=items.filter(function(p){ return isTerm(p.status); });
     var committed=items.reduce(function(s,p){ return s+(+p.storyPoints||0); },0);
     var completed=done.reduce(function(s,p){ return s+(+p.storyPoints||0); },0);
-    return { items:items, total:items.length, done:done.length, committed:committed, completed:completed, snapshot:false };
+    return { items:items, total:items.length, all:all, done:done.length, committed:committed, completed:completed, carry:(sp.carryOver||0), snapshot:false };
   }
   // Snapshot row renderer (snapshot items are {id,key,name,points,outcome}, not live projects)
   function miniSnapRow(it){
@@ -32566,8 +32574,14 @@ if ('serviceWorker' in navigator) {
   function renderSprintsTab(host){
     var sprints=_sprints.slice().sort(function(a,b){ return (b.startDate||'').localeCompare(a.startDate||'') || (b.id||'').localeCompare(a.id||''); });
     if(!sprints.length){ host.innerHTML='<div class="frz-plan-stub">No sprints yet - plan one from the Plan tab.</div>'; return; }
+    // SPRINTS-FILTER-1: with filters on, counts cover matching items only and a sprint with none is hidden.
+    var sf=_planFilters(), sfOn=_planFiltersOn(sf), stBy={}, spTotal=sprints.length;
+    sprints.forEach(function(sp){ stBy[sp.id]=sprintStats(sp, sf); });
+    if(sfOn) sprints=sprints.filter(function(sp){ return stBy[sp.id].total>0; });
+    var spHidden=spTotal-sprints.length;
+    if(!sprints.length){ host.innerHTML='<div class="frz-plan-stub">No sprints have items that match the filters.</div>'; return; }
     var rows=sprints.map(function(sp){
-      var st=sprintStats(sp);
+      var st=stBy[sp.id];
       var mirrored=_sprintIsMirrored(sp);   // JIRA-SPRINT-1: Jira-owned = read-only, no edit/discard
       var badge='<span class="frz-sprint-badge" style="'+(SPRINT_BADGE[sp.state]||'')+'">'+esc(sp.state)+'</span>'+
         (mirrored?' <span class="frz-sprint-badge" style="background:var(--frz-accent-soft);color:var(--frz-accent)" title="Mirrored from Jira - read-only in Flow">Jira</span>':'');
@@ -32582,18 +32596,20 @@ if ('serviceWorker' in navigator) {
         '<div class="frz-tbl-c">'+badge+'</div>'+
         '<div class="frz-tbl-c">'+st.done+'/'+st.total+'</div>'+
         '<div class="frz-tbl-c">'+st.completed+'/'+st.committed+'</div>'+
-        '<div class="frz-tbl-c">'+(sp.carryOver||0)+'</div>'+
+        '<div class="frz-tbl-c">'+st.carry+'</div>'+
       '</div>'+
       '<div class="frz-tbl-detail" id="frzSpDetail_'+escA(sp.id)+'" hidden></div>';
     }).join('');
     host.innerHTML='<div class="frz-tbl">'+
-      '<div class="frz-tbl-head"><div class="frz-tbl-c frz-tbl-name">Sprint</div><div class="frz-tbl-c">Dates</div><div class="frz-tbl-c">State</div><div class="frz-tbl-c">Items</div><div class="frz-tbl-c" title="'+escA(metricLabel)+'">'+esc(metricLabel)+'</div><div class="frz-tbl-c">Carry-over</div></div>'+rows+'</div>';   // METRIC-LABEL-1 / COUNTER-ALIGN-1: title for hover when truncated
+      '<div class="frz-tbl-head"><div class="frz-tbl-c frz-tbl-name">Sprint</div><div class="frz-tbl-c">Dates</div><div class="frz-tbl-c">State</div><div class="frz-tbl-c">Items</div><div class="frz-tbl-c" title="'+escA(metricLabel)+'">'+esc(metricLabel)+'</div><div class="frz-tbl-c">Carry-over</div></div>'+rows+'</div>'+   // METRIC-LABEL-1 / COUNTER-ALIGN-1: title for hover when truncated
+      (spHidden ? '<div class="frz-ship-note">'+spHidden+' sprint'+(spHidden!==1?'s':'')+' with no matching items hidden by the filters.</div>' : '');
     host.querySelectorAll('[data-sprintrow]').forEach(function(row){
       row.addEventListener('click', function(){
         var id=row.getAttribute('data-sprintrow'); var det=document.getElementById('frzSpDetail_'+id); if(!det) return;
         if(!det.hidden){ det.hidden=true; det.innerHTML=''; return; }
-        var sp=sprintById(id); var st=sprintStats(sp);
+        var sp=sprintById(id); var st=sprintStats(sp, _planFilters());
         var hint = (st.snapshot && st.reconstructed) ? '<div class="frz-snap-hint">Figures reconstructed from activity history (points are current values).</div>' : '';
+        if(st.total<st.all) hint = '<div style="padding:2px 0 8px;color:var(--frz-text-muted);font-size:12px">Showing '+st.total+' of '+st.all+' items (filters on)</div>'+hint;   // SPRINTS-FILTER-1
         var body = st.items.length
           ? (st.snapshot ? st.items.map(miniSnapRow).join('') : st.items.map(function(p){ return miniItemRow(p,true); }).join(''))
           : '<div class="frz-plan-empty">No items.</div>';
