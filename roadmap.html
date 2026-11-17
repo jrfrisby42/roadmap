@@ -4495,6 +4495,8 @@ function _ganttScrollToToday(){ _ganttKeep = null; render(); }
 function isParentCollapsed(id, depth){ const v = collapsedParents[id]; return v === undefined ? (depth > 0 || _ganttProjectsOnly()) : v; }
 function _ganttProjectsOnly(){ return _ganttItems === 'projects' && document.body.classList.contains('frz-beta-active'); }
 const unschedOpen = {};       // GANTT-DECLUTTER-1: group label -> true when its "Unscheduled (N)" bucket is expanded (default collapsed)
+let _ganttShowNew = false;    // GANTT-NEW-HIDE-1: this session asked to see the untouched New requests too
+window._frzShowNewRequests = function(){ _ganttShowNew = true; render(); };
 const otherWorkOpen = {};     // GANTT-WORK-1: team key -> true when its "Other work" row lists the in-progress items
 // GANTT-WORK-1: one health rule for in-flight work, shared by the Team Board cards and the Gantt project rows,
 // so the two views never disagree. due: Date|null; total/done: leaf work; lastChange: Date|null.
@@ -5167,9 +5169,11 @@ function render(){
     // poisoning the min/max - filter(Boolean) drops them, so a mix of dated + undated still derives a span.
     // GANTT-SPRINT-DATES-1: a descendant with no dates of its own lends its sprint's dates (current sprint, else the
     // last one it was in) so a story in a sprint still shapes its project's bar. Display only, like the roll-up.
-    const _sb = c => (c.start || c.due || c.revised) ? null : _sprintSpanOf(c);
-    const starts = kids.map(c=>c.start || (_sb(c) || {}).start).filter(Boolean).sort();
-    const dues   = kids.map(c=>c.revised||c.due||(_sb(c) || {}).due).filter(Boolean).sort();   // revised wins over due
+    // GANTT-SPRINT-GUESS-1: the same goes for a start Flow only guessed (startAuto - the item went active with no
+    // start, nobody typed it): its sprint's dates win over that guess and the estimate-based due that follows it.
+    const _sb = c => (c.revised || ((c.start || c.due) && !c.startAuto)) ? null : _sprintSpanOf(c);
+    const starts = kids.map(c => { const s = _sb(c); return s ? s.start : c.start; }).filter(Boolean).sort();
+    const dues   = kids.map(c => { const s = _sb(c); return s ? s.due : (c.revised||c.due); }).filter(Boolean).sort();   // revised wins over due
     const _fromSprint = kids.filter(c => _sb(c)).length;
     // ROLLUP-SYNC-1: status follows rule A (the Jira convention) - the SAME rule the server now writes onto
     // the parent (_rollup_plan), so the Gantt and the item never disagree. Over the leaf work (descendants
@@ -5316,6 +5320,16 @@ function render(){
     return lo <= _winHi && hi >= _winLo;
   }
   let _outOfWindow = 0;
+  // GANTT-NEW-HIDE-1: a request nobody has picked up - still in the default ("New") status, no dates, no assignee,
+  // and nothing under it that is assigned, started or dated - is left off the Gantt (it lives in the List and the
+  // Plan backlog). Assigning it, dating it, or moving it on (in Flow or via Jira) brings it back. Flow shell only.
+  let _newHidden = 0;
+  const _hideNewOn = !_ganttShowNew && document.body.classList.contains('frz-beta-active');
+  function _isNewRequest(p){
+    if(!statusIsDefault[p.status] || p.assignee || p.start || p.due || p.revised || p.expected) return false;
+    if(_drawsBar(p)) return false;
+    return !_rollupDescendants(p.id).some(c => !c.archived && (c.assignee || !statusIsDefault[c.status] || c.start || c.due));
+  }
   // GANTT-FOCUS-1 "Projects only": an item stays when it, or any ancestor, is of a project type (Team
   // Settings - projectTypes), so a project keeps its children to expand into. Standalone work drops out.
   const _projOnly = _ganttProjectsOnly();
@@ -5344,7 +5358,8 @@ function render(){
     (!ownerScope || p.dev === ownerScope) &&
     itemMatchesSearch(p, searchQ) &&
     (!_projOnly || _inProject(p)) &&
-    (!_spanNow || _inWindow(p) || (_outOfWindow++, false))
+    (!_spanNow || _inWindow(p) || (_outOfWindow++, false)) &&
+    (!_hideNewOn || !_isNewRequest(p) || (_newHidden++, false))
   );
   // GANTT-FOCUS-4: in "Projects only" a child never gets a row of its own. Each item belongs to its
   // top-level project: it is grouped where that project is grouped (so a project's work stays in one tree
@@ -5934,6 +5949,11 @@ function render(){
   _rollTeam = null;   // GANTT-TEAM-SLICES-1: later readers (hover, connectors) see whole items
 
   // GANTT-DECLUTTER-1: say what the "Now" window left out, with a one-click way back to everything.
+  if(_newHidden){   // GANTT-NEW-HIDE-1
+    lRows += `<div class="left-row span-foot"><span class="proj-name" title="Still New, with no dates, no assignee and nothing under them started. They are in the List and the Plan backlog.">${_newHidden} new request${_newHidden!==1?'s':''} not shown (not picked up yet)</span><button type="button" class="span-foot-btn" onclick="event.stopPropagation();window._frzShowNewRequests&&window._frzShowNewRequests()">Show</button></div>`;
+    cH += `<div class="chart-row span-foot" style="width:${totalPx}px">${wCells}</div>`;
+    rowIndex++;
+  }
   if(_outOfWindow){
     lRows += `<div class="left-row span-foot"><span class="proj-name">${_outOfWindow} item${_outOfWindow!==1?'s':''} outside the current window</span><button type="button" class="span-foot-btn" onclick="event.stopPropagation();window._frzSetGanttSpan&&window._frzSetGanttSpan('all')">Show all</button></div>`;
     cH += `<div class="chart-row span-foot" style="width:${totalPx}px">${wCells}</div>`;
