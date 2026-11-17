@@ -33179,8 +33179,11 @@ if ('serviceWorker' in navigator) {
     }).then(function(res){
       var ts=(res && res.updatedTs) || {};
       (_val('projects',[])||[]).forEach(function(p){ if(ids.indexOf(p.id)>=0){ p.release=rel.id; if(ts[p.id]) p.updated_ts=ts[p.id]; } });
-      var r=releaseById(rel.id);
-      if(r && !String(r.notes||'').trim()){ r.notes=_frzGenReleaseNotes(rel.id); return saveReleases().then(function(){ return res; }); }
+      var r=releaseById(rel.id), dirty=false;
+      // REL-STATE-1: Shipped work is finished, so adding it to an existing release also marks that release Released.
+      if(r && r.state!=='Released'){ r.state='Released'; r.releasedDate=r.targetDate||end; dirty=true; }
+      if(r && !String(r.notes||'').trim()){ r.notes=_frzGenReleaseNotes(rel.id); dirty=true; }
+      if(dirty) return saveReleases().then(function(){ return res; });
       return res;
     }).then(function(res){
       _ship.pick=null; state.releaseId=rel.id;
@@ -33247,10 +33250,14 @@ if ('serviceWorker' in navigator) {
     var relHidden=relTotal-rels.length;
     var rows=rels.map(function(r){
       var pr=prBy[r.id];
-      var badge='<span class="frz-sprint-badge" style="'+(RELEASE_BADGE[r.state]||'')+'">'+esc(r.state)+'</span>';
+      // REL-STATE-1: a release whose items are all finished reads Released, whatever its stored flag says (the
+      // flag used to change only via the retired "Mark released" button). Counted over every item, not the filtered view.
+      var full=rfOn ? releaseProgress(r) : pr;
+      var shownState=(r.state!=='Released' && full.total>0 && full.done===full.total) ? 'Released' : r.state;
+      var badge='<span class="frz-sprint-badge" style="'+(RELEASE_BADGE[shownState]||'')+'">'+esc(shownState)+'</span>';
       var bar='<div class="frz-prog"><div class="frz-prog-bar" style="width:'+pr.pct+'%"></div></div><span class="frz-prog-txt">'+pr.done+'/'+pr.total+' done</span>';
       return '<div class="frz-rel-row" data-relrow="'+escA(r.id)+'">'+
-        '<div class="frz-rel-main"><div class="frz-tbl-title">'+esc(r.name)+'</div><div class="frz-tbl-sub">'+((r.targetDate||r.releasedDate) ? (r.state==='Released' ? 'Released ' : 'Target ')+fmtD(r.targetDate||r.releasedDate) : '')+' · '+pr.total+' item'+(pr.total===1?'':'s')+'</div></div>'+
+        '<div class="frz-rel-main"><div class="frz-tbl-title">'+esc(r.name)+'</div><div class="frz-tbl-sub">'+((r.targetDate||r.releasedDate) ? (shownState==='Released' ? 'Released ' : 'Target ')+fmtD(r.targetDate||r.releasedDate) : '')+' · '+pr.total+' item'+(pr.total===1?'':'s')+'</div></div>'+
         '<div class="frz-rel-state">'+badge+'</div>'+
         '<div class="frz-rel-prog">'+bar+'</div>'+
         '<div class="frz-rel-actions"><button class="frz-iconbtn" data-reledit="'+escA(r.id)+'" title="Edit"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg></button>'+
