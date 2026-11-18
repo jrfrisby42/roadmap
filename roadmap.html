@@ -12279,11 +12279,12 @@ const AC_SORT_ORDER = {
 //   _openActs === []/[.] -> loaded (may legitimately be empty)
 //   _openActsErr === true -> last fetch failed (show error, not "all clear")
 let _openActs = null, _openActsErr = false, _openActsInited = false, _openActsLoading = false;
+let _openActsPromise = null;   // PLAN-ACTS-LOOP-1: the request in flight, so a cold read waits for it
 function _fetchOpenActs(){
   // Always fetch fresh - loadActivities() calls this after every activity mutation, so it must
   // not return a coalesced pre-mutation result. Defensive/cold reads use _ensureOpenActs() below.
   _openActsLoading = true;
-  return API.get('/api/activities?status=open').then(rows => {
+  return _openActsPromise = API.get('/api/activities?status=open').then(rows => {
     _openActs = Array.isArray(rows) ? rows : [];
     _openActsErr = false; _openActsLoading = false;
     // The first load can land AFTER the initial render() (boot races the capacity chain against
@@ -12298,9 +12299,16 @@ function _fetchOpenActs(){
 }
 function _ensureOpenActs(){
   // Fetch only if nothing is loaded and nothing is in flight (used by defensive cold-path reads).
-  if(_openActs !== null || _openActsLoading) return Promise.resolve(_openActs || []);
+  // PLAN-ACTS-LOOP-1: while a request is in flight, WAIT for it. This used to resolve at once with nothing,
+  // so a caller that repaints "when the set lands" (the Planning board) repainted immediately, found it still
+  // missing, asked again, and so on - a promise loop that never yields, so the response that would end it
+  // could never arrive: Chrome's "Page Unresponsive" on J.R.'s Planning loads (2026-11-18). Callers also
+  // repaint only once the set is really there, so a failed fetch shows its Retry state instead of looping.
+  if(_openActs !== null) return Promise.resolve(_openActs);
+  if(_openActsLoading && _openActsPromise) return _openActsPromise;
   return _fetchOpenActs();
 }
+let _planActsWait = false, _dashActsWait = false;   // PLAN-ACTS-LOOP-1: one pending repaint per view
 
 async function loadActivities(){
   // Load BOTH in parallel: the capped feed (History consumers) and the uncapped open set (work
@@ -12435,7 +12443,7 @@ function renderAcOpen(){
   // fetch must NOT render as "All clear" - that is the silent-wrong answer this fix removes. Show a
   // distinct Loading / Retry state and repaint when the set lands.
   if(_openActs === null){
-    _ensureOpenActs().then(()=>{ if(document.getElementById('acPaneOpen')) renderAcOpen(); });
+    _ensureOpenActs().then(()=>{ if(_openActs !== null && document.getElementById('acPaneOpen')) renderAcOpen(); });
     pane.innerHTML = _openActsErr
       ? `<div style="text-align:center;padding:48px 20px;color:var(--muted)">
            <strong>Couldn't load open items.</strong>
@@ -14779,7 +14787,7 @@ function renderDashboard(){
   // Needs Decision - start date arrived, not active (ACT-WINDOW-1: uncapped open set, not the 500-window)
   const needsDecisionActs = _openSrc.filter(a=>a.activity_type==='Needs Decision'&&a.source==='System'&&(a.status==='Open'||a.status==='Read'));
   // Cold-boot only: repaint the dashboard once the open set lands, so the three tiles above leave "…".
-  if(!_openReady) _ensureOpenActs().then(()=>{ if(viewMode==='dashboard') renderDashboard(); });
+  if(!_openReady && !_dashActsWait){ _dashActsWait = true; _ensureOpenActs().then(()=>{ _dashActsWait = false; if(_openActs !== null && viewMode==='dashboard') renderDashboard(); }); }
 
   // Helper: click-to-filter card wrapper
   // Store function directly to avoid string eval and extension interference
@@ -16271,7 +16279,7 @@ function applySavedView(viewId){
   } else if(sv.id === 'sys_atrisk'){
     // ACT-WINDOW-1: derive the at-risk owner scope from the uncapped open set. Defensive cold path:
     // if it has not loaded yet, fetch then re-apply, so the view never scopes off a partial window.
-    if(_openActs === null){ _ensureOpenActs().then(()=>applySavedView(viewId)); return; }
+    if(_openActs === null){ _ensureOpenActs().then(()=>{ if(_openActs !== null) applySavedView(viewId); }); return; }
     const atRiskOwners = [...new Set(
       (_openActs || []).filter(a => a.activity_type==='At Risk' && (a.status==='Open'||a.status==='Read'))
                 .map(a => a.owner).filter(Boolean)
@@ -16505,7 +16513,7 @@ function getPlanningItems(){
   const searchQ = getSearchQuery();
   // At-risk item IDs from open activities (ACT-WINDOW-1: uncapped open set, not the 500-window; while it
   // loads the board still shows every non-terminal item, just without the at-risk marker, then repaints).
-  if(_openActs === null) _ensureOpenActs().then(()=>{ if(viewMode==='planning') renderPlanningBoard(); });
+  if(_openActs === null && !_planActsWait){ _planActsWait = true; _ensureOpenActs().then(()=>{ _planActsWait = false; if(_openActs !== null && viewMode==='planning') renderPlanningBoard(); }); }
   const atRiskIds = new Set((_openActs||[]).filter(a=>a.activity_type==='At Risk'&&(a.status==='Open'||a.status==='Read')).map(a=>a.item_id));
 
   return projects.filter(p => {
