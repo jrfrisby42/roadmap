@@ -23391,6 +23391,8 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-relpick-row .frz-bl-name { flex:1; }
   .frz-beta .frz-relpick-cb { margin:0; flex-shrink:0; accent-color:var(--frz-accent); }
   .frz-beta .frz-relpick-row.is-in { cursor:default; opacity:.6; }
+  /* SHIP-REL-MARK-1: "already in a release" badge on a Shipped row (accent tokens, so it follows dark mode) */
+  .frz-beta .frz-ship-relmark { flex-shrink:0; margin-right:8px; font-size:10.5px; font-weight:700; white-space:nowrap; color:var(--frz-accent); background:var(--frz-accent-soft); border-radius:999px; padding:1px 7px; }
   .frz-beta .frz-relpick-in { flex-shrink:0; font-size:10.5px; font-weight:700; color:var(--frz-text-muted); border:1px solid var(--frz-border); border-radius:999px; padding:0 6px; }
   .frz-beta .frz-rel-list { border:1px solid var(--frz-border); border-radius:10px; overflow:hidden; background:var(--frz-bg-surface); }
   .frz-beta .frz-rel-row { display:grid; grid-template-columns:2fr .9fr 1.8fr auto; gap:12px; align-items:center; padding:11px 14px; border-top:1px solid var(--frz-border); }
@@ -33142,8 +33144,10 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
                        : '<input type="checkbox" class="frz-relpick-cb" data-relpick="'+x.id+'"'+(_ship.pick.sel[x.id]?' checked':'')+' aria-label="Include in the release">';
       return '<label class="frz-mini-row frz-ship-row frz-relpick-row'+(inRel?' is-in':'')+'">'+lead+'<span class="frz-bl-name">'+key+esc(x.name)+'</span><span class="frz-rb-right"><span class="frz-bl-meta">'+esc(meta)+'</span>'+_rbPill(x)+'</span></label>';
     }
-    if(inRel) meta += ' · '+inRel.name;
-    return '<a class="frz-mini-row frz-ship-row" href="'+escA(_shipUrl(x.id))+'"><span class="frz-bl-name">'+key+esc(x.name)+'</span><span class="frz-rb-right"><span class="frz-bl-meta">'+esc(meta)+'</span>'+_rbPill(x)+'</span></a>';
+    // SHIP-REL-MARK-1: an item already in a release carries a badge with the release's name (it used to be a
+    // " · 26.10.31" tail on the grey meta text, easy to miss).
+    var relMark = inRel ? '<span class="frz-ship-relmark" title="In release '+escA(inRel.name)+'">✓ '+esc(inRel.name)+'</span>' : '';
+    return '<a class="frz-mini-row frz-ship-row'+(inRel?' is-released':'')+'" href="'+escA(_shipUrl(x.id))+'"><span class="frz-bl-name">'+key+esc(x.name)+'</span><span class="frz-rb-right">'+relMark+'<span class="frz-bl-meta">'+esc(meta)+'</span>'+_rbPill(x)+'</span></a>';
   }
   function _shipSummary(d, vis){
     var pts=0, any=false; vis.forEach(function(x){ if(x.points!=null){ pts+=x.points; any=true; } });
