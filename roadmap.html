@@ -1237,9 +1237,9 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   (function(){
     var KEY = 'frazil_boot_trace', t0 = Date.now(), prev = null, settled = false;
     try { prev = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch(e){}
-    // Only a load that got its data (so it was signed in, not on the login screen) and then never settled counts.
-    window._frzPrevBootTrace = (prev && !prev.done && (t0 - (prev.at || 0)) < 6 * 3600 * 1000 &&
-      (prev.steps || []).some(function(x){ return String(x).indexOf('data@') === 0; })) ? prev : null;
+    // A load that never settled counts (the login screen, leaving the page and classic mode all settle themselves).
+    // It is sent by the next signed-in load, so a freeze before boot() is reported too.
+    window._frzPrevBootTrace = (prev && !prev.done && (t0 - (prev.at || 0)) < 6 * 3600 * 1000) ? prev : null;
     var nav = ''; try { var n = performance.getEntriesByType('navigation')[0]; nav = n ? n.type : ''; } catch(e){}
     var tr = { at: t0, url: location.pathname + location.search.slice(0, 80), nav: nav,
                ctl: !!(navigator.serviceWorker && navigator.serviceWorker.controller), ua: navigator.userAgent.slice(0, 160), steps: [], done: false };
@@ -2996,7 +2996,7 @@ try{window._frzMark&&window._frzMark('script-b')}catch(_e){}   // HANG-PROBE-1
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
-const APP_VERSION = '6.62.59';
+const APP_VERSION = '6.62.60';
 
 // ── JIRA VISIBILITY ──────────────────────────────────────────────────────────
 // Call after jiraConfigured changes to hide/show Jira UI across the app
@@ -11737,6 +11737,7 @@ function _frzShowDraftRecovery(){
 }
 
 async function showLoginWall(reason){
+  try { window._frzMark && window._frzMark('login', true); } catch(_e){}   // HANG-PROBE-1: the login screen is not a freeze
   document.getElementById('loginWall').style.display = 'flex';
   // SESS-1 Part 3.2: a revoked session carries a distinct server reason - show it on the wall instead
   // of the generic "incorrect password" copy, so the user knows re-entering credentials will not help.
@@ -21724,7 +21725,7 @@ async function boot(){
     }
   } catch(e){}
   // Emailed set-password / reset link - handle before anything else (user is not logged in).
-  if(checkPasswordTokenParam()) return;
+  if(checkPasswordTokenParam()){ try { window._frzMark && window._frzMark('pwtoken', true); } catch(_e){} return; }   // HANG-PROBE-1: the set-password screen is not a freeze
   // If no team stored yet, skip API call and go straight to login wall
   const _storedTeam = (() => { try { return localStorage.getItem(SK.team) || ''; } catch(e){ return ''; } })();
   if(!_storedTeam){
@@ -21739,15 +21740,16 @@ async function boot(){
 
   showLoading(true);
   try { window._frzMark && window._frzMark('boot'); } catch(_e){}   // HANG-PROBE-1
+  // HANG-PROBE-1: the previous load froze before it settled - send its trace to the server log. Sent BEFORE the
+  // data request, because some freezes happen before that request goes out.
+  if(window._frzPrevBootTrace){
+    try { console.warn('[HANG-PROBE-1] the previous load did not finish starting up', window._frzPrevBootTrace); } catch(_e){}
+    API.post('/api/client-log', { kind: 'boot-hang', trace: window._frzPrevBootTrace }).catch(()=>{});
+    window._frzPrevBootTrace = null;
+  }
   try {
     const data = await API.get('/api/all');
     try { window._frzMark && window._frzMark('data'); } catch(_e){}
-    // HANG-PROBE-1: the previous load froze before it settled - send its trace to the server log.
-    if(window._frzPrevBootTrace){
-      try { console.warn('[HANG-PROBE-1] the previous load did not finish starting up', window._frzPrevBootTrace); } catch(_e){}
-      API.post('/api/client-log', { kind: 'boot-hang', trace: window._frzPrevBootTrace }).catch(()=>{});
-      window._frzPrevBootTrace = null;
-    }
     projects     = data.projects     || [];
     developers   = data.developers   || [];
     statuses     = data.statuses     || [];

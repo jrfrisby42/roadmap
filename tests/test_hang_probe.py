@@ -25,7 +25,8 @@ def test_client_log_rejects_non_objects(client, admin_headers):
 
 def test_page_traces_start_up_and_reports_an_unsettled_load():
     assert "var KEY = 'frazil_boot_trace'" in HTML
-    assert "indexOf('data@') === 0" in HTML                                     # only signed-in loads count
+    assert "window._frzPrevBootTrace = (prev && !prev.done && (t0 - (prev.at || 0)) < 6 * 3600 * 1000) ? prev : null;" in HTML
+    assert "window._frzMark('login', true)" in HTML                             # the login screen settles itself
     assert "window.addEventListener('pagehide', function(){ window._frzMark('left', true); });" in HTML
     assert "API.post('/api/client-log', { kind: 'boot-hang', trace: window._frzPrevBootTrace })" in HTML
     assert "window._frzMark && window._frzMark('settled', true); }, 10000);" in HTML
