@@ -1230,6 +1230,33 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
     }, 15000);
   };
   window._frzLoadWatch(true);
+  // HANG-PROBE-1: a frozen page (Chrome's "Page Unresponsive") can't run the timer above, and DevTools can't
+  // attach to it. So each start-up step is written to localStorage as it happens; the page marks itself
+  // settled 10s after it is shown. A load that never settled is reported by the next load (boot() posts it
+  // to /api/client-log, which only logs), so the server log says which step froze.
+  (function(){
+    var KEY = 'frazil_boot_trace', t0 = Date.now(), prev = null, settled = false;
+    try { prev = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch(e){}
+    // Only a load that got its data (so it was signed in, not on the login screen) and then never settled counts.
+    window._frzPrevBootTrace = (prev && !prev.done && (t0 - (prev.at || 0)) < 6 * 3600 * 1000 &&
+      (prev.steps || []).some(function(x){ return String(x).indexOf('data@') === 0; })) ? prev : null;
+    var nav = ''; try { var n = performance.getEntriesByType('navigation')[0]; nav = n ? n.type : ''; } catch(e){}
+    var tr = { at: t0, url: location.pathname + location.search.slice(0, 80), nav: nav,
+               ctl: !!(navigator.serviceWorker && navigator.serviceWorker.controller), ua: navigator.userAgent.slice(0, 160), steps: [], done: false };
+    window._frzMark = function(step, done){
+      if(settled) return;
+      try {
+        tr.steps.push(step + '@' + (Date.now() - t0));
+        if(tr.steps.length > 60) tr.steps.splice(1, 1);
+        if(done){ tr.done = true; settled = true; }
+        localStorage.setItem(KEY, JSON.stringify(tr));
+      } catch(e){}
+    };
+    window._frzMark('page');
+    try { if(navigator.serviceWorker) navigator.serviceWorker.addEventListener('controllerchange', function(){ window._frzMark('sw-claim'); }); } catch(e){}
+    window.addEventListener('load', function(){ window._frzMark('load'); });
+    window.addEventListener('pagehide', function(){ window._frzMark('left', true); });   // left normally (reload, Org switch, closed) - not a freeze
+  })();
   document.getElementById('loadingReload').addEventListener('click', function(){
     var go = function(){ location.reload(); };
     try {
@@ -2940,6 +2967,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
 </div>
 
 <script>
+try{window._frzMark&&window._frzMark('script-b')}catch(_e){}   // HANG-PROBE-1
 // ── STORAGE ──
 const SK = { session:'frazil_rm_session', team:'frazil_rm_team' };
 
@@ -21685,8 +21713,16 @@ async function boot(){
   _frzInstallTeamDesyncWatch();
 
   showLoading(true);
+  try { window._frzMark && window._frzMark('boot'); } catch(_e){}   // HANG-PROBE-1
   try {
     const data = await API.get('/api/all');
+    try { window._frzMark && window._frzMark('data'); } catch(_e){}
+    // HANG-PROBE-1: the previous load froze before it settled - send its trace to the server log.
+    if(window._frzPrevBootTrace){
+      try { console.warn('[HANG-PROBE-1] the previous load did not finish starting up', window._frzPrevBootTrace); } catch(_e){}
+      API.post('/api/client-log', { kind: 'boot-hang', trace: window._frzPrevBootTrace }).catch(()=>{});
+      window._frzPrevBootTrace = null;
+    }
     projects     = data.projects     || [];
     developers   = data.developers   || [];
     statuses     = data.statuses     || [];
@@ -21865,9 +21901,11 @@ async function boot(){
     const _vs = document.getElementById('viewSelect'); if(_vs) _vs.value = viewMode;
     initSearch();     // wire the shared search input (the shell relocates it)
     loadSavedViews(); // harmless; the classic saved-view menu is hidden under the shell
+    try { window._frzMark && window._frzMark('boot-tail'); } catch(_e){}   // HANG-PROBE-1
     showLoading(true);
     setTimeout(() => showLoading(false), 6000);
   } else {
+    try { window._frzMark && window._frzMark('classic', true); } catch(_e){}   // HANG-PROBE-1: classic is not traced
     initViewSelect(); // sets viewMode and calls render() or renderKanban()
     applyMobileViewDefault(); // on small screens, default to Kanban
     initSearch();     // wire search input
@@ -21882,16 +21920,21 @@ async function boot(){
 
   // Load activities and run auto-notifications (non-blocking)
   loadActivities().then(()=>{
+    try { window._frzMark && window._frzMark('acts'); } catch(_e){}   // HANG-PROBE-1
     runAutoNotifications();
     runCapacityConflictNotifications();
     updateHamburgerMenu();
+    try { window._frzMark && window._frzMark('acts-end'); } catch(_e){}
   });
 
   // Load all capacity overrides + assignment impacts for accurate calendar + graph
   // on first render (assignment impacts subtract from effective capacity - Phase 1b).
   Promise.all([loadAllCapOverrides(), loadAssignmentData()]).then(() => {
+    try { window._frzMark && window._frzMark('caps'); } catch(_e){}   // HANG-PROBE-1
     _capUsageMap = buildCapacityUsageMap();
+    try { window._frzMark && window._frzMark('caps-render'); } catch(_e){}
     render();
+    try { window._frzMark && window._frzMark('caps-end'); } catch(_e){}
   }).catch(()=>{});
 
   // Check for an interrupted planning session to restore (non-blocking)
@@ -21921,6 +21964,7 @@ boot();
 // ── PWA: register the service worker (installable + cached app shell) ──
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
+    try { window._frzMark && window._frzMark('sw-reg'); } catch(_e){}   // HANG-PROBE-1
     navigator.serviceWorker.register('/sw.js').catch(() => {});
   });
 }
@@ -24326,6 +24370,7 @@ if ('serviceWorker' in navigator) {
   body.frz-beta-active #ipNotes.ip-desc-editable ul[data-type="taskList"] > li:not(:has(> label))::before { cursor:pointer; }
 </style>
 <script>
+try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
 (function(){
   "use strict";
   // ── CONSTRAINT 1: hard no-op for classic (?classic=1) and the set-password flow
@@ -24816,6 +24861,7 @@ if ('serviceWorker' in navigator) {
 
   // ════════ build ════════
   function build(){
+    try { window._frzMark && window._frzMark('build'); } catch(_e){}   // HANG-PROBE-1
     root = document.createElement('div');
     root.className = 'frz-beta';
     root.id = 'frzBeta';
@@ -25133,7 +25179,9 @@ if ('serviceWorker' in navigator) {
       };
       window.renderList._frzWrapped = true;
     }
+    try { window._frzMark && window._frzMark('wire'); } catch(_e){}   // HANG-PROBE-1
     wire();
+    try { window._frzMark && window._frzMark('rail'); } catch(_e){}
     renderRail();
     _frzMyTodosReady(function(){ renderRail(); });   // addendum-B: load the to-do cache once at mount so the My Home badge shows overdue-to-dos on any boot, not only after visiting My Home
     onResize();
@@ -25144,7 +25192,7 @@ if ('serviceWorker' in navigator) {
     _frzCheckReminders(function(){ loadNotifs(); });
     _notifTimer = setInterval(loadNotifs, 60000);
     // Load shared boards + sprints + releases first so deep links mount correctly, then route.
-    loadBoards(function(){ loadSprints(function(){ loadReleases(function(){ routeFromLocation(true); _call('showLoading', false); document.documentElement.classList.remove('frz-boot'); /* FOUC guard: reveal now the rail is mounted + first route rendered */ }); }); });
+    loadBoards(function(){ loadSprints(function(){ loadReleases(function(){ try { window._frzMark && window._frzMark('route:' + location.pathname); } catch(_e){} routeFromLocation(true); try { window._frzMark && window._frzMark('shown'); setTimeout(function(){ window._frzMark && window._frzMark('settled', true); }, 10000); } catch(_e){} _call('showLoading', false); document.documentElement.classList.remove('frz-boot'); /* FOUC guard: reveal now the rail is mounted + first route rendered */ }); }); });
   }
 
   // ════════ rail ════════

@@ -4057,6 +4057,24 @@ def export_team(auth: dict = Depends(require_role("admin"))):
     write_audit(team, "export", _audit_actor("", auth))
     return JSONResponse(data, headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
+# ── HANG-PROBE-1: a page that froze reports how far it got ────────────────────
+# The page keeps a short trace of its start-up steps in localStorage. When a load froze (Chrome's "Page
+# Unresponsive"), the NEXT load posts that trace here so it lands in the server log. Diagnostic only:
+# nothing is stored, the body is capped, it only logs.
+@app.post("/api/client-log")
+async def client_log(request: FRequest, auth: dict = Depends(require_auth)):
+    raw = (await request.body())[:8000]
+    try:
+        body = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        raise HTTPException(422, "Body must be JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(422, "Body must be a JSON object")
+    kind = str(body.get("kind", ""))[:40]
+    log.warning("[client-log] %s team=%s user=%s %s", kind, auth.get("team"), auth.get("username"),
+                json.dumps(body.get("trace"))[:6000])
+    return {"ok": True}
+
 @app.get("/api/all")
 def get_all(auth: dict = Depends(require_auth)):
     # PHASE B BOUNDARY: reads are NOT scoped for Contributors in Phase A - a Contributor
