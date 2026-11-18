@@ -25684,12 +25684,53 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
   }
   // Breakpoint slots (Addendum A3.2 / B2) - NOT continuous measurement. Zoom is absorbed because
   // browser zoom changes effective CSS px. The visible count is min(slots, enabled views).
+  // TAB-FIT-1 (J.R. 2026-11-18: "if I collapse the left menu and there is space, show all the views that fit"):
+  // the bands are now a MINIMUM. _frzFitTabs measures the tabs and the room #frzLeft really has (it is the
+  // flex:1 part of the top bar, so a collapsed rail widens it) and raises the count to every tab that fits.
+  // It only ever shows MORE tabs than the band, never fewer.
+  var _frzTabFitN = null, _frzTabW = {}, _frzMoreW = 0, _frzFitPending = false;
   function _frzTabLayout(){
     var w = window.innerWidth || document.documentElement.clientWidth || 1280;
-    if(w>=1600) return {slots:7, iconOnly:false};
-    if(w>=1280) return {slots:5, iconOnly:false};
-    if(w>=1024) return {slots:3, iconOnly:false};
-    return {slots:3, iconOnly:true};   // <=900 band: icons + title tooltips
+    var lay;
+    if(w>=1600) lay = {slots:7, iconOnly:false};
+    else if(w>=1280) lay = {slots:5, iconOnly:false};
+    else if(w>=1024) lay = {slots:3, iconOnly:false};
+    else lay = {slots:3, iconOnly:true};   // <=900 band: icons + title tooltips
+    if(_frzTabFitN != null && _frzTabFitN > lay.slots) lay.slots = _frzTabFitN;
+    return lay;
+  }
+  function _frzScheduleTabFit(){
+    if(_frzFitPending) return; _frzFitPending = true;
+    requestAnimationFrame(function(){ _frzFitPending = false; _frzFitTabs(); });
+  }
+  function _frzFitTabs(){
+    try {
+      if(!root || !_frzIA() || _frzIsPhone()) return;
+      var left = document.getElementById('frzLeft'); if(!left || !left.offsetWidth) return;   // hidden: measure on a later draw
+      var strip = left.querySelector('.frz-tabs'); if(!strip) return;
+      var order = _frzOrderedViews(); if(!order.length) return;
+      var sfx = strip.classList.contains('frz-tabs--icononly') ? '/i' : '';
+      // A tab's width depends only on its label (and the icon-only band), so learn each one once.
+      [].forEach.call(strip.querySelectorAll('.frz-tab[data-nav]'), function(b){
+        var v = (b.getAttribute('data-nav')||'').replace('view:',''); if(b.offsetWidth) _frzTabW[v+sfx] = b.offsetWidth;
+      });
+      var mb = strip.querySelector('.frz-tab--more'); if(mb && mb.offsetWidth) _frzMoreW = mb.offsetWidth;
+      if(order.some(function(v){ return !_frzTabW[v+sfx]; })){
+        if(_frzTabFitN === order.length) return;            // every tab is already drawn - nothing left to learn
+        _frzTabFitN = order.length; left.innerHTML = _frzTabStrip(); return;   // draw them all once; the next frame decides
+      }
+      var GAP = 2, avail = left.clientWidth, moreW = (_frzMoreW || 72) + GAP, active = state.view, n = order.length;
+      for(; n > 0; n--){
+        var vis = order.slice(0, n);
+        if(n < order.length && order.indexOf(active) >= n) vis[n-1] = active;   // the active view always shows (B2.2)
+        var need = vis.reduce(function(t, v){ return t + _frzTabW[v+sfx] + GAP; }, 0) + (n < order.length ? moreW : 0);
+        if(need <= avail) break;
+      }
+      if(n === _frzTabFitN) return;
+      _frzTabFitN = n;
+      var want = Math.min(_frzTabLayout().slots, order.length);
+      if(want !== strip.querySelectorAll('.frz-tab[data-nav]').length) left.innerHTML = _frzTabStrip();
+    } catch(e){}
   }
   // (visibleViews, overflowViews) after the active-never-in-More substitution (B2.2): if the active
   // view falls outside the visible set, it takes the LAST visible slot and the view it displaces goes
@@ -25717,6 +25758,7 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
       html+='<button class="frz-tab frz-tab--more" data-frzmore="1" aria-haspopup="true" title="More views"><span class="frz-tab-lbl">More</span>'+IC.caret+'</button>';
     }
     html+='</div>';
+    _frzScheduleTabFit();   // TAB-FIT-1: once it is on screen, show every tab that fits
     return html;
   }
   function _frzNavView(v){   // reuses the data-nav view navigation (carry chips; keep active board for Kanban)
@@ -30978,6 +31020,7 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
         return;
       }
       if(!_frzIA() || state.onItem) return;
+      _frzScheduleTabFit();   // TAB-FIT-1: the room changed (window resize, or the left menu collapsed / opened)
       var l=_frzTabLayout(), band=l.slots+'/'+l.iconOnly;
       if(band===_frzTabBand) return; _frzTabBand=band;
       var left=document.getElementById('frzLeft'); if(left) left.innerHTML=_frzTabStrip();
