@@ -23,16 +23,16 @@ def test_app_pages_are_marked_and_server_pages_are_not(client):
     assert client.get("/sw.js").headers.get("x-flow-shell") is None
 
 
-def test_service_worker_retries_and_keeps_only_a_complete_app_page(client):
+def test_service_worker_leaves_page_loads_to_the_browser(client):
+    # SW-NAV-OFF-1 (supersedes the BOOT-STUCK-1 retry + saved copy): 2026-11-18 a worker-controlled tab sat on the
+    # loading screen with readyState "loading" and ~7% of the page received. The worker must not handle navigations.
     sw = client.get("/sw.js").text
-    nav = sw.split("req.mode === 'navigate'", 1)[1].split("// Our own static assets", 1)[0]
-    assert nav.index("await fetch(req)") < nav.index("cache: 'reload'") < nav.index("caches.match('/')"), \
-        "network, then one fresh retry, then the saved copy"
-    assert "res.headers.get('X-Flow-Shell') === '1'" in nav and "res.ok" in nav
-    assert "endsWith('</html>')" in nav, "a cut-off page must never become the offline copy"
-    assert "Response.error()" in nav
+    assert "if (req.mode === 'navigate') return;" in sw
+    assert "respondWith" not in sw.split("if (req.mode === 'navigate') return;", 1)[0], "nothing is answered before the bypass"
+    assert "caches.match('/')" not in sw and "c.put('/'" not in sw, "no saved copy of the page"
     shell = sw.split("const SHELL = [", 1)[1].split("]", 1)[0]
-    assert "'/'" not in shell, "install must not store an unchecked copy of the page"
+    assert "'/'" not in shell, "install must not store a copy of the page"
+    assert "caches.delete(k)" in sw, "activate drops the old caches that held the saved page"
 
 
 def test_loading_screen_offers_reload_after_15s():

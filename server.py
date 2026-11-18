@@ -2024,13 +2024,13 @@ _PWA_MANIFEST = {
     ],
 }
 
-# Network-first for the app shell (so a deploy goes live immediately - Caddy
-# serves roadmap.html fresh), cache-first for our own static icons/manifest, and
-# network-only for /api/* (data stays server-authoritative; no offline writes).
+# Page loads go straight to the network (the worker does not handle navigations, SW-NAV-OFF-1),
+# cache-first for our own static icons/manifest, and network-only for /api/* (data stays
+# server-authoritative; no offline writes).
 # Cache name is tied to APP_VERSION so a release busts the old shell on activate.
 _PWA_SW_TEMPLATE = r"""
 const CACHE = 'frazil-shell-__APP_VERSION__';
-const SHELL = ['/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];   // '/' is stored by the navigation handler, checked complete (BOOT-STUCK-1)
+const SHELL = ['/manifest.webmanifest', '/icon-192.png', '/icon-512.png'];   // never '/': page loads bypass the worker (SW-NAV-OFF-1)
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
@@ -2052,38 +2052,12 @@ self.addEventListener('fetch', (e) => {
   if (url.origin !== location.origin) return;       // fonts, Jira, etc. pass through
   if (url.pathname.startsWith('/api/')) return;     // data is network-only
 
-  // Navigations / app shell: network-first, fall back to cached shell offline.
-  // BOOT-STUCK-1: a navigation can fail with net::ERR_CACHE_MISS (seen on an Organization switch), so
-  // retry ONCE with a fresh request before falling back. Only a COMPLETE app page is kept as the
-  // offline shell: the server marks it (X-Flow-Shell) so /audit, /report etc. never replace it, and
-  // a body that does not end in </html> (cut off mid-download) is never stored - a cut-off copy
-  // shows "Loading data..." forever because the script that clears it never arrives.
-  if (req.mode === 'navigate' || url.pathname === '/') {
-    e.respondWith((async () => {
-      let res = null;
-      try { res = await fetch(req); } catch (err) {}
-      if (!res) {
-        try { res = await fetch(new Request(req.url, { credentials: 'same-origin', cache: 'reload', redirect: 'manual' })); } catch (err) {}
-      }
-      if (res) {
-        if (res.ok && res.type === 'basic' && res.headers.get('X-Flow-Shell') === '1') {
-          const copy = res.clone();
-          e.waitUntil((async () => {
-            try {
-              const txt = await copy.text();
-              if (txt.trimEnd().endsWith('</html>')) {
-                const c = await caches.open(CACHE);
-                await c.put('/', new Response(txt, { headers: { 'Content-Type': 'text/html; charset=utf-8', 'X-Flow-Shell': '1' } }));
-              }
-            } catch (err) {}
-          })());
-        }
-        return res;
-      }
-      return (await caches.match('/')) || Response.error();
-    })());
-    return;
-  }
+  // SW-NAV-OFF-1: page loads are NOT handled here - the browser loads the page itself. Passing the 2.8 MB page
+  // through the worker could leave its download hanging for good (2026-11-18: a tab stuck on the loading screen
+  // with readyState "loading", about 7% of the page received, controlled by the worker), most often right after
+  // a deploy, when the new worker takes over mid-download. Flow has no offline use (/api is network-only), so the
+  // saved offline copy of the page (BOOT-STUCK-1) is gone too; activate() deletes the old caches that held it.
+  if (req.mode === 'navigate') return;
 
   // Our own static assets: cache-first, then populate.
   if (SHELL.includes(url.pathname) || url.pathname === '/apple-touch-icon.png') {
