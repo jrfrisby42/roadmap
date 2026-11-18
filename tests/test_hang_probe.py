@@ -31,3 +31,14 @@ def test_page_traces_start_up_and_reports_an_unsettled_load():
     assert "window._frzMark && window._frzMark('settled', true); }, 10000);" in HTML
     for step in ("'script-b'", "'script-c'", "'boot'", "'data'", "'build'", "'wire'", "'rail'", "'shown'", "'caps'", "'acts'", "'sw-reg'", "'sw-claim'"):
         assert step in HTML, step
+
+
+def test_page_samples_the_stack_while_starting_up():
+    # HANG-PROBE-2: hot helpers + Date stepping + the shell's _call/_val sample the stack until the page settles
+    assert "window._frzSample = function(){" in HTML and "tr.stack = String(new Error().stack || '')" in HTML
+    assert "['setDate', 'toISOString', 'getDay'].forEach(function(n){ window._frzHook(Date.prototype, n); });" in HTML
+    assert "if(done){ tr.done = true; settled = true; try { window._frzUnsample(); } catch(_e){} }" in HTML
+    assert "setTimeout(function(){ stopS = true; window._frzUnsample(); }, 60000);" in HTML
+    assert "function _call(name){ if(window._frzSample) window._frzSample(); try {" in HTML
+    assert "function _val(name, dflt){ if(window._frzSample) window._frzSample(); try {" in HTML
+    assert "window._frzHook && window._frzHook(window, n); }); } catch(_e){}\nboot();" in HTML
