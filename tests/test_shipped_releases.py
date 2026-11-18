@@ -80,3 +80,11 @@ def test_release_state_follows_its_items():
     body = HTML.split("function renderReleasesTab(host){", 1)[1].split("\n  }\n", 1)[0]
     assert "var shownState=(r.state!=='Released' && full.total>0 && full.done===full.total) ? 'Released' : r.state;" in body
     assert "if(r && r.state!=='Released'){ r.state='Released'; r.releasedDate=r.targetDate||end; dirty=true; }" in HTML
+
+
+def test_shipped_rows_mark_items_already_in_a_release():
+    # SHIP-REL-MARK-1: a badge with the release name, not a tail on the grey meta text
+    html = (pathlib.Path(__file__).resolve().parent.parent / "roadmap.html").read_text(encoding="utf-8", errors="replace")
+    assert "var relMark = inRel ? '<span class=\"frz-ship-relmark\" title=\"In release '+escA(inRel.name)+'\">✓ '+esc(inRel.name)+'</span>' : '';" in html
+    assert "if(inRel) meta += ' · '+inRel.name;" not in html
+    assert ".frz-beta .frz-ship-relmark {" in html and "background:var(--frz-accent-soft)" in html
