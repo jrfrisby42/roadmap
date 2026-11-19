@@ -2741,6 +2741,7 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
         <select id="newUserPwMode" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-size:13px;font-family:'Lato',sans-serif;outline:none;color:var(--text)">
           <option value="password">Set password now</option>
           <option value="invite">Email a setup link</option>
+          <option value="microsoft" id="newUserMsOpt" hidden disabled>Signs in with Microsoft</option>
         </select>
       </div>
       <div style="margin-top:8px;display:none" id="newUserOwnerWrap">
@@ -10157,7 +10158,7 @@ function renderUserList(){
     const emailTxt = u.email ? `<span style="font-size:11px;color:var(--muted);margin-left:2px">${esc(u.email)}</span>` : '';
     // SSO-COMPANY-1: a user linked to Microsoft signs in with Microsoft (no password, so not "pending", and no password link)
     const _msLinked = !!(u.microsoft || u.entraOid);
-    const noPwBadge = _msLinked ? ` <span style="font-size:10px;background:rgba(0,89,169,0.1);color:var(--accent);padding:1px 6px;border-radius:8px;font-weight:700" title="Signs in with Microsoft${u.builtin ? ' (the built-in admin can also use a password)' : ''}">Microsoft</span>`
+    const noPwBadge = _msLinked ? ` <span style="font-size:10px;background:rgba(0,89,169,0.1);color:var(--accent);padding:1px 6px;border-radius:8px;font-weight:700" title="${u.msInvited ? 'Added to sign in with Microsoft - has not signed in yet' : 'Signs in with Microsoft' + (u.builtin ? ' (the built-in admin can also use a password)' : '')}">Microsoft${u.msInvited ? ' (invited)' : ''}</span>`
       : (u.pending === true || (u.pending === undefined && u.password === '')) ? ` <span style="font-size:10px;background:rgba(240,165,0,0.15);color:#b06f00;padding:1px 6px;border-radius:8px;font-weight:700" title="No password set - pending setup link">pending</span>` : '';
     const linkBtn = (isAdmin && u.email && !(_msLinked && !u.builtin)) ? `<button class="btn-ic" onclick="sendUserLink(${i})" title="Email a password setup/reset link"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg></button>` : '';
 
@@ -10350,9 +10351,30 @@ function deleteUser(i){
 function _toggleNewUserPwMode(){
   const mode = document.getElementById('newUserPwMode')?.value || 'password';
   const wrap = document.getElementById('newUserPassWrap');
-  if(wrap) wrap.style.display = (mode === 'invite') ? 'none' : 'block';
+  if(wrap) wrap.style.display = (mode === 'invite' || mode === 'microsoft') ? 'none' : 'block';
 }
-document.getElementById('newUserPwMode')?.addEventListener('change', _toggleNewUserPwMode);
+// SSO-COMPANY-1: "Signs in with Microsoft" is offered when this Org has Microsoft sign-in (ssoDomains from
+// /api/all), and picked for a company email until the admin chooses a mode themselves.
+let ssoDomains = [];
+let _newUserModeTouched = false;
+function _newUserIsCompanyEmail(email){
+  const d = String(email || '').trim().toLowerCase().split('@')[1] || '';
+  return !!d && ssoDomains.indexOf(d) >= 0;
+}
+function _syncNewUserMsOpt(){
+  const opt = document.getElementById('newUserMsOpt'), sel = document.getElementById('newUserPwMode');
+  if(!opt || !sel) return;
+  const on = ssoDomains.length > 0;
+  opt.hidden = !on; opt.disabled = !on;
+  if(!on && sel.value === 'microsoft'){ sel.value = 'password'; _toggleNewUserPwMode(); }
+  if(on && !_newUserModeTouched){
+    const company = _newUserIsCompanyEmail(document.getElementById('newUserEmail')?.value);
+    const want = company ? 'microsoft' : (sel.value === 'microsoft' ? 'password' : sel.value);
+    if(want !== sel.value){ sel.value = want; _toggleNewUserPwMode(); }
+  }
+}
+document.getElementById('newUserPwMode')?.addEventListener('change', ()=>{ _newUserModeTouched = true; _toggleNewUserPwMode(); });
+document.getElementById('newUserEmail')?.addEventListener('input', _syncNewUserMsOpt);
 document.getElementById('newUserRole')?.addEventListener('change', _syncNewUserOwner);
 
 document.getElementById('addUserBtn')?.addEventListener('click', async ()=>{
@@ -10377,14 +10399,24 @@ document.getElementById('addUserBtn')?.addEventListener('click', async ()=>{
   errEl.style.display = 'none';
   if(!uname) return fail('Username is required.');
   if(users.some(u => u.username.toLowerCase() === uname.toLowerCase())) return fail(`Username "${uname}" already exists.`);
-  if(mode === 'invite'){
+  if(mode === 'microsoft'){
+    if(!_newUserIsCompanyEmail(uemail)) return fail('To sign in with Microsoft, their email must be on ' + ssoDomains.map(d => '@' + d).join(' or ') + '.');
+  } else if(mode === 'invite'){
     if(!uemail) return fail('Email is required to send a setup link.');
   } else {
     if(!upass) return fail('Password is required (or choose "Email a setup link").');
     if(upass.length < 6) return fail('Password must be at least 6 characters.');
   }
   try {
-    if(mode === 'invite'){
+    if(mode === 'microsoft'){
+      // SSO-COMPANY-1: no password; the server marks them invited and emails how to sign in. Their first
+      // Microsoft sign-in links them by email.
+      users.push({ username: uname, firstName: ufirst, lastName: ulast, email: uemail, builtin: false, role: urole, ownerFilter: uowner });
+      await saveConfig('users', users);
+      const r = await API.post('/api/users/' + encodeURIComponent(uname) + '/sso-welcome', {});
+      const me = users.find(u => u.username === uname); if(me){ me.microsoft = true; me.msInvited = true; }
+      fail(r && r.sent ? `Added. Sign-in instructions sent to ${uemail}.` : `Added. They can sign in with Microsoft now (no email was sent).`, true);
+    } else if(mode === 'invite'){
       // Create as a pending user (no password), then email the setup link.
       users.push({ username: uname, firstName: ufirst, lastName: ulast, email: uemail, builtin: false, role: urole, ownerFilter: uowner });
       await saveConfig('users', users);
@@ -10397,7 +10429,7 @@ document.getElementById('addUserBtn')?.addEventListener('click', async ()=>{
     }
     if(firstInp) firstInp.value=''; if(lastInp) lastInp.value='';
     nameInp.value=''; emailInp.value=''; passInp.value=''; roleInp.value='viewer';
-    modeInp.value='password'; _toggleNewUserPwMode(); _syncNewUserOwner();
+    modeInp.value='password'; _newUserModeTouched = false; _toggleNewUserPwMode(); _syncNewUserOwner(); _syncNewUserMsOpt();
     renderUserList();
   } catch(e){ fail(e.message || String(e)); }
 });
@@ -21968,6 +22000,8 @@ async function boot(){
     departments   = data.departments   || [];
     products     = data.products     || [];
     users        = data.users        || [];
+    ssoDomains   = Array.isArray(data.ssoDomains) ? data.ssoDomains.map(d => String(d).toLowerCase()) : [];   // SSO-COMPANY-1
+    try { _syncNewUserMsOpt(); } catch(_e){}
     types        = data.types        || DEFAULT_TYPES;
     ownerCapacity         = data.ownerCapacity         || {};
     capacityMode          = data.capacityMode          || {};
