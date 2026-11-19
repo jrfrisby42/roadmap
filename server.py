@@ -3864,7 +3864,7 @@ def _sso_match(co, oid: str, emails: set) -> list:
             users = json.loads(row["value"]) if row else []
             u = next((u for u in users if u.get("entraOid") == oid and not u.get("revokedAt")), None)
             if not u:
-                u = next((u for u in users if not u.get("revokedAt") and not u.get("entraOid") and (
+                u = next((u for u in users if not u.get("revokedAt") and not u.get("entraOid") and not u.get("ssoOff") and (
                     (u.get("email") or "").strip().lower() in emails
                     or (u.get("username") or "").strip().lower() in emails)), None)
                 if u:
@@ -4311,21 +4311,24 @@ def send_user_sso_welcome(target_username: str, auth: dict = Depends(require_rol
         email = (user.get("email") or "").strip()
         if not email or _company_for_email(email) is not co:
             raise HTTPException(400, "Their email must be on " + ", ".join("@" + d for d in co["domains"]) + " to sign in with Microsoft")
+        back_on = bool(user.pop("ssoOff", None))   # SSO-UNLINK-1: "Use Microsoft" on someone switched to a password
         user["ssoInvitedAt"] = datetime.now(timezone.utc).isoformat()
         c.execute("UPDATE config SET value=? WHERE key='users'", (json.dumps(users),))
-    write_audit(team, "user:sso-invite", auth["username"], changes={"target": target_username})
+    write_audit(team, "user:sso-invite", auth["username"], changes={"target": target_username, **({"back": True} if back_on else {})})
     sent = False
     if mail_configured():
         name = (user.get("firstName") or "").strip() or target_username
         org = team.capitalize()
+        lead = (f"Frazil Flow ({org}) now signs you in with Microsoft" if back_on
+                else f"You have been added to Frazil Flow ({org})")
         try:
             send_email(
                 email,
-                "You have been added to Frazil Flow",
-                f"Hi {name},\n\nYou have been added to Frazil Flow ({org}). To sign in, go to {APP_BASE_URL} and choose "
+                "Sign in to Frazil Flow with Microsoft" if back_on else "You have been added to Frazil Flow",
+                f"Hi {name},\n\n{lead}. To sign in, go to {APP_BASE_URL} and choose "
                 f"\"Sign in with Microsoft\" with your work email, {email}. There is no separate password to set up.",
                 f"<p>Hi {html.escape(name)},</p>"
-                f"<p>You have been added to Frazil Flow (<b>{html.escape(org)}</b>).</p>"
+                f"<p>{html.escape(lead)}.</p>"
                 f"<p>To sign in, go to <a href=\"{APP_BASE_URL}\">{html.escape(APP_BASE_URL.replace('https://', ''))}</a> and choose "
                 f"<b>Sign in with Microsoft</b> with your work email, {html.escape(email)}. There is no separate password to set up.</p>",
             )
@@ -4333,6 +4336,35 @@ def send_user_sso_welcome(target_username: str, auth: dict = Depends(require_rol
         except Exception as e:
             log.warning(f"[Email] Microsoft welcome send failed for {target_username}: {e}")
     return {"ok": True, "sent": sent}
+
+
+@app.post("/api/users/{target_username}/sso-unlink")
+def sso_unlink_user(target_username: str, auth: dict = Depends(require_role("admin"))):
+    """SSO-UNLINK-1: switch a user from Microsoft back to a password. Clears the Microsoft link (and any invite),
+    sets ssoOff so their next Microsoft sign-in does NOT link them again, and signs them out everywhere (bumps
+    tokenGen) - the undo for a link to the wrong account. Non-builtin users are left with no password (pending);
+    the admin sends a setup link next. "Use Microsoft" (sso-welcome) turns it back on. Not on yourself."""
+    team = auth["team"]
+    if target_username == auth["username"]:
+        raise HTTPException(400, "You can't switch your own account off Microsoft")
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+        users = json.loads(row["value"]) if row else []
+        user = next((u for u in users if u["username"] == target_username), None)
+        if not user:
+            raise HTTPException(404, f"User '{target_username}' not found")
+        was = "linked" if user.get("entraOid") else ("invited" if user.get("ssoInvitedAt") else None)
+        if not was:
+            raise HTTPException(400, f"{target_username} does not sign in with Microsoft")
+        for k in ("entraOid", "entraLinkedAt", "ssoAt", "ssoInvitedAt"):
+            user.pop(k, None)
+        user["ssoOff"] = True
+        user["tokenGen"] = int(user.get("tokenGen") or 0) + 1
+        c.execute("UPDATE config SET value=? WHERE key='users'", (json.dumps(users),))
+    write_audit(team, "sso:unlink", auth["username"], project_name=target_username,
+                changes={"target": target_username, "was": was})
+    return {"ok": True, "username": target_username, "hasPassword": bool(user.get("password")),
+            "email": user.get("email") or ""}
 
 
 @app.post("/api/logout")
@@ -4516,7 +4548,8 @@ def get_all(auth: dict = Depends(require_auth)):
                    # linked to Microsoft (the Users list badge; it used to test a password field the page never got).
                    "microsoft": bool(u.get("entraOid") or u.get("ssoInvitedAt")),
                    "msInvited": bool(u.get("ssoInvitedAt") and not u.get("entraOid")),   # added for Microsoft, not signed in yet
-                   "pending": not u.get("password") and not u.get("entraOid") and not u.get("ssoInvitedAt")} for u in users_raw]
+                   "pending": not u.get("password") and not u.get("entraOid") and not u.get("ssoInvitedAt"),
+                   "ssoOff": bool(u.get("ssoOff"))} for u in users_raw]   # SSO-UNLINK-1: switched to a password by an admin
     # KANBAN-AGE-1: {pid: [status, since]} for the items in THIS payload only (contributor-scoped above).
     _ids = {p["id"] for p in projects}
     with db(team) as c:
@@ -6922,13 +6955,15 @@ def set_config(key: str, body = Body(...), username: str = "",
             u["builtin"] = bool(prev.get("builtin")) if prev else False
             # SSO-COMPANY-1: the Microsoft link is server-owned - only a Microsoft sign-in sets it. Kept from the
             # stored record, never taken from the client (so an admin save can neither wipe nor forge it).
-            for _k in ("entraOid", "entraLinkedAt", "ssoAt", "ssoInvitedAt"):
+            # SSO-UNLINK-1: ssoOff (an admin switched them back to a password) and tokenGen (SESSION-SLIDE-1 "sign
+            # out everywhere") are server-owned too - the form never carries tokenGen, so an admin save used to
+            # reset it to 0 and bring signed-out sessions back.
+            for _k in ("entraOid", "entraLinkedAt", "ssoAt", "ssoInvitedAt", "ssoOff", "tokenGen"):
                 if prev and prev.get(_k):
                     u[_k] = prev[_k]
                 else:
                     u.pop(_k, None)
-            u.pop("microsoft", None); u.pop("pending", None); u.pop("msInvited", None)   # read-only flags /api/all adds; never stored
-            # avatarInitials/avatarColor are user-owned (set via /api/users/self/avatar).
+            u.pop("microsoft", None); u.pop("pending", None); u.pop("msInvited", None)   # read-only flags /api/all adds; never stored            # avatarInitials/avatarColor are user-owned (set via /api/users/self/avatar).
             # The admin user form doesn't include them, so inherit here or an admin save
             # would wipe a user's chosen monogram/color.
             if prev and "avatarInitials" not in u and prev.get("avatarInitials"):

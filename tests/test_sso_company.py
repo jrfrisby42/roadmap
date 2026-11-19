@@ -418,3 +418,73 @@ def test_an_invited_user_links_on_first_microsoft_sign_in(https, company, monkey
     d = https.post("/api/auth/sso/finish", json={}).json()
     assert d["username"] == "newstaff"
     assert next(u for u in _users(company["team"]) if u["username"] == "newstaff")["entraOid"] == "oid-new"
+
+
+# ── Unlink: Microsoft -> password, and back (SSO-UNLINK-1) ──────────────────────
+
+def _drop_pw(team, username):
+    us = _users(team); next(u for u in us if u["username"] == username)["password"] = ""; _set_users(team, us)
+
+
+def test_unlink_clears_the_link_signs_them_out_and_stops_relinking(https, client, company, admin_headers, monkeypatch):
+    _add_user(company["team"], "jr", "jr@freezingpointllc.com", entraOid=OID, ssoAt=int(time.time()))
+    _drop_pw(company["team"], "jr")
+    h = {"Authorization": "Bearer " + server.create_token(company["team"], "jr", "editor"), "X-Team": company["team"]}
+    assert client.get("/api/all", headers=h).status_code == 200
+    r = client.post("/api/users/jr/sso-unlink", headers=admin_headers)
+    assert r.status_code == 200 and r.json()["hasPassword"] is False
+    u = next(u for u in _users(company["team"]) if u["username"] == "jr")
+    assert "entraOid" not in u and "ssoAt" not in u and u["ssoOff"] is True and u["tokenGen"] == 1
+    assert client.get("/api/all", headers=h).status_code == 401           # signed out everywhere
+    got = next(x for x in client.get("/api/all", headers=admin_headers).json()["users"] if x["username"] == "jr")
+    assert got["microsoft"] is False and got["pending"] is True and got["ssoOff"] is True
+    # Microsoft does not link them again
+    _fake_ms(monkeypatch)
+    cb, _ = _sign_in(https)
+    assert cb.headers["location"] == "/?sso_error=noaccount"
+    assert "entraOid" not in next(u for u in _users(company["team"]) if u["username"] == "jr")
+
+
+def test_an_admin_save_keeps_ssooff_and_the_signout_counter(client, company, admin_headers):
+    _add_user(company["team"], "jr", "jr@freezingpointllc.com", entraOid=OID)
+    assert client.post("/api/users/jr/sso-unlink", headers=admin_headers).status_code == 200
+    allu = client.get("/api/all", headers=admin_headers).json()["users"]
+    for x in allu:
+        x["ssoOff"] = False; x["tokenGen"] = 0     # a forged / stale client copy changes nothing
+    assert client.put("/api/config/users", json=allu, headers=admin_headers).status_code == 200
+    u = next(u for u in _users(company["team"]) if u["username"] == "jr")
+    assert u["ssoOff"] is True and u["tokenGen"] == 1
+    assert not any(x.get("ssoOff") for x in _users(company["team"]) if x["username"] != "jr")
+
+
+def test_unlink_refusals(client, company, admin_headers, editor_headers):
+    _add_user(company["team"], "pwuser", "pw@freezingpointllc.com")
+    assert client.post("/api/users/pwuser/sso-unlink", headers=admin_headers).status_code == 400   # not on Microsoft
+    assert client.post("/api/users/nobody/sso-unlink", headers=admin_headers).status_code == 404
+    _add_user(company["team"], "jr", "jr@freezingpointllc.com", entraOid=OID)
+    assert client.post("/api/users/jr/sso-unlink", headers=editor_headers).status_code == 403
+    us = _users(company["team"]); next(u for u in us if u["username"] == "admin")["entraOid"] = "a"; _set_users(company["team"], us)
+    assert client.post("/api/users/admin/sso-unlink", headers=admin_headers).status_code == 400   # not yourself
+
+
+def test_unlinking_an_invite_and_the_builtin_admin_keeps_passwords(client, company, admin_headers):
+    _add_user(company["team"], "inv", "inv@freezingpointllc.com", ssoInvitedAt="2026-11-19T00:00:00Z")
+    r = client.post("/api/users/inv/sso-unlink", headers=admin_headers)
+    assert r.status_code == 200 and r.json()["hasPassword"] is True
+    assert "ssoInvitedAt" not in next(u for u in _users(company["team"]) if u["username"] == "inv")
+    server._rate.clear()
+    assert client.post("/api/login", json={"team": company["team"], "username": "inv", "password": "pw123456"}).status_code == 200
+
+
+def test_use_microsoft_turns_it_back_on(https, client, company, admin_headers, monkeypatch):
+    _add_user(company["team"], "jr", "jr@freezingpointllc.com", entraOid=OID)
+    client.post("/api/users/jr/sso-unlink", headers=admin_headers)
+    sent = []
+    monkeypatch.setattr(server, "mail_configured", lambda: True)
+    monkeypatch.setattr(server, "send_email", lambda *a, **k: sent.append(a))
+    assert client.post("/api/users/jr/sso-welcome", headers=admin_headers).json() == {"ok": True, "sent": True}
+    assert sent[0][1] == "Sign in to Frazil Flow with Microsoft"
+    assert "ssoOff" not in next(u for u in _users(company["team"]) if u["username"] == "jr")
+    _fake_ms(monkeypatch)
+    _sign_in(https)
+    assert https.post("/api/auth/sso/finish", json={}).json()["username"] == "jr"
