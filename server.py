@@ -685,6 +685,11 @@ def require_auth(authorization: Optional[str] = Header(None),
             cur_gen = _user_token_gen(auth["team"], auth["username"])
             if cur_gen is not None and auth.get("gen", 0) != cur_gen:
                 raise HTTPException(401, "Session ended. Please log in again.")
+            # SSO-COMPANY-1: a Microsoft-linked session goes back through Microsoft once a day (silent while their
+            # Microsoft 365 sign-in is live), so someone disabled in Entra loses Flow within a day. The client
+            # answers this exact detail by starting the silent re-check.
+            if _sso_recheck_due(auth["team"], auth["username"]):
+                raise HTTPException(401, "SSO_RECHECK")
             # SESSION-SLIDE-1: sliding renewal. Runs ONLY here, AFTER every check above has passed, so
             # a revoked or generation-bumped user can never receive a fresh token. Fires only past
             # half-life. Best-effort: a renewal failure leaves the request successful and the session
@@ -3640,6 +3645,10 @@ def login(body: dict = Body(...), request: FRequest = None, response: Response =
     if not user or user.get("revokedAt"):
         time.sleep(0.3)
         raise HTTPException(401, "Invalid username or password")
+    # SSO-COMPANY-1: a Microsoft-linked user signs in with Microsoft only (the built-in admin keeps a password).
+    if _sso_is_linked(team, user):
+        time.sleep(0.3)
+        raise HTTPException(409, "This account signs in with Microsoft. Use Sign in with Microsoft.")
 
     pw = user.get("password", "")
     if not is_hashed(pw):
@@ -3685,6 +3694,348 @@ def login(body: dict = Body(...), request: FRequest = None, response: Response =
             "team": team,
             "token": token,
             "mustChangePassword": user.get("mustChangePassword", False)}
+
+# ── SSO-COMPANY-1: Companies + "Sign in with Microsoft" ───────────────────────
+# A Company sits above Organizations and holds one Microsoft Entra setup (tenant, app registration, signing
+# certificate) shared by every Org in it (design/sso-company-plan.md). One small JSON file outside the Org
+# databases, operator-maintained; missing/unreadable = no Companies = no Microsoft sign-in (fail closed, the
+# pre-SSO behaviour). Sign-in: authorization code + PKCE against the Company's tenant; Flow proves itself with
+# a certificate-signed client assertion (the tenant does not allow client secrets) and reads the ID token it
+# gets straight from Microsoft's token endpoint over TLS (OIDC Core 3.1.3.7), checking issuer/tenant/audience/
+# nonce/expiry. People are found in every Org of the Company: already linked (entraOid = the token's oid), else
+# an unrevoked, unlinked user whose email (or username) is one of the token's addresses - the first such
+# sign-in links them. Nobody is ever created by signing in, and a Microsoft account never reaches another
+# Company's Orgs. A linked user signs in with Microsoft only (password dropped), except each Org's built-in
+# admin; outside people (contributors, non-Entra) are untouched. Linked sessions re-check with Microsoft daily.
+COMPANIES_FILE = os.environ.get("FLOW_COMPANIES_FILE") or os.path.join(
+    os.path.dirname(os.path.abspath(TENANTS_DIR.rstrip("/\\") or ".")), "flow-companies.json")
+_SSO_AUTHORITY = (os.environ.get("FLOW_SSO_AUTHORITY") or "https://login.microsoftonline.com").rstrip("/")
+_SSO_STATE_COOKIE = "frazil_sso"          # the in-flight sign-in (state, nonce, PKCE verifier), 10 minutes
+_SSO_DONE_COOKIE = "frazil_sso_done"      # who Microsoft vouched for, until the page claims a session, 5 minutes
+_SSO_COOKIE_PATH = "/api/auth/sso"
+_SSO_RECHECK_SECS = 24 * 3600
+_SSO_QUIET_ERRORS = {"login_required", "interaction_required", "consent_required", "account_selection_required"}
+_COMPANIES_CACHE = {"path": None, "mtime": None, "data": []}
+
+def _companies() -> list:
+    """The Companies, normalised, cached on the file's mtime. [] when there is no usable file."""
+    path = COMPANIES_FILE
+    try:
+        mt = os.path.getmtime(path)
+    except OSError:
+        return []
+    if _COMPANIES_CACHE["path"] == path and _COMPANIES_CACHE["mtime"] == mt:
+        return _COMPANIES_CACHE["data"]
+    out, seen_orgs = [], set()
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = json.load(f)
+        for co in (raw.get("companies") or []):
+            cid = re.sub(r"[^a-z0-9]", "", str(co.get("id", "")).lower())
+            en = co.get("entra") or {}
+            if not cid or not str(en.get("tenantId") or "").strip() or not str(en.get("clientId") or "").strip():
+                continue
+            orgs = []
+            for t in (co.get("orgs") or []):   # an Org belongs to at most one Company: the first listing wins
+                if isinstance(t, str) and re.match(r"^[a-z0-9]+$", t) and t not in seen_orgs:
+                    orgs.append(t); seen_orgs.add(t)
+            out.append({
+                "id": cid, "name": str(co.get("name") or cid),
+                "domains": sorted({str(d).strip().lower().lstrip("@") for d in (co.get("domains") or []) if str(d).strip()}),
+                "orgs": orgs,
+                "entra": {"tenantId": str(en["tenantId"]).strip(), "clientId": str(en["clientId"]).strip(),
+                          "certKey": str(en.get("certKey") or "").strip(),
+                          "certThumbprint": re.sub(r"[^0-9A-Fa-f]", "", str(en.get("certThumbprint") or "")).upper(),
+                          "certExpires": str(en.get("certExpires") or "").strip()},
+            })
+    except Exception as e:
+        log.warning(f"[SSO] companies file unreadable ({path}): {e}")
+        out = []
+    _COMPANIES_CACHE.update(path=path, mtime=mt, data=out)
+    return out
+
+def _company_for_email(email: str):
+    d = email.rsplit("@", 1)[1].strip().lower() if "@" in (email or "") else ""
+    return next((co for co in _companies() if d and d in co["domains"]), None)
+
+def _company_for_org(team: str):
+    return next((co for co in _companies() if team in co["orgs"]), None)
+
+def _company_by_id(cid: str):
+    return next((co for co in _companies() if co["id"] == cid), None)
+
+def _b64u(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+def _b64u_dec(s: str) -> bytes:
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+def _sso_sign(obj: dict) -> str:
+    body = _b64u(json.dumps(obj, separators=(",", ":")).encode())
+    sig = hmac.new(_TOKEN_SECRET.encode(), ("sso|" + body).encode(), hashlib.sha256).hexdigest()
+    return body + "." + sig
+
+def _sso_unsign(s: str):
+    """The signed cookie's object, or None if missing, forged or expired."""
+    try:
+        body, sig = (s or "").rsplit(".", 1)
+        good = hmac.new(_TOKEN_SECRET.encode(), ("sso|" + body).encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, good):
+            return None
+        obj = json.loads(_b64u_dec(body))
+        return obj if int(obj.get("exp", 0)) > int(time.time()) else None
+    except Exception:
+        return None
+
+def _sso_redirect_uri() -> str:
+    return APP_BASE_URL + "/api/auth/sso/microsoft/callback"
+
+def _sso_safe_ret(ret: str) -> str:
+    ret = (ret or "/").strip()
+    return ret if (ret.startswith("/") and not ret.startswith("//") and "\\" not in ret and len(ret) < 500) else "/"
+
+def _sso_key_path(co) -> str:
+    kp = co["entra"]["certKey"]
+    return kp if os.path.isabs(kp) else os.path.join(os.path.dirname(os.path.abspath(__file__)), kp)
+
+def _sso_client_assertion(co) -> str:
+    """The certificate-signed JWT Flow sends Microsoft instead of a client secret (RS256, x5t = the
+    certificate's SHA-1 thumbprint, 5 minutes). `cryptography` is imported here only, so a box without it
+    loses Microsoft sign-in and nothing else."""
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+    en = co["entra"]
+    with open(_sso_key_path(co), "rb") as f:
+        key = serialization.load_pem_private_key(f.read(), password=None)
+    now = int(time.time())
+    hdr = {"alg": "RS256", "typ": "JWT", "x5t": _b64u(bytes.fromhex(en["certThumbprint"]))}
+    pl = {"aud": f"{_SSO_AUTHORITY}/{en['tenantId']}/oauth2/v2.0/token", "iss": en["clientId"], "sub": en["clientId"],
+          "jti": secrets.token_hex(16), "nbf": now - 30, "iat": now, "exp": now + 300}
+    signing = _b64u(json.dumps(hdr, separators=(",", ":")).encode()) + "." + _b64u(json.dumps(pl, separators=(",", ":")).encode())
+    return signing + "." + _b64u(key.sign(signing.encode(), padding.PKCS1v15(), hashes.SHA256()))
+
+def _sso_redeem(co, code: str, verifier: str) -> dict:
+    """Swap the code for tokens at Microsoft's token endpoint; return the ID token's claims (unchecked)."""
+    from urllib.parse import urlencode
+    en = co["entra"]
+    data = urlencode({
+        "client_id": en["clientId"], "grant_type": "authorization_code", "code": code,
+        "redirect_uri": _sso_redirect_uri(), "code_verifier": verifier, "scope": "openid profile email",
+        "client_assertion_type": "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+        "client_assertion": _sso_client_assertion(co),
+    }).encode()
+    req = Request(f"{_SSO_AUTHORITY}/{en['tenantId']}/oauth2/v2.0/token", data=data,
+                  headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"})
+    try:
+        with urlopen(req, timeout=15) as r:
+            body = json.loads(r.read().decode("utf-8"))
+    except HTTPError as e:
+        try:
+            eb = json.loads(e.read().decode("utf-8"))
+            raise ValueError(f"token endpoint {e.code}: {eb.get('error')}: {str(eb.get('error_description') or '')[:300]}")
+        except ValueError:
+            raise
+        except Exception:
+            raise ValueError(f"token endpoint {e.code}")
+    idt = str(body.get("id_token") or "")
+    parts = idt.split(".")
+    if len(parts) != 3:
+        raise ValueError("no id_token in the token response")
+    return json.loads(_b64u_dec(parts[1]))
+
+def _sso_emails(claims: dict) -> set:
+    out = set()
+    for k in ("preferred_username", "email", "upn", "unique_name"):
+        v = str(claims.get(k) or "").strip().lower()
+        if "@" in v:
+            out.add(v)
+    return out
+
+def _sso_match(co, oid: str, emails: set) -> list:
+    """[(team, username)] for this person in every Org of the Company; links on the first match by email.
+    Never creates a user. Stamps ssoAt (the daily re-check clock) on each match."""
+    out, now = [], int(time.time())
+    for team in co["orgs"]:
+        if not valid_team(team):
+            continue
+        linked = None
+        with db(team) as c:
+            row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+            users = json.loads(row["value"]) if row else []
+            u = next((u for u in users if u.get("entraOid") == oid and not u.get("revokedAt")), None)
+            if not u:
+                u = next((u for u in users if not u.get("revokedAt") and not u.get("entraOid") and (
+                    (u.get("email") or "").strip().lower() in emails
+                    or (u.get("username") or "").strip().lower() in emails)), None)
+                if u:
+                    u["entraOid"] = oid
+                    u["entraLinkedAt"] = datetime.now(timezone.utc).isoformat()
+                    if not u.get("builtin"):            # Microsoft only from now on; the built-in admin keeps a way in
+                        u["password"] = ""
+                        u.pop("mustChangePassword", None)
+                    linked = u["username"]
+            if not u:
+                continue
+            u["ssoAt"] = now
+            c.execute("UPDATE config SET value=? WHERE key='users'", (json.dumps(users),))
+        if linked:
+            write_audit(team, "sso:link", linked, changes={"via": "microsoft", "company": co["id"]})
+        out.append((team, u["username"]))
+    return out
+
+def _sso_recheck_due(team: str, username: str) -> bool:
+    """A Microsoft-linked user (not the built-in admin) whose last pass through Microsoft is over a day old,
+    in an Org that still has Microsoft sign-in. Fail-open like the revocation check."""
+    try:
+        if not _company_for_org(team):
+            return False
+        with db(team) as c:
+            row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+        users = json.loads(row["value"]) if row else []
+        u = next((u for u in users if u.get("username") == username), None)
+        if not u or not u.get("entraOid") or u.get("builtin"):
+            return False
+        return (int(time.time()) - int(u.get("ssoAt") or 0)) > _SSO_RECHECK_SECS
+    except Exception as e:
+        log.warning(f"[SSO] re-check lookup failed for '{username}'@'{team}': {e}")
+        return False
+
+def _sso_is_linked(team: str, user: dict) -> bool:
+    """Microsoft-only: linked and not the built-in admin, in an Org that has Microsoft sign-in."""
+    return bool(user and user.get("entraOid") and not user.get("builtin") and _company_for_org(team))
+
+@app.get("/api/auth/sso/enabled")
+def sso_enabled():
+    """Public: whether the sign-in page shows "Sign in with Microsoft" (any Company set up)."""
+    return {"enabled": bool(_companies())}
+
+@app.get("/api/auth/sso/microsoft/start")
+def sso_start(email: str = "", team: str = "", silent: int = 0, ret: str = "/"):
+    """Send the browser to Microsoft. The Company comes from the email's domain, or (the daily silent
+    re-check) from the Org the session is on."""
+    email = (email or "").strip().lower()
+    team = re.sub(r"[^a-z0-9]", "", (team or "").lower())
+    co = _company_for_email(email) if email else (_company_for_org(team) if team else None)
+    if not co:
+        return RedirectResponse("/?sso_error=domain", status_code=302)
+    verifier = secrets.token_urlsafe(48)
+    st = {"co": co["id"], "state": secrets.token_urlsafe(24), "nonce": secrets.token_urlsafe(24), "v": verifier,
+          "ret": _sso_safe_ret(ret), "team": team, "silent": bool(silent), "exp": int(time.time()) + 600}
+    from urllib.parse import urlencode
+    params = {"client_id": co["entra"]["clientId"], "response_type": "code", "redirect_uri": _sso_redirect_uri(),
+              "response_mode": "query", "scope": "openid profile email", "state": st["state"], "nonce": st["nonce"],
+              "code_challenge": _b64u(hashlib.sha256(verifier.encode()).digest()), "code_challenge_method": "S256"}
+    if email:
+        params["login_hint"] = email
+    if silent:
+        params["prompt"] = "none"
+    r = RedirectResponse(f"{_SSO_AUTHORITY}/{co['entra']['tenantId']}/oauth2/v2.0/authorize?{urlencode(params)}", status_code=302)
+    r.set_cookie(_SSO_STATE_COOKIE, _sso_sign(st), max_age=600, path=_SSO_COOKIE_PATH, httponly=True, secure=True, samesite="lax")
+    return r
+
+@app.get("/api/auth/sso/microsoft/callback")
+def sso_callback(request: FRequest, code: str = "", state: str = "", error: str = "", error_description: str = ""):
+    """Microsoft sends the browser back here. Checks the sign-in, finds the person, and hands the page a
+    5-minute cookie it trades for a session at /api/auth/sso/finish."""
+    def fail(why: str, detail: str = ""):
+        if detail:
+            log.warning(f"[SSO] sign-in failed ({why}): {detail}")
+        r = RedirectResponse(f"/?sso_error={why}", status_code=302)
+        r.delete_cookie(_SSO_STATE_COOKIE, path=_SSO_COOKIE_PATH)
+        return r
+    st = _sso_unsign(request.cookies.get(_SSO_STATE_COOKIE, ""))
+    if not st or not state or not hmac.compare_digest(str(st.get("state", "")), state):
+        return fail("state")
+    co = _company_by_id(st.get("co", ""))
+    if not co:
+        return fail("config", "company gone")
+    if error:
+        return fail("signin" if error in _SSO_QUIET_ERRORS else "microsoft", f"{error}: {error_description[:300]}")
+    if not code:
+        return fail("microsoft", "no code")
+    try:
+        claims = _sso_redeem(co, code, st["v"])
+    except Exception as e:
+        return fail("microsoft", str(e))
+    tid = co["entra"]["tenantId"]
+    now = int(time.time())
+    checks = [
+        (claims.get("tid") == tid, "tenant"),
+        (claims.get("iss") == f"{_SSO_AUTHORITY}/{tid}/v2.0", "issuer"),
+        (claims.get("aud") == co["entra"]["clientId"], "audience"),
+        (hmac.compare_digest(str(claims.get("nonce") or ""), str(st.get("nonce") or "")), "nonce"),
+        (int(claims.get("exp") or 0) > now - 300, "expired"),
+        (bool(claims.get("oid")), "no oid"),
+    ]
+    bad = [why for ok, why in checks if not ok]
+    if bad:
+        return fail("microsoft", "id_token " + ", ".join(bad))
+    oid, emails = str(claims["oid"]), _sso_emails(claims)
+    matches = _sso_match(co, oid, emails)
+    if not matches:
+        log.warning(f"[SSO] no Flow account for {sorted(emails)} in company {co['id']}")
+        return fail("noaccount")
+    done = {"m": [[t, u] for t, u in matches], "oid": oid, "ret": st.get("ret", "/"), "pref": st.get("team", ""),
+            "exp": now + 300}
+    r = RedirectResponse("/?sso=done", status_code=302)
+    r.delete_cookie(_SSO_STATE_COOKIE, path=_SSO_COOKIE_PATH)
+    r.set_cookie(_SSO_DONE_COOKIE, _sso_sign(done), max_age=300, path=_SSO_COOKIE_PATH, httponly=True, secure=True, samesite="lax")
+    return r
+
+@app.post("/api/auth/sso/finish")
+def sso_finish(request: FRequest, response: Response, body: dict = Body(default={})):
+    """Trade the callback's cookie for a session. Several Orgs and none chosen -> {"pick": [teams]}."""
+    done = _sso_unsign(request.cookies.get(_SSO_DONE_COOKIE, ""))
+    if not done:
+        raise HTTPException(401, "Microsoft sign-in expired. Please try again.")
+    m = [(t, u) for t, u in (done.get("m") or [])]
+    teams = [t for t, _ in m]
+    want = re.sub(r"[^a-z0-9]", "", str((body or {}).get("team") or "").lower())
+    if want:
+        if want not in teams:
+            raise HTTPException(400, "Not one of your Organizations")
+        team = want
+    elif len(m) == 1:
+        team = teams[0]
+    elif done.get("pref") in teams:
+        team = done["pref"]
+    else:
+        return {"pick": teams}
+    uname = dict(m)[team]
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+    users = json.loads(row["value"]) if row else []
+    user = next((u for u in users if u.get("username") == uname), None)
+    if not user or user.get("revokedAt") or user.get("entraOid") != done.get("oid"):
+        raise HTTPException(401, "Account access has been revoked. Please contact an admin.")
+    role = user.get("role", "viewer")
+    token = create_token(team, uname, role, int(user.get("tokenGen") or 0))
+    write_audit(team, "login", uname, changes={"via": "microsoft"})
+    response.set_cookie(key="frazil_session", value=token, httponly=True, secure=True, samesite="lax", max_age=60 * 60 * 24 * 7)
+    response.delete_cookie(_SSO_DONE_COOKIE, path=_SSO_COOKIE_PATH)
+    return {"username": uname, "builtin": user.get("builtin", False), "role": role,
+            "ownerFilter": user.get("ownerFilter", ""), "avatarInitials": user.get("avatarInitials", ""),
+            "avatarColor": user.get("avatarColor", ""), "team": team, "token": token,
+            "mustChangePassword": False, "ret": _sso_safe_ret(done.get("ret", "/")), "via": "microsoft"}
+
+@app.get("/api/sys/companies")
+def sys_companies(auth: dict = Depends(require_auth)):
+    """Operator-only (SYS_STATUS_USERS, like System status): the Companies and their Microsoft sign-in
+    health. Never returns the key."""
+    if auth["username"] not in SYS_STATUS_USERS:
+        raise HTTPException(403, "Restricted to the box operator")
+    try:
+        import cryptography  # noqa: F401
+        has_crypto = True
+    except Exception:
+        has_crypto = False
+    out = []
+    for co in _companies():
+        out.append({"id": co["id"], "name": co["name"], "domains": co["domains"], "orgs": co["orgs"],
+                    "tenantId": co["entra"]["tenantId"], "clientId": co["entra"]["clientId"],
+                    "certExpires": co["entra"]["certExpires"], "certThumbprint": co["entra"]["certThumbprint"],
+                    "keyPresent": bool(co["entra"]["certKey"]) and os.path.isfile(_sso_key_path(co))})
+    return {"file": COMPANIES_FILE, "cryptography": has_crypto, "companies": out}
 
 @app.post("/api/users/self/password")
 def change_own_password(body: dict = Body(...), auth: dict = Depends(require_auth)):
@@ -3856,6 +4207,8 @@ def forgot_password(body: dict = Body(...), request: FRequest = None):
     users = json.loads(row["value"]) if row else []
     user = next((u for u in users
                  if (u.get("email") or "").strip().lower() == email and not u.get("revokedAt")), None)
+    if user and _sso_is_linked(team, user):   # SSO-COMPANY-1: no password to reset (same uniform response)
+        user = None
 
     if user and mail_configured():
         try:
@@ -4116,7 +4469,11 @@ def get_all(auth: dict = Depends(require_auth)):
                    "avatarColor": u.get("avatarColor", ""),         # user-chosen #RRGGBB (blank = username-hash color)
                    "fte": u.get("fte"),                             # per-user FTE for derived pod capacity (null -> 1.0 at read)
                    "topbarViews": bool(u.get("topbarViews", True)),  # SHELL-IA-1 Stage 3: top-bar-views IA. Default ON (opt-OUT); absent = ON, explicit false = the old left-rail (admin-settable)
-                   "revokedAt": u.get("revokedAt")} for u in users_raw]
+                   "revokedAt": u.get("revokedAt"),
+                   # SSO-COMPANY-1: yes/no only (never the hash or the Entra id). "pending" = no password and not
+                   # linked to Microsoft (the Users list badge; it used to test a password field the page never got).
+                   "microsoft": bool(u.get("entraOid")),
+                   "pending": not u.get("password") and not u.get("entraOid")} for u in users_raw]
     # KANBAN-AGE-1: {pid: [status, since]} for the items in THIS payload only (contributor-scoped above).
     _ids = {p["id"] for p in projects}
     with db(team) as c:
@@ -6519,6 +6876,14 @@ def set_config(key: str, body = Body(...), username: str = "",
             # route: inherit it from the stored record, default False for new users.
             # (Blocks self-promotion to primary and clearing the primary's flag.)
             u["builtin"] = bool(prev.get("builtin")) if prev else False
+            # SSO-COMPANY-1: the Microsoft link is server-owned - only a Microsoft sign-in sets it. Kept from the
+            # stored record, never taken from the client (so an admin save can neither wipe nor forge it).
+            for _k in ("entraOid", "entraLinkedAt", "ssoAt"):
+                if prev and prev.get(_k):
+                    u[_k] = prev[_k]
+                else:
+                    u.pop(_k, None)
+            u.pop("microsoft", None); u.pop("pending", None)   # read-only flags /api/all adds; never stored
             # avatarInitials/avatarColor are user-owned (set via /api/users/self/avatar).
             # The admin user form doesn't include them, so inherit here or an admin save
             # would wipe a user's chosen monogram/color.
