@@ -5228,6 +5228,14 @@ function render(){
     const starts = kids.map(c => { const s = _sb(c); return s ? s.start : c.start; }).filter(Boolean).sort();
     const dues   = kids.map(c => { const s = _sb(c); return s ? s.due : (c.revised||c.due); }).filter(Boolean).sort();   // revised wins over due
     const _fromSprint = kids.filter(c => _sb(c)).length;
+    // GANTT-LATE-1: how far unfinished work under it really runs (the planned span above is unchanged).
+    let _lateEnd = null, _carried = 0, _lateN = 0;
+    kids.forEach(c => {
+      const s = _sb(c), l = _lateEndOf(c, s ? s.due : (c.revised || c.due));
+      if(!l) return;
+      if(l.kind === 'sprint') _carried++; else _lateN++;
+      if(!_lateEnd || l.end > _lateEnd) _lateEnd = l.end;
+    });
     // ROLLUP-SYNC-1: status follows rule A (the Jira convention) - the SAME rule the server now writes onto
     // the parent (_rollup_plan), so the Gantt and the item never disagree. Over the leaf work (descendants
     // that are not themselves roll-up parents): every countable leaf finished -> the least-progressed
@@ -5262,7 +5270,7 @@ function render(){
       multiPod:pods.length>1, assignee:(ak.length===1?ak[0]:(ak.length>1?'Multiple':'')),
       empty:!(starts.length || dues.length), progress, done:_done, total:_cnt.length,
       active:_act.length, people:Object.keys(_pc).sort((a,b) => (_pc[b]-_pc[a]) || a.localeCompare(b)), lastTs:_last,
-      fromSprint:_fromSprint };
+      fromSprint:_fromSprint, lateEnd:_lateEnd, carried:_carried, lateN:_lateN };
   }
   // GANTT-SPRINT-DATES-1: {start, due} of the sprint an item is in (sprintId), else of the last sprint in its history.
   let _sprintById = null;
@@ -5272,6 +5280,27 @@ function render(){
     if(!sid || !_sprintById[sid]){ const h = Array.isArray(c.sprintHistory) ? c.sprintHistory : []; for(let i = h.length - 1; i >= 0; i--){ if(h[i] && _sprintById[h[i].sprintId]){ sid = h[i].sprintId; break; } } }
     const s = sid && _sprintById[sid];
     return (s && s.startDate && s.endDate && s.state !== 'Discarded') ? { start: s.startDate, due: s.endDate } : null;
+  }
+  // GANTT-LATE-1 (J.R. 2026-11-19, "it looks like nothing is happening right now"): unfinished work whose dates have
+  // passed still runs on the chart instead of ending in the past. `endIso` = the end the bar draws to (revised, else
+  // due, else its sprint backstop). In the Active sprint -> runs to that sprint's end (work carried over from an
+  // earlier sprint keeps its old dates in Jira); else STARTED work (active, not parked/deferred) -> runs to today.
+  // Unstarted work that missed its dates is left alone (it needs new dates, not a longer bar). Display only: drawn as
+  // the hatched overrun, never written, never counted in capacity. Returns {end: Date, kind: 'sprint'|'late', sprint}.
+  function _lateEndOf(c, endIso){
+    if(!c || c.hidden || c.archived) return null;
+    const st = c.status || '';
+    if(!st || statusIsTerminal[st] || RESERVED_TERMINAL_STATUSES.has(st)) return null;
+    const e = parseD(endIso);
+    if(!e || e >= TODAY) return null;
+    _sprintSpanOf(c);   // builds _sprintById
+    const sp = c.sprintId && _sprintById[c.sprintId];
+    if(sp && sp.state === 'Active' && sp.endDate){
+      const se = nextMonday(parseD(sp.endDate));
+      if(se && se > nextMonday(e)) return { end: se, kind: 'sprint', sprint: sp.name || 'the current sprint' };
+    }
+    if(statusIsActive[st] && !statusIsParked[st] && !statusIsDeferred[st]) return { end: TODAY, kind: 'late' };
+    return null;
   }
   function _rollupAll(p){ if(!(p.id in _rollupCache)) _rollupCache[p.id]=_computeRollup(p); return _rollupCache[p.id]; }
   // GANTT-TEAM-SLICES-1: inside a team group (Projects only, grouped by Team) a parent's bar is that team's
@@ -5368,6 +5397,9 @@ function render(){
     const ru = _rollupOf(p);
     const ds = ru ? [ru.start, ru.due] : [p.start, p.revised || p.due, p.expected, p.releaseDate, (_kidsSpanOf(p) || {}).due];   // PARENT-OVERRUN-1: a stale-dated parent stays in the window while its work does
     const dd = ds.map(parseD).filter(Boolean);
+    // GANTT-LATE-1: work still running now keeps its row in the window
+    const _lt = ru ? ru.lateEnd : (((_kidsSpanOf(p) || {}).lateEnd) || ((_lateEndOf(p, p.revised || p.due) || {}).end));
+    if(_lt) dd.push(_lt);
     if(!dd.length) return true;
     const lo = new Date(Math.min(...dd)), hi = new Date(Math.max(...dd));
     return lo <= _winHi && hi >= _winLo;
@@ -5758,6 +5790,7 @@ function render(){
           const _tchip = _ru.multiPod ? `<span class="rollup-team" title="Children span multiple teams; placed under the pod with the most">${esc(_ru.teamLabel)}</span>` : '';
           const _stBadge = _ru.status ? `<span class="sbadge ${statusCls(_ru.status)}">${esc(_ru.status)}</span>` : `<span class="sbadge" style="opacity:.5">-</span>`;
           const _ds=parseD(_ru.start), _dd=_ru.due?nextMonday(parseD(_ru.due)):null;
+          const _le = (_ru.lateEnd && _dd && _ru.lateEnd > _dd) ? _ru.lateEnd : null;   // GANTT-LATE-1
           const _schedTxt = _dd ? _dd.toLocaleDateString('en-US',{timeZone:MT_TZ,month:'short',day:'numeric'}) : '-';
           const _pl = (_projOnly && !depth) ? _pulseHtml(p) : null;   // GANTT-WORK-1
           const _nm = `${_pl ? _pl.dot : ''}${(()=>{const ic=typeIconHTML(p.type);return ic?ic+' ':'';})()}${esc(p.name)}${_tchip}`;
@@ -5765,7 +5798,7 @@ function render(){
             ${(_pl && _pl.sub) ? `<span class="proj-name pn-2" title="${escA(p.name)}"><span class="pn-main">${_nm}</span>${_pl.sub}</span>` : `<span class="proj-name" title="${escA(p.name)}">${_nm}</span>`}
             ${priorityDot(p.priority)}
             ${_stBadge}
-            <span class="sched-date muted-sched">${_schedTxt}</span>
+            <span class="sched-date ${_le ? 'overdue' : 'muted-sched'}">${_schedTxt}</span>
             ${_caret}
           </div>`;
           let _bar;
@@ -5775,7 +5808,7 @@ function render(){
             const _pct = Math.round((_ru.progress || 0) * 100);
             const _ptip = (_ru.total ? `${_ru.done} of ${_ru.total} finished (${_pct}%)` : 'no child work yet') + (_ru.fromSprint ? ` · dates for ${_ru.fromSprint} item${_ru.fromSprint===1?'':'s'} come from their sprint` : '');   // GANTT-SPRINT-DATES-1
             const _rlJoin = parseD(_ru.release || p.releaseDate);   // GANTT-BAR-JOINS-1: square the end a release segment joins
-            const _sq = (_rlJoin && px(_dd) < px(_rlJoin)) ? ';border-top-right-radius:0;border-bottom-right-radius:0' : '';
+            const _sq = ((_rlJoin && px(_dd) < px(_rlJoin)) || _le) ? ';border-top-right-radius:0;border-bottom-right-radius:0' : '';
             _bar = `<div class="bar derived${_pct>0?' derived-prog':''}${_pct>=100?' derived-done':''}" data-id="${p.id}" title="Summary of children: ${_ptip}" style="left:${px(_ds).toFixed(1)}px;width:${pxW(_ds,_dd).toFixed(1)}px${_sq}">${_pct>0?`<div class="derived-fill" style="width:${_pct}%"></div>`:''}</div>`;
             // ROLLUP-OVERRUN-1: a release later than the children's span gets the same hatched overrun segment a
             // normal item draws (UI-TRIO-1 P3), so the release marker attaches to the bar instead of floating
@@ -5784,9 +5817,19 @@ function render(){
             const _rl = parseD(_ru.release || p.releaseDate);
             if(_rl){
               if(px(_dd) < px(_rl)){
-                _bar += `<div class="bar overrun" data-id="${p.id}" title="Released ${fmtD(_rl)} - after the children's scheduled end (${fmtD(_dd)})" style="left:${px(_dd).toFixed(1)}px;width:${pxW(_dd,_rl).toFixed(1)}px"></div>`;
+                _bar += `<div class="bar overrun" data-id="${p.id}" title="Released ${fmtD(_rl)} - after the children's scheduled end (${fmtD(_dd)})" style="left:${px(_dd).toFixed(1)}px;width:${pxW(_dd,_rl).toFixed(1)}px${_le && px(_le) > px(_rl) ? ';border-radius:0' : ''}"></div>`;
               }
               _bar += `<div class="plane-marker" data-id="${p.id}" title="Released: ${fmtD(_rl)}" style="left:${px(_rl).toFixed(1)}px">${PLANE_SVG}</div>`;
+            }
+            // GANTT-LATE-1: unfinished work under it whose dates have passed carries the bar on, hatched, to the end of the
+            // current sprint (carried-over work) or to today (started work running late). Display only.
+            if(_le){
+              const _lf = (_rl && px(_rl) > px(_dd)) ? _rl : _dd;
+              if(px(_le) > px(_lf)){
+                const _n = _ru.carried + _ru.lateN;
+                const _why = [_ru.carried ? `${_ru.carried} carried into the current sprint` : '', _ru.lateN ? `${_ru.lateN} in progress past ${_ru.lateN===1?'its':'their'} dates` : ''].filter(Boolean).join(', ');
+                _bar += `<div class="bar overrun" data-id="${p.id}" title="${escA(`${_n} unfinished item${_n===1?'':'s'} still open past ${_n===1?'its':'their'} dates (${_why}) - runs to ${fmtD(_le)}; planned end ${fmtD(_dd)}`)}" style="left:${px(_lf).toFixed(1)}px;width:${pxW(_lf,_le).toFixed(1)}px"></div>`;
+              }
             }
           } else {
             _bar = `<span class="rollup-noschedule" title="No schedule - children have no dates yet">no schedule</span>`;   // Decision 4: deliberate marker, not an empty lane
@@ -5889,10 +5932,15 @@ function render(){
         const _ownEnd  = hasDelay ? r : d;
         const _relOver = !!(rl && _ownEnd && px(_ownEnd) < px(rl));                   // release later than the scheduled end
         const _ks      = _kidsSpanOf(p);                                               // PARENT-OVERRUN-1
-        const _kEnd    = (_ks && _ks.due) ? nextMonday(parseD(_ks.due)) : null;
+        const _kEnd0   = (_ks && _ks.due) ? nextMonday(parseD(_ks.due)) : null;
+        const _kEnd    = (_ks && _ks.lateEnd && (!_kEnd0 || _ks.lateEnd > _kEnd0)) ? _ks.lateEnd : _kEnd0;   // GANTT-LATE-1: its work still running
         const _kidFrom = (rl && _ownEnd && px(rl) > px(_ownEnd)) ? rl : _ownEnd;
         const _kidOver = !!(_kEnd && _ownEnd && px(_kEnd) > px(_ownEnd) && px(_kEnd) > px(_kidFrom));
-        const _tail    = _relOver || _kidOver;
+        // GANTT-LATE-1: the item itself is unfinished past its dates -> hatched on to its sprint's end / today
+        const _late     = (s && d) ? _lateEndOf(p, p.revised || p.due) : null;
+        const _lateFrom = _kidOver ? _kEnd : _kidFrom;
+        const _lateOver = !!(_late && _ownEnd && px(_late.end) > px(_lateFrom));
+        const _tail    = _relOver || _kidOver || _lateOver;
         if(s && d){
           // Green dev bar: start → devEnd (compressed if parallel)
           const gLeft  = px(s);
@@ -5928,7 +5976,7 @@ function render(){
         // the delay-reason prompt + an audit trail); it is rendered HATCHED, distinct from .bar.delay.
         if(rl){
           if(_relOver){
-            cH += `<div class="bar overrun" data-id="${p.id}" title="Released ${fmtD(rl)} - past the ${hasDelay?'revised':'due'} date (no delay reason recorded)" style="left:${px(_ownEnd).toFixed(1)}px;width:${pxW(_ownEnd,rl).toFixed(1)}px${_kidOver ? ';border-radius:0' : ''}"></div>`;
+            cH += `<div class="bar overrun" data-id="${p.id}" title="Released ${fmtD(rl)} - past the ${hasDelay?'revised':'due'} date (no delay reason recorded)" style="left:${px(_ownEnd).toFixed(1)}px;width:${pxW(_ownEnd,rl).toFixed(1)}px${(_kidOver || _lateOver) ? ';border-radius:0' : ''}"></div>`;
           }
           cH += `<div class="plane-marker" data-id="${p.id}" title="Released: ${fmtD(rl)}" style="left:${px(rl).toFixed(1)}px">${PLANE_SVG}</div>`;
         }
@@ -5937,7 +5985,13 @@ function render(){
         // the end of that work as a hatched overrun, so current work is never hidden behind old dates. Starts
         // where the bar (or a later release marker) ends. Display only - nothing is written to the item.
         if(_kidOver){
-          cH += `<div class="bar overrun" data-id="${p.id}" title="Work under this item runs to ${fmtD(_kEnd)} - past its own ${hasDelay?'revised':'due'} date (${fmtD(_ownEnd)})" style="left:${px(_kidFrom).toFixed(1)}px;width:${pxW(_kidFrom,_kEnd).toFixed(1)}px"></div>`;
+          cH += `<div class="bar overrun" data-id="${p.id}" title="Work under this item runs to ${fmtD(_kEnd)} - past its own ${hasDelay?'revised':'due'} date (${fmtD(_ownEnd)})" style="left:${px(_kidFrom).toFixed(1)}px;width:${pxW(_kidFrom,_kEnd).toFixed(1)}px${_lateOver ? ';border-radius:0' : ''}"></div>`;
+        }
+        if(_lateOver){
+          const _lt = _late.kind === 'sprint'
+            ? `Still open - carried into ${_late.sprint}, runs to ${fmtD(_late.end)} (its own ${hasDelay?'revised':'due'} date was ${fmtD(_ownEnd)})`
+            : `Still in progress - past its ${hasDelay?'revised':'due'} date (${fmtD(_ownEnd)})`;
+          cH += `<div class="bar overrun" data-id="${p.id}" title="${escA(_lt)}" style="left:${px(_lateFrom).toFixed(1)}px;width:${pxW(_lateFrom,_late.end).toFixed(1)}px"></div>`;
         }
         cH += `</div></div>`;
 
