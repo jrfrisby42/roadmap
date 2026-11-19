@@ -1149,6 +1149,15 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   .btn-logout { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 6px 12px; border-radius: 6px; font-family:'Lato',sans-serif; font-weight:700; font-size:12px; cursor:pointer; }
   .btn-logout:hover { border-color: var(--accent2); color: var(--accent2); }
   .login-error { color: var(--accent2); font-size: 11px; font-weight: 700; margin-top: 6px; display: none; }
+  /* SSO-COMPANY-1: "Sign in with Microsoft" (Microsoft's light button: white, #8C8C8C border, #5E5E5E text) */
+  .sso-btn { width:100%; display:flex; align-items:center; justify-content:center; gap:10px; height:41px; background:#fff; border:1px solid #8C8C8C; border-radius:4px; color:#5E5E5E; font-size:15px; font-weight:600; font-family:inherit; cursor:pointer; }
+  .sso-btn:hover { background:#F3F6FA; }
+  .sso-btn:focus-visible { outline:2px solid #0059A9; outline-offset:2px; }
+  .sso-or { display:flex; align-items:center; gap:10px; margin:16px 0 12px; font-size:11px; color:#5a6b7c; }
+  .sso-or::before, .sso-or::after { content:''; flex:1; border-top:1px solid var(--border); }
+  #loginWall.sso-picking .lw-pw, #loginWall.sso-picking #ssoBox { display:none; }
+  .sso-pick-btn { width:100%; display:block; text-align:left; margin-top:8px; padding:10px 12px; background:#fff; border:1px solid var(--border); border-radius:8px; font-size:14px; font-weight:600; color:#1a2b3c; cursor:pointer; font-family:inherit; }
+  .sso-pick-btn:hover { border-color:#0059A9; background:#F3F6FA; }
 
   /* ADMIN PANEL */
   .admin-modal { width: 800px; max-width: 96vw; }
@@ -1533,6 +1542,17 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       <h1 style="font-size:20px;font-weight:900;color:var(--text);margin:0">Frazil Flow</h1>
       <div style="font-size:12px;color:var(--muted);margin-top:4px">Sign in to continue</div>
     </div>
+    <!-- SSO-COMPANY-1: shown only when a Company is set up (GET /api/auth/sso/enabled) -->
+    <div id="ssoBox" style="display:none">
+      <button type="button" class="sso-btn" id="ssoBtn"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 21 21" aria-hidden="true"><rect x="1" y="1" width="9" height="9" fill="#F25022"/><rect x="11" y="1" width="9" height="9" fill="#7FBA00"/><rect x="1" y="11" width="9" height="9" fill="#00A4EF"/><rect x="11" y="11" width="9" height="9" fill="#FFB900"/></svg>Sign in with Microsoft</button>
+      <div class="form-row" id="ssoEmailRow" style="display:none;margin-top:12px">
+        <label>Work email</label>
+        <input type="email" id="ssoEmail" placeholder="you@company.com" autocomplete="email">
+      </div>
+      <div class="sso-or">or sign in with a password</div>
+    </div>
+    <div id="ssoPick" style="display:none"></div>
+    <div class="lw-pw">
     <div class="form-row">
       <label>Organization</label>
       <select id="loginTeam" style="text-transform:capitalize">
@@ -1547,10 +1567,13 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
       <label>Password</label>
       <input type="password" id="loginPass" placeholder="Password" autocomplete="current-password">
     </div>
+    </div>
     <div class="login-error" id="loginError" style="display:none;margin-bottom:10px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Incorrect username or password.</div>
+    <div class="lw-pw">
     <button class="btn-save" id="loginSubmitBtn" style="width:100%;padding:10px;font-size:14px;margin-top:4px">Sign In</button>
     <div style="text-align:center;margin-top:14px">
       <a id="forgotLink" href="#" style="font-size:12px;color:var(--accent);text-decoration:none">Forgot password?</a>
+    </div>
     </div>
     <div style="text-align:center;margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
       <a href="/report" style="font-size:12px;color:var(--muted);text-decoration:none">Not on the team? Submit or track a ticket &rarr;</a>
@@ -3147,6 +3170,7 @@ const API = {
       // Do NOT wipe the fresh token or wall the user - signal a one-shot retry with the current token.
       if(this._rotated(sentToken)){ const e=new Error('Session token refreshed; retrying.'); e._tokenRotated=true; throw e; }
       let _detail=null; try { _detail = (await r.json()).detail; } catch(_){}
+      if(_detail === 'SSO_RECHECK' && typeof _frzSsoRecheck === 'function' && _frzSsoRecheck()) throw new Error('Checking your Microsoft sign-in...');   // SSO-COMPANY-1
       try { if(typeof _frzCaptureDrafts==='function') _frzCaptureDrafts(); } catch(e){}   // SESS-1 Part 2: save unsaved text before the wall/reload
       try { localStorage.removeItem('frazil_token'); } catch(e){}
       // SESS-1 Part 3.2: preserve the server's reason (revoked vs expired) instead of flattening to generic.
@@ -9876,6 +9900,22 @@ function _sysStatusHTML(d){
   if(trows) out += _sysSection('Teams', trows);
   return out;
 }
+// SSO-COMPANY-1: the Companies above the Organizations and their Microsoft sign-in health (read-only; the
+// file is edited on the server). Certificate expiry turns amber 30 days out, red once past.
+function _sysCompanyHTML(c){
+  var cos=(c&&c.companies)||[], rows='';
+  if(!cos.length) rows += _sysRow('Companies', _sysBadge('info','none') + '<span class="frz-sys-muted" style="padding:0">no Microsoft sign-in ('+esc(c.file||'')+')</span>');
+  if(cos.length && !c.cryptography) rows += _sysRow('Signing library', _sysBadge('red','missing') + '<span class="frz-sys-muted" style="padding:0">install cryptography - Microsoft sign-in cannot work</span>');
+  cos.forEach(function(x){
+    var days = x.certExpires ? Math.floor((Date.parse(x.certExpires+'T00:00:00Z') - Date.now())/86400000) : null;
+    var cert = days==null ? _sysBadge('info','expiry unknown') : days < 0 ? _sysBadge('red','certificate expired') : days <= 30 ? _sysBadge('warn','certificate expires in '+days+'d') : _sysBadge('ok','certificate until '+x.certExpires);
+    rows += _sysRow(x.name, (x.keyPresent ? _sysBadge('ok','Microsoft sign-in') : _sysBadge('red','signing key missing')) + cert);
+    rows += _sysRow('Domains', '<span class="frz-sys-muted" style="padding:0">'+esc((x.domains||[]).join(', ')||'-')+'</span>');
+    rows += _sysRow('Organizations', '<span class="frz-sys-muted" style="padding:0">'+esc((x.orgs||[]).join(', ')||'-')+'</span>');
+    rows += _sysRow('Entra app', '<span class="frz-sys-muted" style="padding:0">tenant '+esc(x.tenantId)+' · client '+esc(x.clientId)+'</span>');
+  });
+  return _sysSection('Company', rows);
+}
 async function renderSystemStatus(){
   var box=document.getElementById('frzSysStatusBody');
   if(!box) return;
@@ -9883,7 +9923,8 @@ async function renderSystemStatus(){
   try {
     // API.get resolves to the PARSED body (not a Response) and throws on non-2xx (403 => "Permission denied").
     var d=await API.get('/api/system/status');
-    box.innerHTML=_sysStatusHTML(d);
+    var co=null; try { co=await API.get('/api/sys/companies'); } catch(_e){}   // SSO-COMPANY-1
+    box.innerHTML=_sysStatusHTML(d) + (co ? _sysCompanyHTML(co) : '');
   } catch(e){
     var m=String(e && e.message || e);
     box.innerHTML='<div class="frz-sys-muted">'+(/Permission denied/i.test(m)?'You do not have access to system status.':('Could not load system status ('+esc(m)+').'))+'</div>';
@@ -10114,8 +10155,11 @@ function renderUserList(){
     const signoutBtn = canLogout ? `<button class="btn-ic" onclick="signoutEverywhere(${i})" title="Sign out everywhere (ends active sessions; user can sign back in)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>` : '';
     const selfBadge = isSelf ? ' <span style="font-size:10px;background:rgba(0,89,169,0.1);color:var(--accent);padding:1px 6px;border-radius:8px;font-weight:700">you</span>' : '';
     const emailTxt = u.email ? `<span style="font-size:11px;color:var(--muted);margin-left:2px">${esc(u.email)}</span>` : '';
-    const noPwBadge = (!u.password) ? ` <span style="font-size:10px;background:rgba(240,165,0,0.15);color:#b06f00;padding:1px 6px;border-radius:8px;font-weight:700" title="No password set - pending setup link">pending</span>` : '';
-    const linkBtn = (isAdmin && u.email) ? `<button class="btn-ic" onclick="sendUserLink(${i})" title="Email a password setup/reset link"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg></button>` : '';
+    // SSO-COMPANY-1: a user linked to Microsoft signs in with Microsoft (no password, so not "pending", and no password link)
+    const _msLinked = !!(u.microsoft || u.entraOid);
+    const noPwBadge = _msLinked ? ` <span style="font-size:10px;background:rgba(0,89,169,0.1);color:var(--accent);padding:1px 6px;border-radius:8px;font-weight:700" title="Signs in with Microsoft${u.builtin ? ' (the built-in admin can also use a password)' : ''}">Microsoft</span>`
+      : (u.pending === true || (u.pending === undefined && u.password === '')) ? ` <span style="font-size:10px;background:rgba(240,165,0,0.15);color:#b06f00;padding:1px 6px;border-radius:8px;font-weight:700" title="No password set - pending setup link">pending</span>` : '';
+    const linkBtn = (isAdmin && u.email && !(_msLinked && !u.builtin)) ? `<button class="btn-ic" onclick="sendUserLink(${i})" title="Email a password setup/reset link"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg></button>` : '';
 
     const dName = displayName(u.username);
     const uHint = (dName !== u.username) ? ` <span style="font-size:11px;color:var(--muted);font-weight:400">@${esc(u.username)}</span>` : '';
@@ -11821,7 +11865,96 @@ async function showLoginWall(reason){
     }
   }
 
+  _ssoInitWall();   // SSO-COMPANY-1
   setTimeout(()=> document.getElementById('loginUser').focus(), 50);
+}
+
+// -- SSO-COMPANY-1: "Sign in with Microsoft" --------------------------------------------------------------
+// The work email's domain picks the Company (server side); Microsoft sends the browser back to /?sso=done
+// (or /?sso_error=why), and boot() trades that for a session through _ssoReturn. Linked sessions are sent
+// back through Microsoft once a day (the server answers 401 "SSO_RECHECK"; _frzSsoRecheck does it silently).
+const _SSO_ERR = {
+  domain:    'That email is not set up for Microsoft sign-in. Use your Flow password.',
+  noaccount: 'You do not have a Flow account yet. Ask your Flow admin to add you.',
+  signin:    'Please sign in with Microsoft again.',
+  state:     'Microsoft sign-in took too long or was interrupted. Please try again.',
+  config:    'Microsoft sign-in is not set up correctly. Contact your Flow admin.',
+  microsoft: 'Microsoft sign-in did not finish. Please try again.'
+};
+let _ssoWired = false;
+async function _ssoInitWall(){
+  const box = document.getElementById('ssoBox');
+  if(!box) return;
+  let on = false;
+  try { on = !!(await fetch('/api/auth/sso/enabled').then(r => r.json())).enabled; } catch(e){}
+  box.style.display = on ? '' : 'none';
+  if(!on || _ssoWired) return;
+  _ssoWired = true;
+  const em = document.getElementById('ssoEmail');
+  try { const last = localStorage.getItem('frazil_sso_email'); if(last) em.value = last; } catch(e){}
+  const go = () => {
+    const u = document.getElementById('loginUser').value.trim();
+    const email = (em.value.trim() || (u.includes('@') ? u : '')).toLowerCase();
+    const row = document.getElementById('ssoEmailRow');
+    if(!email || !email.includes('@')){ row.style.display = ''; em.focus(); return; }
+    try { localStorage.setItem('frazil_sso_email', email); } catch(e){}
+    location.href = '/api/auth/sso/microsoft/start?email=' + encodeURIComponent(email) + '&ret=' + encodeURIComponent(_ssoRet());
+  };
+  document.getElementById('ssoBtn').addEventListener('click', go);
+  em.addEventListener('keydown', e => { if(e.key === 'Enter') go(); });
+}
+function _ssoRet(){
+  const p = location.pathname + location.search;
+  return (p && p.charAt(0) === '/' && p.indexOf('sso') < 0) ? p : '/';
+}
+// Back from Microsoft (boot): true when it handled the load.
+async function _ssoReturn(){
+  const qs = new URLSearchParams(location.search);
+  const err = qs.get('sso_error'), done = qs.get('sso') === 'done';
+  if(!err && !done) return false;
+  try { history.replaceState(history.state, '', location.pathname); } catch(e){}
+  showLoading(false);
+  if(err){ try { localStorage.removeItem('frazil_token'); } catch(e){} showLoginWall(_SSO_ERR[err] || _SSO_ERR.microsoft); return true; }   // a refused daily check must not leave the old session behind
+  return _ssoFinish(null);
+}
+async function _ssoFinish(team){
+  let r = null, d = null;
+  try {
+    r = await fetch('/api/auth/sso/finish', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(team ? {team} : {}) });
+    d = await r.json();
+  } catch(e){}
+  if(!r || !r.ok || !d){ document.getElementById('loginWall').classList.remove('sso-picking'); showLoginWall((d && d.detail) || 'Microsoft sign-in expired. Please try again.'); return true; }
+  if(d.pick){ showLoginWall(); _ssoShowPicker(d.pick); return true; }
+  try { localStorage.setItem(SK.team, d.team); } catch(e){}
+  try { localStorage.setItem('frazil_token', d.token || ''); } catch(e){}
+  _recordSession(d.team, d.token, d.username, d.role || 'viewer');
+  document.documentElement.classList.add('frz-boot');
+  hideLoginWall();
+  setAdminMode(true, d.username, d.role || 'viewer');
+  location.replace(d.ret || '/');
+  return true;
+}
+function _ssoShowPicker(teams){
+  const wall = document.getElementById('loginWall'), box = document.getElementById('ssoPick');
+  wall.classList.add('sso-picking');
+  box.innerHTML = '<div style="font-size:13px;font-weight:700;color:#1a2b3c">Choose an Organization</div>' +
+    teams.map(t => '<button type="button" class="sso-pick-btn" data-team="' + escA(t) + '">' + esc(teamLabel(t)) + '</button>').join('');
+  box.style.display = '';
+  box.querySelectorAll('.sso-pick-btn').forEach(b => b.addEventListener('click', () => {
+    box.querySelectorAll('.sso-pick-btn').forEach(x => x.disabled = true);
+    _ssoFinish(b.getAttribute('data-team'));
+  }));
+}
+// The daily silent pass through Microsoft (the server's 401 "SSO_RECHECK"). Once per page.
+function _frzSsoRecheck(){
+  if(window._frzSsoGoing) return true;
+  let team = '';
+  try { team = localStorage.getItem(SK.team) || ''; } catch(e){}
+  if(!team) return false;
+  window._frzSsoGoing = true;
+  try { if(typeof _frzCaptureDrafts === 'function') _frzCaptureDrafts(); } catch(e){}
+  location.href = '/api/auth/sso/microsoft/start?team=' + encodeURIComponent(team) + '&silent=1&ret=' + encodeURIComponent(_ssoRet());
+  return true;
 }
 
 function hideLoginWall(){
@@ -11954,6 +12087,7 @@ async function attemptLogin(){
   } catch(e) {
     const msg = e.message || '';
     errEl.textContent = msg.includes('429') ? '! Too many attempts. Please wait 60 seconds.'
+      : msg.includes('signs in with Microsoft') ? '! This account signs in with Microsoft. Use Sign in with Microsoft above.'
       : msg.includes('Unknown team') ? '! Team not found. Check your team name.'
       : '! Incorrect username or password.';
     errEl.style.display = 'block';
@@ -21788,6 +21922,7 @@ async function boot(){
   } catch(e){}
   // Emailed set-password / reset link - handle before anything else (user is not logged in).
   if(checkPasswordTokenParam()){ try { window._frzMark && window._frzMark('pwtoken', true); } catch(_e){} return; }   // HANG-PROBE-1: the set-password screen is not a freeze
+  if(await _ssoReturn()){ try { window._frzMark && window._frzMark('sso', true); } catch(_e){} return; }   // SSO-COMPANY-1: back from Microsoft
   // If no team stored yet, skip API call and go straight to login wall
   const _storedTeam = (() => { try { return localStorage.getItem(SK.team) || ''; } catch(e){ return ''; } })();
   if(!_storedTeam){
