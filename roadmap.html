@@ -10160,6 +10160,9 @@ function renderUserList(){
     const _msLinked = !!(u.microsoft || u.entraOid);
     const noPwBadge = _msLinked ? ` <span style="font-size:10px;background:rgba(0,89,169,0.1);color:var(--accent);padding:1px 6px;border-radius:8px;font-weight:700" title="${u.msInvited ? 'Added to sign in with Microsoft - has not signed in yet' : 'Signs in with Microsoft' + (u.builtin ? ' (the built-in admin can also use a password)' : '')}">Microsoft${u.msInvited ? ' (invited)' : ''}</span>`
       : (u.pending === true || (u.pending === undefined && u.password === '')) ? ` <span style="font-size:10px;background:rgba(240,165,0,0.15);color:#b06f00;padding:1px 6px;border-radius:8px;font-weight:700" title="No password set - pending setup link">pending</span>` : '';
+    // SSO-UNLINK-1: switch a Microsoft user back to a password (the undo for a wrong link), and turn it back on.
+    const msOffBtn = (isAdmin && !isSelf && _msLinked) ? `<button class="btn-ic" onclick="ssoUnlinkUser(${i})" title="Switch to a password (unlink Microsoft)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M18.84 12.25l1.72-1.71a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M5.17 11.75l-1.71 1.71a5 5 0 0 0 7.07 7.07l1.71-1.71"/><line x1="8" y1="2" x2="8" y2="5"/><line x1="2" y1="8" x2="5" y2="8"/><line x1="16" y1="19" x2="16" y2="22"/><line x1="19" y1="16" x2="22" y2="16"/></svg></button>`
+      : (isAdmin && !isSelf && u.ssoOff && _newUserIsCompanyEmail(u.email)) ? `<button class="btn-ic" onclick="ssoUseMicrosoft(${i})" title="Use Microsoft sign-in again"><svg viewBox="0 0 24 24" width="12" height="12" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="1" y="1" width="10" height="10" fill="#f25022"/><rect x="13" y="1" width="10" height="10" fill="#7fba00"/><rect x="1" y="13" width="10" height="10" fill="#00a4ef"/><rect x="13" y="13" width="10" height="10" fill="#ffb900"/></svg></button>` : '';
     const linkBtn = (isAdmin && u.email && !(_msLinked && !u.builtin)) ? `<button class="btn-ic" onclick="sendUserLink(${i})" title="Email a password setup/reset link"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg></button>` : '';
 
     const dName = displayName(u.username);
@@ -10169,7 +10172,7 @@ function renderUserList(){
       <span class="dev-nm">${esc(dName)}${uHint}${selfBadge}${noPwBadge}</span>
       ${emailTxt}
       ${rolePill}${ownerPill}
-      ${editBtn}${linkBtn}${signoutBtn}${logoutBtn}${deleteBtn}
+      ${editBtn}${linkBtn}${msOffBtn}${signoutBtn}${logoutBtn}${deleteBtn}
     </div>`;
   }).join('');
   _syncNewUserOwner();
@@ -10317,6 +10320,37 @@ async function sendUserLink(i){
     await API.post('/api/users/' + encodeURIComponent(u.username) + '/send-invite', {});
     alert(`Link sent to ${u.email}.`);
   } catch(e){ alert('Could not send link: ' + (e.message || String(e))); }
+}
+
+// SSO-UNLINK-1: Microsoft -> password. The server clears the link, stops Microsoft from linking them again and signs
+// them out everywhere; someone left with no password then needs a setup link.
+async function ssoUnlinkUser(i){
+  const u = users[i]; if(!u) return;
+  const nm = displayName(u.username);
+  if(!confirm(`Switch ${nm} from Microsoft to a password?\n\nThey are signed out now, and Microsoft sign-in will not link them again until you turn it back on.`)) return;
+  let r;
+  try { r = await API.post('/api/users/' + encodeURIComponent(u.username) + '/sso-unlink', {}); }
+  catch(e){ alert('Could not switch ' + nm + ': ' + (e.message || String(e))); return; }
+  Object.assign(u, { microsoft: false, msInvited: false, ssoOff: true, pending: !(r && r.hasPassword) });
+  renderUserList();
+  if(r && !r.hasPassword){
+    if(!u.email){ alert(`${nm} has no password now. Add an email and send them a setup link, or set one with Edit.`); return; }
+    if(confirm(`${nm} has no password now. Email ${u.email} a link to set one?`)){
+      try { await API.post('/api/users/' + encodeURIComponent(u.username) + '/send-invite', {}); alert(`Link sent to ${u.email}.`); }
+      catch(e){ alert('Could not send link: ' + (e.message || String(e))); }
+    }
+  } else if(typeof showToast === 'function') showToast(nm + ' now signs in with a password');
+}
+async function ssoUseMicrosoft(i){
+  const u = users[i]; if(!u) return;
+  const nm = displayName(u.username);
+  if(!confirm(`Turn Microsoft sign-in back on for ${nm}?\n\nTheir next "Sign in with Microsoft" links them and turns off their password. They are emailed how to sign in.`)) return;
+  let r;
+  try { r = await API.post('/api/users/' + encodeURIComponent(u.username) + '/sso-welcome', {}); }
+  catch(e){ alert('Could not turn it on: ' + (e.message || String(e))); return; }
+  Object.assign(u, { microsoft: true, msInvited: true, ssoOff: false, pending: false });
+  renderUserList();
+  if(typeof showToast === 'function') showToast(r && r.sent ? `Sign-in instructions sent to ${u.email}` : `${nm} can sign in with Microsoft now (no email was sent)`);
 }
 
 function forceLogoutUser(i){
