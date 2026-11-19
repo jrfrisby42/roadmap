@@ -659,7 +659,10 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   /* ROLLUP-PROGRESS-1: summary-bar progress. The fill sits inside the dashed track; a finished parent is solid. */
   .bar.derived { overflow: hidden; }
   .bar.derived .derived-fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--bar-green); pointer-events: none; }
-  .bar.derived.derived-prog { opacity: 1; }   /* the faded 0.6 look is kept only for a track with no finished work */
+  .bar.derived.derived-prog { opacity: 1; }   /* the faded 0.6 look is kept only for a track with nothing finished or started */
+  /* GANTT-WIP-FILL-1: the in-progress share, a lighter green after the finished share */
+  .bar.derived .derived-wip { position: absolute; top: 0; bottom: 0; background: rgba(34,185,110,0.32); pointer-events: none; }
+  body.dark-mode .bar.derived .derived-wip { background: rgba(34,185,110,0.4); }
   .bar.derived.derived-done { border-style: solid; border-color: var(--bar-green); }
   .rollup-team { font-size: 9px; font-weight: 700; color: var(--muted); background: var(--surface2); border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; margin-left: 6px; white-space: nowrap; vertical-align: middle; }
   .rollup-noschedule { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); font-size: 10px; font-style: italic; color: var(--muted); opacity: 0.7; pointer-events: none; }
@@ -5831,10 +5834,13 @@ function render(){
             // ROLLUP-PROGRESS-1: the outline is the track; the fill is the share of child work finished
             // (100% = solid once the parent is finished). Still display only - never counted in capacity.
             const _pct = Math.round((_ru.progress || 0) * 100);
-            const _ptip = (_ru.total ? `${_ru.done} of ${_ru.total} finished (${_pct}%)` : 'no child work yet') + (_ru.fromSprint ? ` · dates for ${_ru.fromSprint} item${_ru.fromSprint===1?'':'s'} come from their sprint` : '');   // GANTT-SPRINT-DATES-1
+            // GANTT-WIP-FILL-1 (J.R. 2026-11-19): work under way shows too, in a lighter green after the finished share,
+            // so a project with work started but nothing finished no longer reads as an empty outline.
+            const _wip = (_pct < 100 && _ru.total) ? Math.min(100 - _pct, Math.round((_ru.active || 0) / _ru.total * 100)) : 0;
+            const _ptip = (_ru.total ? `${_ru.done} of ${_ru.total} finished${_ru.active && _pct < 100 ? `, ${_ru.active} in progress` : ''} (${_pct}% done)` : 'no child work yet') + (_ru.fromSprint ? ` · dates for ${_ru.fromSprint} item${_ru.fromSprint===1?'':'s'} come from their sprint` : '');   // GANTT-SPRINT-DATES-1
             const _rlJoin = parseD(_ru.release || p.releaseDate);   // GANTT-BAR-JOINS-1: square the end a release segment joins
             const _sq = ((_rlJoin && px(_dd) < px(_rlJoin)) || _le) ? ';border-top-right-radius:0;border-bottom-right-radius:0' : '';
-            _bar = `<div class="bar derived${_pct>0?' derived-prog':''}${_pct>=100?' derived-done':''}" data-id="${p.id}" title="Summary of children: ${_ptip}" style="left:${px(_ds).toFixed(1)}px;width:${pxW(_ds,_dd).toFixed(1)}px${_sq}">${_pct>0?`<div class="derived-fill" style="width:${_pct}%"></div>`:''}</div>`;
+            _bar = `<div class="bar derived${(_pct>0||_wip>0)?' derived-prog':''}${_pct>=100?' derived-done':''}" data-id="${p.id}" title="Summary of children: ${_ptip}" style="left:${px(_ds).toFixed(1)}px;width:${pxW(_ds,_dd).toFixed(1)}px${_sq}">${_pct>0?`<div class="derived-fill" style="width:${_pct}%"></div>`:''}${_wip>0?`<div class="derived-wip" style="left:${_pct}%;width:${_wip}%"></div>`:''}</div>`;
             // ROLLUP-OVERRUN-1: a release later than the children's span gets the same hatched overrun segment a
             // normal item draws (UI-TRIO-1 P3), so the release marker attaches to the bar instead of floating
             // past it (FRZ-951: children Sep 8 - Oct 2, last release Oct 13). Display only, nothing is written.
