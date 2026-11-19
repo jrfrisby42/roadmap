@@ -4293,6 +4293,48 @@ def send_user_invite(target_username: str, auth: dict = Depends(require_role("ad
     return {"ok": True}
 
 
+@app.post("/api/users/{target_username}/sso-welcome")
+def send_user_sso_welcome(target_username: str, auth: dict = Depends(require_role("admin"))):
+    """SSO-COMPANY-1 (Add User "Signs in with Microsoft"): mark a new user as invited to sign in with Microsoft
+    and email them how (best-effort: the account works either way, the reply says whether mail went). Their
+    first Microsoft sign-in links them by email as usual. The email must be on a domain of the Org's Company."""
+    team = auth["team"]
+    co = _company_for_org(team)
+    if not co:
+        raise HTTPException(400, "Microsoft sign-in is not set up for this Organization")
+    with db(team) as c:
+        row = c.execute("SELECT value FROM config WHERE key='users'").fetchone()
+        users = json.loads(row["value"]) if row else []
+        user = next((u for u in users if u["username"] == target_username), None)
+        if not user or user.get("revokedAt"):
+            raise HTTPException(404, f"User '{target_username}' not found")
+        email = (user.get("email") or "").strip()
+        if not email or _company_for_email(email) is not co:
+            raise HTTPException(400, "Their email must be on " + ", ".join("@" + d for d in co["domains"]) + " to sign in with Microsoft")
+        user["ssoInvitedAt"] = datetime.now(timezone.utc).isoformat()
+        c.execute("UPDATE config SET value=? WHERE key='users'", (json.dumps(users),))
+    write_audit(team, "user:sso-invite", auth["username"], changes={"target": target_username})
+    sent = False
+    if mail_configured():
+        name = (user.get("firstName") or "").strip() or target_username
+        org = team.capitalize()
+        try:
+            send_email(
+                email,
+                "You have been added to Frazil Flow",
+                f"Hi {name},\n\nYou have been added to Frazil Flow ({org}). To sign in, go to {APP_BASE_URL} and choose "
+                f"\"Sign in with Microsoft\" with your work email, {email}. There is no separate password to set up.",
+                f"<p>Hi {html.escape(name)},</p>"
+                f"<p>You have been added to Frazil Flow (<b>{html.escape(org)}</b>).</p>"
+                f"<p>To sign in, go to <a href=\"{APP_BASE_URL}\">{html.escape(APP_BASE_URL.replace('https://', ''))}</a> and choose "
+                f"<b>Sign in with Microsoft</b> with your work email, {html.escape(email)}. There is no separate password to set up.</p>",
+            )
+            sent = True
+        except Exception as e:
+            log.warning(f"[Email] Microsoft welcome send failed for {target_username}: {e}")
+    return {"ok": True, "sent": sent}
+
+
 @app.post("/api/logout")
 def logout(response: Response):
     """Clear the session cookie set on login."""
@@ -4472,8 +4514,9 @@ def get_all(auth: dict = Depends(require_auth)):
                    "revokedAt": u.get("revokedAt"),
                    # SSO-COMPANY-1: yes/no only (never the hash or the Entra id). "pending" = no password and not
                    # linked to Microsoft (the Users list badge; it used to test a password field the page never got).
-                   "microsoft": bool(u.get("entraOid")),
-                   "pending": not u.get("password") and not u.get("entraOid")} for u in users_raw]
+                   "microsoft": bool(u.get("entraOid") or u.get("ssoInvitedAt")),
+                   "msInvited": bool(u.get("ssoInvitedAt") and not u.get("entraOid")),   # added for Microsoft, not signed in yet
+                   "pending": not u.get("password") and not u.get("entraOid") and not u.get("ssoInvitedAt")} for u in users_raw]
     # KANBAN-AGE-1: {pid: [status, since]} for the items in THIS payload only (contributor-scoped above).
     _ids = {p["id"] for p in projects}
     with db(team) as c:
@@ -4525,6 +4568,7 @@ def get_all(auth: dict = Depends(require_auth)):
             "intakeCombined": bool(cfg_map.get("intakeCombined", True)),   # PORTAL-SCOPE-LOCK-1: default true; explicit False reaches the client
             "metricLabel": (cfg_map.get("metricLabel") or "Story Points"),   # METRIC-LABEL-1: empty/missing -> default so the client never renders a blank label
             "pointsEstimate": (cfg_map.get("pointsEstimate") or _POINTS_ESTIMATE_DEFAULT),   # POINTS-ESTIMATE-1
+            "ssoDomains": ((_company_for_org(team) or {}).get("domains") or []),   # SSO-COMPANY-1: Add User offers "Signs in with Microsoft" for these
             "projectTypes": (cfg_map.get("projectTypes") or ["Roadmap Item", "Epic", "Feature", "Project"]),   # GANTT-FOCUS-1
             "handoffLabel": (cfg_map.get("handoffLabel") or "Handoff"),      # CAL-DATES-1: empty/missing -> default (client never renders a blank badge label)
             "dueLabel": (cfg_map.get("dueLabel") or "Due"),                  # CAL-DATES-1
@@ -6878,12 +6922,12 @@ def set_config(key: str, body = Body(...), username: str = "",
             u["builtin"] = bool(prev.get("builtin")) if prev else False
             # SSO-COMPANY-1: the Microsoft link is server-owned - only a Microsoft sign-in sets it. Kept from the
             # stored record, never taken from the client (so an admin save can neither wipe nor forge it).
-            for _k in ("entraOid", "entraLinkedAt", "ssoAt"):
+            for _k in ("entraOid", "entraLinkedAt", "ssoAt", "ssoInvitedAt"):
                 if prev and prev.get(_k):
                     u[_k] = prev[_k]
                 else:
                     u.pop(_k, None)
-            u.pop("microsoft", None); u.pop("pending", None)   # read-only flags /api/all adds; never stored
+            u.pop("microsoft", None); u.pop("pending", None); u.pop("msInvited", None)   # read-only flags /api/all adds; never stored
             # avatarInitials/avatarColor are user-owned (set via /api/users/self/avatar).
             # The admin user form doesn't include them, so inherit here or an admin save
             # would wipe a user's chosen monogram/color.

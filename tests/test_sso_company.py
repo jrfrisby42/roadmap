@@ -363,3 +363,58 @@ def test_the_page_gets_yes_no_flags_never_the_link_or_hash(client, company, admi
     r = client.put("/api/config/users", json=list(got.values()), headers=admin_headers)
     assert r.status_code == 200, r.text
     assert not any("microsoft" in u or "pending" in u for u in _users(company["team"]))
+
+
+# ── Add User "Signs in with Microsoft" ─────────────────────────────────────────
+
+def test_microsoft_welcome_marks_invited_and_emails(client, company, admin_headers, monkeypatch):
+    _add_user(company["team"], "newstaff", "new.staff@freezingpointllc.com")
+    us = _users(company["team"]); next(u for u in us if u["username"] == "newstaff").pop("password"); _set_users(company["team"], us)
+    sent = []
+    monkeypatch.setattr(server, "mail_configured", lambda: True)
+    monkeypatch.setattr(server, "send_email", lambda *a, **k: sent.append(a))
+    r = client.post("/api/users/newstaff/sso-welcome", headers=admin_headers)
+    assert r.status_code == 200 and r.json() == {"ok": True, "sent": True}
+    assert sent and sent[0][0] == "new.staff@freezingpointllc.com" and "Sign in with Microsoft" in sent[0][2]
+    got = next(u for u in client.get("/api/all", headers=admin_headers).json()["users"] if u["username"] == "newstaff")
+    assert got["microsoft"] is True and got["msInvited"] is True and got["pending"] is False
+    # an admin save keeps the invite mark (server-owned) and never stores the flags
+    allu = client.get("/api/all", headers=admin_headers).json()["users"]
+    assert client.put("/api/config/users", json=allu, headers=admin_headers).status_code == 200
+    stored = next(u for u in _users(company["team"]) if u["username"] == "newstaff")
+    assert stored.get("ssoInvitedAt") and "msInvited" not in stored
+
+
+def test_microsoft_welcome_without_mail_still_works(client, company, admin_headers, monkeypatch):
+    _add_user(company["team"], "newstaff", "new.staff@frazil.com")
+    monkeypatch.setattr(server, "mail_configured", lambda: False)
+    assert client.post("/api/users/newstaff/sso-welcome", headers=admin_headers).json() == {"ok": True, "sent": False}
+
+
+def test_microsoft_welcome_needs_a_company_email_and_an_admin(client, company, admin_headers, editor_headers):
+    _add_user(company["team"], "outsider", "bob@gmail.com")
+    r = client.post("/api/users/outsider/sso-welcome", headers=admin_headers)
+    assert r.status_code == 400 and "@freezingpointllc.com" in r.json()["detail"]
+    assert client.post("/api/users/outsider/sso-welcome", headers=editor_headers).status_code == 403
+    assert client.post("/api/users/nobody/sso-welcome", headers=admin_headers).status_code == 404
+
+
+def test_microsoft_welcome_needs_microsoft_sign_in_on_the_org(client, team, admin_headers, monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "COMPANIES_FILE", str(tmp_path / "none.json"))
+    server._COMPANIES_CACHE.update(path=None, mtime=None, data=[])
+    _add_user(team, "newstaff", "new.staff@frazil.com")
+    assert client.post("/api/users/newstaff/sso-welcome", headers=admin_headers).status_code == 400
+    assert client.get("/api/all", headers=admin_headers).json()["ssoDomains"] == []
+
+
+def test_the_page_learns_the_company_domains(client, company, admin_headers):
+    assert client.get("/api/all", headers=admin_headers).json()["ssoDomains"] == ["frazil.com", "freezingpointllc.com"]
+
+
+def test_an_invited_user_links_on_first_microsoft_sign_in(https, company, monkeypatch):
+    _add_user(company["team"], "newstaff", "new.staff@freezingpointllc.com", ssoInvitedAt="2026-11-19T00:00:00Z")
+    _fake_ms(monkeypatch, preferred_username="new.staff@freezingpointllc.com", oid="oid-new")
+    _sign_in(https, email="new.staff@freezingpointllc.com")
+    d = https.post("/api/auth/sso/finish", json={}).json()
+    assert d["username"] == "newstaff"
+    assert next(u for u in _users(company["team"]) if u["username"] == "newstaff")["entraOid"] == "oid-new"
