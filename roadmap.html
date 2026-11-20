@@ -4643,6 +4643,29 @@ async function _ganttDeleteBase(id){
   _ganttBaseData = null;
   await _ganttLoadBase(true);
 }
+// GANTT-TIP-DELAY-1 (J.R. 2026-11-20: tooltips "bounce around while you are moving the mouse"): a Gantt hover
+// tooltip opens only once the pointer has rested on a bar / marker for _GTIP_MS, then stays where it opened (no
+// chasing the pointer) until the pointer leaves. Moving across bars never flashes a tooltip on each one.
+const _GTIP_MS = 550;
+let _gtipTimer = null, _gtipOn = null;
+function _gtipDefer(el, show){
+  return e => {
+    if(_gtipOn === el) return;                                    // already open for this bar: stay put
+    const ev = { clientX: e.clientX, clientY: e.clientY, target: e.target };
+    clearTimeout(_gtipTimer);
+    _gtipTimer = setTimeout(() => {
+      if(!el.isConnected) return;
+      show(ev);
+      const tip = document.getElementById('tooltip');
+      if(tip && tip.style.display === 'block'){ positionTooltip(tip, ev.clientX + 16, ev.clientY - 10); _gtipOn = el; }   // re-measure with the new content
+    }, _GTIP_MS);
+  };
+}
+function _gtipHide(){
+  clearTimeout(_gtipTimer); _gtipOn = null;
+  const tip = document.getElementById('tooltip'); if(tip) tip.style.display = 'none';
+}
+let _gdescTimer = null;
 function _ganttSprints(){   // dated, non-discarded sprints in start order
   const all = (typeof window._frzGetSprints === 'function' ? window._frzGetSprints() : null) || [];
   return all.filter(s => s && s.startDate && s.endDate && s.state !== 'Discarded')
@@ -6465,13 +6488,14 @@ function render(){
 
   // Tooltip - uses shared buildTooltipHTML
   const tip = document.getElementById('tooltip');
+  _gtipHide();   // GANTT-TIP-DELAY-1: a redraw drops any tooltip left open on the old bars
   document.querySelectorAll('.bar').forEach(bar => {
-    bar.addEventListener('mousemove', e => {
+    bar.addEventListener('mousemove', _gtipDefer(bar, e => {
       const p=projects.find(x=>x.id===+bar.dataset.id); if(!p) return;
       positionTooltip(tip, e.clientX+16, e.clientY-10);
       tip.innerHTML = buildTooltipHTML(p);
-    });
-    bar.addEventListener('mouseleave', ()=>tip.style.display='none');
+    }));
+    bar.addEventListener('mouseleave', _gtipHide);
     bar.addEventListener('click', e=>{ e.stopPropagation(); openProjectModal(+bar.dataset.id); });
   });
 
@@ -6498,8 +6522,8 @@ function render(){
       }
       openProjectModal(+el.dataset.id);
     });
-    // Description tooltip on hover
-    el.addEventListener('mouseenter', e => {
+    // Description tooltip on hover (GANTT-TIP-DELAY-1: after the pointer rests on the name, like the bar tooltips)
+    el.addEventListener('mouseenter', e => { clearTimeout(_gdescTimer); _gdescTimer = setTimeout(() => { if(!el.isConnected) return;
       const p = projects.find(x => x.id === +el.dataset.id);
       if(!p?.description || p.description === '<br>' || p.description.trim() === '') return;
       let descTip = document.getElementById('descTooltip');
@@ -6512,8 +6536,9 @@ function render(){
       descTip.textContent = stripHtml(p.description);
       const rect = el.getBoundingClientRect();
       descTip.style.cssText = `display:block;left:${rect.right + 8}px;top:${Math.min(rect.top, window.innerHeight - 200)}px`;
-    });
+    }, _GTIP_MS); });
     el.addEventListener('mouseleave', () => {
+      clearTimeout(_gdescTimer);
       const descTip = document.getElementById('descTooltip');
       if(descTip) descTip.style.display = 'none';
     });
@@ -6521,25 +6546,25 @@ function render(){
 
   // Diamond tooltip
   document.querySelectorAll('.diamond').forEach(dm => {
-    dm.addEventListener('mousemove', e => {
+    dm.addEventListener('mousemove', _gtipDefer(dm, e => {
       const p=projects.find(x=>x.id===+dm.dataset.id); if(!p) return;
       positionTooltip(tip, e.clientX+16, e.clientY-10);
       tip.innerHTML=`<strong>${esc(p.name)}</strong>
         <div class="tip-row"><span>Expected Date</span><span>${fmtD(parseD(p.expected))}</span></div>`;
-    });
-    dm.addEventListener('mouseleave', ()=>tip.style.display='none');
+    }));
+    dm.addEventListener('mouseleave', _gtipHide);
     dm.addEventListener('click', e=>{ e.stopPropagation(); openProjectModal(+dm.dataset.id); });
   });
 
   // Plane marker tooltip
   document.querySelectorAll('.plane-marker').forEach(pl => {
-    pl.addEventListener('mousemove', e => {
+    pl.addEventListener('mousemove', _gtipDefer(pl, e => {
       const p=projects.find(x=>x.id===+pl.dataset.id); if(!p) return;
       positionTooltip(tip, e.clientX+16, e.clientY-10);
       tip.innerHTML=`<strong>${esc(p.name)}</strong>
         <div class="tip-row"><span><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:middle;flex-shrink:0"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg> Released</span><span>${fmtD(parseD(p.releaseDate))}</span></div>`;
-    });
-    pl.addEventListener('mouseleave', ()=>tip.style.display='none');
+    }));
+    pl.addEventListener('mouseleave', _gtipHide);
     pl.addEventListener('click', e=>{ e.stopPropagation(); openProjectModal(+pl.dataset.id); });
   });
 
