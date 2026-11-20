@@ -1039,6 +1039,17 @@ def init_team_db(team: str):
             username    TEXT NOT NULL,
             PRIMARY KEY(item_id, username)
         );
+        -- GANTT-BASELINE-1: frozen copies of the project plan (start/due per project) to compare the Gantt against.
+        -- quarter = '2026-Q4' for the automatic start-of-quarter snapshot (one per quarter), NULL for one an admin took.
+        CREATE TABLE IF NOT EXISTS baselines (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            name      TEXT NOT NULL,
+            taken_at  TEXT NOT NULL,
+            taken_by  TEXT NOT NULL DEFAULT '',
+            quarter   TEXT,
+            items     TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_baselines_quarter ON baselines(quarter);
         -- TODO-EMAIL-1: per-user notification preferences + the once-per-day send guards for the
         -- morning To-do reminder. todo_email NULL = default (ON); 0 = turned off; 1 = on.
         CREATE TABLE IF NOT EXISTS user_prefs (
@@ -7196,6 +7207,174 @@ def put_sprints(body = Body(...), auth: dict = Depends(require_role("admin", "ed
         if detail: changes["detail"] = detail[:500]
     write_audit(team, "beta:sprints", auth["username"], changes=changes)
     return {"sprints": sprints}
+
+# ── Gantt baselines (GANTT-BASELINE-1) ─────────────────────────────────────────
+# A baseline is a frozen copy of the plan: each open project's start + due on the day it was taken, so the
+# Gantt can show what moved since (grey planned bar, slip badge, summary line). Projects = the Org's
+# projectTypes (GANTT-FOCUS-1). A project with its own start+due keeps them (revised wins over due, like the
+# bar); one without rolls up its work the way the Gantt's derived bar does (a descendant with no dates of its
+# own, or only a start Flow guessed, lends its sprint's dates - GANTT-SPRINT-DATES-1 / GANTT-SPRINT-GUESS-1).
+# Taken automatically the first time baselines are read in a new quarter, or by an admin at any time.
+# Display only: nothing on the items changes.
+def _baseline_items(rows: dict, cfg: dict) -> dict:
+    proj_types = set(cfg.get("projectTypes") or ["Roadmap Item", "Epic", "Feature", "Project"])
+    term = cfg.get("statusIsTerminal") or {}
+    sprints = {s.get("id"): s for s in (cfg.get("sprints") or []) if isinstance(s, dict) and s.get("id")}
+    kids = {}
+    for pid, p in rows.items():
+        par = p.get("parent")
+        if par in (None, ""):
+            continue
+        try:
+            par = int(par)
+        except (TypeError, ValueError):
+            continue
+        kids.setdefault(par, []).append(pid)
+
+    def desc(pid, seen):
+        out = []
+        for k in kids.get(pid, []):
+            if k in seen or k not in rows:
+                continue
+            seen.add(k); out.append(rows[k]); out += desc(k, seen)
+        return out
+
+    def sprint_span(c):
+        sid = c.get("sprintId")
+        if not sid or sid not in sprints:
+            sid = None
+            for h in reversed(c.get("sprintHistory") or []):
+                if isinstance(h, dict) and h.get("sprintId") in sprints:
+                    sid = h["sprintId"]; break
+        sp = sprints.get(sid) if sid else None
+        if sp and sp.get("startDate") and sp.get("endDate") and sp.get("state") != "Discarded":
+            return str(sp["startDate"])[:10], str(sp["endDate"])[:10]
+        return None
+
+    out = {}
+    for pid, p in rows.items():
+        st = p.get("status") or ""
+        if p.get("type") not in proj_types or p.get("archived") or p.get("hidden") \
+                or term.get(st) or st in RESERVED_TERMINAL_STATUSES:
+            continue
+        if p.get("start") and p.get("due"):
+            s, d = p["start"], (p.get("revised") or p["due"])
+        else:
+            d_ = desc(pid, {pid})
+            if d_:
+                starts, dues = [], []
+                for c in d_:
+                    own = c.get("revised") or ((c.get("start") or c.get("due")) and not c.get("startAuto"))
+                    sb = None if own else sprint_span(c)
+                    cs, cd = (sb if sb else (c.get("start"), c.get("revised") or c.get("due")))
+                    if cs: starts.append(str(cs)[:10])
+                    if cd: dues.append(str(cd)[:10])
+                s, d = (min(starts) if starts else ""), (max(dues) if dues else "")
+            else:
+                s, d = p.get("start") or "", (p.get("revised") or p.get("due") or "")
+        if not d:
+            continue                                   # nothing planned yet - nothing to compare against
+        out[str(pid)] = {"s": str(s)[:10] if s else "", "d": str(d)[:10], "n": p.get("name") or "", "t": p.get("dev") or ""}
+    return out
+
+
+def _baseline_cfg(c) -> dict:
+    cfg = {}
+    for k in ("projectTypes", "statusIsTerminal", "sprints"):
+        r = c.execute("SELECT value FROM config WHERE key=?", (k,)).fetchone()
+        if r:
+            try:
+                cfg[k] = json.loads(r["value"])
+            except Exception:
+                pass
+    return cfg
+
+
+def _baseline_snapshot(c) -> dict:
+    rows = {r["id"]: json.loads(r["data"]) for r in c.execute("SELECT id, data FROM projects")}
+    return _baseline_items(rows, _baseline_cfg(c))
+
+
+def _quarter_key(d) -> tuple:
+    q = (d.month - 1) // 3 + 1
+    return f"{d.year}-Q{q}", f"Q{q} {d.year} plan"
+
+
+def _baseline_auto(team: str) -> None:
+    """Take this quarter's automatic baseline if it has not been taken yet (the unique index on quarter makes a
+    race between workers harmless: the second insert is ignored)."""
+    key, name = _quarter_key(datetime.now(_MT_ZONE).date())
+    with db(team) as c:
+        if c.execute("SELECT 1 FROM baselines WHERE quarter=?", (key,)).fetchone():
+            return
+        items = _baseline_snapshot(c)
+        cur = c.execute("INSERT OR IGNORE INTO baselines(name, taken_at, taken_by, quarter, items) VALUES(?,?,?,?,?)",
+                        (name, datetime.now(timezone.utc).isoformat(), "", key, json.dumps(items)))
+        added = cur.rowcount
+    if added:
+        write_audit(team, "baseline:auto", "system", changes={"name": name, "projects": len(items)})
+
+
+def _baseline_row(r, with_items=False) -> dict:
+    items = json.loads(r["items"] or "{}")
+    out = {"id": r["id"], "name": r["name"], "takenAt": r["taken_at"], "takenBy": r["taken_by"] or "",
+           "auto": bool(r["quarter"]), "count": len(items)}
+    if with_items:
+        out["items"] = items
+    return out
+
+
+@app.get("/api/baselines")
+def list_baselines(auth: dict = Depends(require_auth)):
+    team = auth["team"]
+    try:
+        _baseline_auto(team)
+    except Exception as e:
+        log.warning(f"[Baseline] automatic snapshot failed for {team}: {e}")
+    with db(team) as c:
+        rows = c.execute("SELECT * FROM baselines ORDER BY taken_at DESC, id DESC").fetchall()
+    return {"baselines": [_baseline_row(r) for r in rows]}
+
+
+@app.get("/api/baselines/{bid}")
+def get_baseline(bid: int, auth: dict = Depends(require_auth)):
+    with db(auth["team"]) as c:
+        r = c.execute("SELECT * FROM baselines WHERE id=?", (bid,)).fetchone()
+    if not r:
+        raise HTTPException(404, "Baseline not found")
+    return _baseline_row(r, with_items=True)
+
+
+@app.post("/api/baselines")
+def take_baseline(body: dict = Body(default={}), auth: dict = Depends(require_role("admin"))):
+    team = auth["team"]
+    name = str((body or {}).get("name") or "").strip()
+    if not name:
+        name = "Baseline " + datetime.now(_MT_ZONE).strftime("%b %d, %Y").replace(" 0", " ")
+    if len(name) > 60:
+        raise HTTPException(422, "Baseline name must be 60 characters or fewer")
+    with db(team) as c:
+        items = _baseline_snapshot(c)
+        cur = c.execute("INSERT INTO baselines(name, taken_at, taken_by, quarter, items) VALUES(?,?,?,NULL,?)",
+                        (name, datetime.now(timezone.utc).isoformat(), auth["username"], json.dumps(items)))
+        bid = cur.lastrowid
+        r = c.execute("SELECT * FROM baselines WHERE id=?", (bid,)).fetchone()
+    write_audit(team, "baseline:take", auth["username"], changes={"id": bid, "name": name, "projects": len(items)})
+    return _baseline_row(r)
+
+
+@app.delete("/api/baselines/{bid}")
+def delete_baseline(bid: int, auth: dict = Depends(require_role("admin"))):
+    team = auth["team"]
+    with db(team) as c:
+        r = c.execute("SELECT * FROM baselines WHERE id=?", (bid,)).fetchone()
+        if not r:
+            raise HTTPException(404, "Baseline not found")
+        if r["quarter"]:
+            raise HTTPException(400, "The automatic start-of-quarter baseline can't be deleted")
+        c.execute("DELETE FROM baselines WHERE id=?", (bid,))
+    write_audit(team, "baseline:delete", auth["username"], changes={"id": bid, "name": r["name"]})
+    return {"ok": True}
 
 # ── Beta: Releases (shared, global per team) ──────────────────────────────────
 # Additive, /beta-only. Releases are stored in the config table under key
