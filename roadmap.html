@@ -672,6 +672,25 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   body.dark-mode .proj-mark.is-late { border-left-color: #f0716a; }
   body.dark-mode .proj-mark.is-late .proj-lbl { color: #f48a83; }
   body.dark-mode .proj-gap { border-top-color: #f0716a; }
+  /* GANTT-BASELINE-1: planned dates from a baseline (grey bar under the row's bar) + how far it moved (badge by the name) */
+  .base-ghost { position: absolute; top: calc(50% + 10px); height: 4px; border-radius: 2px; background: #9aa7b4; z-index: 2; pointer-events: all; cursor: default; }
+  .base-ghost.base-tick { width: 0; height: 9px; top: calc(50% + 7px); margin-left: -1px; border-left: 2px solid #9aa7b4; background: none; border-radius: 0; }
+  body.dark-mode .base-ghost { background: #6f7c8a; }
+  body.dark-mode .base-ghost.base-tick { background: none; border-left-color: #6f7c8a; }
+  .base-chip { display: inline-block; margin-right: 5px; font-size: 10px; font-weight: 700; line-height: 1.5; padding: 0 6px; border-radius: 999px; white-space: nowrap; vertical-align: 1px; }
+  .base-chip.is-slip  { background: #fdecea; color: #a32a20; }
+  .base-chip.is-early { background: #e6f4ec; color: #17663f; }
+  .base-chip.is-plan  { background: var(--surface2); color: var(--muted); }
+  .base-chip.is-new   { background: #e7f0fa; color: #0059A9; }
+  body.dark-mode .base-chip.is-slip  { background: rgba(240,113,106,0.18); color: #f48a83; }
+  body.dark-mode .base-chip.is-early { background: rgba(34,185,110,0.18); color: #5fd49a; }
+  body.dark-mode .base-chip.is-new   { background: rgba(47,134,222,0.2); color: #8bbcf0; }
+  #ganttBaseSum { position: absolute; left: 16px; bottom: 22px; z-index: 30; display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px;
+    max-width: min(520px, calc(100% - 32px)); padding: 8px 14px; font-size: 12.5px; line-height: 1.45; border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.10);
+    border: 1px solid var(--frz-border, var(--border)); background: var(--frz-bg-surface, var(--surface)); color: var(--frz-text-secondary, var(--text)); }
+  #ganttBaseSum b { color: var(--frz-text, var(--text)); }
+  #ganttBaseSum .bs-slip { color: #a32a20; } #ganttBaseSum .bs-early { color: #17663f; } #ganttBaseSum .bs-new { color: #0059A9; }
+  body.dark-mode #ganttBaseSum .bs-slip { color: #f48a83; } body.dark-mode #ganttBaseSum .bs-early { color: #5fd49a; } body.dark-mode #ganttBaseSum .bs-new { color: #8bbcf0; }
   .bar.derived.derived-done { border-style: solid; border-color: var(--bar-green); }
   .rollup-team { font-size: 9px; font-weight: 700; color: var(--muted); background: var(--surface2); border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; margin-left: 6px; white-space: nowrap; vertical-align: middle; }
   .rollup-noschedule { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); font-size: 10px; font-style: italic; color: var(--muted); opacity: 0.7; pointer-events: none; }
@@ -4581,6 +4600,49 @@ function _ganttToggleProj(){
   try { localStorage.setItem('frazil_gantt_proj', _ganttShowProj ? '1' : '0'); } catch(e){}
   render();
 }
+// GANTT-BASELINE-1: compare the Gantt with a frozen copy of the plan (server: /api/baselines). Per-user switch (default
+// off) + which baseline (per Org, default the newest). The list and the chosen baseline's items are fetched once and
+// kept; a render with the switch on and nothing fetched yet asks for them ONCE (_ganttBaseTried guards the loop).
+let _ganttShowBase = (() => { try { return localStorage.getItem('frazil_gantt_base') === '1'; } catch(e){ return false; } })();
+let _ganttBaseList = null, _ganttBaseData = null, _ganttBaseBusy = false, _ganttBaseTried = false;
+function _ganttBaseKey(){ return 'frazil_gantt_base_id_' + (API._team() || ''); }
+function _ganttBaseSelId(){ try { return localStorage.getItem(_ganttBaseKey()) || ''; } catch(e){ return ''; } }
+async function _ganttLoadBase(reloadList){
+  if(_ganttBaseBusy) return;
+  _ganttBaseBusy = true; _ganttBaseTried = true;
+  try {
+    if(reloadList || !_ganttBaseList) _ganttBaseList = ((await API.get('/api/baselines')) || {}).baselines || [];
+    const want = _ganttBaseSelId();
+    const pick = _ganttBaseList.find(b => String(b.id) === want) || _ganttBaseList[0] || null;
+    if(!pick) _ganttBaseData = null;
+    else if(!_ganttBaseData || _ganttBaseData.id !== pick.id) _ganttBaseData = await API.get('/api/baselines/' + pick.id);
+  } catch(e){ console.warn('[baseline] load failed', e); }
+  finally { _ganttBaseBusy = false; }
+  render();
+  if(typeof window._frzRefreshViewMenu === 'function') window._frzRefreshViewMenu();
+}
+function _ganttToggleBase(){
+  _ganttShowBase = !_ganttShowBase;
+  try { localStorage.setItem('frazil_gantt_base', _ganttShowBase ? '1' : '0'); } catch(e){}
+  if(_ganttShowBase && !_ganttBaseData) _ganttLoadBase();
+  render();
+}
+function _ganttSetBase(id){
+  try { localStorage.setItem(_ganttBaseKey(), String(id)); } catch(e){}
+  _ganttLoadBase();
+}
+async function _ganttTakeBase(name){
+  const b = await API.post('/api/baselines', { name: name || '' });
+  if(b && b.id != null){ try { localStorage.setItem(_ganttBaseKey(), String(b.id)); } catch(e){} }
+  await _ganttLoadBase(true);
+  return b;
+}
+async function _ganttDeleteBase(id){
+  await API.del('/api/baselines/' + id);
+  if(_ganttBaseSelId() === String(id)){ try { localStorage.removeItem(_ganttBaseKey()); } catch(e){} }
+  _ganttBaseData = null;
+  await _ganttLoadBase(true);
+}
 function _ganttSprints(){   // dated, non-discarded sprints in start order
   const all = (typeof window._frzGetSprints === 'function' ? window._frzGetSprints() : null) || [];
   return all.filter(s => s && s.startDate && s.endDate && s.state !== 'Discarded')
@@ -5449,6 +5511,47 @@ function render(){
     return { html, tip: ' · ' + tip };
   }
 
+  // GANTT-BASELINE-1: compare a row with the chosen baseline. curEnd = when it is due now (raw date, revised wins),
+  // finD = when it finished (finished rows compare that instead). Returns {chip, ghost}: a badge for the name
+  // (+3w / 1w early / On plan / New) and the grey planned bar under the row's bar. Counts each project once for the
+  // summary line. A row not in the baseline gets "New" only when it is a project created after the baseline.
+  const _blOn = !!(_ganttShowBase && _ganttBaseData && _ganttBaseData.items && document.body.classList.contains('frz-beta-active'));
+  const _bl = _blOn ? _ganttBaseData.items : null;
+  const _blTaken = _blOn ? new Date(_ganttBaseData.takenAt) : null;
+  const _blName = _blOn ? (_ganttBaseData.name || 'the baseline') : '';
+  const _blSeen = new Set(), _blStat = { plan:0, slip:0, early:0, added:0, slipDays:0 };
+  if(_ganttShowBase && !_ganttBaseData && !_ganttBaseTried && !_ganttBaseBusy && document.body.classList.contains('frz-beta-active')) setTimeout(() => _ganttLoadBase(), 0);
+  function _baseCmp(p, curEnd, finD, depth){
+    if(!_bl) return { chip:'', ghost:'' };
+    const b = _bl[String(p.id)];
+    if(!b){
+      const cr = p.createdAt ? new Date(p.createdAt) : null;
+      if(!(depth === 0 && _projTypeSet.has(p.type) && cr && !isNaN(cr) && cr > _blTaken)) return { chip:'', ghost:'' };
+      if(!_blSeen.has(p.id)){ _blSeen.add(p.id); _blStat.added++; }
+      return { chip:`<span class="base-chip is-new" title="${escA(`Not in ${_blName}: added ${fmtD(cr)}`)}">New</span>`, ghost:'' };
+    }
+    const bs = parseD(b.s), bd = parseD(b.d), end = finD || curEnd;
+    let kind = 'plan', txt = 'On plan', dd = 0;
+    if(end && bd){
+      dd = Math.round((end - bd) / 86400000);
+      if(dd >= 4){ kind = 'slip'; txt = '+' + Math.max(1, Math.round(dd / 7)) + 'w'; }
+      else if(dd <= -4){ kind = 'early'; txt = Math.max(1, Math.round(-dd / 7)) + 'w early'; }
+    }
+    if(!_blSeen.has(p.id)){ _blSeen.add(p.id); _blStat[kind]++; if(kind === 'slip') _blStat.slipDays += dd; }
+    const planned = `Planned in ${_blName}: ${bs ? fmtD(bs) + ' to ' : 'due '}${fmtD(bd)}`;
+    const now = finD ? `finished ${fmtD(finD)}` : (curEnd ? `now due ${fmtD(curEnd)}` : 'no due date now');
+    const _wks = n => { const w = Math.round(Math.abs(n) / 7 * 10) / 10; return w + (w === 1 ? ' week' : ' weeks'); };
+    const tip = `${planned}; ${now}` + (kind === 'slip' ? ` (${_wks(dd)} later)` : kind === 'early' ? ` (${_wks(dd)} early)` : '');
+    let ghost = '';
+    if(bd){
+      const ge = nextMonday(bd);
+      ghost = (bs && px(ge) > px(bs))
+        ? `<div class="base-ghost" title="${escA(tip)}" style="left:${px(bs).toFixed(1)}px;width:${pxW(bs, ge).toFixed(1)}px"></div>`
+        : `<div class="base-ghost base-tick" title="${escA(tip)}" style="left:${px(ge).toFixed(1)}px"></div>`;
+    }
+    return { chip:`<span class="base-chip is-${kind}" title="${escA(tip)}">${esc(txt)}</span>`, ghost };
+  }
+
   // GANTT-DECLUTTER-1: does the item draw anything on the chart? A rollup parent needs a derived span;
   // a normal item needs a start+due bar, an expected diamond or a release marker. Items that draw
   // nothing go to their group's collapsed "Unscheduled (N)" row instead of taking a row each.
@@ -5863,7 +5966,9 @@ function render(){
           const _le = (_ru.lateEnd && _dd && _ru.lateEnd > _dd) ? _ru.lateEnd : null;   // GANTT-LATE-1
           const _schedTxt = _dd ? _dd.toLocaleDateString('en-US',{timeZone:MT_TZ,month:'short',day:'numeric'}) : '-';
           const _pl = (_projOnly && !depth) ? _pulseHtml(p) : null;   // GANTT-WORK-1
-          const _nm = `${_pl ? _pl.dot : ''}${(()=>{const ic=typeIconHTML(p.type);return ic?ic+' ':'';})()}${esc(p.name)}${_tchip}`;
+          const _ruAll = _bl ? (_rollupAll(p) || _ru) : _ru;   // GANTT-BASELINE-1: the whole project, not one Team's slice
+          const _bc = _baseCmp(p, parseD(_ruAll.due), statusIsTerminal[_ruAll.status] ? (parseD(_ruAll.release || p.releaseDate) || itemFinishDate(p)) : null, depth);
+          const _nm = `${_pl ? _pl.dot : ''}${_bc.chip}${(()=>{const ic=typeIconHTML(p.type);return ic?ic+' ':'';})()}${esc(p.name)}${_tchip}`;
           lRows += `<div class="left-row rollup-row${isChild?' child-row':''}" data-id="${p.id}"${_indent}>
             ${(_pl && _pl.sub) ? `<span class="proj-name pn-2" title="${escA(p.name)}"><span class="pn-main">${_nm}</span>${_pl.sub}</span>` : `<span class="proj-name" title="${escA(p.name)}">${_nm}</span>`}
             ${priorityDot(p.priority)}
@@ -5906,6 +6011,7 @@ function render(){
               }
             }
             _bar += _pm.html;   // GANTT-PROJ-FINISH-1
+            _bar += _bc.ghost;  // GANTT-BASELINE-1
           } else {
             _bar = `<span class="rollup-noschedule" title="No schedule - children have no dates yet">no schedule</span>`;   // Decision 4: deliberate marker, not an empty lane
           }
@@ -5992,7 +6098,8 @@ function render(){
         const statusText = statusOverridden ? `<span style="color:var(--accent2)">⚠</span> ${displayStatus} <span style="color:var(--accent2)">⚠</span>` : displayStatus;
 
         const _pl = (_projOnly && !depth && !_owRowItem) ? _pulseHtml(p) : null;   // GANTT-WORK-1
-        const _nm = `${_pl ? _pl.dot : ''}${(()=>{ const ic=typeIconHTML(p.type); return ic?ic+' ':''; })()}${esc(p.name)}${conflictIcon}${activityIndicator}`;
+        const _bc = _baseCmp(p, parseD(p.revised || p.due), isTerminalStatus(p.status) ? itemFinishDate(p) : null, depth);   // GANTT-BASELINE-1
+        const _nm = `${_pl ? _pl.dot : ''}${_bc.chip}${(()=>{ const ic=typeIconHTML(p.type); return ic?ic+' ':''; })()}${esc(p.name)}${conflictIcon}${activityIndicator}`;
         lRows += `<div class="left-row${isEffectivelyHidden(p)?' hidden-row':''}${isChild?' child-row':''}" data-id="${p.id}"${_indent}>
           ${(_pl && _pl.sub) ? `<span class="proj-name pn-2" title="${escA(p.name)}"><span class="pn-main">${_nm}</span>${_pl.sub}</span>` : `<span class="proj-name" title="${escA(p.name)}">${_nm}</span>`}
           ${priorityDot(p.priority)}
@@ -6069,6 +6176,7 @@ function render(){
           cH += `<div class="bar overrun" data-id="${p.id}" title="${escA(_lt)}" style="left:${px(_lateFrom).toFixed(1)}px;width:${pxW(_lateFrom,_late.end).toFixed(1)}px"></div>`;
         }
         if(_ks && s && d) cH += _projMark(p, _ks, parseD(p.revised || p.due), _ownEnd).html;   // GANTT-PROJ-FINISH-1
+        cH += _bc.ghost;   // GANTT-BASELINE-1
         cH += `</div></div>`;
 
         // Track row position for connector drawing
@@ -6162,6 +6270,26 @@ function render(){
     _ganttKeep = { weeks: _cw0.scrollLeft / _ganttLastWkPx, top: _cw0.scrollTop };
   }
   document.getElementById('chartWrap').innerHTML = cH;
+  // GANTT-BASELINE-1: the summary card (bottom-left of the chart, like the legend card at bottom-right). A child of
+  // .gantt-outer so it hides with the Gantt. Counts the projects on the chart now; "no longer in the plan" = projects
+  // in the baseline that were since deleted, archived or hidden (narrowed by the Team chip when one is set).
+  (function(){
+    const outer = document.querySelector('.frz-content > .gantt-outer');
+    let sum = document.getElementById('ganttBaseSum');
+    if(!_ganttShowBase || !outer){ if(sum) sum.remove(); return; }
+    if(!sum){ sum = document.createElement('div'); sum.id = 'ganttBaseSum'; sum.setAttribute('role', 'status'); outer.appendChild(sum); }
+    if(!_bl){ sum.textContent = (_ganttBaseBusy || !_ganttBaseTried) ? 'Loading the baseline...' : 'No baseline to compare with yet.'; return; }
+    const byId = new Map(projects.map(x => [String(x.id), x]));
+    const devs = getSelectedDevs();
+    const gone = Object.keys(_bl).filter(id => { const x = byId.get(id), b = _bl[id]; return (!x || x.archived || x.hidden) && (!devs || !b.t || devs.includes(b.t)); });
+    const avg = _blStat.slip ? Math.round(_blStat.slipDays / _blStat.slip / 7 * 10) / 10 : 0;
+    const parts = [`<b>${_blStat.plan}</b> on plan`];
+    if(_blStat.slip) parts.push(`<span class="bs-slip"><b>${_blStat.slip}</b> slipped, ${_blStat.slip === 1 ? 'by ' : ''}${avg} week${avg === 1 ? '' : 's'}${_blStat.slip === 1 ? '' : ' on average'}</span>`);
+    if(_blStat.early) parts.push(`<span class="bs-early"><b>${_blStat.early}</b> early</span>`);
+    if(_blStat.added) parts.push(`<span class="bs-new"><b>${_blStat.added}</b> new</span>`);
+    if(gone.length) parts.push(`<span title="${escA(gone.map(id => _bl[id].n || ('#' + id)).join(', '))}"><b>${gone.length}</b> no longer in the plan</span>`);
+    sum.innerHTML = `<span>Since <b>${esc(_blName)}</b> (${esc(fmtD(_blTaken))}):</span>` + parts.join('<span aria-hidden="true">·</span>');
+  })();
 
   // Today line
   const cp = document.getElementById('chartPanel');
@@ -23276,6 +23404,12 @@ if ('serviceWorker' in navigator) {
   .frz-beta .frz-vm-reset { border:0; background:none; font:inherit; font-size:13px; font-weight:600; color:var(--frz-accent); cursor:pointer; padding:6px 0 2px; }
   .frz-beta .frz-vm-badge { background:var(--frz-accent); color:#fff; font-size:11px; font-weight:700; line-height:16px; border-radius:999px; padding:0 6px; }
   .frz-beta .frz-chip--more { flex-shrink:0; }
+  .frz-beta .frz-vm-base { display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:0 0 6px 45px; }
+  .frz-beta .frz-vm-link { border:0; background:none; font:inherit; font-size:13px; font-weight:600; color:var(--frz-accent); cursor:pointer; padding:2px 0; }
+  .frz-beta .frz-vm-take { display:flex; gap:6px; align-items:center; width:100%; }
+  .frz-beta .frz-vm-take .frz-vm-sel { flex:1; min-width:0; }
+  .frz-beta .frz-vm-save { border:1px solid var(--frz-accent); background:var(--frz-accent); color:#fff; font:inherit; font-size:13px; font-weight:600; border-radius:var(--frz-radius-control); padding:6px 10px; cursor:pointer; }
+  .frz-beta .frz-vm-save:disabled { opacity:.6; cursor:default; }
   .frz-beta .frz-pop-opt { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:6px; cursor:pointer; font-size:13px; font-weight:400; color:var(--frz-text); border:0; background:none; width:100%; text-align:left; }
   .frz-beta .frz-pop-opt:hover { background:var(--frz-bg-app); }
   .frz-beta .frz-pop-opt.is-active { color:var(--frz-accent); font-weight:700; }   /* SHELL-IA-1: current board row in the board chip menu */
@@ -31564,9 +31698,11 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
     if (_frzHasDatedSprints() && !_val('_ganttShowSprints', true)) changed.push('Sprints band off');
     if (_val('_showCapacityView', false)) changed.push('Capacity on');
     if (!_val('_ganttShowProj', true)) changed.push('Projected finish off');
+    if (_val('_ganttShowBase', false)) changed.push('Compare to baseline on');   // GANTT-BASELINE-1
     return { changed: changed, label: 'View: '+(_ganttSpan==='all' ? 'All' : 'Now')+' · '+(_ganttItems==='projects' ? 'Projects' : 'Everything') };
   }
   function viewMenu(anchor){
+    _frzBaseTaking=false;
     openPop(anchor, function(pop){ pop.classList.add('frz-vm'); _frzBuildViewMenu(pop); });
   }
   function _frzBuildViewMenu(pop, focusKey){
@@ -31613,6 +31749,10 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
     var byTeam = !gb || gb.value==='developer';
     sw('capacity', 'Capacity', byTeam ? 'Team load under each group' : 'Only when grouped by Team', byTeam && !!_val('_showCapacityView', false), function(){ _call('toggleCapacityView'); }, !byTeam);
     sw('proj', 'Projected finish', 'When each project lands at its recent pace', !!_val('_ganttShowProj', true), function(){ _call('_ganttToggleProj'); });
+    // GANTT-BASELINE-1: compare with a baseline (a frozen copy of the plan) - which one, and (admins) take / delete one
+    var baseOn=!!_val('_ganttShowBase', false);
+    sw('base', 'Compare to baseline', 'Planned dates as a grey bar, with how far each project moved', baseOn, function(){ _call('_ganttToggleBase'); });
+    if (baseOn) _frzBaseControls(pop, focusKey);
     divider();
     var rs=document.createElement('button'); rs.type='button'; rs.className='frz-vm-reset'; rs.textContent='Reset to default'; rs.setAttribute('data-vmk','reset');
     rs.addEventListener('click', function(){
@@ -31621,10 +31761,69 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
       if (_frzHasDatedSprints() && !_val('_ganttShowSprints', true)) _call('_ganttToggleSprints');
       if (_val('_showCapacityView', false)) _call('toggleCapacityView');
       if (!_val('_ganttShowProj', true)) _call('_ganttToggleProj');
+      if (_val('_ganttShowBase', false)) _call('_ganttToggleBase');   // GANTT-BASELINE-1
       syncURL(true); rerender(); reflow(); redraw('reset');
     });
     pop.appendChild(rs);
     if (focusKey){ var f=pop.querySelector('[data-vmk="'+focusKey+'"]'); if (f) try { f.focus(); } catch(e){} }
+  }
+  // GANTT-BASELINE-1: the baseline picker under the "Compare to baseline" switch (+ Take baseline now / Delete for admins).
+  // The list comes from the Gantt's loader (_ganttBaseList); _frzRefreshViewMenu redraws the open menu once it lands.
+  var _frzBaseTaking=false;
+  window._frzRefreshViewMenu=function(){ if(state.pop && state.pop.classList.contains('frz-vm')) _frzBuildViewMenu(state.pop); renderBar(); };
+  function _frzBaseControls(pop, focusKey){
+    var list=_val('_ganttBaseList', null), data=_val('_ganttBaseData', null), isAdmin=_val('currentRole','')==='admin';
+    var box=document.createElement('div'); box.className='frz-vm-base'; pop.appendChild(box);
+    if (!list){ box.innerHTML='<span class="frz-vm-hint">Loading baselines...</span>'; return; }
+    function shortD(iso){ try { return new Date(iso).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); } catch(e){ return ''; } }
+    if (list.length){
+      var sel=document.createElement('select'); sel.className='frz-vm-sel'; sel.setAttribute('aria-label','Baseline to compare with'); sel.setAttribute('data-vmk','basesel');
+      list.forEach(function(b){ var o=document.createElement('option'); o.value=String(b.id); o.textContent=b.name+' · '+shortD(b.takenAt); sel.appendChild(o); });
+      if (data) sel.value=String(data.id);
+      sel.addEventListener('change', function(){ _call('_ganttSetBase', sel.value); });
+      box.appendChild(sel);
+      var cur=list.filter(function(b){ return data && b.id===data.id; })[0];
+      if (cur){
+        var info=document.createElement('div'); info.className='frz-vm-hint';
+        info.textContent=cur.count+' project'+(cur.count===1?'':'s')+(cur.auto ? ', taken automatically' : (cur.takenBy ? ', taken by '+(_call('displayName', cur.takenBy)||cur.takenBy) : ''));
+        box.appendChild(info);
+      }
+      if (isAdmin && cur && !cur.auto){
+        var del=document.createElement('button'); del.type='button'; del.className='frz-vm-link'; del.textContent='Delete this baseline'; del.setAttribute('data-vmk','basedel');
+        del.addEventListener('click', function(){
+          if (!confirm('Delete the baseline "'+cur.name+'"? This cannot be undone.')) return;
+          Promise.resolve(_call('_ganttDeleteBase', cur.id)).catch(function(e){ _call('showToast', 'Could not delete: '+((e&&e.message)||e)); });
+        });
+        box.appendChild(del);
+      }
+    } else {
+      var none=document.createElement('span'); none.className='frz-vm-hint'; none.textContent='No baselines yet.'; box.appendChild(none);
+    }
+    if (!isAdmin) return;
+    if (!_frzBaseTaking){
+      var tk=document.createElement('button'); tk.type='button'; tk.className='frz-vm-link'; tk.textContent='Take baseline now'; tk.setAttribute('data-vmk','basetake');
+      tk.addEventListener('click', function(){ _frzBaseTaking=true; _frzBuildViewMenu(pop, 'basename'); });
+      box.appendChild(tk);
+      return;
+    }
+    var row=document.createElement('div'); row.className='frz-vm-take';
+    var inp=document.createElement('input'); inp.type='text'; inp.maxLength=60; inp.className='frz-vm-sel'; inp.setAttribute('data-vmk','basename'); inp.setAttribute('aria-label','Baseline name');
+    inp.value='Plan '+new Date().toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    var save=document.createElement('button'); save.type='button'; save.className='frz-vm-save'; save.textContent='Save';
+    var cancel=document.createElement('button'); cancel.type='button'; cancel.className='frz-vm-link'; cancel.textContent='Cancel';
+    var note=document.createElement('div'); note.className='frz-vm-hint'; note.textContent="Saves every open project's start and due as they are now. Nothing on the items changes.";
+    function go(){
+      save.disabled=true; save.textContent='Saving...';
+      Promise.resolve(_call('_ganttTakeBase', inp.value.trim())).then(function(b){
+        _frzBaseTaking=false; _call('showToast', 'Baseline "'+((b&&b.name)||inp.value)+'" saved'+(b&&b.count!=null ? ' ('+b.count+' projects)' : ''));
+        if (state.pop===pop) _frzBuildViewMenu(pop, 'basesel');
+      }).catch(function(e){ save.disabled=false; save.textContent='Save'; _call('showToast', 'Could not save: '+((e&&e.message)||e)); });
+    }
+    save.addEventListener('click', go);
+    inp.addEventListener('keydown', function(e){ if (e.key==='Enter'){ e.preventDefault(); go(); } });
+    cancel.addEventListener('click', function(){ _frzBaseTaking=false; _frzBuildViewMenu(pop, 'basetake'); });
+    row.appendChild(inp); row.appendChild(save); row.appendChild(cancel);
+    box.appendChild(row); box.appendChild(note);
   }
   // GANTT-VIEW-MENU-1: when the filter row is too narrow, its right-most filter chips fold into one "+N more" chip (the
   // first chip always stays) so nothing scrolls out of sight. Runs after every bar draw; a resize redraws the bar.
