@@ -663,6 +663,15 @@ html.frz-boot body > *:not(#loginWall):not(#pwResetWall):not(#loadingOverlay):no
   /* GANTT-WIP-FILL-1: the in-progress share, a lighter green after the finished share */
   .bar.derived .derived-wip { position: absolute; top: 0; bottom: 0; background: rgba(34,185,110,0.32); pointer-events: none; }
   body.dark-mode .bar.derived .derived-wip { background: rgba(34,185,110,0.4); }
+  /* GANTT-PROJ-FINISH-1: projected finish - a tick with its date; red (+ a dotted line from the bar's end) when it lands after the due date */
+  .proj-mark { position: absolute; top: 50%; height: 26px; width: 0; margin-left: -1px; transform: translateY(-50%); border-left: 2px solid var(--frz-accent, #0059A9); z-index: 6; pointer-events: all; cursor: default; }
+  .proj-mark .proj-lbl { position: absolute; left: 3px; top: -2px; font-size: 10px; font-weight: 700; line-height: 1.1; white-space: nowrap; color: var(--frz-accent, #0059A9); background: var(--surface); padding: 0 2px; border-radius: 2px; }
+  .proj-mark.is-late { border-left-color: #c0362c; }
+  .proj-mark.is-late .proj-lbl { color: #b3261e; }
+  .proj-gap { position: absolute; top: 50%; height: 0; border-top: 2px dotted #c0362c; pointer-events: none; z-index: 0; }
+  body.dark-mode .proj-mark.is-late { border-left-color: #f0716a; }
+  body.dark-mode .proj-mark.is-late .proj-lbl { color: #f48a83; }
+  body.dark-mode .proj-gap { border-top-color: #f0716a; }
   .bar.derived.derived-done { border-style: solid; border-color: var(--bar-green); }
   .rollup-team { font-size: 9px; font-weight: 700; color: var(--muted); background: var(--surface2); border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; margin-left: 6px; white-space: nowrap; vertical-align: middle; }
   .rollup-noschedule { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); font-size: 10px; font-style: italic; color: var(--muted); opacity: 0.7; pointer-events: none; }
@@ -4564,6 +4573,14 @@ function _ganttToggleSprints(){
   try { localStorage.setItem('frazil_gantt_sprints', _ganttShowSprints ? '1' : '0'); } catch(e){}
   render();
 }
+// GANTT-PROJ-FINISH-1: a projected-finish marker on project bars (when the work lands at its recent pace). Per-user
+// on/off in the Gantt View menu, default on.
+let _ganttShowProj = (() => { try { return localStorage.getItem('frazil_gantt_proj') !== '0'; } catch(e){ return true; } })();
+function _ganttToggleProj(){
+  _ganttShowProj = !_ganttShowProj;
+  try { localStorage.setItem('frazil_gantt_proj', _ganttShowProj ? '1' : '0'); } catch(e){}
+  render();
+}
 function _ganttSprints(){   // dated, non-discarded sprints in start order
   const all = (typeof window._frzGetSprints === 'function' ? window._frzGetSprints() : null) || [];
   return all.filter(s => s && s.startDate && s.endDate && s.state !== 'Discarded')
@@ -5292,7 +5309,13 @@ function render(){
     const _act = _leaves.filter(c => c.status && statusIsActive[c.status] && !statusIsTerminal[c.status] && !RESERVED_TERMINAL_STATUSES.has(c.status));
     const _pc = {}; _act.forEach(c => { if(c.assignee) _pc[c.assignee] = (_pc[c.assignee]||0) + 1; });
     let _last = 0; kids.forEach(c => { const t = c.updated_ts ? Date.parse(c.updated_ts) : 0; if(t > _last) _last = t; });
-    return { start:starts[0]||'', due:(dues.length?dues[dues.length-1]:''), status,
+    // GANTT-PROJ-FINISH-1 (J.R. 2026-11-20): when the leaf work left lands at the pace of the last 6 weeks (leaf items
+    // finished per day). Needs at least 3 finished in that window, else no projection (too little to judge). Display only.
+    const _recentFrom = addDays(TODAY, -42);
+    const _recent = _leaves.filter(c => c.status && statusIsTerminal[c.status] && !RESERVED_TERMINAL_STATUSES.has(c.status) && (d => !!d && d >= _recentFrom)(itemFinishDate(c))).length;
+    const _left = _cnt.length - _done;
+    const _projEnd = (_left > 0 && progress < 1 && _recent >= 3) ? addDays(TODAY, Math.ceil(_left * 42 / _recent)) : null;
+    return { start:starts[0]||'', due:(dues.length?dues[dues.length-1]:''), status, projEnd:_projEnd, projRecent:_recent, projLeft:(progress < 1 ? _left : 0),
       release:(allReleased && rels.length)?rels[rels.length-1]:'',
       dev:(pods[0]||''), teamLabel:(pods.length>1?(pods[0]+' +'+(pods.length-1)):(pods[0]||'')),
       multiPod:pods.length>1, assignee:(ak.length===1?ak[0]:(ak.length>1?'Multiple':'')),
@@ -5405,6 +5428,25 @@ function render(){
     }
     const sub = (parts.length || ppl) ? `<span class="pn-sub">${esc(parts.join(' · '))}${ppl}</span>` : '';
     return { dot, sub };
+  }
+
+  // GANTT-PROJ-FINISH-1: the projected-finish marker on a parent's bar. r = its roll-up (no own dates) or the span of
+  // the work under it (own dates); dueD = when that work is due; barEnd = where the bar ends (the dotted "late" gap
+  // starts there). Returns {html, tip}; tip is added to the bar's tooltip. Flow shell only, per-user switch.
+  function _projMark(p, r, dueD, barEnd){
+    if(!_ganttShowProj || !r || !r.projLeft || !document.body.classList.contains('frz-beta-active')) return { html:'', tip:'' };
+    if(!r.projEnd) return { html:'', tip:' · No projected finish yet: fewer than 3 items finished in the last 6 weeks' };
+    const end = r.projEnd > CHART_END ? addDays(CHART_END, -1) : r.projEnd;
+    const late = !!(dueD && r.projEnd > dueD);
+    const wk = dueD ? Math.round((r.projEnd - dueD) / (7 * 86400000)) : 0;
+    const rel = !dueD ? '' : !late ? `, on time for the due date (${fmtD(dueD)})`
+      : wk >= 1 ? `, ${wk} week${wk === 1 ? '' : 's'} after the due date (${fmtD(dueD)})` : `, just after the due date (${fmtD(dueD)})`;
+    const tip = `Projected finish ${fmtD(r.projEnd)} at the recent pace (${r.projRecent} finished in the last 6 weeks, ${r.projLeft} left)${rel}`;
+    let html = '';
+    const from = barEnd || dueD;
+    if(late && from && px(end) > px(from)) html += `<div class="proj-gap" style="left:${px(from).toFixed(1)}px;width:${pxW(from, end).toFixed(1)}px" aria-hidden="true"></div>`;
+    html += `<div class="proj-mark${late ? ' is-late' : ''}" data-id="${p.id}" role="img" aria-label="${escA(tip)}" title="${escA(tip)}" style="left:${px(end).toFixed(1)}px"><span class="proj-lbl">${esc(r.projEnd.toLocaleDateString('en-US', {timeZone:MT_TZ, month:'short', day:'numeric'}))}</span></div>`;
+    return { html, tip: ' · ' + tip };
   }
 
   // GANTT-DECLUTTER-1: does the item draw anything on the chart? A rollup parent needs a derived span;
@@ -5840,7 +5882,8 @@ function render(){
             const _ptip = (_ru.total ? `${_ru.done} of ${_ru.total} finished${_ru.active && _pct < 100 ? `, ${_ru.active} in progress` : ''} (${_pct}% done)` : 'no child work yet') + (_ru.fromSprint ? ` · dates for ${_ru.fromSprint} item${_ru.fromSprint===1?'':'s'} come from their sprint` : '');   // GANTT-SPRINT-DATES-1
             const _rlJoin = parseD(_ru.release || p.releaseDate);   // GANTT-BAR-JOINS-1: square the end a release segment joins
             const _sq = ((_rlJoin && px(_dd) < px(_rlJoin)) || _le) ? ';border-top-right-radius:0;border-bottom-right-radius:0' : '';
-            _bar = `<div class="bar derived${(_pct>0||_wip>0)?' derived-prog':''}${_pct>=100?' derived-done':''}" data-id="${p.id}" title="Summary of children: ${_ptip}" style="left:${px(_ds).toFixed(1)}px;width:${pxW(_ds,_dd).toFixed(1)}px${_sq}">${_pct>0?`<div class="derived-fill" style="width:${_pct}%"></div>`:''}${_wip>0?`<div class="derived-wip" style="left:${_pct}%;width:${_wip}%"></div>`:''}</div>`;
+            const _pm = _projMark(p, _ru, parseD(_ru.due), _dd);   // GANTT-PROJ-FINISH-1
+            _bar = `<div class="bar derived${(_pct>0||_wip>0)?' derived-prog':''}${_pct>=100?' derived-done':''}" data-id="${p.id}" title="${escA('Summary of children: ' + _ptip + _pm.tip)}" style="left:${px(_ds).toFixed(1)}px;width:${pxW(_ds,_dd).toFixed(1)}px${_sq}">${_pct>0?`<div class="derived-fill" style="width:${_pct}%"></div>`:''}${_wip>0?`<div class="derived-wip" style="left:${_pct}%;width:${_wip}%"></div>`:''}</div>`;
             // ROLLUP-OVERRUN-1: a release later than the children's span gets the same hatched overrun segment a
             // normal item draws (UI-TRIO-1 P3), so the release marker attaches to the bar instead of floating
             // past it (FRZ-951: children Sep 8 - Oct 2, last release Oct 13). Display only, nothing is written.
@@ -5862,6 +5905,7 @@ function render(){
                 _bar += `<div class="bar overrun" data-id="${p.id}" title="${escA(`${_n} unfinished item${_n===1?'':'s'} still open past ${_n===1?'its':'their'} dates (${_why}) - runs to ${fmtD(_le)}; planned end ${fmtD(_dd)}`)}" style="left:${px(_lf).toFixed(1)}px;width:${pxW(_lf,_le).toFixed(1)}px"></div>`;
               }
             }
+            _bar += _pm.html;   // GANTT-PROJ-FINISH-1
           } else {
             _bar = `<span class="rollup-noschedule" title="No schedule - children have no dates yet">no schedule</span>`;   // Decision 4: deliberate marker, not an empty lane
           }
@@ -6024,6 +6068,7 @@ function render(){
             : `Still in progress - past its ${hasDelay?'revised':'due'} date (${fmtD(_ownEnd)})`;
           cH += `<div class="bar overrun" data-id="${p.id}" title="${escA(_lt)}" style="left:${px(_lateFrom).toFixed(1)}px;width:${pxW(_lateFrom,_late.end).toFixed(1)}px"></div>`;
         }
+        if(_ks && s && d) cH += _projMark(p, _ks, parseD(p.revised || p.due), _ownEnd).html;   // GANTT-PROJ-FINISH-1
         cH += `</div></div>`;
 
         // Track row position for connector drawing
@@ -23211,6 +23256,26 @@ if ('serviceWorker' in navigator) {
      .frz-pop-opt, which set no weight). That made every menu's contents heavier than the 600 control that
      opened them. Drop to normal here (scoped to .frz-pop-opt = all popovers, NOT the global button rule);
      the SELECTED option is re-bolded inline by its builder + gets a check (4.2), so colour is never the only cue. */
+  /* GANTT-VIEW-MENU-1: the Gantt View menu (segmented Time/Items, Group by, chart-layer switches) + the "+N more" chip fold */
+  .frz-beta .frz-pop.frz-vm { width:300px; max-height:min(82vh, 600px); padding:8px 12px 10px; }
+  .frz-beta .frz-vm-head { padding:8px 0 5px; font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--frz-text-muted); }
+  .frz-beta .frz-vm-seg { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); border:1px solid var(--frz-border-strong); border-radius:var(--frz-radius-control); overflow:hidden; }
+  .frz-beta .frz-vm-seg button { border:0; background:var(--frz-bg-surface); color:var(--frz-text-secondary); font:inherit; font-size:13px; font-weight:600; padding:7px 8px; cursor:pointer; min-height:34px; }
+  .frz-beta .frz-vm-seg button + button { border-left:1px solid var(--frz-border-strong); }
+  .frz-beta .frz-vm-seg button.is-on { background:var(--frz-accent); color:#fff; }
+  .frz-beta .frz-vm-sel { width:100%; font:inherit; font-size:13px; padding:7px 8px; border:1px solid var(--frz-border-strong); border-radius:var(--frz-radius-control); background:var(--frz-bg-surface); color:var(--frz-text); }
+  .frz-beta .frz-vm-sw { display:flex; align-items:center; gap:11px; width:100%; border:0; background:none; padding:6px 0; cursor:pointer; text-align:left; font:inherit; color:var(--frz-text); min-height:40px; }
+  .frz-beta .frz-vm-sw:disabled { cursor:not-allowed; opacity:.55; }
+  .frz-beta .frz-vm-track { position:relative; flex:none; width:34px; height:20px; border-radius:999px; background:var(--frz-border-strong); transition:background .12s; }
+  .frz-beta .frz-vm-knob { position:absolute; top:3px; left:3px; width:14px; height:14px; border-radius:50%; background:#fff; transition:left .12s; }
+  .frz-beta .frz-vm-sw.is-on .frz-vm-track { background:var(--frz-accent); }
+  .frz-beta .frz-vm-sw.is-on .frz-vm-knob { left:17px; }
+  .frz-beta .frz-vm-txt { display:flex; flex-direction:column; gap:1px; min-width:0; }
+  .frz-beta .frz-vm-lbl { font-size:13px; font-weight:600; }
+  .frz-beta .frz-vm-hint { font-size:12px; color:var(--frz-text-muted); }
+  .frz-beta .frz-vm-reset { border:0; background:none; font:inherit; font-size:13px; font-weight:600; color:var(--frz-accent); cursor:pointer; padding:6px 0 2px; }
+  .frz-beta .frz-vm-badge { background:var(--frz-accent); color:#fff; font-size:11px; font-weight:700; line-height:16px; border-radius:999px; padding:0 6px; }
+  .frz-beta .frz-chip--more { flex-shrink:0; }
   .frz-beta .frz-pop-opt { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:6px; cursor:pointer; font-size:13px; font-weight:400; color:var(--frz-text); border:0; background:none; width:100%; text-align:left; }
   .frz-beta .frz-pop-opt:hover { background:var(--frz-bg-app); }
   .frz-beta .frz-pop-opt.is-active { color:var(--frz-accent); font-weight:700; }   /* SHELL-IA-1: current board row in the board chip menu */
@@ -24758,7 +24823,7 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
   // are in that view's CFG.extra - so they render on the List alone. Empty-list gating is in the offer menu.
   var _XCHIP = ['priority','dept','location','resolutionType','blockedReason','reporter'];   // REPORTER-TEXT-1: +reporter (free-text, List-only via CFG.list.extra)
   var CFG = {
-    gantt:    { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['focus','sprints','groupby','capacity'] },   // GANTT-FOCUS-1: span (Now/All) + Projects only fold into one Focus menu; Legend + Today moved to the chart's bottom-right corner.   // GANTT-DECLUTTER-1: +span (Now/All window toggle); GANTT-KEEP-SCROLL-1: +today   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
+    gantt:    { chips:['owner','assignee','type','status'], extra:['priority','dept'], opts:['view'] },   // GANTT-VIEW-MENU-1: Focus (Time + Items), Group by, Sprints, Capacity and Projected finish live in ONE View menu so the filter chips keep the row.   // GANTT-FOCUS-1: span (Now/All) + Projects only fold into one Focus menu; Legend + Today moved to the chart's bottom-right corner.   // GANTT-DECLUTTER-1: +span (Now/All window toggle); GANTT-KEEP-SCROLL-1: +today   // Stage 2: +Assignee (List's chip order). No Scenario entry: the levers are Planning-only, so entering scenario from the Gantt lands in a mode with no controls. Scenario MODE still affects Gantt render (shifted dates move bars) - you enter on Planning and switch here to see it. Revisit if Gantt bar-drag is ever built.
     kanban:   { chips:['owner','assignee','type','status'], extra:['sprint','priority','dept'], opts:['flagged','hideEmpty'] },   // FN5: +Flagged toggle
     list:     { chips:['owner','assignee','type','status'], extra:['priority','dept','location','resolutionType','blockedReason','reporter'], opts:['listgroup','flagged','columns','export'] },     // FN5: +Flagged; GROUPBY-2: +Group by. FIELDS-2: +location/resolutionType/blockedReason chips (List only; server-filtered; gated on non-empty list)
     planning: { chips:['owner','status'],                   extra:['type','assignee','priority','dept'], opts:['whatif'] },   // What-if (Phase 0)
@@ -26170,6 +26235,7 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
     html += '<span class="frz-spacer"></span>';
     html += cfg.opts.map(optHTML).join('');
     bar.innerHTML = html;
+    _frzFoldChips(bar);      // GANTT-VIEW-MENU-1: chips that don't fit fold into "+N more"
     _frzSyncGanttLegend();   // Gantt: show inline legend if it fits, else keep the Legend button
   }
   // Fix 3: reset every CHIP in the current view to All (owner/type/status/assignee + range if shown),
@@ -26199,6 +26265,12 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
       sprints:'Sprints'      // GANTT-SPRINTS-1: show/hide the Sprints band (only offered when the Org has sprints)
     };
     var label = map[o]||o;
+    if (o==='view'){   // GANTT-VIEW-MENU-1: one button - the two main settings on its face, "+N" for anything else changed
+      var _vs=_frzGanttViewState();
+      return '<button class="frz-viewopt frz-vm-btn" data-opt="view" aria-haspopup="true" title="'+esc('Time, items, grouping and what the chart shows'+(_vs.changed.length ? ': '+_vs.changed.join(', ') : ''))+'">'+
+        '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg>'+
+        esc(_vs.label)+(_vs.changed.length ? '<span class="frz-vm-badge">+'+_vs.changed.length+'</span>' : '')+IC.caret+'</button>';
+    }
     if (o==='sprints' && !(_sprints||[]).some(function(s){ return s && s.startDate && s.endDate && s.state!=='Discarded'; })) return '';   // GANTT-SPRINTS-1: no sprints, no button
     if (o==='groupby'){ var gb=document.getElementById('groupBy'); var cur=gb?(gb.options[gb.selectedIndex]||{}).text:'Team'; label='Group by: '+(cur||'Team'); }
     if (o==='listgroup'){ var lg=_call('_listGetGroup')||''; label='Group by'+(lg?': '+(_FRZ_GROUP_LABELS[lg]||lg):''); }
@@ -30691,7 +30763,7 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
 
   // ════════ popovers ════════
   function closePop(){ if(state.pop){ state.pop.remove(); state.pop=null; document.removeEventListener('mousedown', _popAway, true); } }
-  function _popAway(e){ if(state.pop && !state.pop.contains(e.target) && !(e.target.closest && e.target.closest('[data-chip],[data-opt],[data-addfilter]'))) closePop(); }
+  function _popAway(e){ if(state.pop && !state.pop.contains(e.target) && !(e.target.closest && e.target.closest('[data-chip],[data-opt],[data-addfilter],[data-morechips]'))) closePop(); }
   function openPop(anchor, build){
     closePop();
     var pop = document.createElement('div'); pop.className='frz-pop';
@@ -31245,6 +31317,8 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
       // rest of the chip opens the dropdown. One action per click.
       var savedClr = e.target.closest && e.target.closest('[data-savedclear]');
       if (savedClr){ e.preventDefault(); e.stopPropagation(); _frzClearSavedFilter(); return; }
+      var moreB = e.target.closest && e.target.closest('[data-morechips]');   // GANTT-VIEW-MENU-1
+      if (moreB){ moreChipsMenu(moreB); return; }
       var chip = e.target.closest && e.target.closest('[data-chip]');
       if (chip){ chipMenu(chip.getAttribute('data-chip'), chip); return; }
       if (e.target.closest && e.target.closest('[data-addfilter]')){ addFilterMenu(e.target.closest('[data-addfilter]')); return; }
@@ -31271,9 +31345,11 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
     }, true);
     // SHELL-IA-1 Stage 3.2: re-flow the tab strip ONLY when the breakpoint BAND changes (not on every
     // resize pixel) - the overflow set (visible vs More) is band-driven per _frzTabLayout.
-    var _frzTabBand=null, _frzWasPhone=_frzIsPhone();
+    var _frzTabBand=null, _frzWasPhone=_frzIsPhone(), _frzFoldTimer=null;
     window.addEventListener('resize', function(){
       if(!document.body.classList.contains('frz-beta-active')) return;
+      // GANTT-VIEW-MENU-1: re-fold the filter chips for the new width (redraws only the filter row, debounced)
+      clearTimeout(_frzFoldTimer); _frzFoldTimer=setTimeout(function(){ if(!state.onItem) renderBar(); }, 150);
       // STAGE3-PATCH-2 P3: crossing the 640px phone boundary flips _frzIA() for a flag-user, so the
       // whole shell (tab strip vs classic title, .frz-ia + its CSS, scope chip, brand) must re-resolve.
       // Re-render the current view once per crossing. Only a flag-user (window._topbarViews) is affected;
@@ -31477,7 +31553,115 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
       opt('Projects only', 'Only '+(projectTypes||[]).join(', ')+' items, collapsed to one row each (expand to see their work)', _ganttItems==='projects', function(){ _frzSetGanttItems('projects'); });
     });
   }
+  // GANTT-VIEW-MENU-1 (J.R. 2026-11-20: toolbar buttons were scrolling off the screen): the Gantt's own settings in one
+  // menu - Time and Items (GANTT-FOCUS-1, URL state), Group by (#groupBy), and per-person chart layers (Sprints band,
+  // Capacity, Projected finish). The menu stays open while settings change and redraws itself; the button's label
+  // and "+N" (settings changed from the default) follow via renderBar.
+  function _frzHasDatedSprints(){ return (_sprints||[]).some(function(s){ return s && s.startDate && s.endDate && s.state!=='Discarded'; }); }
+  function _frzGanttViewState(){
+    var gb=document.getElementById('groupBy'), g=gb ? gb.value : 'developer', changed=[];
+    if (g && g!=='developer'){ var go=gb.options[gb.selectedIndex]; changed.push('grouped by '+((go && go.text) || g)); }
+    if (_frzHasDatedSprints() && !_val('_ganttShowSprints', true)) changed.push('Sprints band off');
+    if (_val('_showCapacityView', false)) changed.push('Capacity on');
+    if (!_val('_ganttShowProj', true)) changed.push('Projected finish off');
+    return { changed: changed, label: 'View: '+(_ganttSpan==='all' ? 'All' : 'Now')+' · '+(_ganttItems==='projects' ? 'Projects' : 'Everything') };
+  }
+  function viewMenu(anchor){
+    openPop(anchor, function(pop){ pop.classList.add('frz-vm'); _frzBuildViewMenu(pop); });
+  }
+  function _frzBuildViewMenu(pop, focusKey){
+    pop.innerHTML='';
+    function redraw(k){ _frzBuildViewMenu(pop, k); renderBar(); }
+    function head(t){ var h=document.createElement('div'); h.className='frz-vm-head'; h.textContent=t; pop.appendChild(h); return h; }
+    function seg(key, opts, cur, fn){
+      var w=document.createElement('div'); w.className='frz-vm-seg'; w.setAttribute('role','group'); w.setAttribute('aria-label', key);
+      opts.forEach(function(o){
+        var b=document.createElement('button'); b.type='button'; b.textContent=o[1]; b.setAttribute('data-vmk', key+':'+o[0]);
+        if (o[2]) b.title=o[2];
+        b.setAttribute('aria-pressed', o[0]===cur ? 'true' : 'false'); if (o[0]===cur) b.className='is-on';
+        b.addEventListener('click', function(){ if (o[0]!==cur) fn(o[0]); redraw(key+':'+o[0]); });
+        w.appendChild(b);
+      });
+      pop.appendChild(w);
+    }
+    function sw(key, label, hint, on, fn, disabled){
+      var b=document.createElement('button'); b.type='button'; b.className='frz-vm-sw'+(on ? ' is-on' : ''); b.setAttribute('data-vmk', key);
+      b.setAttribute('role','switch'); b.setAttribute('aria-checked', on ? 'true' : 'false'); if (disabled) b.disabled=true;
+      b.innerHTML='<span class="frz-vm-track" aria-hidden="true"><span class="frz-vm-knob"></span></span><span class="frz-vm-txt"><span class="frz-vm-lbl">'+esc(label)+'</span><span class="frz-vm-hint">'+esc(hint)+'</span></span>';
+      b.addEventListener('click', function(){ if (b.disabled) return; fn(); redraw(key); });
+      pop.appendChild(b);
+    }
+    function divider(){ var d=document.createElement('div'); d.className='frz-pop-div'; pop.appendChild(d); }
+    head('Time');
+    seg('Time', [['now','Now','Items active from 45 days ago to 90 days ahead, plus everything finished in the last 45 days'], ['all','All','Every item']],
+      _ganttSpan==='all' ? 'all' : 'now', _frzSetGanttSpan);
+    head('Items');
+    seg('Items', [['projects','Projects only','Only '+(projectTypes||[]).join(', ')+' items, one row each (expand to see their work)'], ['all','Everything','']],
+      _ganttItems==='projects' ? 'projects' : 'all', _frzSetGanttItems);
+    var gb=document.getElementById('groupBy');
+    if (gb){
+      var lab=head('Group by'); lab.id='frzVmGbLbl';
+      var sel=document.createElement('select'); sel.className='frz-vm-sel'; sel.setAttribute('aria-labelledby','frzVmGbLbl'); sel.setAttribute('data-vmk','groupby');
+      [].slice.call(gb.options).forEach(function(o){ var op=document.createElement('option'); op.value=o.value; op.textContent=o.text; sel.appendChild(op); });
+      sel.value=gb.value;
+      sel.addEventListener('change', function(){ gb.value=sel.value; gb.dispatchEvent(new Event('change')); reflow(); redraw('groupby'); });
+      pop.appendChild(sel);
+    }
+    divider();
+    head('Show on the chart');
+    if (_frzHasDatedSprints()) sw('sprints', 'Sprints band', 'Sprint dates across the top', !!_val('_ganttShowSprints', true), function(){ _call('_ganttToggleSprints'); });
+    var byTeam = !gb || gb.value==='developer';
+    sw('capacity', 'Capacity', byTeam ? 'Team load under each group' : 'Only when grouped by Team', byTeam && !!_val('_showCapacityView', false), function(){ _call('toggleCapacityView'); }, !byTeam);
+    sw('proj', 'Projected finish', 'When each project lands at its recent pace', !!_val('_ganttShowProj', true), function(){ _call('_ganttToggleProj'); });
+    divider();
+    var rs=document.createElement('button'); rs.type='button'; rs.className='frz-vm-reset'; rs.textContent='Reset to default'; rs.setAttribute('data-vmk','reset');
+    rs.addEventListener('click', function(){
+      _ganttSpan='now'; _ganttItems='projects';
+      if (gb && gb.value!=='developer'){ gb.value='developer'; gb.dispatchEvent(new Event('change')); }
+      if (_frzHasDatedSprints() && !_val('_ganttShowSprints', true)) _call('_ganttToggleSprints');
+      if (_val('_showCapacityView', false)) _call('toggleCapacityView');
+      if (!_val('_ganttShowProj', true)) _call('_ganttToggleProj');
+      syncURL(true); rerender(); reflow(); redraw('reset');
+    });
+    pop.appendChild(rs);
+    if (focusKey){ var f=pop.querySelector('[data-vmk="'+focusKey+'"]'); if (f) try { f.focus(); } catch(e){} }
+  }
+  // GANTT-VIEW-MENU-1: when the filter row is too narrow, its right-most filter chips fold into one "+N more" chip (the
+  // first chip always stays) so nothing scrolls out of sight. Runs after every bar draw; a resize redraws the bar.
+  function _frzFoldChips(bar){
+    if (!bar || bar.scrollWidth <= bar.clientWidth + 1) return;
+    var chips=[].slice.call(bar.querySelectorAll('.frz-chip[data-chip]')).filter(function(c){ return ['board','scope','saved'].indexOf(c.getAttribute('data-chip'))<0; });
+    if (chips.length < 2) return;
+    var more=document.createElement('button'); more.type='button'; more.className='frz-chip frz-chip--more'; more.setAttribute('aria-haspopup','true');
+    chips[chips.length-1].insertAdjacentElement('afterend', more);
+    var hidden=[], act=false;
+    for (var i=chips.length-1; i>=1; i--){
+      chips[i].style.display='none'; hidden.unshift(chips[i].getAttribute('data-chip'));
+      if (chips[i].classList.contains('is-active')) act=true;
+      more.textContent='+'+hidden.length+' more';
+      if (bar.scrollWidth <= bar.clientWidth + 1) break;
+    }
+    more.setAttribute('data-morechips', hidden.join(','));
+    more.title='More filters: '+hidden.map(function(k){ var c=bar.querySelector('.frz-chip[data-chip="'+k+'"]'); return c ? c.textContent.replace('×','').trim() : k; }).join(', ');
+    if (act) more.classList.add('is-active');
+  }
+  function moreChipsMenu(anchor){
+    var bar=document.getElementById('frzFilterBar');
+    var keys=(anchor.getAttribute('data-morechips')||'').split(',').filter(Boolean);
+    openPop(anchor, function(pop){
+      keys.forEach(function(k){
+        var c=bar && bar.querySelector('.frz-chip[data-chip="'+k+'"]');
+        var b=document.createElement('button'); b.type='button'; b.className='frz-pop-opt';
+        var lbl=c && c.querySelector('.frz-chip-label'), val=c && c.querySelector('.frz-chip-value');
+        b.innerHTML='<span style="font-weight:600">'+esc(lbl ? lbl.textContent : k)+'</span><span style="color:var(--frz-text-muted)">'+esc(val ? val.textContent : '')+'</span>';
+        if (c && c.classList.contains('is-active')){ b.style.color='var(--frz-accent)'; }
+        b.addEventListener('click', function(){ closePop(); chipMenu(k, anchor); });
+        pop.appendChild(b);
+      });
+    });
+  }
   function handleOpt(o, anchor){
+    if (o==='view') return viewMenu(anchor);                                              // GANTT-VIEW-MENU-1
     if (o==='groupby') return groupByMenu(anchor);
     if (o==='legend') return legendPop(anchor);
     if (o==='capacity') { _call('toggleCapacityView'); return; }
