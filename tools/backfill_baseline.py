@@ -84,6 +84,24 @@ def main():
             created_after.add(pid)
         if r["action"] == "delete" and pid is not None and pid not in rows:
             deleted_after.add(pid)
+        if r["action"] == "data:fill-jira-dates":
+            # One-time data op: {"items": {pid: {"start", "due", ...}}}, written into items that had NO dates
+            # ("Flow-empty only"), so before it those items were undated.
+            try:
+                filled = (json.loads(r["changes"]) or {}).get("items") or {}
+            except Exception:
+                filled = {}
+            for k, f in filled.items():
+                try:
+                    k = int(k)
+                except (TypeError, ValueError):
+                    continue
+                if k in rows and isinstance(f, dict):
+                    for fld in ("start", "due"):
+                        if fld in f:
+                            rows[k].pop(fld, None)
+                    undone.setdefault(k, set()).update(x for x in ("start", "due") if x in f)
+            continue
         if pid not in rows:
             continue
         try:
