@@ -43,7 +43,7 @@ def test_shipped_follows_the_filters_on_the_effective_team():
 def test_release_list_and_detail_follow_the_filters():
     src = _src()
     tab = _fn(src, "renderReleasesTab")
-    assert "_planFilterPass(p, rf)" in tab and "prBy[r.id].total>0" in tab
+    assert "_planFilterPassRb(p, rf, null, p.resolvedBy)" in tab and "prBy[r.id].total>0" in tab
     det = _fn(src, "fillReleaseDetail")
     assert "shownItems.map(" in det and "(filters on)" in det
     # flags + notes + Mark released keep the whole release

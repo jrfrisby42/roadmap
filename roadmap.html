@@ -32685,6 +32685,15 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
     if(!departmentMatches(p, f.dept)) return false;
     return true;
   }
+  // RB-FILTER-1: on the Releases tab a finished Support item (a Resolved by Team) that a dev Team fixed also
+  // matches that dev Team in the Team chip, so it shows when Support OR that Team is picked.
+  function _rbCredits(rb, f){ return !!(f.dev && rb && rb.by==='dev' && rb.team && f.dev.indexOf(rb.team)>=0); }
+  function _planFilterPassRb(p, f, team, rb){
+    if(_planFilterPass(p, f, team)) return true;
+    if(!_rbCredits(rb, f)) return false;
+    var g={}; Object.keys(f).forEach(function(k){ g[k]=f[k]; }); g.dev=null;
+    return _planFilterPass(p, g, team);
+  }
   function backlogItems(){
     var f=_planFilters();
     return (_val('projects',[])||[]).filter(function(p){
@@ -33641,7 +33650,7 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
     var locked=!!(rel && rel.state==='Released');   // post-release: membership frozen
     var items=releaseItems(id);
     // RELEASES-FILTER-1: the list follows the filter bar; flags + notes below still cover the whole release.
-    var rf=_planFilters(), shownItems=_planFiltersOn(rf) ? items.filter(function(p){ return _planFilterPass(p, rf); }) : items;
+    var rf=_planFilters(), shownItems=_planFiltersOn(rf) ? items.filter(function(p){ return _planFilterPassRb(p, rf, null, p.resolvedBy); }) : items;   // RB-FILTER-1
     var fNote = shownItems.length<items.length
       ? '<span style="color:var(--frz-text-muted);font-size:12px;margin-right:auto">Showing '+shownItems.length+' of '+items.length+' items (filters on)</span>' : '';
     // RELEASE-FROM-SHIPPED-1: no "+ Add items" / remove here - items are added from Shipped (an item's own
@@ -33769,15 +33778,16 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
     return _ship.rb==='check' ? _rbUnsure(r) : r.by===_ship.rb;
   }
   function _shipVisible(d){ return _shipInTeam(d).filter(_rbMatch); }
-  // Items a developer on the focus Team (the Shipped Team pick, or a single Team in the filter bar) fixed
-  // for a tracked Team like Support. They stay counted under Support; this only credits the dev Team.
+  // RB-FILTER-1 (was RESOLVED-BY-1's single-Team "also fixed"): Support items a picked dev Team fixed. They
+  // stay counted under Support; with the Team chip on one or more dev Teams they show in their own group below
+  // that work. Picking Support itself puts them in the main list (the pool), so they are never shown twice.
   function _rbAlsoFixed(d){
-    var f=_planFilters(), focus=_shipFocusTeam();
-    if(!focus || _ship.rb!=='*' || (d.rbTeams||[]).indexOf(focus)>=0) return { team:null, items:[] };
-    var g={}; Object.keys(f).forEach(function(k){ g[k]=f[k]; }); g.dev=null;
+    var f=_planFilters();
+    if(!f.dev) return { items:[] };
+    var inPool={}; _shipPool(d).forEach(function(x){ inPool[x.id]=1; });
     var byId={}; (_val('projects',[])||[]).forEach(function(p){ byId[p.id]=p; });
-    return { team:focus, items:(d.items||[]).filter(function(x){
-      return x.rb && x.rb.by==='dev' && x.rb.team===focus && _planFilterPass(byId[x.id] || { type:x.type, status:x.status }, g, x.team||'');
+    return { items:(d.items||[]).filter(function(x){
+      return !inPool[x.id] && _rbMatch(x) && _planFilterPassRb(byId[x.id] || { type:x.type, status:x.status }, f, x.team||'', x.rb);
     }) };
   }
   function _rbTip(r){
@@ -34045,7 +34055,7 @@ try{window._frzMark&&window._frzMark('script-c')}catch(_e){}   // HANG-PROBE-1
     var rf=_planFilters(), rfOn=_planFiltersOn(rf), relTotal=rels.length, prBy={};
     rels.forEach(function(r){
       if(!rfOn){ prBy[r.id]=releaseProgress(r); return; }
-      var its=releaseItems(r.id).filter(function(p){ return _planFilterPass(p, rf); });
+      var its=releaseItems(r.id).filter(function(p){ return _planFilterPassRb(p, rf, null, p.resolvedBy); });   // RB-FILTER-1
       var dn=its.filter(function(p){ return isTerm(p.status); }).length;
       prBy[r.id]={ total:its.length, done:dn, pct:(its.length?Math.round(dn/its.length*100):0), items:its };
     });
