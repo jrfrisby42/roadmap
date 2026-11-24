@@ -6626,6 +6626,7 @@ function updateJiraFieldVisibility(){
   if(ffRow) ffRow.style.display = show ? '' : 'none';
   const createBtn = document.getElementById('jiraCreateBtn');
   if(createBtn) createBtn.style.display = (editingId && show && !jiraTickets.length) ? '' : 'none';
+  if(createBtn) createBtn.title = _jiraCreateHint(projects.find(x => x.id === editingId));   // JIRA-CHILD-SUBTASK-1
 }
 
 // ── DUE DATE COMPUTED FROM START + WEEKS ──
@@ -7936,6 +7937,7 @@ function openProjectModal(id){
   if(featureFlagsRow) featureFlagsRow.style.display = showJira ? '' : 'none';
   const jiraCreateBtn = document.getElementById('jiraCreateBtn');
   if(jiraCreateBtn) jiraCreateBtn.style.display = (id && showJira && !jiraTickets.length) ? '' : 'none';
+  if(jiraCreateBtn) jiraCreateBtn.title = _jiraCreateHint(projects.find(x => x.id === id));   // JIRA-CHILD-SUBTASK-1
   // Item 1: Linked Assets in the EDIT modal only. Like createJiraIssueFromModal's `if(!editingId)
   // return;`, asset linking needs a saved item id, so there is NO picker in the CREATE modal
   // (create defers, matching the locked Story-Points/Sprint post-creation decision) - an inert
@@ -8143,6 +8145,18 @@ async function createJiraIssueFromModal(){
   if(cb) cb.style.display = 'none';
 }
 
+// JIRA-CHILD-SUBTASK-1: what "Create Jira issue" will do with a child item (the server decides; this is the
+// button's tooltip). A child goes under its parent's Jira issue, as a Sub-task when that is a Story/Task/Bug.
+function _jiraCreateHint(p){
+  if(!p || p.parent == null || p.parent === '') return '';
+  const key = (window._jiraProjectMappingData||{})[p.product||''] || '';
+  if(!key) return '';
+  const par = projects.find(x => String(x.id) === String(p.parent));
+  const pk = par ? (par.jiraTickets||[]).find(k => String(k).toUpperCase().startsWith(key.toUpperCase()+'-')) : '';
+  if(!pk) return `Its parent has no ${key} Jira issue, so this one is created on its own`;
+  return `Creates it under ${pk}, its parent's Jira issue (a Sub-task when ${pk} is a Story, Task or Bug)`;
+}
+
 // Standalone Jira create - works with or without modal open
 async function createJiraIssueFromModalForItem(p){
   if(!p) return;
@@ -8183,7 +8197,10 @@ async function createJiraIssueFromModalForItem(p){
       created_by:getUsername(), message:`Created Jira issue ${result.key}`,
       new_value:result.key, status:'Auto-Cleared'
     }).catch(()=>{});
-    showToast(`Jira issue ${result.key} created and linked`);
+    // JIRA-CHILD-SUBTASK-1: say where it went (or why it is not under the parent).
+    const _where = result.placed ? ` ${result.placed}` : '';
+    const _why = result.loose ? ` (not under a parent: ${result.loose})` : '';
+    showToast(`Jira issue ${result.key} created${_where} and linked${_why}`);
     return result.key;   // CREATED-TOAST-1: the create flow folds this into its "Item created" toast
   } catch(e){
     // JIRA-ISSUETYPE-1: show the server's detail, not the raw {"detail":...} JSON body.
@@ -21886,7 +21903,7 @@ async function loadItemPageJira(p){
     const canCreate = _ipCanWrite(p) && jiraConfigured;
     jiraEl.innerHTML = canCreate
       ? `<div style="font-size:12px;color:var(--muted);margin-bottom:8px">No Jira issues linked.</div>
-         <button onclick="createJiraFromItemPage(this)" style="font-size:12px;font-weight:700;background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif">+ Create Jira Issue</button>
+         <button onclick="createJiraFromItemPage(this)" title="${escA(esc(_jiraCreateHint(p)))}" style="font-size:12px;font-weight:700;background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:'Lato',sans-serif">+ Create Jira Issue</button>
          ${_ipJiraLinkRowHtml()}`
       : `<div style="font-size:12px;color:var(--muted)">No Jira issues linked.</div>`;
     if(syncBtn) syncBtn.style.display='none';
