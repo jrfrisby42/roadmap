@@ -11638,6 +11638,52 @@ def _match_issuetype(allowed: list, name: str):
     want = (name or "").strip().lower()
     return next((t for t in allowed if t["name"].strip().lower() == want), None) if want else None
 
+# ── JIRA-CHILD-SUBTASK-1: a Flow child goes under its parent's Jira issue ───────────────────────────────────
+# J.R. 2026-11-24: "make Flow always create a child item as a Jira Sub-task under its parent's ticket".
+# Jira's levels are Roadmap Item (2) > Epic (1) > Story/Task/Bug (0) > Sub-task (-1), and a Sub-task can only
+# sit under a level-0 issue, so the rule bends where Jira does: under a Story/Task/Bug the child is a
+# Sub-task of it; under a sub-task (a Flow grandchild) it is a Sub-task of THAT issue's parent (Jira can't
+# nest them; Flow keeps the real nesting); under an Epic or higher it keeps its mapped type and is placed
+# inside the issue when Jira allows it (else created loose, as before). A parent with no Jira issue in this
+# project = as before. The Flow Type never changes; only issues created from now on are affected.
+def _jira_parent_ticket(team: str, item: dict, project_key: str) -> str:
+    """The Jira key of the item's Parent Item that is in `project_key`, else ''."""
+    par_id = item.get("parent")
+    if par_id in (None, ""):
+        return ""
+    with db(team) as c:
+        prow = c.execute("SELECT data FROM projects WHERE id=?", (par_id,)).fetchone()
+    ptix = (json.loads(prow["data"]).get("jiraTickets") or []) if prow else []
+    return next((str(k) for k in ptix if str(k).upper().startswith(project_key.upper() + "-")), "")
+
+def _subtask_issuetype(allowed: list):
+    """The project's sub-task type: the one named Sub-task/Subtask, else the first sub-task-level type."""
+    subs = [t for t in allowed if t.get("subtask")]
+    named = [t for t in subs if t["name"].strip().lower().replace("-", "").replace(" ", "") == "subtask"]
+    return (named or subs or [None])[0]
+
+def _jira_child_plan(parent_key: str, allowed: list, hit) -> dict:
+    """How to create a child under `parent_key`: {type (None = keep the mapped type), parent, optional
+    (True = drop the parent and retry if Jira refuses it), note}. None = create as before."""
+    f = (_jira_req("GET", f"/rest/api/3/issue/{_urlq(parent_key, safe='')}?fields=issuetype,parent") or {}).get("fields") or {}
+    it = f.get("issuetype") or {}
+    if not it:
+        return None                                       # unknown parent type: leave it as before
+    level = it.get("hierarchyLevel", 0)
+    sub = hit if (hit and hit.get("subtask")) else _subtask_issuetype(allowed)
+    if it.get("subtask") or (isinstance(level, int) and level < 0):
+        gp = ((f.get("parent") or {}).get("key") or "")
+        if gp and sub:
+            return {"type": sub, "parent": gp, "optional": False,
+                    "note": f"as a {sub['name']} of {gp} ({parent_key} is itself a sub-task)"}
+        return None
+    if not level:
+        return {"type": sub, "parent": parent_key, "optional": False,
+                "note": f"as a {sub['name']} of {parent_key}"} if sub else None
+    if hit and hit.get("subtask"):
+        return None                                       # a sub-task type can't go under an Epic: as before
+    return {"type": None, "parent": parent_key, "optional": True, "note": f"in {parent_key}"}
+
 @app.get("/api/jira/project-issuetypes")
 def list_jira_project_issuetypes(keys: str = "", auth: dict = Depends(require_role("admin"))):
     """{projectKey: [{name, subtask}]} for the given comma-separated keys. A key whose lookup fails is left
@@ -11714,20 +11760,35 @@ def create_jira_issue(body: dict = Body(...),
                                      f"{project_key} allows: {names}. Change the mapping in Admin > Jira > Type mapping.")
         issuetype_field = {"id": hit["id"]}
 
+    # JIRA-CHILD-SUBTASK-1: a child goes under its parent's Jira issue (see _jira_child_plan).
+    jira_parent, placed_note, parent_optional, loose_why = "", "", False, ""
+    par_key = ""
+    if item.get("parent") not in (None, ""):
+        try:
+            par_key = _jira_parent_ticket(team, item, project_key)
+        except Exception as e:
+            log.warning(f"[Jira] parent lookup for item {item_id} failed: {e}")
+        if not par_key:
+            loose_why = f"its parent has no {project_key} Jira issue"
+    if par_key and allowed:
+        try:
+            plan = _jira_child_plan(par_key, allowed, hit)
+        except Exception as e:
+            log.warning(f"[Jira] parent issue {par_key} lookup failed, creating as before: {e}")
+            plan = None
+        if plan:
+            if plan["type"]:
+                hit = plan["type"]
+                issuetype_field = {"id": hit["id"]}
+            jira_parent, placed_note, parent_optional = plan["parent"], plan["note"], plan["optional"]
+
     # JIRA-SUBTASK-1: a sub-task-level type can only be created under a parent issue. Use the Jira issue of
     # the item's Parent Item (one in this same Jira project); with none, say so plainly rather than pass
     # Jira's "parent issue key or id not specified" through.
-    jira_parent = ""
-    if hit and hit.get("subtask"):
-        par_id = item.get("parent")
-        if par_id not in (None, ""):
-            try:
-                with db(team) as c:
-                    prow = c.execute("SELECT data FROM projects WHERE id=?", (par_id,)).fetchone()
-                ptix = (json.loads(prow["data"]).get("jiraTickets") or []) if prow else []
-                jira_parent = next((k for k in ptix if str(k).upper().startswith(project_key.upper() + "-")), "")
-            except Exception as e:
-                log.warning(f"[Jira] parent lookup for item {item_id} failed: {e}")
+    if hit and hit.get("subtask") and not jira_parent:
+        jira_parent = par_key
+        if jira_parent:
+            placed_note = f"as a {hit['name']} of {jira_parent}"
         if not jira_parent:
             flow_type = (item.get("type") or "").strip()
             std = ", ".join(t["name"] for t in allowed if not t.get("subtask"))
@@ -11751,15 +11812,28 @@ def create_jira_issue(body: dict = Body(...),
     reporter_id = (_jira_account_id(req_email) if req_email else "") or _jira_account_id(_user_email(team, launcher))
     if reporter_id:
         payload["fields"]["reporter"] = {"id": reporter_id}
+
+    def _post():
+        try:
+            return _jira_req("POST", "/rest/api/3/issue", payload)
+        except HTTPException as e:
+            # A project that does not allow setting the reporter must never block creation: retry without it.
+            if "reporter" not in payload["fields"] or e.status_code != 400 or "reporter" not in str(e.detail).lower():
+                raise
+            log.warning(f"[Jira] reporter not accepted for {project_key}, creating without it: {e.detail}")
+            payload["fields"].pop("reporter", None)
+            return _jira_req("POST", "/rest/api/3/issue", payload)
     try:
-        result = _jira_req("POST", "/rest/api/3/issue", payload)
+        result = _post()
     except HTTPException as e:
-        # A project that does not allow setting the reporter must never block creation: retry without it.
-        if not reporter_id or e.status_code != 400 or "reporter" not in str(e.detail).lower():
+        # JIRA-CHILD-SUBTASK-1: placing a child inside an Epic/Roadmap Item is a nicety; if Jira refuses
+        # that parent (a type that can't sit at that level), create it loose as before.
+        if not parent_optional or e.status_code != 400:
             raise
-        log.warning(f"[Jira] reporter not accepted for {project_key}, creating without it: {e.detail}")
-        payload["fields"].pop("reporter", None)
-        result = _jira_req("POST", "/rest/api/3/issue", payload)
+        log.warning(f"[Jira] {jira_parent} not accepted as parent for item {item_id}, creating loose: {e.detail}")
+        payload["fields"].pop("parent", None)
+        jira_parent, placed_note, loose_why = "", "", f"Jira would not place it in {par_key}"
+        result = _post()
     new_key = result.get("key","")
     if not new_key: raise HTTPException(500, "Jira did not return an issue key")
 
@@ -11794,9 +11868,13 @@ def create_jira_issue(body: dict = Body(...),
         except Exception as e:
             log.warning(f"[Jira] Remote link failed for {new_key}: {e}")
 
-    write_audit(team, "jira:create", username, item_id, item_name,
-                changes={"jiraKey": new_key, "action": "created"})
-    return {"key": new_key, "url": f"{JIRA_BASE}/browse/{new_key}"}
+    changes = {"jiraKey": new_key, "action": "created"}
+    if jira_parent:
+        changes["jiraParent"] = jira_parent
+    write_audit(team, "jira:create", username, item_id, item_name, changes=changes)
+    return {"key": new_key, "url": f"{JIRA_BASE}/browse/{new_key}",
+            "issueType": (hit or {}).get("name") or issue_type,
+            "jiraParent": jira_parent, "placed": placed_note, "loose": "" if jira_parent else loose_why}
 
 # ── Link existing Jira issue to roadmap item ──────────────────────────────────
 # ── JIRA-AUTOLINK-1 (part 2): linking a key the pull already copied merges the copy away ─────────────────
